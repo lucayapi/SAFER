@@ -4,12 +4,14 @@ Analyse de récits d'accidents du travail par modèles hiérarchiques (SCGM), tr
 
 ## Structure du dépôt
 
-| Dossier | Contenu |
-|---------|---------|
-| [`text/`](text/) | Pipeline actif : SCGM-Text, MALT, comparaison de topics, BN (BTP → métallurgie) |
-| [`images/`](images/) | Code historique SCGM image (local, **non versionné** — voir `images/README.md`) |
+Le code du pipeline se trouve dans [`text/`](text/) :
 
-## Démarrage rapide (texte)
+- **SCGM-Text** — apprentissage hiérarchique sur embeddings de récits BTP
+- **MALT** — transfert macro-ancré vers d'autres corpus (ex. métallurgie)
+- **topic_eval** — comparaison MALT / BERTopic / KMeans
+- **notebooks** — expériences reproductibles (01 à 04)
+
+## Démarrage rapide
 
 ```bash
 cd text
@@ -17,7 +19,7 @@ pip install -r requirements.txt
 python scripts/train_scgm_text.py -h
 ```
 
-Documentation détaillée :
+## Documentation
 
 - [Adaptation SCGM texte BTP](text/README_TEXT_ADAPTATION.md)
 - [MALT — transfert macro-ancré](text/README_MALT.md)
@@ -25,16 +27,8 @@ Documentation détaillée :
 - [Réseaux bayésiens à partir de MALT](text/README_BN_MALT.md)
 - [Notebooks](text/notebooks/README.md)
 
-## Code image (legacy, local)
-
-Le dossier `images/` reste sur votre machine mais n’est **pas** poussé sur le dépôt distant (évite les timeouts). Après clonage, récupérez-le depuis une sauvegarde locale ou l’historique git antérieur si besoin.
-
-```bash
-cd images
-pip install -r requirements_legacy_image.txt
-python train_scgm_g.py -h
-```
-
 ## Données et artefacts
 
 Les embeddings, checkpoints (`runs/`), figures et exports (`outputs/`) ne sont **pas** versionnés (voir [`.gitignore`](.gitignore)). Placez vos CSV d'embeddings dans `text/embeddings/` en local.
+
+Les métadonnées segmentées (`text/dataset/data_btp.csv`, `data_metallurgie.csv`) sont versionnées ; les fichiers `.env` et clés API ne doivent jamais être commités.
