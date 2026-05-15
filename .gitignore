@@ -12,6 +12,8 @@ venv/
 env/
 .env
 **/.env
+text/scgm_text/.env
+scgm_text/.env
 
 # Jupyter
 .ipynb_checkpoints/
