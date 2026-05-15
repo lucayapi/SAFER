@@ -1,0 +1,43 @@
+# Python / env
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+env/
+.env
+**/.env
+
+# Jupyter
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+Untitled.ipynb
+
+# Artefacts texte (lourds / régénérables)
+text/embeddings/
+text/runs/
+text/outputs/
+!text/outputs/topic_comparison/stopwords_domain.txt
+text/**/*.pt
+text/**/*.pth
+
+# Artefacts image
+images/pretrain_model/
+
+# Binaires scientifiques (global)
+*.npy
+*.npz
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Fichiers temporaires locaux
+test.txt
