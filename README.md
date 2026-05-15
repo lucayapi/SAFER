@@ -7,7 +7,7 @@ Analyse de récits d'accidents du travail par modèles hiérarchiques (SCGM), tr
 | Dossier | Contenu |
 |---------|---------|
 | [`text/`](text/) | Pipeline actif : SCGM-Text, MALT, comparaison de topics, BN (BTP → métallurgie) |
-| [`images/`](images/) | Code historique SCGM image (ICLR 2022, BREEDS / CIFAR / tieredImageNet) |
+| [`images/`](images/) | Code historique SCGM image (local, **non versionné** — voir `images/README.md`) |
 
 ## Démarrage rapide (texte)
 
@@ -25,15 +25,15 @@ Documentation détaillée :
 - [Réseaux bayésiens à partir de MALT](text/README_BN_MALT.md)
 - [Notebooks](text/notebooks/README.md)
 
-## Code image (legacy)
+## Code image (legacy, local)
+
+Le dossier `images/` reste sur votre machine mais n’est **pas** poussé sur le dépôt distant (évite les timeouts). Après clonage, récupérez-le depuis une sauvegarde locale ou l’historique git antérieur si besoin.
 
 ```bash
 cd images
 pip install -r requirements_legacy_image.txt
 python train_scgm_g.py -h
 ```
-
-Voir [images/README.md](images/README.md) (article ICLR 2022).
 
 ## Données et artefacts
 

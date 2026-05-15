@@ -26,8 +26,8 @@ text/outputs/
 text/**/*.pt
 text/**/*.pth
 
-# Artefacts image
-images/pretrain_model/
+# Code image legacy (local uniquement, non poussé)
+images/
 
 # Binaires scientifiques (global)
 *.npy
