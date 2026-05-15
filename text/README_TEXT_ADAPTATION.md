@@ -10,10 +10,6 @@ Cette adaptation applique SCGM-G à des embeddings texte fixes de récits d'acci
 - Embeddings pré-calculés : [`embeddings/`](embeddings/)
 - Alignement par `doc_id = index + 1` sur les lignes filtrées de `data_btp.csv`
 
-## Différence avec le repo image original
-
-Le code image d'origine est dans [`../images/`](../images/) (`scgm_g/`, `scgm_a/`, dataloaders BREEDS/CIFAR/tieredImageNet). L'adaptation texte vit dans ce dossier : [`scgm_text/`](scgm_text/) et [`scripts/`](scripts/).
-
 ## Installation
 
 ```bash
@@ -25,7 +21,67 @@ Le code image historique : [`../images/requirements_legacy_image.txt`](../images
 
 ## Projections (backbone natif)
 
-Le modèle texte utilise un paramètre **`projection`** : `identity` (pas de couche linéaire, `hiddim` = dimension du backbone), `linear` ou `mlp`. Les anciens checkpoints n’avaient que `with_mlp` (bool) : au chargement, `with_mlp=True` → `mlp`, `False` → `linear`. **Il n’y a pas de migration automatique vers `identity`** : il faut réentraîner SCGM texte puis, si besoin, refaire MALT / export à partir du nouveau `source_checkpoint`.
+Le modèle texte utilise un paramètre **`projection`** : `identity` (pas de couche linéaire, `hiddim` = dimension du backbone), `linear` ou `mlp`. Le mode **`mlp`** (Linear → ReLU → Linear) est le plus proche du `fc_enc` du [SCGM-G officiel](https://github.com/nijingchao/SCGM). Les anciens checkpoints n’avaient que `with_mlp` (bool) : au chargement, `with_mlp=True` → `mlp`, `False` → `linear`.
+
+## Fidelity to official SCGM-G
+
+Cette adaptation reproduit le **cœur probabiliste SCGM-G** (μ_y, μ_z, E-step Sinkhorn, pertes ls1/ls2/ls3), pas le pipeline image complet (ResNet50, BREEDS, augmentations).
+
+**Conservé**
+
+- Centres macro `mu_y` et latents `mu_z`
+- `p(z|x)`, `p(y|z)`, marge macro `p(y|x) = sum_z p(z|x) p(y|z)`
+- E-step Sinkhorn sur les scores latents (voir ci-dessous)
+- Pertes ls1, ls2, ls3
+- Self-distillation optionnelle (`DistillKL`, `--use_self_distillation`)
+
+**Adapté au texte**
+
+- Images ResNet → embeddings texte pré-calculés
+- `fc_enc` → `projection` (`identity` / `linear` / `mlp`)
+- Optimiseur par défaut : AdamW (mode pragmatique) ; SGD + cosine disponible (mode strict)
+- Split par `accident_id` (évite la fuite entre segments)
+- Évaluation macro / subtype / topics
+
+**Non reproduit exactement**
+
+- Entraînement end-to-end image
+- Protocole BREEDS / few-shot image
+- Multi-GPU DataParallel officiel
+
+| Aspect | SCGM-G officiel | SAFER SCGM-Text | Statut |
+|--------|-----------------|-----------------|--------|
+| Input | Images | Embeddings texte | Adapté |
+| Backbone | ResNet50 | Projecteur texte | Adapté |
+| mu_y / mu_z | oui | oui | Conservé |
+| E-step Sinkhorn | oui | oui | Conservé |
+| Optimiseur | SGD + cosine | AdamW ou SGD (config) | Configurable |
+| Self-distillation | optionnelle (β) | optionnelle | Configurable |
+| Évaluation | BREEDS fine labels | macro / subtype / topic | Adapté |
+
+**Note sur l’E-step :** `compute_latent_sinkhorn_scores` renvoie un tenseur `(n, K)` utilisé pour Sinkhorn. Ce n’est **pas** la marge macro `p(y|x)` mais le score `p(z|x) * p(y_obs|z)` (comme dans le code officiel, nommé `batch_prob_y_x`).
+
+### Modes d’entraînement
+
+```bash
+cd text
+
+# Mode strict (SGD + cosine, projection mlp) — fidélité aux choix d’optimisation officiels
+python scripts/train_scgm_text.py \
+  --config configs/scgm_text_strict_fidelity.yaml \
+  --run_name scgm_text_strict_qwen06 \
+  --scgm_strict_mode
+
+# Mode pragmatique (AdamW, projection linear) — défaut historique adapté au texte
+python scripts/train_scgm_text.py \
+  --config configs/scgm_text_pragmatic_adamw.yaml \
+  --run_name scgm_text_adamw_qwen06 \
+  --text_pragmatic_mode
+```
+
+Logs détaillés : `{output_dir}/metrics/train_log.csv` et `epoch_metrics.jsonl` (ls1–ls3, Sinkhorn, entropies, NMI subtype si disponible). Le fichier `logs.csv` à la racine du run est conservé pour compatibilité.
+
+Configs : [`configs/scgm_text_default.yaml`](configs/scgm_text_default.yaml), [`configs/scgm_text_strict_fidelity.yaml`](configs/scgm_text_strict_fidelity.yaml), [`configs/scgm_text_pragmatic_adamw.yaml`](configs/scgm_text_pragmatic_adamw.yaml).
 
 ## Entraînement
 
@@ -51,7 +107,7 @@ python scripts/train_scgm_text.py \
   --projection identity
 ```
 
-L’option dépréciée `--with-mlp` / `--no-with-mlp` force encore `projection` à `mlp` ou `linear`. Une configuration YAML est disponible dans [`configs/scgm_text_qwen06.yaml`](configs/scgm_text_qwen06.yaml) (`projection: identity`).
+Options utiles : `--optimizer adamw|sgd`, `--scheduler none|cosine`, `--use_self_distillation`, `--resume_from_checkpoint`, `--run_name` (sortie sous `runs/scgm_text/<run_name>/`).
 
 ## Export des outputs
 

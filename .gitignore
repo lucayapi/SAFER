@@ -18,6 +18,7 @@ scgm_text/.env
 # Jupyter
 .ipynb_checkpoints/
 **/.ipynb_checkpoints/
+*.ipynb.bak
 Untitled.ipynb
 
 # Artefacts texte (lourds / régénérables)

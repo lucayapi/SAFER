@@ -1,0 +1,32 @@
+# Choix d'entraînement proches du SCGM-G officiel (SGD + cosine).
+# Entrée = embeddings texte fixes (pas ResNet / BREEDS).
+
+data:
+  data_csv: dataset/data_btp.csv
+  emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  group_col: accident_id
+  val_ratio: 0.1
+
+model:
+  projection: mlp
+  hiddim: 128
+  n_class: 4
+  n_subclass: 32
+  tau: 0.1
+  alpha: 0.5
+  lmd: 25.0
+  n_iter_estep: 5
+
+training:
+  optimizer: sgd
+  lr: 0.03
+  momentum: 0.9
+  weight_decay: 0.0001
+  scheduler: cosine
+  num_cycles: 10
+  epochs: 200
+  batch_size: 256
+  use_self_distillation: false
+  kd_t: 4.0
+  beta: 1.0
+  teacher_mode: none

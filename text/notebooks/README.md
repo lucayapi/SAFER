@@ -1,8 +1,14 @@
 # Notebooks SCGM / MALT
 
+Les notebooks sont versionnés **sans sorties** (fichiers légers). Réexécutez les cellules après ouverture. En cas de fichier `.ipynb` illisible (JSON tronqué après de gros graphiques Plotly), lancez depuis `text/` :
+
+```bash
+python scripts/repair_notebooks.py
+```
+
 ## 01 — SCGM texte BTP
 
-`01_scgm_text_btp_experiment.ipynb` : exploration, entraînement SCGM-Text, export, évaluation et figures pour le sous-corpus BTP.
+`01_scgm_text_btp_experiment.ipynb` : exploration, entraînement SCGM-Text, export, évaluation et figures pour le sous-corpus BTP. Régler `TRAINING_PRESET` dans la cellule paramètres : `pragmatic` (AdamW), `strict` (SGD + cosine, proche SCGM-G), ou `custom`.
 
 ## 02 — MALT BTP → Métallurgie
 

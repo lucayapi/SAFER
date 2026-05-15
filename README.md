@@ -21,7 +21,7 @@ python scripts/train_scgm_text.py -h
 
 ## Documentation
 
-- [Adaptation SCGM texte BTP](text/README_TEXT_ADAPTATION.md)
+- [Adaptation SCGM texte BTP](text/README_TEXT_ADAPTATION.md) (modes strict / pragmatique vs SCGM-G officiel)
 - [MALT — transfert macro-ancré](text/README_MALT.md)
 - [Comparaison de méthodes de topics](text/README_TOPIC_COMPARISON.md)
 - [Réseaux bayésiens à partir de MALT](text/README_BN_MALT.md)

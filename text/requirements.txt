@@ -52,3 +52,6 @@ pgmpy==0.1.26
 # networkx 3.3+ exige Python ≥3.10 ; 3.2.1 reste OK pour 3.9 et pgmpy 0.1.x
 networkx==3.2.1
 pyvis==0.3.2
+
+# --- Tests (SCGM fidelity / probabilités) ---
+pytest==8.3.4
