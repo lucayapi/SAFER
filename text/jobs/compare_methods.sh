@@ -8,11 +8,15 @@
 #SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
-_JOB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${SLURM_SUBMIT_DIR:-$_JOB_DIR}/.."
-# shellcheck source=jobs/_env.sh
-source "${_JOB_DIR}/_env.sh"
-setup_text_job_env
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/_bootstrap.sh" ]]; then
+  # shellcheck source=jobs/_bootstrap.sh
+  source "${SLURM_SUBMIT_DIR}/_bootstrap.sh"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
+  source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
+else
+  # shellcheck source=jobs/_bootstrap.sh
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
+fi
 
 python scripts/collect_results.py --results_root resultats
 python scripts/compare_methods.py --results_root resultats --output_dir resultats/comparisons
