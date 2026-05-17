@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=compare_emb
-#SBATCH --partition=cpu
+#SBATCH --partition=normal
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --time=01:00:00

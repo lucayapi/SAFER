@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=raw_emb
-#SBATCH --partition=cpu
+#SBATCH --partition=normal
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00

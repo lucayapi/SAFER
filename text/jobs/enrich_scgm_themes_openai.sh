@@ -5,11 +5,11 @@
 # Sur HPC2 : préférer l'exécution sur le nœud de LOGIN, pas via JupyterHub / GPU :
 #   cd ~/SAFER/text && bash jobs/enrich_scgm_themes_openai.sh
 #
-# Si votre partition cpu a accès sortant, vous pouvez aussi :
+# Si la partition normal a accès sortant, vous pouvez aussi :
 #   sbatch jobs/enrich_scgm_themes_openai.sh
 
 #SBATCH --job-name=scgm_openai_themes
-#SBATCH --partition=cpu
+#SBATCH --partition=normal
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G
 #SBATCH --time=04:00:00
