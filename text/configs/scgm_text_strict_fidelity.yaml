@@ -11,7 +11,7 @@ model:
   projection: mlp
   hiddim: 128
   n_class: 4
-  n_subclass: 32
+  n_subclass: 100
   tau: 0.1
   alpha: 0.5
   lmd: 25.0

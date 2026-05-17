@@ -2,11 +2,15 @@
 #SBATCH --job-name=scgm_text
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
+#SBATCH --constraint='a100|h100'
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
-#SBATCH --output=resultats/scgm_text/logs/slurm-%x-%j.out
-#SBATCH --error=resultats/scgm_text/logs/slurm-%x-%j.err
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
+#SBATCH --mail-user=lucayapi@gmail.com
+#SBATCH --mail-type=BEGIN,END,FAIL
+
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}/.."
@@ -21,7 +25,7 @@ export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
 python scripts/train_scgm_text.py \
-  --config configs/methods/scgm_text.yaml \
+  --config configs/scgm_text_strict_fidelity.yaml \
   --data_csv dataset/data_btp.csv \
   --text_col sentence \
   --label_col pred_label \
