@@ -21,7 +21,7 @@ def _as_repo_path(repo_root: str, path: str) -> str:
 
 from malt_text.malt_dataset import MALTTargetDataset, build_target_dataloader
 from malt_text.malt_metrics import anchor_drift_metrics
-from malt_text.malt_model import MALTTargetModel
+from malt_text.malt_em_model import MALTEMTargetModel
 from malt_text.malt_topic_export import export_malt_topic_tables
 from malt_text.malt_transfer import compute_p0_target
 from malt_text.utils import (
@@ -80,7 +80,7 @@ def run_export(args: argparse.Namespace) -> None:
 
     source_model, source_args, _, _ = load_source_scgm(args.source_checkpoint, device)
     proj = projection_from_checkpoint_args(source_args)
-    target_model = MALTTargetModel(
+    target_model = MALTEMTargetModel(
         input_dim=input_dim,
         hiddim=int(source_args.get("hiddim", 128)),
         num_classes=4,
@@ -100,25 +100,41 @@ def run_export(args: argparse.Namespace) -> None:
     projected_adapted = []
     pt_list = []
     pz_list = []
-    z_hat = []
-    z_conf = []
+    z_hat_parts = []
+    z_conf_parts = []
     with torch.no_grad():
         for embeddings, _ in data_loader:
             embeddings = embeddings.to(device)
-            features = target_model(embeddings)
-            prob_z_x = target_model.latent_probs(features, tau_z)
-            pt = target_model.marginal_macro(features, tau_z, tau_yz)
+            probs = target_model.compute_all_probs(embeddings, tau_z=tau_z, tau_yz=tau_yz)
+            features = probs["features"]
+            prob_z_x = probs["prob_z_x"]
+            pt = probs["prob_y_x"]
             projected_adapted.append(features.detach().cpu().numpy())
             pt_list.append(pt.detach().cpu().numpy())
             pz_list.append(prob_z_x.detach().cpu().numpy())
-            z_hat.append(prob_z_x.argmax(dim=1).detach().cpu().numpy())
-            z_conf.append(prob_z_x.max(dim=1).values.detach().cpu().numpy())
+            z_hat_parts.append(prob_z_x.argmax(dim=1).detach().cpu().numpy())
+            z_conf_parts.append(prob_z_x.max(dim=1).values.detach().cpu().numpy())
 
     projected_adapted_arr = np.concatenate(projected_adapted, axis=0)
     pt_arr = np.concatenate(pt_list, axis=0)
     pz_arr = np.concatenate(pz_list, axis=0)
-    z_hat_arr = np.concatenate(z_hat, axis=0)
-    z_conf_arr = np.concatenate(z_conf, axis=0)
+    z_hat_arr = np.concatenate(z_hat_parts, axis=0)
+    z_conf_arr = np.concatenate(z_conf_parts, axis=0)
+
+    q_em = checkpoint.get("q_em")
+    if q_em is None:
+        q_path = os.path.join(os.path.dirname(args.checkpoint), "q_em_final.npy")
+        if os.path.isfile(q_path):
+            q_em = np.load(q_path)
+    if q_em is not None:
+        q_em = np.asarray(q_em, dtype=np.float32)
+        if q_em.shape[0] == len(dataset):
+            z_hat_arr = q_em.argmax(axis=1).astype(np.int64)
+            q_z_hat_arr = q_em.max(axis=1)
+        else:
+            q_z_hat_arr = z_conf_arr
+    else:
+        q_z_hat_arr = z_conf_arr
     prob_y_z = target_model.macro_given_latent(tau_yz).detach().cpu().numpy()
     mu_source = source_model.mu_y.detach().cpu().numpy()
     mu_target = target_model.mu_y.detach().cpu().numpy()
@@ -133,6 +149,17 @@ def run_export(args: argparse.Namespace) -> None:
     save_numpy(mu_source, os.path.join(args.output_dir, "mu_y_source.npy"))
     save_numpy(mu_target, os.path.join(args.output_dir, "mu_y_target.npy"))
     save_numpy(nu_target, os.path.join(args.output_dir, "nu_target.npy"))
+    if q_em is not None:
+        save_numpy(q_em, os.path.join(args.output_dir, "q_em_final.npy"))
+        save_numpy(z_hat_arr, os.path.join(args.output_dir, "z_hat_em_final.npy"))
+
+    p0_hat = p0.argmax(axis=1)
+    pt_hat = pt_arr.argmax(axis=1)
+    transition = pd.crosstab(
+        pd.Series([ID2LABEL[int(i)] for i in p0_hat], name="p0_hat"),
+        pd.Series([ID2LABEL[int(i)] for i in pt_hat], name="pt_hat"),
+    )
+    transition.to_csv(os.path.join(args.output_dir, "macro_transition_p0_to_pt.csv"))
 
     drift = anchor_drift_metrics(mu_source, mu_target)
     pd.DataFrame([drift]).to_csv(os.path.join(args.output_dir, "anchor_drift.csv"), index=False)
@@ -142,14 +169,17 @@ def run_export(args: argparse.Namespace) -> None:
     for macro_id, macro_name in ID2LABEL.items():
         enriched[f"p0_{macro_name}"] = p0[:, macro_id]
         enriched[f"pt_{macro_name}"] = pt_arr[:, macro_id]
-    enriched["p0_macro_id"] = p0.argmax(axis=1)
-    enriched["p0_macro_name"] = [ID2LABEL[int(value)] for value in enriched["p0_macro_id"]]
+    enriched["p0_hat"] = p0_hat
+    enriched["pt_hat"] = pt_hat
+    enriched["p0_macro_id"] = p0_hat
+    enriched["p0_macro_name"] = [ID2LABEL[int(value)] for value in p0_hat]
     enriched["p0_confidence"] = p0.max(axis=1)
-    enriched["pt_macro_id"] = pt_arr.argmax(axis=1)
-    enriched["pt_macro_name"] = [ID2LABEL[int(value)] for value in enriched["pt_macro_id"]]
+    enriched["pt_macro_id"] = pt_hat
+    enriched["pt_macro_name"] = [ID2LABEL[int(value)] for value in pt_hat]
     enriched["pt_confidence"] = pt_arr.max(axis=1)
     enriched["z_hat"] = z_hat_arr
     enriched["z_confidence"] = z_conf_arr
+    enriched["q_z_hat"] = q_z_hat_arr
     enriched["z_dominant_macro"] = [ID2LABEL[int(prob_y_z[z].argmax())] for z in z_hat_arr]
     for macro_id, macro_name in ID2LABEL.items():
         enriched[f"p_{macro_name}_given_z"] = prob_y_z[z_hat_arr, macro_id]

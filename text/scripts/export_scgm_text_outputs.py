@@ -11,9 +11,11 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from scgm_text.batch_utils import batch_to_device, forward_features
+from scgm_text.checkpoint_io import load_scgm_checkpoint
+from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_embeddings import ID2LABEL, TextEmbeddingDataset
-from scgm_text.projection import projection_from_checkpoint_args
-from scgm_text.scgm_embedding_model import SCGMEmbeddingNet
+from scgm_text.dataset_text_raw import TextRawDataset
 from scgm_text.topic_export import export_topic_tables
 from scgm_text.utils_io import ensure_dir, save_numpy
 
@@ -27,8 +29,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label_col", type=str, default="pred_label")
     parser.add_argument("--pred_ok_col", type=str, default="pred_ok")
     parser.add_argument("--group_col", type=str, default="accident_id")
+    parser.add_argument("--text_col", type=str, default=None)
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch_size", type=int, default=512)
+    parser.add_argument("--max_seq_length", type=int, default=256)
     return parser.parse_args()
 
 
@@ -41,35 +45,45 @@ def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
 def run_export(args: argparse.Namespace) -> None:
     ensure_dir(args.output_dir)
 
-    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    checkpoint_args = checkpoint.get("args", {})
-    dataset = TextEmbeddingDataset(
-        data_csv=args.data_csv,
-        emb_csv=args.emb_csv,
-        label_col=args.label_col,
-        pred_ok_col=args.pred_ok_col,
-        group_col=args.group_col,
-    )
-
-    proj = projection_from_checkpoint_args(checkpoint_args)
-    model = SCGMEmbeddingNet(
-        input_dim=checkpoint.get("input_dim", dataset.get_input_dim()),
-        hiddim=checkpoint_args.get("hiddim", 128),
-        num_classes=checkpoint_args.get("n_class", 4),
-        num_subclasses=checkpoint_args.get("n_subclass", 32),
-        projection=proj,
-    )
-    model.load_state_dict(checkpoint["state_dict"])
-
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
+    model, checkpoint_args, _ = load_scgm_checkpoint(args.checkpoint, map_location="cpu")
     model.to(device)
     model.eval()
 
+    input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
     tau = checkpoint_args.get("tau", 0.1)
     n_class = checkpoint_args.get("n_class", 4)
+
+    if input_mode == "text":
+        dataset = TextRawDataset(
+            data_csv=args.data_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+            text_col=args.text_col,
+        )
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            checkpoint_args.get("backbone_model_name_or_path", "Qwen/Qwen3-Embedding-0.6B")
+        )
+        collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
+        batch_size = min(args.batch_size, 32)
+    else:
+        dataset = TextEmbeddingDataset(
+            data_csv=args.data_csv,
+            emb_csv=args.emb_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+        )
+        collate_fn = None
+        batch_size = args.batch_size
+
     metadata_df = dataset.get_metadata_df()
 
     projected = []
+    raw_embeddings = []
     prob_y_x_list = []
     prob_z_x_list = []
     z_hat = []
@@ -78,18 +92,28 @@ def run_export(args: argparse.Namespace) -> None:
     max_prob_z = []
 
     with torch.no_grad():
-        for start in range(0, len(dataset), args.batch_size):
-            end = min(start + args.batch_size, len(dataset))
-            batch_embeddings = []
-            batch_labels = []
-            for index in range(start, end):
-                embedding, label_id, _ = dataset[index]
-                batch_embeddings.append(embedding)
-                batch_labels.append(label_id)
-            embeddings = torch.stack(batch_embeddings).to(device)
-            label_ids = torch.stack(batch_labels).to(device)
-            batch_y = labels_to_onehot(label_ids, n_class)
-            features = model(embeddings)
+        for start in range(0, len(dataset), batch_size):
+            end = min(start + batch_size, len(dataset))
+            if input_mode == "text":
+                items = [dataset[index] for index in range(start, end)]
+                batch = collate_fn(items)
+                batch = batch_to_device(batch, device)
+                label_ids = batch["label_ids"]
+                raw_embeddings.append(model.encode(batch).cpu().numpy())
+                features = forward_features(model, batch)
+            else:
+                batch_embeddings = []
+                batch_labels = []
+                for index in range(start, end):
+                    embedding, label_id, _ = dataset[index]
+                    batch_embeddings.append(embedding)
+                    batch_labels.append(label_id)
+                embeddings = torch.stack(batch_embeddings).to(device)
+                label_ids = torch.stack(batch_labels)
+                raw_embeddings.append(embeddings.cpu().numpy())
+                features = model(embeddings)
+
+            batch_y = labels_to_onehot(label_ids.to(device), n_class)
             prob_y_x, prob_z_x, prob_y_z = model.pred(features, tau)
 
             projected.append(features.cpu().numpy())
@@ -101,6 +125,7 @@ def run_export(args: argparse.Namespace) -> None:
             max_prob_z.append(prob_z_x.max(dim=1).values.cpu().numpy())
 
     projected_embeddings = np.concatenate(projected, axis=0)
+    raw_embeddings_arr = np.concatenate(raw_embeddings, axis=0)
     prob_y_x = np.concatenate(prob_y_x_list, axis=0)
     prob_z_x = np.concatenate(prob_z_x_list, axis=0)
     z_hat_arr = np.concatenate(z_hat, axis=0)
@@ -117,6 +142,7 @@ def run_export(args: argparse.Namespace) -> None:
     prob_y_z = prob_y_z.numpy()
     save_numpy(mu_y.numpy(), os.path.join(args.output_dir, "mu_y.npy"))
     save_numpy(mu_z.numpy(), os.path.join(args.output_dir, "mu_z.npy"))
+    save_numpy(raw_embeddings_arr, os.path.join(args.output_dir, "raw_embeddings.npy"))
     save_numpy(projected_embeddings, os.path.join(args.output_dir, "projected_embeddings.npy"))
     save_numpy(prob_y_x, os.path.join(args.output_dir, "prob_y_x.npy"))
     save_numpy(prob_z_x, os.path.join(args.output_dir, "prob_z_x.npy"))

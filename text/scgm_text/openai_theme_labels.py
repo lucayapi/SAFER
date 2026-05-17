@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
+from tqdm.auto import tqdm
 
 _SYSTEM_PROMPT = (
     "Tu nommes des topics issus d’un modèle hiérarchique (topic modeling) sur des segments "
@@ -206,6 +207,7 @@ def enrich_themes_by_z_openai(
     summary_words_min: int = 6,
     summary_words_max: int = 10,
     client: Any = None,
+    show_progress: bool = True,
 ) -> pd.DataFrame:
     """
     Lit ``themes_by_z.csv`` et écrit ``themes_by_z_openai.csv`` (mêmes colonnes + titres/résumé/mots-clés).
@@ -232,7 +234,9 @@ def enrich_themes_by_z_openai(
     titles: List[str] = []
     summaries: List[str] = []
     kw_strings: List[str] = []
-    for _, row in frame.iterrows():
+    rows = list(frame.iterrows())
+    iterator = tqdm(rows, desc="OpenAI thèmes par z", unit="topic") if show_progress else rows
+    for _, row in iterator:
         parsed = _one_row(
             cli,
             model=model,

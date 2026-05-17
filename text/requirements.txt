@@ -17,6 +17,11 @@ tqdm==4.67.1
 # --- PyTorch (adaptation texte) ; roue CPU — voir site PyTorch pour CUDA ---
 torch==2.5.1
 
+# --- Encodeurs texte (input_mode=text, fine-tuning backbone) ---
+transformers==4.46.3
+tokenizers==0.20.3
+accelerate==1.1.1
+
 # --- Visualisation & données tabulaires ---
 matplotlib==3.9.4
 seaborn==0.13.2

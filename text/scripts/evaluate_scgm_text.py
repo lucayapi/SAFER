@@ -1,5 +1,4 @@
 import argparse
-import json
 import os
 import sys
 
@@ -10,28 +9,29 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from scgm_text.metrics import (
-    accuracy,
-    balanced_accuracy,
-    c1_c10_by_macro,
-    calinski_harabasz_score_safe,
-    compute_confusion_matrix,
-    davies_bouldin_score_safe,
-    macro_f1,
-    pca_energy_c1_c10,
-    rankme_by_macro,
-    rankme_effective_rank,
-    silhouette_score_safe,
-    subtype_alignment_diagnostics,
-)
+from metrics.embedding_geometry_separation import METRICS_TABLE_COLUMNS, build_geometry_metrics_row
+from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
 from scgm_text.utils_io import ensure_dir, save_json
 
 
+def load_raw_embeddings(metadata: pd.DataFrame, emb_csv: str) -> np.ndarray:
+    slim = metadata.drop(columns=[c for c in metadata.columns if c.startswith("dim_")], errors="ignore")
+    merged, dim_columns = merge_metadata_with_embeddings(slim, emb_csv)
+    if len(merged) != len(metadata):
+        raise ValueError(
+            f"Embedding merge row mismatch: metadata={len(metadata)}, merged={len(merged)}"
+        )
+    return merged[dim_columns].to_numpy(dtype=np.float64)
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate exported SCGM text outputs.")
+    parser = argparse.ArgumentParser(description="Evaluate exported SCGM text outputs (eta2 geometry).")
     parser.add_argument("--exports_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--label_col", type=str, default="pred_label")
+    parser.add_argument("--emb_csv", type=str, default=None, help="Encoder embedding CSV for raw row.")
+    parser.add_argument("--method_raw", type=str, default="Embedding brut")
+    parser.add_argument("--method_scgm", type=str, default="SCGM")
     return parser.parse_args()
 
 
@@ -41,76 +41,33 @@ def main() -> None:
 
     metadata = pd.read_csv(os.path.join(args.exports_dir, "metadata_with_predictions.csv"))
     projected = np.load(os.path.join(args.exports_dir, "projected_embeddings.npy"))
-    z_hat = metadata["z_hat"].to_numpy(dtype=np.int64)
+    macro_labels = metadata[args.label_col].to_numpy()
 
-    label_map = {"A0": 0, "A1": 1, "B": 2, "C": 3}
-    y_true = metadata[args.label_col].map(label_map).to_numpy(dtype=np.int64)
-    y_pred = metadata["pred_macro_id"].to_numpy(dtype=np.int64)
+    rows = []
 
-    macro_metrics = {
-        "accuracy": accuracy(y_true, y_pred),
-        "macro_f1": macro_f1(y_true, y_pred),
-        "balanced_accuracy": balanced_accuracy(y_true, y_pred),
-    }
-    confusion = compute_confusion_matrix(y_true, y_pred, labels=[0, 1, 2, 3])
-    pd.DataFrame(
-        confusion,
-        index=["A0", "A1", "B", "C"],
-        columns=["A0", "A1", "B", "C"],
-    ).to_csv(os.path.join(args.output_dir, "confusion_matrix.csv"))
+    raw_path = os.path.join(args.exports_dir, "raw_embeddings.npy")
+    if os.path.isfile(raw_path):
+        raw = np.load(raw_path)
+        if raw.shape[0] != len(metadata):
+            raise ValueError("raw_embeddings.npy row count does not match metadata.")
+    elif args.emb_csv:
+        raw = load_raw_embeddings(metadata, args.emb_csv)
+    else:
+        raw = None
 
-    c1_global, c10_global = pca_energy_c1_c10(projected)
-    geometry_global = {
-        "rankme_global": rankme_effective_rank(projected),
-        "c1_global": c1_global,
-        "c10_global": c10_global,
-    }
-    geometry_by_macro = []
-    for macro_name, macro_id in label_map.items():
-        rankme_macro = rankme_by_macro(projected, y_true).get(macro_id, float("nan"))
-        c1_macro, c10_macro = c1_c10_by_macro(projected, y_true).get(macro_id, (float("nan"), float("nan")))
-        geometry_by_macro.append(
-            {
-                "macro": macro_name,
-                "rankme": rankme_macro,
-                "c1": c1_macro,
-                "c10": c10_macro,
-            }
-        )
-    pd.DataFrame(geometry_by_macro).to_csv(os.path.join(args.output_dir, "geometry_by_macro.csv"), index=False)
-
-    clustering_rows = [
-        {
-            "scope": "global",
-            "silhouette": silhouette_score_safe(projected, z_hat),
-            "davies_bouldin": davies_bouldin_score_safe(projected, z_hat),
-            "calinski_harabasz": calinski_harabasz_score_safe(projected, z_hat),
-        }
-    ]
-    for macro_name, macro_id in label_map.items():
-        mask = y_true == macro_id
-        if mask.sum() < 3:
-            continue
-        clustering_rows.append(
-            {
-                "scope": macro_name,
-                "silhouette": silhouette_score_safe(projected[mask], z_hat[mask]),
-                "davies_bouldin": davies_bouldin_score_safe(projected[mask], z_hat[mask]),
-                "calinski_harabasz": calinski_harabasz_score_safe(projected[mask], z_hat[mask]),
-            }
-        )
-    pd.DataFrame(clustering_rows).to_csv(os.path.join(args.output_dir, "clustering_metrics.csv"), index=False)
-
-    diagnostics = {}
-    if "pred_subtype" in metadata.columns:
-        diagnostics = subtype_alignment_diagnostics(z_hat, metadata["pred_subtype"].astype(str).to_numpy())
-        diagnostics["subtype_diagnostic_note"] = (
-            "pred_subtype is exploratory only and is not expert ground truth."
+    if raw is not None:
+        rows.append(
+            build_geometry_metrics_row(raw, macro_labels, method=args.method_raw)
         )
 
-    summary = {**macro_metrics, **geometry_global, **diagnostics}
-    save_json(summary, os.path.join(args.output_dir, "metrics_summary.json"))
-    pd.DataFrame([summary]).to_csv(os.path.join(args.output_dir, "metrics_summary.csv"), index=False)
+    rows.append(
+        build_geometry_metrics_row(projected, macro_labels, method=args.method_scgm)
+    )
+
+    table = pd.DataFrame(rows, columns=METRICS_TABLE_COLUMNS)
+    table.to_csv(os.path.join(args.output_dir, "metrics_table.csv"), index=False)
+    table.to_csv(os.path.join(args.output_dir, "metrics_summary.csv"), index=False)
+    save_json({"metrics_table": rows}, os.path.join(args.output_dir, "metrics_summary.json"))
 
 
 if __name__ == "__main__":

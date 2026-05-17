@@ -1,0 +1,65 @@
+run:
+  name: malt_btp_to_mettalurgie_qwen06
+  seed: 42
+  output_dir: runs/malt_btp_to_mettalurgie_qwen06
+
+source:
+  checkpoint: runs/scgm_text_qwen06/best_model.pt
+
+target:
+  data_csv: dataset/data_metallurgie.csv
+  data_csv_alt: dataset/data_mettalurgie.csv
+  emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
+  emb_csv_alt: embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv
+  filter_pred_ok: false
+  group_col: accident_id
+  diagnostic_label_col: pred_label
+  subtype_col: pred_subtype
+
+model:
+  projection: linear
+  hiddim: 128
+  num_classes: 4
+  n_subclass: 32
+  copy_source_projector: true
+  freeze_projector: false
+  init_mu_target: source
+  init_nu: kmeans
+
+temperatures:
+  tau_macro: 0.1
+  tau_z: 0.1
+  tau_yz: 0.1
+  tau_div: 0.1
+
+em:
+  n_iter_estep: 5
+  sinkhorn_lmd: 25.0
+  em_q_mode: hard
+  init_q_mode: source_scores
+  prior_z: uniform
+  save_q_every_estep: true
+
+loss:
+  beta_anchor: 1.0
+  beta_div: 0.1
+  beta_macro: 0.5
+  beta_balance: 0.0
+  confidence_threshold: 0.0
+  macro_weight_mode: max_prob
+  disable_anchor: false
+  disable_div: false
+  disable_macro: false
+  disable_balance: true
+
+training:
+  optimizer: adamw
+  lr: 0.001
+  momentum: 0.9
+  weight_decay: 0.0001
+  scheduler: none
+  num_cycles: 10
+  epochs: 50
+  batch_size: 256
+  num_workers: 0
+  device: cuda

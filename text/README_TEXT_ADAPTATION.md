@@ -19,9 +19,29 @@ pip install -r requirements.txt
 
 Le code image historique : [`../images/requirements_legacy_image.txt`](../images/requirements_legacy_image.txt).
 
-## Projections (backbone natif)
+## Modes d'entrée et projections
 
-Le modèle texte utilise un paramètre **`projection`** : `identity` (pas de couche linéaire, `hiddim` = dimension du backbone), `linear` ou `mlp`. Le mode **`mlp`** (Linear → ReLU → Linear) est le plus proche du `fc_enc` du [SCGM-G officiel](https://github.com/nijingchao/SCGM). Les anciens checkpoints n’avaient que `with_mlp` (bool) : au chargement, `with_mlp=True` → `mlp`, `False` → `linear`.
+**`input_mode`** :
+
+- `text` : textes bruts → backbone Hugging Face `f_theta(x)` (fine-tunable si `freeze_backbone=false`).
+- `precomputed_embeddings` : vecteurs `dim_*` du CSV (comportement historique) ; pas de θ backbone dans le graphe.
+
+**`projection`** : `identity` | `linear` | `mlp`.
+
+> **Important — sémantique de `identity`** : `projection=identity` ne signifie **pas** nécessairement des embeddings fixes. Si `input_mode=text` et `freeze_backbone=false`, identity correspond à **h = f_theta(x)** : le backbone est fine-tuné directement par la loss SCGM. Si `input_mode=precomputed_embeddings`, identity signifie **h = e** et aucun paramètre θ de backbone n'est mis à jour. Ne pas confondre avec le preset **`strict_finetune_identity`** (texte + backbone entraînable) et **`precomputed_identity`** (embeddings figés).
+
+Le mode **`mlp`** (Linear → ReLU → Linear) est le plus proche du `fc_enc` du [SCGM-G officiel](https://github.com/nijingchao/SCGM). Les anciens checkpoints n’avaient que `with_mlp` (bool) : au chargement, `with_mlp=True` → `mlp`, `False` → `linear`.
+
+**Fine-tune identity (backbone)** :
+
+```bash
+python scripts/train_scgm_text.py \
+  --config configs/scgm_text_strict_finetune_identity.yaml \
+  --strict_finetune_identity \
+  --run_name scgm_text_finetune_identity
+```
+
+Optimiseur : groupes séparés `backbone` (`--backbone_lr`) et `scgm` / projecteur (`--head_lr`).
 
 ## Fidelity to official SCGM-G
 
@@ -59,7 +79,7 @@ Cette adaptation reproduit le **cœur probabiliste SCGM-G** (μ_y, μ_z, E-step 
 | Self-distillation | optionnelle (β) | optionnelle | Configurable |
 | Évaluation | BREEDS fine labels | macro / subtype / topic | Adapté |
 
-**Note sur l’E-step :** `compute_latent_sinkhorn_scores` renvoie un tenseur `(n, K)` utilisé pour Sinkhorn. Ce n’est **pas** la marge macro `p(y|x)` mais le score `p(z|x) * p(y_obs|z)` (comme dans le code officiel, nommé `batch_prob_y_x`).
+**Note sur l’E-step :** `compute_latent_sinkhorn_scores` renvoie un tenseur `(n, K)` utilisé pour Sinkhorn (`score_for_sinkhorn`). Ce n’est **pas** la marge macro `p(y|x)` mais le score `p(z|x) * p(y_obs|z)`.
 
 ### Modes d’entraînement
 
@@ -81,7 +101,7 @@ python scripts/train_scgm_text.py \
 
 Logs détaillés : `{output_dir}/metrics/train_log.csv` et `epoch_metrics.jsonl` (ls1–ls3, Sinkhorn, entropies, NMI subtype si disponible). Le fichier `logs.csv` à la racine du run est conservé pour compatibilité.
 
-Configs : [`configs/scgm_text_default.yaml`](configs/scgm_text_default.yaml), [`configs/scgm_text_strict_fidelity.yaml`](configs/scgm_text_strict_fidelity.yaml), [`configs/scgm_text_pragmatic_adamw.yaml`](configs/scgm_text_pragmatic_adamw.yaml).
+Configs : [`configs/scgm_text_default.yaml`](configs/scgm_text_default.yaml), [`configs/scgm_text_strict_fidelity.yaml`](configs/scgm_text_strict_fidelity.yaml), [`configs/scgm_text_pragmatic_adamw.yaml`](configs/scgm_text_pragmatic_adamw.yaml), [`configs/scgm_text_strict_finetune_identity.yaml`](configs/scgm_text_strict_finetune_identity.yaml).
 
 ## Entraînement
 
@@ -135,12 +155,27 @@ Sortie par défaut : `themes_by_z_openai.csv` dans le même dossier. Variable op
 
 ## Évaluation
 
+Évaluation **géométrique** (sans classifieur) : structuration des macros `pred_label` (A0–C) via **eta²** sur inertie euclidienne au carré \(\|z_i-\mu\|_2^2\). Module : [`metrics/embedding_geometry_separation.py`](metrics/embedding_geometry_separation.py).
+
 ```bash
 cd text
 python scripts/evaluate_scgm_text.py \
   --exports_dir runs/scgm_text_qwen06/exports \
-  --output_dir runs/scgm_text_qwen06/evaluation
+  --output_dir runs/scgm_text_qwen06/evaluation \
+  --label_col pred_label \
+  --emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv
 ```
+
+**Sorties** (`evaluation/metrics_table.csv`) — **deux lignes** : `Embedding brut` (encodeur) et `SCGM` (projeté). L’export SCGM écrit aussi `raw_embeddings.npy`.
+
+**Colonnes principales** : `eta2_macro_balanced` (métrique principale), `eta2_weighted` (secondaire), `T_*`, `W_*`, `B_*`, `W_A0`…`n_C`, `rankme_global`, `c1_global`, `c10_global`, `macros_ignored`. Scores **entre 0 et 1** (pas de %).
+
+- **eta2_macro_balanced** : \(1 - W_{macro\_balanced}/T_{macro\_balanced}\), centroïde global = moyenne des \(\mu_c\) (poids égal par macro valide)
+- **eta2_weighted** : \(1 - W_{weighted}/T_{weighted}\), centroïde global = moyenne pondérée des points (sensible à la classe majoritaire)
+
+**Interprétation** : 0 = pas de structuration ; 0.10 ≈ 10 % de l’inertie expliquée par les macros ; 1 = séparation parfaite.
+
+Les métriques classifieur, NMI/ARI sous-type et clustering (silhouette, etc.) ne sont plus calculées à l’évaluation.
 
 ## Interprétation des sorties
 
@@ -153,7 +188,7 @@ python scripts/evaluate_scgm_text.py \
 
 ## Notebook expérimental
 
-Le notebook [`notebooks/01_scgm_text_btp_experiment.ipynb`](notebooks/01_scgm_text_btp_experiment.ipynb) orchestre le pipeline texte cellule par cellule : exploration des données, split par `accident_id`, entraînement via `scripts/train_scgm_text.py`, export, évaluation, **enrichissement OpenAI optionnel**, **carte 2D UMAP + DataMapPlot** (`figures/datamap_segments.png`) avec libellés **`theme_summary`** si `DATAMAP_LABEL_MODE="theme_summary"` et le CSV OpenAI est présent, et figures sous `runs/scgm_text_qwen06_notebook/`.
+Le notebook [`notebooks/01_scgm_text_btp_experiment.ipynb`](notebooks/01_scgm_text_btp_experiment.ipynb) orchestre le pipeline texte cellule par cellule : exploration des données, split par `accident_id`, entraînement via `scripts/train_scgm_text.py`, export, évaluation (**eta2_macro_balanced / eta2_weighted**, embedding brut + SCGM, RankMe, C1, C10), **enrichissement OpenAI optionnel** (barre de progression `tqdm`), **carte 2D UMAP + DataMapPlot**, **PCA/t-SNE**, **dashboard eta²** (Plotly), figures sous `runs/scgm_text_qwen06_notebook/figures/`. Helpers : [`scgm_text/notebook_viz.py`](scgm_text/notebook_viz.py).
 
 ```bash
 cd text

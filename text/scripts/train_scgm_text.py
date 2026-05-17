@@ -12,6 +12,8 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+from scgm_text.batch_utils import batch_to_device, forward_features, unpack_batch
+from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_embeddings import (
     ID2LABEL,
     LABEL2ID,
@@ -19,13 +21,16 @@ from scgm_text.dataset_text_embeddings import (
     build_dataloaders,
     split_by_group,
 )
+from scgm_text.dataset_text_raw import TextRawDataset, build_text_dataloaders
 from scgm_text.distillation import (
     build_teacher,
     snapshot_teacher_from_student,
     teacher_logits,
 )
 from scgm_text.fidelity import (
+    apply_precomputed_identity_defaults,
     apply_scgm_strict_defaults,
+    apply_strict_finetune_identity_defaults,
     apply_text_pragmatic_defaults,
     describe_fidelity_mode,
     flatten_config_yaml,
@@ -46,7 +51,15 @@ from scgm_text.metrics import (
 from scgm_text.optimizers import build_optimizer
 from scgm_text.projection import normalize_projection_name
 from scgm_text.schedulers import step_scheduler
-from scgm_text.scgm_embedding_model import SCGMEmbeddingNet
+from scgm_text.scgm_text_model import SCGMTextModel
+from scgm_text.training_diagnostics import (
+    assert_backbone_trainable_when_identity_text,
+    measure_backbone_weight_change,
+    print_trainable_parameters,
+    snapshot_backbone_weights,
+    verify_backbone_updated,
+    warn_identity_frozen_backbone,
+)
 from scgm_text.sinkhorn_estep import sinkhorn_assign
 from scgm_text.utils_io import ensure_dir, load_yaml_config, save_json, set_seed
 
@@ -89,8 +102,31 @@ METRIC_FIELDS = [
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train SCGM-G on fixed text embeddings.")
+    parser = argparse.ArgumentParser(description="Train SCGM-G on text or precomputed embeddings.")
     parser.add_argument("--config", type=str, default=None)
+    parser.add_argument(
+        "--input_mode",
+        type=str,
+        default="precomputed_embeddings",
+        choices=["text", "precomputed_embeddings"],
+    )
+    parser.add_argument(
+        "--backbone_model_name_or_path",
+        type=str,
+        default="Qwen/Qwen3-Embedding-0.6B",
+    )
+    parser.add_argument("--text_col", type=str, default=None)
+    parser.add_argument("--pooling", type=str, default="mean", choices=["cls", "mean"])
+    parser.add_argument("--freeze_backbone", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--train_last_n_layers", type=int, default=None)
+    parser.add_argument("--max_seq_length", type=int, default=256)
+    parser.add_argument("--backbone_lr", type=float, default=2e-5)
+    parser.add_argument("--head_lr", type=float, default=None)
+    parser.add_argument("--backbone_weight_decay", type=float, default=0.01)
+    parser.add_argument("--head_weight_decay", type=float, default=None)
+    parser.add_argument("--strict_finetune_identity", action="store_true")
+    parser.add_argument("--precomputed_identity", action="store_true")
+    parser.add_argument("--verify_backbone_update", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--data_csv", type=str, default="dataset/data_btp.csv")
     parser.add_argument("--emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_btp.csv")
@@ -156,12 +192,30 @@ def apply_config(args: argparse.Namespace, config_path: Optional[str]) -> None:
 
 
 def finalize_args(args: argparse.Namespace) -> None:
-    if args.scgm_strict_mode and args.text_pragmatic_mode:
-        raise ValueError("Cannot use --scgm_strict_mode and --text_pragmatic_mode together.")
-    if args.scgm_strict_mode:
+    preset_flags = sum(
+        bool(x)
+        for x in (
+            args.scgm_strict_mode,
+            args.text_pragmatic_mode,
+            args.strict_finetune_identity,
+            args.precomputed_identity,
+        )
+    )
+    if preset_flags > 1:
+        raise ValueError("Un seul preset d'entraînement à la fois.")
+    if args.strict_finetune_identity:
+        apply_strict_finetune_identity_defaults(args)
+    elif args.precomputed_identity:
+        apply_precomputed_identity_defaults(args)
+    elif args.scgm_strict_mode:
         apply_scgm_strict_defaults(args)
     elif args.text_pragmatic_mode:
         apply_text_pragmatic_defaults(args)
+
+    if args.head_lr is None:
+        args.head_lr = float(args.lr)
+    if args.head_weight_decay is None:
+        args.head_weight_decay = float(args.weight_decay)
 
     if args.beta1 is None:
         args.beta1 = args.beta
@@ -183,6 +237,18 @@ def finalize_args(args: argparse.Namespace) -> None:
 
     if not getattr(args, "fidelity_mode", None):
         args.fidelity_mode = "custom"
+
+    if args.input_mode == "text" and not args.backbone_model_name_or_path:
+        raise ValueError("input_mode=text exige --backbone_model_name_or_path.")
+
+    if args.verify_backbone_update is None:
+        args.verify_backbone_update = (
+            args.input_mode == "text"
+            and args.projection == "identity"
+            and not args.freeze_backbone
+        )
+
+    warn_identity_frozen_backbone(args)
 
 
 def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
@@ -223,7 +289,7 @@ def to_local_train_indices(
 
 
 def run_estep(
-    model: SCGMEmbeddingNet,
+    model: SCGMTextModel,
     train_loader,
     device: torch.device,
     tau: float,
@@ -236,11 +302,12 @@ def run_estep(
     index_parts: List[np.ndarray] = []
     model.eval()
     with torch.no_grad():
-        for embeddings, label_ids, selected_indices in train_loader:
-            embeddings = embeddings.to(device)
+        for batch in train_loader:
+            batch = batch_to_device(batch, device)
+            _, label_ids, selected_indices = unpack_batch(batch)
             label_ids = label_ids.to(device)
             batch_y = labels_to_onehot(label_ids, n_class)
-            features = model(embeddings)
+            features = forward_features(model, batch)
             score_for_sinkhorn, _, _ = model.compute_latent_sinkhorn_scores(features, batch_y, tau)
             score_parts.append(score_for_sinkhorn.detach().cpu().numpy())
             index_parts.append(to_local_train_indices(selected_indices, train_loader, n_train))
@@ -259,7 +326,7 @@ def run_estep(
 
 
 def evaluate_split(
-    model: SCGMEmbeddingNet,
+    model: SCGMTextModel,
     data_loader,
     device: torch.device,
     tau: float,
@@ -275,9 +342,10 @@ def evaluate_split(
     prob_yz_list: List[np.ndarray] = []
 
     with torch.no_grad():
-        for batch_embeddings, label_ids, _ in data_loader:
-            batch_embeddings = batch_embeddings.to(device)
-            features = model(batch_embeddings)
+        for batch in data_loader:
+            batch = batch_to_device(batch, device)
+            _, label_ids, _ = unpack_batch(batch)
+            features = forward_features(model, batch)
             prob_y_x, prob_z_x, prob_y_z = model.pred(features, tau)
             preds = prob_y_x.argmax(dim=1).cpu().numpy()
             z_preds = prob_z_x.argmax(dim=1).cpu().numpy()
@@ -311,9 +379,9 @@ def evaluate_split(
 
 
 def compute_train_subtype_metrics(
-    model: SCGMEmbeddingNet,
+    model: SCGMTextModel,
     train_loader,
-    dataset: TextEmbeddingDataset,
+    dataset,
     train_idx: np.ndarray,
     device: torch.device,
     tau: float,
@@ -324,9 +392,10 @@ def compute_train_subtype_metrics(
     z_all: List[int] = []
     subtypes: List[str] = []
     with torch.no_grad():
-        for batch_embeddings, _, selected_indices in train_loader:
-            batch_embeddings = batch_embeddings.to(device)
-            features = model(batch_embeddings)
+        for batch in train_loader:
+            batch = batch_to_device(batch, device)
+            _, _, selected_indices = unpack_batch(batch)
+            features = forward_features(model, batch)
             _, prob_z_x, _ = model.pred(features, tau)
             z_all.extend(prob_z_x.argmax(dim=1).cpu().tolist())
             for idx in selected_indices.cpu().numpy():
@@ -346,7 +415,7 @@ def compute_train_subtype_metrics(
 
 def save_checkpoint(
     path: str,
-    model: SCGMEmbeddingNet,
+    model: SCGMTextModel,
     args: argparse.Namespace,
     input_dim: int,
     train_idx: np.ndarray,
@@ -368,7 +437,7 @@ def save_checkpoint(
 
 def load_resume(
     path: str,
-    model: SCGMEmbeddingNet,
+    model: SCGMTextModel,
     args: argparse.Namespace,
 ) -> Optional[Any]:
     try:
@@ -386,28 +455,88 @@ def load_resume(
     return ckpt.get("teacher_state_dict")
 
 
+def _smoke_backbone_step(
+    model: SCGMTextModel,
+    train_loader,
+    optimizer,
+    device: torch.device,
+    args: argparse.Namespace,
+) -> None:
+    model.train()
+    batch = next(iter(train_loader))
+    batch = batch_to_device(batch, device)
+    _, label_ids, local_indices = unpack_batch(batch)
+    label_ids = label_ids.to(device)
+    batch_y = labels_to_onehot(label_ids, args.n_class)
+    n_train = len(train_loader.dataset.indices) if hasattr(train_loader.dataset, "indices") else len(train_loader.dataset)
+    local = to_local_train_indices(local_indices, train_loader, n_train)
+    q_dummy = torch.zeros(len(local), args.n_subclass, device=device)
+    q_dummy[torch.arange(len(local)), torch.randint(0, args.n_subclass, (len(local),), device=device)] = 1.0
+
+    before = snapshot_backbone_weights(model)
+    features = forward_features(model, batch)
+    loss, *_ = model.loss(features, q_dummy, batch_y, args.tau, args.alpha, kd_t=args.kd_t)
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    change = measure_backbone_weight_change(model, before)
+    verify_backbone_updated(model, args, before, change)
+
+
 def run_training(args: argparse.Namespace) -> None:
     set_seed(args.seed)
     print(describe_fidelity_mode(args), flush=True)
+    print(
+        f"input_mode={args.input_mode} projection={args.projection} "
+        f"freeze_backbone={args.freeze_backbone}",
+        flush=True,
+    )
 
     dirs = create_run_dirs(args.output_dir)
     ensure_dir(args.output_dir)
 
-    dataset = TextEmbeddingDataset(
-        data_csv=args.data_csv,
-        emb_csv=args.emb_csv,
-        label_col=args.label_col,
-        pred_ok_col=args.pred_ok_col,
-        group_col=args.group_col,
-    )
-    train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
-    train_loader, val_loader = build_dataloaders(
-        dataset,
-        train_idx=train_idx,
-        val_idx=val_idx,
-        batch_size=args.batch_size,
-        num_workers=args.num_workers,
-    )
+    collate_fn = None
+    if args.input_mode == "text":
+        from transformers import AutoTokenizer
+
+        dataset = TextRawDataset(
+            data_csv=args.data_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+            text_col=args.text_col,
+        )
+        tokenizer = AutoTokenizer.from_pretrained(args.backbone_model_name_or_path)
+        collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
+        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+        train_loader, val_loader = build_text_dataloaders(
+            dataset,
+            train_idx=train_idx,
+            val_idx=val_idx,
+            batch_size=args.batch_size,
+            collate_fn=collate_fn,
+            num_workers=args.num_workers,
+        )
+        input_dim = 0
+    else:
+        dataset = TextEmbeddingDataset(
+            data_csv=args.data_csv,
+            emb_csv=args.emb_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+        )
+        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+        train_loader, val_loader = build_dataloaders(
+            dataset,
+            train_idx=train_idx,
+            val_idx=val_idx,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+        )
+        input_dim = int(dataset.get_input_dim())
+        if args.projection == "identity":
+            args.hiddim = input_dim
 
     if args.device == "cuda" and torch.cuda.is_available():
         device = torch.device("cuda")
@@ -417,17 +546,10 @@ def run_training(args: argparse.Namespace) -> None:
         device = torch.device("cpu")
     print(f"Device effectif: {device}", flush=True)
 
-    if args.projection == "identity":
-        args.hiddim = int(dataset.get_input_dim())
-
-    model = SCGMEmbeddingNet(
-        input_dim=dataset.get_input_dim(),
-        hiddim=args.hiddim,
-        num_classes=args.n_class,
-        num_subclasses=args.n_subclass,
-        projection=args.projection,
-        kd_t=args.kd_t,
-    ).to(device)
+    model = SCGMTextModel.from_args(args, input_dim=input_dim).to(device)
+    if args.input_mode == "text":
+        input_dim = int(model.hiddim)
+        args.hiddim = input_dim
 
     ema_teacher = None
     if args.resume_from_checkpoint:
@@ -439,6 +561,11 @@ def run_training(args: argparse.Namespace) -> None:
                 ema_teacher.load_state_dict(teacher_sd)
 
     optimizer = build_optimizer(model, args)
+    print_trainable_parameters(model)
+    assert_backbone_trainable_when_identity_text(model, args, optimizer)
+
+    if args.verify_backbone_update and args.input_mode == "text":
+        _smoke_backbone_step(model, train_loader, optimizer, device, args)
 
     if args.use_self_distillation and ema_teacher is None:
         ema_teacher = build_teacher(model, args.teacher_mode, args.ema_decay)
@@ -452,7 +579,8 @@ def run_training(args: argparse.Namespace) -> None:
     config_payload = vars(args).copy()
     config_payload["label2id"] = LABEL2ID
     config_payload["id2label"] = ID2LABEL
-    config_payload["input_dim"] = dataset.get_input_dim()
+    config_payload["input_dim"] = input_dim
+    config_payload["hiddim"] = int(model.hiddim)
     config_payload["train_idx"] = train_idx.tolist()
     config_payload["val_idx"] = val_idx.tolist()
     config_payload["label_distribution"] = dataset.get_label_distribution()
@@ -500,14 +628,15 @@ def run_training(args: argparse.Namespace) -> None:
             totals = {k: 0.0 for k in ("loss", "ls1", "ls2", "ls3", "ls_div1", "ls_div2", "ls_div3", "macro", "latent")}
             num_batches = 0
 
-            for embeddings, label_ids, selected_indices in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
-                embeddings = embeddings.to(device)
+            for batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
+                batch = batch_to_device(batch, device)
+                _, label_ids, selected_indices = unpack_batch(batch)
                 label_ids = label_ids.to(device)
                 batch_y = labels_to_onehot(label_ids, args.n_class)
                 local_indices = to_local_train_indices(selected_indices, train_loader, len(train_idx))
                 batch_q = torch.tensor(q_new[local_indices], dtype=torch.float32, device=device)
 
-                features = model(embeddings)
+                features = forward_features(model, batch)
                 logit_t1 = logit_t2 = logit_t3 = None
                 if args.use_self_distillation and ema_teacher is not None:
                     logit_t1, logit_t2, logit_t3 = teacher_logits(
@@ -609,7 +738,7 @@ def run_training(args: argparse.Namespace) -> None:
                 os.path.join(args.output_dir, "last_model.pt"),
                 model,
                 args,
-                dataset.get_input_dim(),
+                input_dim,
                 train_idx,
                 val_idx,
                 ema_teacher,
@@ -620,7 +749,7 @@ def run_training(args: argparse.Namespace) -> None:
                     os.path.join(args.output_dir, "best_model.pt"),
                     model,
                     args,
-                    dataset.get_input_dim(),
+                    input_dim,
                     train_idx,
                     val_idx,
                     ema_teacher,

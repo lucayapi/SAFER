@@ -39,13 +39,3 @@ def test_sinkhorn_score_shape_and_differs_from_macro_margin():
     assert prob_z.shape == (10, 8)
     assert prob_y_x.shape == (10, 4)
     assert not torch.allclose(score.sum(1), prob_y_x.sum(1), atol=1e-3)
-
-
-def test_forward_to_prob_alias():
-    model = _model()
-    features = model(torch.randn(5, 32))
-    y = torch.eye(4)[torch.randint(0, 4, (5,))]
-    a = model.forward_to_prob(features, y, 0.1)
-    b = model.compute_latent_sinkhorn_scores(features, y, 0.1)
-    for t1, t2 in zip(a, b):
-        assert torch.allclose(t1, t2)

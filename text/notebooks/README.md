@@ -8,11 +8,11 @@ python scripts/repair_notebooks.py
 
 ## 01 — SCGM texte BTP
 
-`01_scgm_text_btp_experiment.ipynb` : exploration, entraînement SCGM-Text, export, évaluation et figures pour le sous-corpus BTP. Régler `TRAINING_PRESET` dans la cellule paramètres : `pragmatic` (AdamW), `strict` (SGD + cosine, proche SCGM-G), ou `custom`.
+`01_scgm_text_btp_experiment.ipynb` : exploration, entraînement SCGM-Text, export, évaluation et figures pour le sous-corpus BTP. Régler `TRAINING_PRESET` (`pragmatic` | `strict` | `custom`) et, si besoin, `USE_SELF_DISTILLATION` / `BETA1/2/3` / `KD_T` / `TEACHER_MODE` dans la cellule paramètres.
 
 ## 02 — MALT BTP → Métallurgie
 
-`02_malt_btp_to_mettalurgie_transfer.ipynb` : transfert macro-ancré vers la métallurgie avec un K global.
+`02_malt_btp_to_mettalurgie_transfer.ipynb` : MALT-EM (transfert macro souple `p0`, E-step Sinkhorn full-dataset, M-step à `q` fixé).
 
 Prérequis :
 

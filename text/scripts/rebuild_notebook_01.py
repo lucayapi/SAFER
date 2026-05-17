@@ -36,9 +36,26 @@ def get_source(cell: dict) -> str:
     return "".join(cell.get("source", []))
 
 
+def replace_cell_by_prefix(cells: list, prefix: str, new_source: str, cell_type: str = "code") -> bool:
+    for c in cells:
+        if c["cell_type"] == cell_type and get_source(c).startswith(prefix):
+            c["source"] = [line + "\n" for line in new_source.strip().split("\n")]
+            c["source"][-1] = c["source"][-1].rstrip("\n") + "\n"
+            return True
+    return False
+
+
 PARAMS_SOURCE = """# Parameters
 DATA_CSV = "dataset/data_btp.csv"
 EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
+INPUT_MODE = "precomputed_embeddings"  # text | precomputed_embeddings
+BACKBONE_MODEL = "Qwen/Qwen3-Embedding-0.6B"
+TEXT_COL = None  # sentence par défaut
+POOLING = "mean"  # cls | mean
+FREEZE_BACKBONE = False
+BACKBONE_LR = 2e-5
+HEAD_LR = 1e-3
+MAX_SEQ_LENGTH = 256
 OUTPUT_DIR = "runs/scgm_text_qwen06_notebook"
 LABEL_COL = "pred_label"
 PRED_OK_COL = "pred_ok"
@@ -60,20 +77,32 @@ LR = 1e-3
 WEIGHT_DECAY = 1e-4
 TSNE_SAMPLE_SIZE = 8000
 DATAMAP_MAX_POINTS = 12000
+RAW_EMBEDDING_UMAP_MAX_POINTS = 12000
 DATAMAP_SEED = 42
 DATAMAP_LABEL_MODE = "theme_summary"  # theme_summary | macro_z
 N_OPENAI_EXAMPLE_TEXTS = 5
 DATAMAP_SHOW_MACRO_CENTROIDS = True
 
 # --- Optimiseur / fidélité SCGM-G ---
-# pragmatic : AdamW, scheduler none, projection linear (défaut texte)
-# strict    : SGD + momentum + cosine, projection mlp (proche SCGM-G officiel)
-# custom    : OPTIMIZER, SCHEDULER, PROJECTION, LR ci-dessous
-TRAINING_PRESET = "pragmatic"  # pragmatic | strict | custom
+# pragmatic : AdamW, projection linear
+# strict : SGD + cosine, embeddings pré-calculés, projection mlp
+# strict_finetune_identity : text + identity + backbone fine-tuné
+# precomputed_identity : embeddings figés + identity (≠ strict_finetune_identity)
+# custom : OPTIMIZER, SCHEDULER, PROJECTION, INPUT_MODE, LR ci-dessous
+TRAINING_PRESET = "pragmatic"  # pragmatic | strict | strict_finetune_identity | precomputed_identity | custom
 OPTIMIZER = "adamw"  # adamw | sgd (custom uniquement)
 SCHEDULER = "none"  # none | cosine (custom uniquement)
 MOMENTUM = 0.9
 NUM_CYCLES = 10
+
+# --- Self-distillation (optionnel) ---
+USE_SELF_DISTILLATION = False
+BETA1 = 1.0  # < 1.0 active ls_div1 (avec teacher)
+BETA2 = 1.0
+BETA3 = 1.0
+KD_T = 4.0
+TEACHER_MODE = "ema"  # ema | previous_epoch (ignoré si USE_SELF_DISTILLATION=False)
+EMA_DECAY = 0.999
 """
 
 SETUP_SOURCE = """def find_repo_root(start: Path) -> Path:
@@ -98,7 +127,7 @@ from scgm_text.dataset_text_embeddings import (
     split_by_group,
 )
 from scgm_text.fidelity import describe_fidelity_mode
-from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, set_seed
+from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, save_json, set_seed
 
 OUTPUT_PATH = Path(OUTPUT_DIR)
 EXPORTS_DIR = OUTPUT_PATH / "exports"
@@ -198,11 +227,18 @@ SECTION8_MD = """## 8. Entraînement SCGM-G texte depuis le notebook
 - **MODE RAPIDE** : `RUN_FULL_TRAINING = False` (10 epochs par défaut).
 - **MODE COMPLET** : `RUN_FULL_TRAINING = True` (`EPOCHS_FULL` epochs).
 - **Optimiseur** : `TRAINING_PRESET` en tête du notebook :
-  - `pragmatic` — AdamW, pas de scheduler, projection `linear`.
-  - `strict` — SGD + momentum + scheduler cosine, projection `mlp`.
-  - `custom` — `OPTIMIZER`, `SCHEDULER`, `PROJECTION`, `LR` dans les paramètres.
+  - `pragmatic` — AdamW, projection `linear`.
+  - `strict` — SGD + cosine, `precomputed_embeddings`, projection `mlp`.
+  - `strict_finetune_identity` — `text` + `identity`, backbone fine-tuné (`BACKBONE_LR` / `HEAD_LR`).
+  - `precomputed_identity` — embeddings CSV figés + `identity` (pas de θ backbone).
+  - `custom` — `INPUT_MODE`, `OPTIMIZER`, `SCHEDULER`, `PROJECTION`, `LR`.
+- **Self-distillation** : `USE_SELF_DISTILLATION`, `BETA1/2/3`, `KD_T`, `TEACHER_MODE`, `EMA_DECAY`. Les termes `ls_div*` restent à 0 si `BETA1/2/3 == 1.0` ; pour activer : `USE_SELF_DISTILLATION = True` et au moins un `BETA* < 1.0` (ex. `0.95`).
 - Entraînement via `run_training()` (même logique que `scripts/train_scgm_text.py`).
 - Journaux : `metrics/train_log.csv` ou `logs.csv`, puis `show_training_progress()`.
+
+### Identity projection with trainable backbone
+
+Dans ce mode (`INPUT_MODE=text`, `PROJECTION=identity`, `FREEZE_BACKBONE=False`), **identity** signifie l'absence de projecteur additionnel, mais le backbone **f_theta** est bien optimisé par la loss SCGM (`h = f_theta(x)`). Ce n'est **pas** le mode `precomputed_identity` (embeddings figés).
 """
 
 TRAIN_SOURCE = """import argparse
@@ -222,6 +258,20 @@ train_args = argparse.Namespace(
     run_name=None,
     data_csv=DATA_CSV,
     emb_csv=EMB_CSV,
+    input_mode=INPUT_MODE,
+    backbone_model_name_or_path=BACKBONE_MODEL,
+    text_col=TEXT_COL,
+    pooling=POOLING,
+    freeze_backbone=FREEZE_BACKBONE,
+    backbone_lr=BACKBONE_LR,
+    head_lr=HEAD_LR,
+    max_seq_length=MAX_SEQ_LENGTH,
+    train_last_n_layers=None,
+    backbone_weight_decay=0.01,
+    head_weight_decay=WEIGHT_DECAY,
+    strict_finetune_identity=False,
+    precomputed_identity=False,
+    verify_backbone_update=None,
     output_dir=str(OUTPUT_PATH),
     label_col=LABEL_COL,
     pred_ok_col=PRED_OK_COL,
@@ -248,14 +298,14 @@ train_args = argparse.Namespace(
     with_mlp=None,
     scgm_strict_mode=False,
     text_pragmatic_mode=False,
-    use_self_distillation=False,
-    kd_t=4.0,
+    use_self_distillation=USE_SELF_DISTILLATION,
+    kd_t=KD_T,
     beta=1.0,
-    beta1=None,
-    beta2=None,
-    beta3=None,
-    teacher_mode="none",
-    ema_decay=0.999,
+    beta1=BETA1,
+    beta2=BETA2,
+    beta3=BETA3,
+    teacher_mode="none" if not USE_SELF_DISTILLATION else TEACHER_MODE,
+    ema_decay=EMA_DECAY,
     resume_from_checkpoint=None,
     num_workers=0,
     smoke_epochs=None,
@@ -265,14 +315,25 @@ if preset == "strict":
     train_args.scgm_strict_mode = True
 elif preset == "pragmatic":
     train_args.text_pragmatic_mode = True
+elif preset == "strict_finetune_identity":
+    train_args.strict_finetune_identity = True
+elif preset == "precomputed_identity":
+    train_args.precomputed_identity = True
 elif preset != "custom":
-    raise ValueError(f"TRAINING_PRESET inconnu : {TRAINING_PRESET!r} (pragmatic | strict | custom)")
+    raise ValueError(
+        f"TRAINING_PRESET inconnu : {TRAINING_PRESET!r} "
+        "(pragmatic | strict | strict_finetune_identity | precomputed_identity | custom)"
+    )
 
 scgm_train_text.finalize_args(train_args)
 print(describe_fidelity_mode(train_args))
 print(
+    f"input_mode={train_args.input_mode} projection={train_args.projection} "
+    f"freeze_backbone={train_args.freeze_backbone}"
+)
+print(
     f"optimizer={train_args.optimizer} scheduler={train_args.scheduler} "
-    f"projection={train_args.projection} lr={train_args.lr}"
+    f"projection={train_args.projection} head_lr={train_args.head_lr}"
 )
 scgm_train_text.run_training(train_args)
 show_training_progress()
@@ -290,10 +351,15 @@ if val_cols:
     logs.plot(x="epoch", y=val_cols, ax=axes[0, 1])
 geom_cols = [c for c in ["rankme_global", "c1_global", "c10_global"] if c in logs.columns]
 if geom_cols:
-    logs.plot(x="epoch", y=geom_cols, ax=axes[1, 0])
+    logs.plot(x="epoch", y=geom_cols, ax=axes[1, 0], marker="o", markersize=3)
+    axes[1, 0].set_title("RankMe / C1 / C10 (global)")
 axes[1, 1].axis("off")
 save_fig("04_training_curves.png")
 display_df_for_paper(logs, "training_logs.csv")
+
+from scgm_text.notebook_viz import plot_training_geometry_curves
+
+plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
 CHECKPOINT_SOURCE = """checkpoint = torch.load(
@@ -318,7 +384,9 @@ pd.Series({
 SECTION12_MD = """## 12. Visualisation des embeddings projetés
 
 PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pred_label`).
-Figure : `FIGURES_DIR/05_projection_macro.png`.
+
+- Statique : `FIGURES_DIR/05_projection_macro.png`
+- Interactif Plotly : `05_projection_pca_interactive.html`, `05_projection_tsne_interactive.html`
 """
 
 OPENAI_MD = """## 11 bis — Thèmes latents étiquetés par OpenAI (optionnel)
@@ -356,12 +424,20 @@ DATAMAP_MD = """## 11 ter — Carte 2D des segments (UMAP + DataMapPlot)
 Sous-échantillon (`DATAMAP_MAX_POINTS`). UMAP sur `projected_embeddings.npy`.
 Si `DATAMAP_LABEL_MODE == "theme_summary"` et `themes_by_z_openai.csv` existe, libellés = `theme_summary` via `z_hat`.
 `DATAMAP_SHOW_MACRO_CENTROIDS` : marqueurs `P` = moyenne UMAP par macro (A0–C).
+
+- Statique : `datamap_segments.png`
+- Interactif Plotly : `datamap_segments_interactive.html`
 """
 
-DATAMAP_CODE = """import datamapplot as dmp
-from matplotlib import colors as mcolors
-from matplotlib.lines import Line2D
-from umap import UMAP
+DATAMAP_CODE = """from umap import UMAP
+
+from scgm_text.notebook_viz import (
+    display_plotly_html,
+    macro_umap_centroids,
+    plot_umap_datamap_static,
+    plot_umap_plotly,
+    resolve_datamap_labels,
+)
 
 emb_path = EXPORTS_DIR / "projected_embeddings.npy"
 meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
@@ -378,28 +454,20 @@ else:
     rng = np.random.default_rng(DATAMAP_SEED)
     idx = rng.choice(len(projected_all), size=n, replace=False)
     X = projected_all[idx]
-    lab = meta_all.iloc[idx]
+    lab = meta_all.iloc[idx].copy()
 
-    _mode = str(DATAMAP_LABEL_MODE).strip().lower()
-    labels = None
-    if _mode == "theme_summary" and themes_openai_path.is_file():
+    labels, label_kind = resolve_datamap_labels(
+        lab,
+        label_col=LABEL_COL,
+        label_mode=DATAMAP_LABEL_MODE,
+        themes_openai_path=themes_openai_path,
+    )
+    if label_kind == "theme_summary":
         _to = pd.read_csv(themes_openai_path)
-        if "theme_summary" in _to.columns and "z_id" in _to.columns:
-            _z2s = dict(zip(_to["z_id"].astype(int), _to["theme_summary"].astype(str)))
-            labels = (
-                lab["z_hat"]
-                .map(lambda z: _z2s.get(int(z), f"z={int(z)}"))
-                .to_numpy(dtype=object)
-            )
-        else:
-            print("themes_by_z_openai.csv : colonnes theme_summary ou z_id absentes ; repli macro_z.")
-    if labels is None:
-        if _mode == "theme_summary" and not themes_openai_path.is_file():
-            print(
-                f"Fichier absent : {themes_openai_path} — exécuter la cellule OpenAI (11 bis) "
-                "ou définir DATAMAP_LABEL_MODE='macro_z'. Repli macro|z."
-            )
-        labels = (lab[LABEL_COL].astype(str) + "|z=" + lab["z_hat"].astype(str)).to_numpy(dtype=object)
+        _z2s = dict(zip(_to["z_id"].astype(int), _to["theme_summary"].astype(str)))
+        lab["hover_theme"] = lab["z_hat"].map(lambda z: _z2s.get(int(z), f"z={int(z)}"))
+    else:
+        lab["hover_theme"] = lab[LABEL_COL].astype(str) + "|z=" + lab["z_hat"].astype(str)
 
     reducer = UMAP(
         n_components=2,
@@ -409,74 +477,157 @@ else:
         metric="cosine",
     )
     coords = reducer.fit_transform(X)
-    fig, ax = dmp.create_plot(
+
+    centroids = None
+    if DATAMAP_SHOW_MACRO_CENTROIDS:
+        centroids = macro_umap_centroids(coords, lab[LABEL_COL].astype(str).to_numpy())
+
+    fig, _ax = plot_umap_datamap_static(
         coords,
         labels,
         title="Segments BTP — embedding SCGM (normalisé)",
         label_font_size=8,
+        macro_centroids=centroids,
     )
-    if DATAMAP_SHOW_MACRO_CENTROIDS:
-        macros_order = ["A0", "A1", "B", "C"]
-        lab_mac = lab[LABEL_COL].astype(str).to_numpy()
-        pal_hex = [mcolors.to_hex(c) for c in sns.color_palette("Set2", 4)]
-        macro_to_color = dict(zip(macros_order, pal_hex))
-        cx, cy, names = [], [], []
-        for m in macros_order:
-            mask = lab_mac == m
-            if not np.any(mask):
-                continue
-            mu = coords[mask].mean(axis=0)
-            cx.append(float(mu[0]))
-            cy.append(float(mu[1]))
-            names.append(m)
-        if names:
-            ax.scatter(
-                cx,
-                cy,
-                s=240,
-                c=[macro_to_color[m] for m in names],
-                marker="P",
-                edgecolors="#111111",
-                linewidths=1.2,
-                zorder=100,
-            )
-            for xi, yi, m in zip(cx, cy, names):
-                ax.annotate(
-                    m,
-                    (xi, yi),
-                    xytext=(6, 6),
-                    textcoords="offset points",
-                    fontsize=9,
-                    fontweight="bold",
-                    color="#111111",
-                    zorder=101,
-                )
-            leg_handles = [
-                Line2D(
-                    [0],
-                    [0],
-                    linestyle="None",
-                    marker="P",
-                    color="w",
-                    markerfacecolor=macro_to_color[m],
-                    markeredgecolor="#111111",
-                    markersize=11,
-                    label=f"{m} — centroïde macro (moyenne UMAP)",
-                )
-                for m in names
-            ]
-            ax.legend(
-                handles=leg_handles,
-                loc="lower left",
-                frameon=True,
-                title="Macro (pred_label)",
-                fontsize=8,
-                title_fontsize=9,
-            )
     out_png = FIGURES_DIR / "datamap_segments.png"
     fig.savefig(out_png, dpi=160, bbox_inches="tight")
     plt.close(fig)
     print(out_png)
+
+    fig_pl = plot_umap_plotly(
+        coords,
+        lab,
+        label_col=LABEL_COL,
+        hover_label="hover_theme",
+        title="UMAP segments BTP (interactif)",
+        out_html=FIGURES_DIR / "datamap_segments_interactive.html",
+    )
+    display_plotly_html(FIGURES_DIR / "datamap_segments_interactive.html")
+"""
+
+PROJECTION_CODE = """from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+from scgm_text.notebook_viz import (
+    display_plotly_html,
+    plot_projection_matplotlib,
+    plot_projection_plotly,
+    sample_projection_indices,
+)
+
+projected = np.load(EXPORTS_DIR / "projected_embeddings.npy")
+meta_pred = pd.read_csv(EXPORTS_DIR / "metadata_with_predictions.csv")
+
+idx = sample_projection_indices(meta_pred, LABEL_COL, max_points=TSNE_SAMPLE_SIZE, seed=SEED)
+sample_df = meta_pred.loc[idx]
+sample_x = projected[idx]
+
+pca = PCA(n_components=2, random_state=SEED)
+pca_xy = pca.fit_transform(sample_x)
+tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
+tsne_xy = tsne.fit_transform(sample_x)
+
+plot_projection_matplotlib(pca_xy, tsne_xy, sample_df, LABEL_COL, save_fig=save_fig)
+_, pca_html = plot_projection_plotly(pca_xy, tsne_xy, sample_df, LABEL_COL, figures_dir=FIGURES_DIR)
+print(pca_html)
+display_plotly_html(FIGURES_DIR / "05_projection_pca_interactive.html")
+display_plotly_html(FIGURES_DIR / "05_projection_tsne_interactive.html")
+"""
+
+EVAL_RAW_PROJ_MD = """### Carte 2D — embedding brut (PCA + t-SNE statiques, couleur = macro)
+
+Sous-échantillon (`RAW_EMBEDDING_UMAP_MAX_POINTS`) sur les vecteurs **encodeur** (`EMB_CSV` / `raw_embeddings.npy`), colorés par `pred_label` (A0–C). Figure statique : `09_raw_embedding_pca_tsne.png`.
+"""
+
+EVAL_GEOMETRY_CODE = """eval_cmd = [
+    sys.executable,
+    "scripts/evaluate_scgm_text.py",
+    "--exports_dir", str(EXPORTS_DIR),
+    "--output_dir", str(EVAL_DIR),
+    "--label_col", LABEL_COL,
+    "--emb_csv", EMB_CSV,
+]
+run_cli(eval_cmd)
+
+import importlib
+import scgm_text.notebook_viz as _notebook_viz
+importlib.reload(_notebook_viz)
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+from scgm_text.notebook_viz import (
+    display_plotly_html,
+    plot_evaluation_geometry_dashboard,
+    plot_projection_matplotlib,
+    sample_projection_indices,
+)
+
+metrics_table = pd.read_csv(EVAL_DIR / "metrics_table.csv")
+display(metrics_table)
+
+html_paths = plot_evaluation_geometry_dashboard(
+    metrics_table,
+    figures_dir=FIGURES_DIR,
+    save_fig=save_fig,
+)
+for p in html_paths:
+    print(p)
+display_plotly_html(FIGURES_DIR / "09_eta2_macro_interactive.html")
+display_plotly_html(FIGURES_DIR / "09_rankme_c1_c10_global_interactive.html")
+
+# --- PCA / t-SNE 2D embedding brut (macro, statique) ---
+meta_eval = pd.read_csv(EXPORTS_DIR / "metadata_with_predictions.csv")
+raw_npy = EXPORTS_DIR / "raw_embeddings.npy"
+if raw_npy.is_file():
+    raw_emb = np.load(raw_npy)
+elif Path(EMB_CSV).is_file():
+    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+    slim = meta_eval.drop(columns=[c for c in meta_eval.columns if c.startswith("dim_")], errors="ignore")
+    merged, dim_cols = merge_metadata_with_embeddings(slim, EMB_CSV)
+    raw_emb = merged[dim_cols].to_numpy(dtype=np.float64)
+else:
+    raise FileNotFoundError("raw_embeddings.npy ou EMB_CSV requis pour la carte embedding brut.")
+
+idx_raw = sample_projection_indices(
+    meta_eval, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
+)
+sample_raw_df = meta_eval.loc[idx_raw]
+sample_raw_x = raw_emb[idx_raw]
+
+pca_raw = PCA(n_components=2, random_state=SEED)
+pca_raw_xy = pca_raw.fit_transform(sample_raw_x)
+tsne_raw = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
+tsne_raw_xy = tsne_raw.fit_transform(sample_raw_x)
+
+p_raw = plot_projection_matplotlib(
+    pca_raw_xy,
+    tsne_raw_xy,
+    sample_raw_df,
+    LABEL_COL,
+    save_fig=save_fig,
+    png_name="09_raw_embedding_pca_tsne.png",
+    pca_title="PCA 2D — embedding brut (macro)",
+    tsne_title="t-SNE 2D — embedding brut (macro)",
+)
+print(p_raw)
+"""
+
+PAPER_TABLES_CODE = """display_df_for_paper(metrics_table, "paper_metrics_summary.csv")
+display_df_for_paper(themes_macro, "paper_themes_by_macro.csv")
+
+notebook_summary = {
+    "output_dir": str(OUTPUT_PATH),
+    "exports_dir": str(EXPORTS_DIR),
+    "evaluation_dir": str(EVAL_DIR),
+    "figures_dir": str(FIGURES_DIR),
+    "tables_dir": str(TABLES_DIR),
+    "epochs": epochs,
+    "device": str(device),
+    "figure_files": sorted(p.name for p in FIGURES_DIR.glob("*.png")),
+    "table_files": sorted(p.name for p in TABLES_DIR.glob("*.csv")),
+}
+save_json(notebook_summary, OUTPUT_PATH / "notebook_summary.json")
+notebook_summary
 """
 
 
@@ -487,7 +638,7 @@ def main() -> None:
     cells[2]["source"] = [
         "## 2. Imports et configuration\n",
         "\n",
-        "Régler **`TRAINING_PRESET`** (`pragmatic` | `strict` | `custom`) dans la cellule paramètres.\n",
+        "Régler **`TRAINING_PRESET`** (`pragmatic` | `strict` | `strict_finetune_identity` | `precomputed_identity` | `custom`), **`INPUT_MODE`** et **`USE_SELF_DISTILLATION`** dans la cellule paramètres.\n",
     ]
     cells[4] = cell_from_source(PARAMS_SOURCE, cell_id="91307aa9")
     cells[4]["metadata"] = {"tags": ["parameters"]}
@@ -507,12 +658,21 @@ def main() -> None:
     ]
     cells[insert_at:insert_at] = extras
 
-    # Section 12 markdown (was index 27, now 31)
+    # Section 12 markdown + projection / évaluation
     for c in cells:
         if get_source(c).startswith("## 12. Visualisation"):
             c["source"] = [line + "\n" for line in SECTION12_MD.strip().split("\n")]
             c["source"][-1] = c["source"][-1].rstrip("\n") + "\n"
             break
+
+    replace_cell_by_prefix(cells, "from sklearn.decomposition import PCA", PROJECTION_CODE)
+    replace_cell_by_prefix(cells, "eval_cmd = [", EVAL_GEOMETRY_CODE)
+    # Markdown UMAP embedding brut (juste avant la cellule eval)
+    for i, c in enumerate(cells):
+        if get_source(c).startswith("eval_cmd = ["):
+            cells.insert(i, cell_from_source(EVAL_RAW_PROJ_MD, cell_type="markdown"))
+            break
+    replace_cell_by_prefix(cells, "confusion = pd.read_csv", PAPER_TABLES_CODE)
 
     # Drop empty trailing cells from draft
     while cells and not get_source(cells[-1]).strip():

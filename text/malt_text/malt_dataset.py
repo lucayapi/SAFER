@@ -1,4 +1,4 @@
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -49,6 +49,7 @@ class MALTTargetDataset(Dataset):
         metadata_df: Optional[pd.DataFrame] = None,
         dim_columns: Optional[Sequence[str]] = None,
         expected_input_dim: Optional[int] = None,
+        return_index: bool = False,
     ) -> None:
         if metadata_df is None:
             metadata_df = load_target_metadata(
@@ -70,14 +71,30 @@ class MALTTargetDataset(Dataset):
             raise ValueError(
                 f"Target embedding dim {len(self.dim_columns)} != source input_dim {expected_input_dim}"
             )
+        self.return_index = return_index
 
     def __len__(self) -> int:
         return len(self.metadata_df)
 
-    def __getitem__(self, index: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> Union[Tuple[torch.Tensor, torch.Tensor], Dict[str, Any]]:
         embedding = torch.from_numpy(self.embeddings[index])
-        selected_index = torch.tensor(index, dtype=torch.long)
-        return embedding, selected_index
+        if not self.return_index:
+            selected_index = torch.tensor(index, dtype=torch.long)
+            return embedding, selected_index
+        row = self.metadata_df.iloc[index]
+        item: Dict[str, Any] = {
+            "embedding": embedding,
+            "index": torch.tensor(index, dtype=torch.long),
+        }
+        if "doc_id" in row.index:
+            item["doc_id"] = row["doc_id"]
+        if "pred_label" in self.metadata_df.columns:
+            pl = row["pred_label"]
+            item["diagnostic_label"] = str(pl) if pd.notna(pl) else None
+        if "pred_subtype" in self.metadata_df.columns:
+            ps = row["pred_subtype"]
+            item["pred_subtype"] = str(ps) if pd.notna(ps) else None
+        return item
 
     def get_metadata_df(self) -> pd.DataFrame:
         return self.metadata_df.copy()
@@ -97,16 +114,30 @@ class MALTTargetDataset(Dataset):
         return label_ids
 
 
+def _collate_indexed_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {
+        "embedding": torch.stack([item["embedding"] for item in batch]),
+        "index": torch.stack([item["index"] for item in batch]),
+    }
+    for key in ("doc_id", "diagnostic_label", "pred_subtype"):
+        if all(key in item for item in batch):
+            out[key] = [item[key] for item in batch]
+    return out
+
+
 def build_target_dataloader(
     dataset: MALTTargetDataset,
     batch_size: int,
     shuffle: bool,
     num_workers: int = 0,
+    return_index: Optional[bool] = None,
 ) -> DataLoader:
+    use_index = dataset.return_index if return_index is None else return_index
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
+        collate_fn=_collate_indexed_batch if use_index else None,
     )

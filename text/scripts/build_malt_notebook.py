@@ -24,9 +24,9 @@ def code(source: str):
 cells = [
     md(
         """
-        # 02 — MALT Transfer: BTP -> Métallurgie
+        # 02 — MALT-EM Transfer: BTP -> Métallurgie
 
-        Transfert macro-ancré avec un seul K global de motifs latents.
+        Transfert macro-ancré avec boucle EM type SCGM (E-step Sinkhorn full-dataset, M-step à q fixé).
         """
     ),
     code(
@@ -47,13 +47,20 @@ cells = [
         BATCH_SIZE = 512
         N_SUBCLASS = 32
         SEED = 42
+        N_ITER_ESTEP = 5
+        SINKHORN_LMD = 25.0
+        EM_Q_MODE = "hard"
+        BETA_ANCHOR = 1.0
+        BETA_DIV = 0.1
+        BETA_MACRO = 0.5
         """
     ),
     md(
         """
         ## 1. Objectif
 
-        Source BTP, cible métallurgie, ancres macro transférées, motifs latents réappris localement.
+        Source BTP, cible métallurgie. Macro cible = responsabilités souples `p0(y|x)` (pas de label dur).
+        E-step : Sinkhorn sur tout le train ; M-step : `L_EM` avec q fixé + régularisations.
         """
     ),
     md(
@@ -146,7 +153,7 @@ cells = [
         pd.Series(p0.argmax(1)).value_counts()
         """
     ),
-    md("## 6. Entraînement MALT"),
+    md("## 6. Entraînement MALT-EM"),
     code(
         """
         train_script = REPO_ROOT / "scripts" / "train_malt_target.py"
@@ -168,11 +175,10 @@ cells = [
             print("  → Mettre FORCE_RETRAIN = True dans la cellule Parameters pour relancer,")
             print("  → ou supprimer le fichier :", best_ckpt)
         else:
-            print("Démarrage de l'entraînement MALT…")
+            print("Démarrage de l'entraînement MALT-EM…")
             args = argparse.Namespace(
                 config=None,
                 source_checkpoint=str(ckpt_path),
-                source_config=str(REPO_ROOT / SOURCE_CONFIG),
                 target_data_csv=TARGET_DATA_CSV,
                 target_data_csv_alt=TARGET_DATA_CSV_ALT,
                 target_emb_csv=TARGET_EMB_CSV,
@@ -181,25 +187,37 @@ cells = [
                 batch_size=BATCH_SIZE,
                 epochs=epochs,
                 lr=1e-3,
+                momentum=0.9,
                 weight_decay=1e-4,
+                optimizer="adamw",
+                scheduler="none",
+                num_cycles=10,
                 tau_macro=0.1,
                 tau_z=0.1,
                 tau_yz=0.1,
                 tau_div=0.1,
-                beta_latent=1.0,
-                beta_anchor=1.0,
-                beta_div=0.1,
                 n_subclass=N_SUBCLASS,
+                num_classes=4,
+                n_iter_estep=N_ITER_ESTEP,
+                sinkhorn_lmd=SINKHORN_LMD,
+                em_q_mode=EM_Q_MODE,
+                init_q_mode="source_scores",
+                beta_anchor=BETA_ANCHOR,
+                beta_div=BETA_DIV,
+                beta_macro=BETA_MACRO,
+                beta_balance=0.0,
                 confidence_threshold=0.0,
+                macro_weight_mode="max_prob",
+                copy_source_projector=True,
                 freeze_projector=False,
+                init_mu_target="source",
+                init_nu="kmeans",
+                save_q_every_estep=True,
                 filter_pred_ok=False,
-                latent_loss_mode="marginal",
-                use_sinkhorn=True,
-                sinkhorn_lmd=25.0,
-                disable_softmacro=False,
-                disable_latent=False,
                 disable_anchor=False,
                 disable_div=False,
+                disable_macro=False,
+                disable_balance=True,
                 seed=SEED,
                 device="cuda" if torch.cuda.is_available() else "cpu",
                 num_workers=0,
@@ -207,15 +225,23 @@ cells = [
                 resolved_target_emb_csv=resolved_emb,
             )
             malt_train.run_malt_training(args)
-            print("Entraînement MALT terminé.")
+            print("Entraînement MALT-EM terminé.")
         """
     ),
     md("## 7. Courbes d'entraînement"),
     code(
         """
-        logs = pd.read_csv(OUTPUT_PATH / "logs.csv")
-        logs.plot(x="epoch", y=["loss_total", "loss_softmacro", "loss_latent", "loss_anchor", "loss_div"])
-        plt.savefig(FIGURES_DIR / "malt_losses.png", dpi=150)
+        log_path = OUTPUT_PATH / "metrics" / "train_log.csv"
+        if not log_path.is_file():
+            log_path = OUTPUT_PATH / "logs.csv"
+        logs = pd.read_csv(log_path)
+        ycols = [c for c in ["loss_total", "loss_em", "loss_z", "loss_yz", "loss_anchor", "loss_div", "loss_macro"] if c in logs.columns]
+        logs.plot(x="epoch", y=ycols)
+        plt.savefig(FIGURES_DIR / "malt_em_losses.png", dpi=150)
+        em_cols = [c for c in logs.columns if c.startswith("estep_")]
+        if em_cols:
+            logs.plot(x="epoch", y=em_cols)
+            plt.savefig(FIGURES_DIR / "malt_em_diagnostics.png", dpi=150)
         plt.show()
         """
     ),
@@ -245,7 +271,7 @@ cells = [
         """
         ## 9. Évaluation du transfert
 
-        Inclut un **ARI global** (vue *micro-segments* : un score sur tous les segments avec `pred_subtype` renseigné) entre le clustering latent **`z_hat`** et les pseudo-sous-types **`pred_subtype`** (diagnostic, pas vérité terrain experte).
+        Tableau principal **`metrics_table.csv`** : **eta2_macro_balanced** (principal) et **eta2_weighted** (secondaire), inertie macro sur distance euclidienne au carré (0–1), plus RankMe, C1 et C10. Lignes : Embedding brut (si dispo), MALT_source, MALT_adapted.
         """
     ),
     code(
@@ -259,22 +285,12 @@ cells = [
                 exports_dir=str(EXPORTS_DIR),
                 output_dir=str(EVAL_DIR),
                 label_col="pred_label",
-                subtype_col="pred_subtype",
             )
         )
-        display(pd.read_csv(EVAL_DIR / "metrics_summary.csv"))
-        ari_path = EVAL_DIR / "ari_subtype_alignment.csv"
-        if ari_path.is_file():
-            display(pd.read_csv(ari_path))
+        display(pd.read_csv(EVAL_DIR / "metrics_table.csv"))
         with open(EVAL_DIR / "metrics_summary.json", encoding="utf-8") as handle:
-            _m = json.load(handle)
-        if "ari_z_vs_pred_subtype_micro" in _m:
-            print(
-                "ARI (z_hat vs pred_subtype, global / micro-segments):",
-                _m["ari_z_vs_pred_subtype_micro"],
-                "| n_segments:",
-                _m.get("ari_subtype_n_segments"),
-            )
+            malt_eval_summary = json.load(handle)
+        print("change_rate:", malt_eval_summary["malt_diagnostics"].get("change_rate"))
         """
     ),
     md("## 10. Visualisation avant/après adaptation"),

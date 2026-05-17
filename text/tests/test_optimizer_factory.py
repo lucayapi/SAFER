@@ -15,9 +15,10 @@ def _args(**kwargs):
 
 def test_build_adamw_and_sgd():
     model = SCGMEmbeddingNet(32, 16, 4, 8, projection="linear")
-    opt_a = build_optimizer(model, _args(optimizer="adamw"))
+    opt_a = build_optimizer(model, _args(optimizer="adamw", head_lr=1e-3))
     assert isinstance(opt_a, torch.optim.AdamW)
-    opt_s = build_optimizer(model, _args(optimizer="sgd"))
+    assert len(opt_a.param_groups) >= 1
+    opt_s = build_optimizer(model, _args(optimizer="sgd", head_lr=1e-3))
     assert isinstance(opt_s, torch.optim.SGD)
 
 

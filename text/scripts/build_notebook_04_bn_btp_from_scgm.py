@@ -37,7 +37,7 @@ def main() -> None:
 
 ## 1 — Objectif
 
-Ce notebook reprend la **même chaîne BN** que `04_malt_to_bayesian_network`, mais en entrée les **exports SCGM** produits par `01_scgm_text_btp_experiment` (`metadata_with_predictions.csv`, `prob_z_x.npy`, etc.). Une étape de copie vers un dossier **« type MALT »** (`malt_like_exports`) fournit les noms de fichiers attendus par `bn_malt` sans modifier le package.
+Ce notebook reprend la **même chaîne BN** que `04_malt_to_bayesian_network`, mais en entrée les **exports SCGM** produits par `01_scgm_text_btp_experiment` (`metadata_with_predictions.csv`, `prob_z_x.npy`, etc.). Les copies « type MALT » vont dans `staging/malt_like_exports/`. Les figures BN sont dans `figures/static/`, `figures/interactive/` (Plotly + Pyvis) et `figures/nodes/` (cartes CPD par nœud).
 
 Les variables binaires au niveau accident décrivent la **co-présence de motifs latents `z`** (SCGM) au-dessus d’un seuil de confiance ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
 
@@ -87,7 +87,7 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 # Dossier `exports` du notebook 01 (SCGM BTP), après `export_scgm_text_outputs.py`.
 SCGM_EXPORTS_DIR = "runs/scgm_text_qwen06_notebook/exports"
-# Sorties du BN (et sous-dossier malt_like_exports pour les copies « type MALT »).
+# Sorties BN : staging/, tables/, models/, figures/static|interactive|nodes/, reports/
 OUTPUT_DIR = "outputs/bn_btp_from_scgm"
 CONFIDENCE_THRESHOLD = 0.50
 MIN_TOPIC_ACCIDENT_SUPPORT = 20
@@ -161,12 +161,14 @@ from topic_eval.paths import resolve_repo_path
 
 OUT_ROOT = resolve_repo_path(OUTPUT_DIR, REPO)
 TABLES = OUT_ROOT / "tables"
-FIGURES = OUT_ROOT / "figures"
+FIGURES_STATIC = OUT_ROOT / "figures" / "static"
+FIGURES_INTERACTIVE = OUT_ROOT / "figures" / "interactive"
+FIGURES_NODES = OUT_ROOT / "figures" / "nodes"
 MODELS = OUT_ROOT / "models"
 REPORTS = OUT_ROOT / "reports"
 
 SCGM_EXPORTS_ROOT = resolve_repo_path(SCGM_EXPORTS_DIR, REPO)
-MALT_LIKE = OUT_ROOT / "malt_like_exports"
+MALT_LIKE = OUT_ROOT / "staging" / "malt_like_exports"
 MALT_LIKE.mkdir(parents=True, exist_ok=True)
 _copy_map = (
     ("prob_z_x.npy", "pt_z_target.npy"),
@@ -181,7 +183,28 @@ for _src_name, _dst_name in _copy_map:
     if not _src.is_file():
         raise FileNotFoundError(f"Export SCGM manquant pour le BN : {_src}")
     shutil.copy2(_src, _dst)
+_openai_themes_src = SCGM_EXPORTS_ROOT / "themes_by_z_openai.csv"
+if _openai_themes_src.is_file():
+    shutil.copy2(_openai_themes_src, MALT_LIKE / "themes_by_z_openai.csv")
+    print("Copié :", MALT_LIKE / "themes_by_z_openai.csv")
+else:
+    print(
+        "AVERTISSEMENT : themes_by_z_openai.csv absent dans les exports SCGM — "
+        "les libellés BN exigeront ce fichier (notebook 01, cellule OpenAI 11 bis)."
+    )
 EXPORTS = MALT_LIKE
+
+import importlib
+
+
+def _reload_bn_malt_submodules() -> None:
+    # Recharge bn_malt après édition du code sans redémarrer le noyau Jupyter.
+    names = [n for n in sys.modules if n == "bn_malt" or n.startswith("bn_malt.")]
+    for name in sorted(names, key=len, reverse=True):
+        importlib.reload(sys.modules[name])
+
+
+_reload_bn_malt_submodules()
 
 from bn_malt.utils import ensure_output_dirs, load_metadata_for_bn
 from bn_malt.aggregate_malt_variables import create_accident_topic_matrix, export_aggregate_outputs
@@ -201,10 +224,18 @@ from bn_malt.bn_learning import (
 )
 from bn_malt.bn_inference import conditional_prob_table, run_bn_queries
 from bn_malt.bn_visualization import (
+    build_short_title_map,
     build_topic_node_label_map,
+    display_node_card,
+    export_node_cards_png,
+    export_node_marginals_csv,
+    join_theme_summary_to_selected_variables,
+    load_openai_themes_for_bn,
+    resolve_openai_themes_path,
     plot_adjacency_heatmap,
     plot_bn_graph,
     try_plotly_interactive,
+    try_pyvis_bn_graph,
 )
 from bn_malt.scenario_mining import export_scenarios, extract_typical_scenarios
 from bn_malt.bn_diagnostics import compare_structure_rows, run_model_diagnostics
@@ -254,7 +285,7 @@ if _has_sev_panel:
     meta["pred_severity"].astype(str).value_counts().head(8).plot.bar(ax=axes[1])
     axes[1].set_title("Gravité prédite (unités)")
 plt.tight_layout()
-p = FIGURES / "eda_malt_metadata.png"
+    p = FIGURES_STATIC / "eda_malt_metadata.png"
 plt.savefig(p, dpi=150, bbox_inches="tight")
 plt.close()
 print("Figure :", p)
@@ -298,7 +329,7 @@ if topic_cols:
     co = np.corrcoef(M.T)
     sns.heatmap(co, xticklabels=False, yticklabels=False, cmap="vlag", center=0)
     plt.title("Corrélations entre colonnes Z (aperçu)")
-    p = FIGURES / "topic_correlation_heatmap.png"
+    p = FIGURES_STATIC / "topic_correlation_heatmap.png"
     plt.savefig(p, dpi=150, bbox_inches="tight")
     plt.close()
     print("Figure :", p)
@@ -392,59 +423,98 @@ diag_df = pd.DataFrame(diag_rows)
 display(diag_df)
 """
         ),
-        md("## 10 — Visualisation du graphe et heatmap d’adjacence"),
+        md(
+            """## 10 — Visualisation du graphe et heatmap d’adjacence
+
+Cercles colorés (macro) **séparés** des cartes CPD (`theme_summary` OpenAI + barres `P(0)` / `P(1)`).
+Sorties : `figures/static/`, `figures/interactive/`, `figures/nodes/`, `tables/node_marginals.csv`.
+"""
+        ),
         py(
             r"""
 from pathlib import Path
+from IPython.display import HTML, display as ipy_display
 
+_explicit_themes = None
 if str(THEMES_OPENAI_CSV).strip():
     _tp = Path(str(THEMES_OPENAI_CSV).strip()).expanduser()
     if not _tp.is_absolute():
         _tp = resolve_repo_path(str(_tp), REPO)
-    _themes_path = _tp if _tp.is_file() else None
-else:
-    _themes_path = None
-    for _c in (
-        EXPORTS / "themes_by_z_openai_malt.csv",
-        EXPORTS / "themes_by_z_openai.csv",
-        EXPORTS / "themes_by_z_malt.csv",
-        SCGM_EXPORTS_ROOT / "themes_by_z_openai_malt.csv",
-        SCGM_EXPORTS_ROOT / "themes_by_z_openai.csv",
-        SCGM_EXPORTS_ROOT / "themes_by_z_malt.csv",
-        SCGM_EXPORTS_ROOT / "themes_by_z.csv",
-    ):
-        if _c.is_file():
-            _themes_path = _c
-            break
+    if _tp.is_file():
+        _explicit_themes = _tp
 
-if _themes_path is not None:
-    themes_df = pd.read_csv(_themes_path)
-    print("Fichier libellés thèmes :", _themes_path)
-else:
-    themes_df = pd.DataFrame()
-    print("Aucun CSV thèmes trouvé ; libellés de repli sur les codes Z_*.")
+themes_df = load_openai_themes_for_bn(
+    SCGM_EXPORTS_ROOT,
+    staging_dir=OUT_ROOT / "staging",
+    explicit_path=_explicit_themes,
+)
+_themes_path = resolve_openai_themes_path(
+    SCGM_EXPORTS_ROOT, OUT_ROOT / "staging", _explicit_themes
+)
+print("Libellés BN : theme_summary OpenAI depuis", _themes_path)
+display(themes_df[["z_id", "dominant_macro", "theme_summary"]].head(8))
 
-node_label_map = build_topic_node_label_map(list(topic_model.nodes()), themes_df, wrap_width=32)
+sel = join_theme_summary_to_selected_variables(sel, themes_df)
+sel.to_csv(TABLES / "selected_bn_variables.csv", index=False)
+display(sel[["z_id", "macro", "variable", "theme_summary"]].head(10))
+
+_nodes = list(topic_model.nodes())
+node_label_map = build_topic_node_label_map(
+    _nodes, themes_df, wrap_width=32, variable_macro_map=topic_var_map_f
+)
+short_title_map = build_short_title_map(_nodes, themes_df, topic_var_map_f)
+
+export_node_marginals_csv(topic_model, short_title_map, TABLES / "node_marginals.csv")
+
 plot_bn_graph(
     topic_model,
     topic_var_map_f,
-    FIGURES / "bn_topic_constrained.png",
+    FIGURES_STATIC / "bn_topic_constrained.png",
     title="Réseau bayésien — motifs (structure contrainte)",
-    node_label_map=node_label_map,
+    short_title_map=short_title_map,
+    themes_df=themes_df,
+    show_cpd_cards=True,
+    card_offset=(0, -78),
 )
 plot_adjacency_heatmap(
     topic_model,
     list(topic_used),
-    FIGURES / "bn_topic_adjacency.png",
+    FIGURES_STATIC / "bn_topic_adjacency.png",
     title="Adjacence — BN topics",
+    themes_df=themes_df,
+    variable_macro_map=topic_var_map_f,
 )
-ok_html = try_plotly_interactive(
+export_node_cards_png(topic_model, short_title_map, FIGURES_NODES)
+
+_ok_plotly = try_plotly_interactive(
     topic_model,
-    FIGURES / "bn_topic_interactive.html",
+    FIGURES_INTERACTIVE / "bn_topic_interactive.html",
     node_label_map=node_label_map,
-    title="Réseau bayésien — exploration interactive",
+    short_title_map=short_title_map,
+    variable_macro_map=topic_var_map_f,
+    themes_df=themes_df,
+    title="Réseau bayésien — exploration interactive (Plotly)",
 )
-print("Plotly HTML :", ok_html)
+_ok_pyvis = try_pyvis_bn_graph(
+    topic_model,
+    FIGURES_INTERACTIVE / "bn_topic_pyvis.html",
+    short_title_map=short_title_map,
+    variable_macro_map=topic_var_map_f,
+    themes_df=themes_df,
+    title="Réseau bayésien — Pyvis",
+)
+print("Plotly HTML :", _ok_plotly, "| Pyvis HTML :", _ok_pyvis)
+
+if _ok_plotly and (FIGURES_INTERACTIVE / "bn_topic_interactive.html").is_file():
+    ipy_display(HTML((FIGURES_INTERACTIVE / "bn_topic_interactive.html").read_text(encoding="utf-8")))
+if _ok_pyvis and (FIGURES_INTERACTIVE / "bn_topic_pyvis.html").is_file():
+    ipy_display(HTML((FIGURES_INTERACTIVE / "bn_topic_pyvis.html").read_text(encoding="utf-8")))
+
+# Exemple carte nœud (format barres)
+if topic_used:
+    _demo = str(topic_used[0])
+    print(f"\n--- Carte exemple : {_demo} ---")
+    display_node_card(topic_model, _demo, short_title_map)
 """
         ),
         md("## 11 — Inférence (VariableElimination) et lifts sur les arcs"),
@@ -493,10 +563,14 @@ else:
     print("Pas d’export « risque gravité » (mode sans colonne de gravité ou effectifs nuls).")
 """
         ),
-        md("## 13 — Helpers d’affichage (résumé nœud, scénario)"),
+        md("## 13 — Helpers d’affichage (carte CPD, scénario)"),
         py(
             r"""
 def display_bn_node_summary(model, node: str, max_lines: int = 40) -> None:
+    # Carte barres P(0)/P(1) si short_title_map existe, sinon CPD brut
+    if "short_title_map" in globals():
+        display_node_card(model, node, short_title_map)
+        return
     for cpd in model.get_cpds():
         if cpd.variable == node:
             txt = str(cpd)
@@ -589,9 +663,11 @@ write_bn_malt_report(
     diagnostics_df=diag_df,
     comparison_df=comp_df,
     figure_paths=[
-        str(FIGURES / "eda_malt_metadata.png"),
-        str(FIGURES / "bn_topic_constrained.png"),
-        str(FIGURES / "bn_topic_adjacency.png"),
+        str(FIGURES_STATIC / "eda_malt_metadata.png"),
+        str(FIGURES_STATIC / "bn_topic_constrained.png"),
+        str(FIGURES_STATIC / "bn_topic_adjacency.png"),
+        str(FIGURES_INTERACTIVE / "bn_topic_interactive.html"),
+        str(FIGURES_INTERACTIVE / "bn_topic_pyvis.html"),
     ],
 )
 print("Rapport :", REPORTS / "bn_malt_summary.md")

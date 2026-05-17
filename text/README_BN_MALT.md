@@ -75,7 +75,38 @@ papermill notebooks/04_malt_to_bayesian_network.ipynb \
 
 ## Sorties
 
-Sous `outputs/bn_malt/` : `tables/`, `figures/`, `models/`, `reports/` (voir notebook pour la liste des fichiers CSV, LaTeX, PNG, HTML optionnel).
+### Notebook MALT (`04_malt_to_bayesian_network`)
+
+Sous `outputs/bn_malt/` : `tables/`, `figures/`, `models/`, `reports/`.
+
+### Notebook BTP depuis SCGM (`04_bayesian_network_btp_from_scgm`)
+
+Sous `outputs/bn_btp_from_scgm/` :
+
+```
+outputs/bn_btp_from_scgm/
+  staging/malt_like_exports/   # copies SCGM → noms MALT
+  tables/                      # agrégation, arêtes, node_marginals.csv, CPD
+  models/                      # .pkl, .bif
+  figures/static/              # PNG (graphe BN avec cartes CPD décalées)
+  figures/interactive/         # Plotly + Pyvis HTML
+  figures/nodes/               # cartes CPD par nœud
+  reports/                     # .md, .tex
+```
+
+**Libellés des nœuds** : uniquement la colonne **`theme_summary`** de **`themes_by_z_openai.csv`** (cellule OpenAI, notebook 01). Le fichier `themes_by_z.csv` (mots TF-IDF `top_words`) et la colonne `theme_keywords` **ne servent pas** aux libellés du graphe. Si `themes_by_z_openai.csv` est absent, le notebook 04 lève une erreur explicite.
+
+Ensuite : barres ASCII `P(0)` / `P(1)` sur chaque carte ; le cercle coloré (macro) reste séparé du texte.
+
+Exemple de carte :
+
+```
+défaut protection équipement chantier
+0  ███░░░░░░░  33.2%
+1  ███████░░░  66.8%
+```
+
+Régénérer : `python scripts/build_notebook_04_bn_btp_from_scgm.py`
 
 ## Dépendances optionnelles
 

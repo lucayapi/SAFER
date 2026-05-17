@@ -1,4 +1,5 @@
 from malt_text.malt_dataset import MALTTargetDataset
+from malt_text.malt_em_model import MALTEMTargetModel
 from malt_text.malt_model import MALTTargetModel
 
-__all__ = ["MALTTargetDataset", "MALTTargetModel"]
+__all__ = ["MALTTargetDataset", "MALTTargetModel", "MALTEMTargetModel"]

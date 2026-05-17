@@ -1,12 +1,14 @@
-# Defaults alignés avec l'entraînement historique SAFER (AdamW, projection identity).
+# Defaults alignés avec l'entraînement historique SAFER (AdamW, embeddings pré-calculés).
 
 data:
   data_csv: dataset/data_btp.csv
   emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  input_mode: precomputed_embeddings
   group_col: accident_id
   val_ratio: 0.1
 
 model:
+  input_mode: precomputed_embeddings
   projection: identity
   hiddim: 128
   n_class: 4

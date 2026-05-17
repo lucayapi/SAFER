@@ -1,45 +1,37 @@
 import argparse
-import json
 import os
 import sys
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import adjusted_rand_score
-from sklearn.preprocessing import LabelEncoder
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from malt_text.malt_metrics import (
-    anchor_drift_metrics,
-    geometry_metrics,
-    probability_summary,
-)
-from scgm_text.dataset_text_embeddings import ID2LABEL, LABEL2ID
-from scgm_text.metrics import (
-    balanced_accuracy,
-    calinski_harabasz_score_safe,
-    compute_confusion_matrix,
-    davies_bouldin_score_safe,
-    macro_f1,
-    silhouette_score_safe,
-)
+from malt_text.malt_metrics import anchor_drift_metrics, probability_summary
+from metrics.embedding_geometry_separation import METRICS_TABLE_COLUMNS, build_geometry_metrics_row
+from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
 from scgm_text.utils_io import ensure_dir, save_json
 
 
+def load_raw_embeddings(metadata: pd.DataFrame, emb_csv: str) -> np.ndarray:
+    slim = metadata.drop(columns=[c for c in metadata.columns if c.startswith("dim_")], errors="ignore")
+    merged, dim_columns = merge_metadata_with_embeddings(slim, emb_csv)
+    if len(merged) != len(metadata):
+        raise ValueError(
+            f"Embedding merge row mismatch: metadata={len(metadata)}, merged={len(merged)}"
+        )
+    return merged[dim_columns].to_numpy(dtype=np.float64)
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate exported MALT transfer outputs.")
+    parser = argparse.ArgumentParser(description="Evaluate exported MALT transfer outputs (eta2 geometry).")
     parser.add_argument("--exports_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--label_col", type=str, default="pred_label")
-    parser.add_argument(
-        "--subtype_col",
-        type=str,
-        default="pred_subtype",
-        help="Column for ARI vs z_hat (diagnostic; often pseudo-labels).",
-    )
+    parser.add_argument("--emb_csv", type=str, default=None)
+    parser.add_argument("--method_raw", type=str, default="Embedding brut")
     return parser.parse_args()
 
 
@@ -63,19 +55,13 @@ def run_evaluate(args: argparse.Namespace) -> None:
     mu_source = np.load(os.path.join(exports_dir, "mu_y_source.npy"))
     mu_target = np.load(os.path.join(exports_dir, "mu_y_target.npy"))
     z_hat = metadata["z_hat"].to_numpy(dtype=np.int64)
+    macro_labels = metadata[args.label_col].to_numpy()
 
-    summary = {
+    malt_diagnostics = {
         "p0_distribution": probability_summary(p0),
         "pt_distribution": probability_summary(pt),
         "change_rate": float((metadata["p0_macro_id"].to_numpy() != metadata["pt_macro_id"].to_numpy()).mean()),
-    }
-    summary["geometry_source"] = geometry_metrics(projected_source)
-    summary["geometry_adapted"] = geometry_metrics(projected_adapted)
-    summary["anchor_drift"] = anchor_drift_metrics(mu_source, mu_target)
-    summary["clustering"] = {
-        "silhouette_z": silhouette_score_safe(projected_adapted, z_hat),
-        "davies_bouldin_z": davies_bouldin_score_safe(projected_adapted, z_hat),
-        "calinski_harabasz_z": calinski_harabasz_score_safe(projected_adapted, z_hat),
+        "anchor_drift": anchor_drift_metrics(mu_source, mu_target),
     }
 
     transition = transition_matrix(
@@ -83,6 +69,30 @@ def run_evaluate(args: argparse.Namespace) -> None:
         metadata["pt_macro_id"].to_numpy(dtype=np.int64),
     )
     transition.to_csv(os.path.join(args.output_dir, "macro_transition_matrix.csv"))
+    transition.to_csv(os.path.join(args.output_dir, "transition_matrix.csv"))
+    pd.DataFrame([malt_diagnostics["anchor_drift"]]).to_csv(
+        os.path.join(args.output_dir, "anchor_drift.csv"), index=False
+    )
+
+    q_path = os.path.join(exports_dir, "q_em_final.npy")
+    if os.path.isfile(q_path):
+        q_em = np.load(q_path)
+        malt_diagnostics["q_entropy_mean"] = float(
+            -np.mean(np.sum(q_em * np.log(np.clip(q_em, 1e-12, None)), axis=1))
+        )
+        malt_diagnostics["em_active_clusters"] = int(np.unique(q_em.argmax(axis=1)).size)
+
+    run_root = os.path.dirname(exports_dir.rstrip("/\\"))
+    for log_name in ("metrics/train_log.csv", "logs.csv"):
+        log_path = os.path.join(run_root, log_name)
+        if os.path.isfile(log_path):
+            log_df = pd.read_csv(log_path)
+            for col in ("loss_em", "loss_z", "loss_yz", "estep_q_change_rate", "estep_z_change_rate"):
+                if col in log_df.columns:
+                    malt_diagnostics[f"last_{col}"] = float(log_df[col].iloc[-1])
+            break
+
+    from scgm_text.dataset_text_embeddings import ID2LABEL
 
     z_affiliation = []
     for z_id in range(prob_y_z.shape[0]):
@@ -100,68 +110,31 @@ def run_evaluate(args: argparse.Namespace) -> None:
         )
     pd.DataFrame(z_affiliation).to_csv(os.path.join(args.output_dir, "z_macro_affiliation.csv"), index=False)
 
-    # ARI global (vue « micro » : tous les segments avec sous-type renseigné, un seul score sur l'ensemble)
-    subtype_col = (args.subtype_col or "").strip()
-    if subtype_col and subtype_col in metadata.columns:
-        st = metadata[subtype_col].astype(str).str.strip()
-        valid_subtype = st.notna() & (st != "") & (st.str.lower() != "nan")
-        n_valid = int(valid_subtype.sum())
-        if n_valid >= 2:
-            z_valid = z_hat[valid_subtype.to_numpy()]
-            enc = LabelEncoder()
-            y_subtype = enc.fit_transform(st.loc[valid_subtype])
-            n_z = len(np.unique(z_valid))
-            n_st = len(np.unique(y_subtype))
-            if n_z >= 2 and n_st >= 2:
-                ari_micro = float(adjusted_rand_score(y_subtype, z_valid))
-                summary["ari_z_vs_pred_subtype_micro"] = ari_micro
-                summary["ari_subtype_n_segments"] = n_valid
-                summary["ari_subtype_n_unique_subtype"] = int(n_st)
-                summary["ari_subtype_n_unique_z"] = int(n_z)
-                pd.DataFrame(
-                    [
-                        {
-                            "metric": "ari_z_vs_pred_subtype_micro",
-                            "value": ari_micro,
-                            "n_segments": n_valid,
-                            "n_unique_pred_subtype": int(n_st),
-                            "n_unique_z_hat": int(n_z),
-                            "subtype_col": subtype_col,
-                        }
-                    ]
-                ).to_csv(os.path.join(args.output_dir, "ari_subtype_alignment.csv"), index=False)
+    metrics_rows = []
 
-    if args.label_col in metadata.columns:
-        valid = metadata[args.label_col].notna() & metadata[args.label_col].isin(LABEL2ID.keys())
-        if valid.any():
-            y_true = metadata.loc[valid, args.label_col].map(LABEL2ID).to_numpy(dtype=np.int64)
-            p0_pred = metadata.loc[valid, "p0_macro_id"].to_numpy(dtype=np.int64)
-            pt_pred = metadata.loc[valid, "pt_macro_id"].to_numpy(dtype=np.int64)
-            summary["diagnostic_p0"] = {
-                "macro_f1": macro_f1(y_true, p0_pred),
-                "balanced_accuracy": balanced_accuracy(y_true, p0_pred),
-            }
-            summary["diagnostic_pt"] = {
-                "macro_f1": macro_f1(y_true, pt_pred),
-                "balanced_accuracy": balanced_accuracy(y_true, pt_pred),
-            }
-            labels = [0, 1, 2, 3]
-            pd.DataFrame(
-                compute_confusion_matrix(y_true, p0_pred, labels=labels),
-                index=["A0", "A1", "B", "C"],
-                columns=["A0", "A1", "B", "C"],
-            ).to_csv(os.path.join(args.output_dir, "confusion_matrix_p0.csv"))
-            pd.DataFrame(
-                compute_confusion_matrix(y_true, pt_pred, labels=labels),
-                index=["A0", "A1", "B", "C"],
-                columns=["A0", "A1", "B", "C"],
-            ).to_csv(os.path.join(args.output_dir, "confusion_matrix_pt.csv"))
+    raw_path = os.path.join(exports_dir, "raw_embeddings.npy")
+    if os.path.isfile(raw_path):
+        raw = np.load(raw_path)
+        metrics_rows.append(build_geometry_metrics_row(raw, macro_labels, method=args.method_raw))
+    elif args.emb_csv:
+        raw = load_raw_embeddings(metadata, args.emb_csv)
+        metrics_rows.append(build_geometry_metrics_row(raw, macro_labels, method=args.method_raw))
 
-    save_json(summary, os.path.join(args.output_dir, "metrics_summary.json"))
-    pd.json_normalize(summary, sep="_").to_csv(os.path.join(args.output_dir, "metrics_summary.csv"), index=False)
-    pd.DataFrame([summary["geometry_source"]]).to_csv(os.path.join(args.output_dir, "geometry_summary.csv"), index=False)
-    pd.DataFrame([summary["clustering"]]).to_csv(os.path.join(args.output_dir, "clustering_metrics.csv"), index=False)
-    pd.DataFrame([summary["anchor_drift"]]).to_csv(os.path.join(args.output_dir, "anchor_drift.csv"), index=False)
+    metrics_rows.append(
+        build_geometry_metrics_row(projected_source, macro_labels, method="MALT_source")
+    )
+    metrics_rows.append(
+        build_geometry_metrics_row(projected_adapted, macro_labels, method="MALT_adapted")
+    )
+
+    metrics_table = pd.DataFrame(metrics_rows, columns=METRICS_TABLE_COLUMNS)
+    metrics_table.to_csv(os.path.join(args.output_dir, "metrics_table.csv"), index=False)
+    metrics_table.to_csv(os.path.join(args.output_dir, "metrics_summary.csv"), index=False)
+
+    save_json(
+        {"metrics_table": metrics_rows, "malt_diagnostics": malt_diagnostics},
+        os.path.join(args.output_dir, "metrics_summary.json"),
+    )
 
 
 def main() -> None:
