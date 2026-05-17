@@ -13,7 +13,11 @@
 
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$PWD}/.."
+_JOB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SLURM_SUBMIT_DIR:-$_JOB_DIR}/.."
+# shellcheck source=jobs/_env.sh
+source "${_JOB_DIR}/_env.sh"
+setup_text_job_env
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"

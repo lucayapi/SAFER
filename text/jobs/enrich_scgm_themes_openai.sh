@@ -17,15 +17,11 @@
 #SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$PWD}/.."
-
-if [[ -f ".venv/bin/activate" ]]; then
-  # shellcheck disable=SC1091
-  source .venv/bin/activate
-fi
-
-# Ne pas « source .env » : format shell KEY=value uniquement (pas KEY: valeur).
-# La clé est chargée par python-dotenv dans scripts/enrich_scgm_themes_openai.py
+_JOB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SLURM_SUBMIT_DIR:-$_JOB_DIR}/.."
+# shellcheck source=jobs/_env.sh
+source "${_JOB_DIR}/_env.sh"
+setup_text_job_env
 
 OUTPUT_DIR="${SCGM_OUTPUT_DIR:-resultats/scgm_text}"
 PROBE_ONLY="${PROBE_ONLY:-0}"

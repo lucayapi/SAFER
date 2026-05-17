@@ -80,11 +80,18 @@ def parse_args() -> argparse.Namespace:
         default="Qwen/Qwen3-Embedding-0.6B",
         help="Nom du modèle de base HF."
     )
+    # Accepté pour compatibilité runner / CLI unifié (non utilisé par le triplet batch)
+    parser.add_argument(
+        "--use_contextual_prompt_with_summary",
+        type=str2bool,
+        default=False,
+        help="Ignoré pour batch triplet (alignement CLI avec SoftTriple/SupCon).",
+    )
     parser.add_argument(
         "--use_fixed_instruction_prefix",
         type=str2bool,
         default=False,
-        help="Active ou non le préfixe d'instruction fixe (true/false)."
+        help="Active ou non le préfixe d'instruction fixe (true/false).",
     )
     parser.add_argument(
         "--fixed_instruction_prefix",

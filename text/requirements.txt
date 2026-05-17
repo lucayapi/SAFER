@@ -22,6 +22,8 @@ torch==2.5.1
 transformers==4.51.3
 tokenizers==0.21.0
 accelerate==1.1.1
+# Batch triplet / SoftTriple / SupCon (legacy sentence_transformers.SentenceTransformerTrainer)
+sentence-transformers==3.4.1
 
 # --- Visualisation & données tabulaires ---
 matplotlib==3.9.4

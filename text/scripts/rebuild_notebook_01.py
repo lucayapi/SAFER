@@ -356,6 +356,28 @@ _verify_export_layout()
 print("Export OK —", _proj)
 """
 
+THEMES_SOURCE = """def _topics_csv(name: str) -> Path:
+    \"\"\"themes_by_z*.csv : topics/ (export SCGM) ; repli embeddings/ (anciens runs).\"\"\"
+    for base in (TOPICS_DIR, EXPORTS_DIR):
+        path = base / name
+        if path.is_file():
+            if base != TOPICS_DIR:
+                print(f"WARN: {name} sous {base} — attendu {TOPICS_DIR}")
+            return path
+    raise FileNotFoundError(
+        f"{name} introuvable sous {TOPICS_DIR} ni {EXPORTS_DIR}. "
+        "Relancer l'export : python scripts/export_scgm_text_outputs.py "
+        f"--checkpoint {CHECKPOINT_PATH} --output_dir {OUTPUT_PATH}"
+    )
+
+
+themes_z = pd.read_csv(_topics_csv("themes_by_z.csv"))
+themes_macro = pd.read_csv(_topics_csv("themes_by_macro_z.csv"))
+display(themes_macro)
+top_components = themes_z.sort_values("n_units", ascending=False).head(15)
+display_df_for_paper(top_components, "top_themes_by_z.csv")
+"""
+
 CHECKPOINT_SOURCE = """checkpoint = torch.load(
     CHECKPOINT_PATH, map_location="cpu", weights_only=False
 )
@@ -633,6 +655,8 @@ def main() -> None:
             break
 
     replace_cell_by_prefix(cells, "export_cmd = [", EXPORT_SOURCE)
+    replace_cell_by_prefix(cells, "themes_z = pd.read_csv", THEMES_SOURCE)
+    replace_cell_by_prefix(cells, "def _topics_csv", THEMES_SOURCE)
     replace_cell_by_prefix(cells, "from sklearn.decomposition import PCA", PROJECTION_CODE)
     replace_cell_by_prefix(cells, "eval_cmd = [", EVAL_GEOMETRY_CODE)
     # Markdown UMAP embedding brut (juste avant la cellule eval)

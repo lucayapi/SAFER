@@ -8,7 +8,11 @@
 #SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
-cd "${SLURM_SUBMIT_DIR:-$PWD}/.."
+_JOB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SLURM_SUBMIT_DIR:-$_JOB_DIR}/.."
+# shellcheck source=jobs/_env.sh
+source "${_JOB_DIR}/_env.sh"
+setup_text_job_env
 
 python scripts/collect_results.py --results_root resultats
 python scripts/compare_methods.py --results_root resultats --output_dir resultats/comparisons
