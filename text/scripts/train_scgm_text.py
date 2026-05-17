@@ -416,7 +416,7 @@ def evaluate_split(
             z_preds = prob_z_x.argmax(dim=1).cpu().numpy()
             y_pred.extend(preds.tolist())
             z_pred.extend(z_preds.tolist())
-            y_true.extend(label_ids.numpy().tolist())
+            y_true.extend(label_ids.detach().cpu().numpy().tolist())
             embeddings.append(features.detach().cpu().numpy())
             prob_z_list.append(prob_z_x.cpu().numpy())
             prob_yz_list.append(prob_y_z.cpu().numpy())
