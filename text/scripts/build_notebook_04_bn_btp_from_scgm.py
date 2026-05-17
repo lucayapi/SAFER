@@ -1,4 +1,4 @@
-"""Génère notebooks/04_bayesian_network_btp_from_scgm.ipynb (exports SCGM du notebook 01 BTP)."""
+"""Génère notebooks/04_bayesian_network_from_scgm.ipynb (exports SCGM du notebook 01)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NB_PATH = REPO / "notebooks" / "04_bayesian_network_btp_from_scgm.ipynb"
+NB_PATH = REPO / "notebooks" / "04_bayesian_network_from_scgm.ipynb"
 
 
 def md(text: str) -> dict:
@@ -37,7 +37,7 @@ def main() -> None:
 
 ## 1 — Objectif
 
-Ce notebook reprend la **même chaîne BN** que `04_malt_to_bayesian_network`, mais en entrée les **exports SCGM** produits par `01_scgm_text_btp_experiment` (`metadata_with_predictions.csv`, `prob_z_x.npy`, etc.). Les copies « type MALT » vont dans `staging/malt_like_exports/`. Les figures BN sont dans `figures/static/`, `figures/interactive/` (Plotly + Pyvis) et `figures/nodes/` (cartes CPD par nœud).
+Ce notebook reprend la **même chaîne BN** que `04_malt_to_bayesian_network`, mais en entrée les **exports SCGM** produits par `01_scgm_text_experiment` (`metadata_with_predictions.csv`, `prob_z_x.npy`, etc.). Le corpus dépend du CSV / config SCGM, pas du nom du notebook. Les copies « type MALT » vont dans `staging/malt_like_exports/`. Les figures BN sont dans `figures/static/`, `figures/interactive/` (Plotly + Pyvis) et `figures/nodes/` (cartes CPD par nœud).
 
 Les variables binaires au niveau accident décrivent la **co-présence de motifs latents `z`** (SCGM) au-dessus d’un seuil de confiance ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
 

@@ -72,10 +72,12 @@ python scripts/export_malt_outputs.py \
   --source_checkpoint resultats/scgm_text/checkpoints/best_model.pt \
   --output_dir resultats/malt/exports
 
-# 4. Méthodes contrastives (optionnel)
-python scripts/train_batch_triplet.py
+# 4. Méthodes contrastives (legacy + post-traitement automatique)
+python scripts/train_batch_triplet.py   # → resultats/batch_triplet/embeddings/ + metrics/
 python scripts/train_softtriple.py
 python scripts/train_supcon.py
+# Post-traitement manuel si besoin :
+python scripts/postprocess_contrastive_results.py --method batch_triplet
 
 # 5. Agrégation
 python scripts/collect_results.py
@@ -94,11 +96,15 @@ sbatch compare_methods.slurm
 
 Logs : `resultats/<method>/logs/slurm-*.out`. Cache HF : `$SCRATCH/hf_cache` si défini.
 
+`submit_all.sh` crée les dossiers `resultats/*/logs/` **avant** `sbatch` (évite les échecs SLURM si `resultats/` n'existe pas encore). Les fichiers `*.slurm` utilisent des fins de ligne LF (voir `.gitattributes`).
+
 ## SCGM-Text
 
 Macros observées `A0`–`C` ; latents `z` = thèmes intra-macro. Données : `dataset/data_btp.csv` + `embeddings/Qwen3-Embedding-0.6B_btp.csv` (alignement `doc_id`).
 
 **`input_mode`** : `text` (backbone HF fine-tunable) ou `precomputed_embeddings` (colonnes `dim_*`). **`projection`** : `identity` | `linear` | `mlp`. Avec `text` + `freeze_backbone=false`, `identity` signifie **h = f_θ(x)** (pas des embeddings figés).
+
+**Sélection du meilleur checkpoint** (`best_model.pt`) : `val_eta2_macro_balanced` par défaut (pas F1). Option `--best_checkpoint_metric composite` avec `--best_checkpoint_lambda` (score = eta² − λ·C1). Diagnostics classifieur / subtype : `--compute_classifier_diagnostics` / `--compute_subtype_diagnostics` (désactivés par défaut).
 
 Presets d'entraînement :
 
@@ -136,28 +142,33 @@ jupyter notebook notebooks/03_compare_malt_bertopic_kmeans_topics.ipynb
 ## Réseaux bayésiens
 
 - `notebooks/04_malt_to_bayesian_network.ipynb` — entrée `resultats/malt/exports`, sortie `resultats/malt/bn_staging/`
-- `notebooks/04_bayesian_network_btp_from_scgm.ipynb` — entrée `resultats/scgm_text/`, sortie `resultats/scgm_text/bn_staging/`
+- `notebooks/04_bayesian_network_from_scgm.ipynb` — entrée `resultats/scgm_text/`, sortie `resultats/scgm_text/bn_staging/`
 
 Dépendances : `numpy<2`, `pgmpy>=0.1.23,<1.0`. Utiliser le même interpréteur Python que le noyau Jupyter (`import sys; print(sys.executable)`).
 
 ## Notebooks
 
+Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameters* ou les YAML `configs/methods/`, pas dans le nom du fichier `.ipynb`.
+
 | Notebook | Rôle |
 |----------|------|
-| `00_check_data.ipynb` | Aperçu dataset |
-| `01_compare_embedding_methods.ipynb` | Tableau eta² / RankMe (lecture `resultats/comparisons/`) |
-| `01_scgm_text_btp_experiment.ipynb` | Pipeline SCGM complet (expérimental) |
-| `02_malt_btp_to_mettalurgie_transfer.ipynb` | Transfert MALT |
+| `00_check_data.ipynb` | Aperçu du CSV configuré |
+| `01_compare_embedding_methods.ipynb` | Comparaison globale eta² / RankMe |
+| `01_scgm_text_experiment.ipynb` | Pipeline SCGM complet (expérimental) |
+| `02_malt_btp_to_mettalurgie_transfer.ipynb` | Transfert MALT (ex. BTP → métallurgie) |
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
 | `04_malt_to_bayesian_network.ipynb` | BN depuis MALT |
-| `04_bayesian_network_btp_from_scgm.ipynb` | BN depuis SCGM |
+| `04_bayesian_network_from_scgm.ipynb` | BN depuis SCGM |
+| `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`resultats/batch_triplet/`) |
+| `05_view_softtriple_results.ipynb` | Résultats SoftTriple |
+| `05_view_supcon_results.ipynb` | Résultats SupCon |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
 
-Régénération des notebooks :
+Régénération :
 
 ```bash
-python scripts/build_analysis_notebooks.py
+python scripts/build_analysis_notebooks.py   # 00, 01_compare, 05_view_*
 python scripts/rebuild_notebook_01.py
 python scripts/build_malt_notebook.py
 python scripts/build_notebook_03_compare_topics.py
@@ -178,10 +189,10 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 ## Legacy
 
-Code historique sous `legacy/` (contrastif v0, anciens scripts d'export). Entrée actuelle :
+Code historique sous `legacy/` (contrastif v0, anciens scripts d'export). Les scripts `train_*` contrastifs délèguent au legacy puis exécutent automatiquement `postprocess_contrastive_results.py` (embeddings → `resultats/<method>/embeddings/final_embeddings.csv`, `metrics/metrics_geometry.csv`, `configs/config_resolved.yaml`).
 
 ```bash
-python scripts/train_batch_triplet.py   # délègue à legacy/contrastive_method_v0/
+python scripts/train_batch_triplet.py
 ```
 
 ## Tests

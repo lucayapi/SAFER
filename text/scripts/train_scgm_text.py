@@ -43,9 +43,7 @@ from scgm_text.metrics import (
     homogeneity_purity_safe,
     macro_f1,
     mean_entropy,
-    pca_energy_c1_c10,
     q_assignment_distribution,
-    rankme_effective_rank,
     subtype_alignment_diagnostics,
 )
 from scgm_text.optimizers import build_optimizer
@@ -61,12 +59,13 @@ from scgm_text.training_diagnostics import (
     warn_identity_frozen_backbone,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
+from metrics.geometry import build_geometry_metrics_row
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output, resolve_output_dir
 from safer_core.seed import set_seed
 from scgm_text.utils_io import ensure_dir, load_yaml_config, save_json
 
-METRIC_FIELDS = [
+BASE_METRIC_FIELDS = [
     "epoch",
     "train_loss",
     "ls1",
@@ -83,25 +82,44 @@ METRIC_FIELDS = [
     "projection",
     "fidelity_mode",
     "use_self_distillation",
-    "train_acc",
-    "train_macro_f1",
-    "train_nmi_subtype",
-    "train_ari_subtype",
-    "train_homogeneity_subtype",
-    "train_purity_subtype",
     "train_entropy_pz",
     "train_entropy_py_z",
     "n_active_z",
     "z_usage_entropy",
     "sinkhorn_n_active_z",
     "sinkhorn_assignment_entropy",
-    "val_acc",
-    "val_macro_f1",
-    "val_balanced_acc",
+    "train_eta2_macro_balanced",
+    "train_eta2_weighted",
+    "val_eta2_macro_balanced",
+    "val_eta2_weighted",
     "rankme_global",
     "c1_global",
     "c10_global",
 ]
+
+CLASSIFIER_METRIC_FIELDS = [
+    "train_acc",
+    "train_macro_f1",
+    "val_acc",
+    "val_macro_f1",
+    "val_balanced_acc",
+]
+
+SUBTYPE_METRIC_FIELDS = [
+    "train_nmi_subtype",
+    "train_ari_subtype",
+    "train_homogeneity_subtype",
+    "train_purity_subtype",
+]
+
+
+def build_metric_fields(args: argparse.Namespace) -> List[str]:
+    fields = list(BASE_METRIC_FIELDS)
+    if getattr(args, "compute_classifier_diagnostics", False):
+        fields.extend(CLASSIFIER_METRIC_FIELDS)
+    if getattr(args, "compute_subtype_diagnostics", False):
+        fields.extend(SUBTYPE_METRIC_FIELDS)
+    return fields
 
 
 def parse_args() -> argparse.Namespace:
@@ -180,6 +198,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--smoke_epochs", type=int, default=None)
+    parser.add_argument(
+        "--best_checkpoint_metric",
+        type=str,
+        default="eta2_macro_balanced",
+        choices=["eta2_macro_balanced", "composite"],
+        help="Critère de sélection du best_model.pt (géométrie, pas F1).",
+    )
+    parser.add_argument(
+        "--best_checkpoint_lambda",
+        type=float,
+        default=0.01,
+        help="λ pour composite = eta2_macro_balanced - λ * c1_global.",
+    )
+    parser.add_argument(
+        "--compute_classifier_diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Calcule accuracy / F1 (diagnostic secondaire, hors sélection).",
+    )
+    parser.add_argument(
+        "--compute_subtype_diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Calcule NMI/ARI subtype sur le train (diagnostic secondaire).",
+    )
     return parser.parse_args()
 
 
@@ -329,6 +372,22 @@ def run_estep(
     return q_new, sink_diag
 
 
+def checkpoint_selection_score(
+    val_metrics: Dict[str, float],
+    metric_name: str,
+    lambda_c1: float,
+) -> float:
+    eta2 = float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
+    if np.isnan(eta2):
+        eta2 = float("-inf")
+    if metric_name == "composite":
+        c1 = float(val_metrics.get("c1_global", 0.0))
+        if np.isnan(c1):
+            c1 = 0.0
+        return eta2 - float(lambda_c1) * c1
+    return eta2
+
+
 def evaluate_split(
     model: SCGMTextModel,
     data_loader,
@@ -336,6 +395,8 @@ def evaluate_split(
     tau: float,
     n_class: int,
     prefix: str = "val",
+    *,
+    compute_classifier_diagnostics: bool = False,
 ) -> Tuple[Dict[str, float], np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
     y_true: List[int] = []
@@ -367,18 +428,27 @@ def evaluate_split(
     prob_z = np.concatenate(prob_z_list, axis=0)
     prob_yz = np.concatenate(prob_yz_list, axis=0)
 
-    metrics = {
-        f"{prefix}_acc": accuracy(y_true_arr, y_pred_arr),
-        f"{prefix}_macro_f1": macro_f1(y_true_arr, y_pred_arr),
-        f"{prefix}_balanced_acc": balanced_accuracy(y_true_arr, y_pred_arr),
+    macro_labels = np.array([ID2LABEL[int(i)] for i in y_true_arr])
+    geom = build_geometry_metrics_row(
+        embedding_arr,
+        macro_labels,
+        method=f"{prefix}_scgm",
+        l2_normalize=True,
+    )
+    metrics: Dict[str, float] = {
+        f"{prefix}_eta2_macro_balanced": float(geom["eta2_macro_balanced"]),
+        f"{prefix}_eta2_weighted": float(geom["eta2_weighted"]),
         f"{prefix}_entropy_pz": mean_entropy(prob_z),
         f"{prefix}_entropy_py_z": mean_entropy(prob_yz),
         "n_active_z": float(count_active_clusters(z_pred_arr)),
+        "rankme_global": float(geom["rankme_global"]),
+        "c1_global": float(geom["c1_global"]),
+        "c10_global": float(geom["c10_global"]),
     }
-    c1, c10 = pca_energy_c1_c10(embedding_arr)
-    metrics["rankme_global"] = rankme_effective_rank(embedding_arr)
-    metrics["c1_global"] = c1
-    metrics["c10_global"] = c10
+    if compute_classifier_diagnostics:
+        metrics[f"{prefix}_acc"] = accuracy(y_true_arr, y_pred_arr)
+        metrics[f"{prefix}_macro_f1"] = macro_f1(y_true_arr, y_pred_arr)
+        metrics[f"{prefix}_balanced_acc"] = balanced_accuracy(y_true_arr, y_pred_arr)
     return metrics, y_true_arr, y_pred_arr, embedding_arr
 
 
@@ -597,21 +667,24 @@ def run_training(args: argparse.Namespace) -> None:
     save_json(config_payload, layout["configs"] / "config.json")
     save_json(LABEL2ID, layout["configs"] / "label2id.json")
 
-    init_metrics_csv(dirs["train_log_csv"], METRIC_FIELDS)
+    metric_fields = build_metric_fields(args)
+    init_metrics_csv(dirs["train_log_csv"], metric_fields)
     legacy_fields = [
         "epoch",
         "train_loss",
         "loss_macro",
         "loss_latent",
-        "val_acc",
-        "val_macro_f1",
-        "val_balanced_acc",
+        "val_eta2_macro_balanced",
+        "val_eta2_weighted",
         "rankme_global",
         "c1_global",
         "c10_global",
     ]
+    if args.compute_classifier_diagnostics:
+        legacy_fields.extend(["val_acc", "val_macro_f1", "val_balanced_acc"])
 
-    best_f1 = -1.0
+    best_score = float("-inf")
+    best_epoch = 0
     with open(dirs["legacy_logs_csv"], "w", newline="", encoding="utf-8") as legacy_file:
         legacy_writer = csv.DictWriter(legacy_file, fieldnames=legacy_fields)
         legacy_writer.writeheader()
@@ -684,10 +757,29 @@ def run_training(args: argparse.Namespace) -> None:
 
             nb = max(num_batches, 1)
             train_metrics, _, _, _ = evaluate_split(
-                model, train_loader, device, args.tau, args.n_class, prefix="train"
+                model,
+                train_loader,
+                device,
+                args.tau,
+                args.n_class,
+                prefix="train",
+                compute_classifier_diagnostics=args.compute_classifier_diagnostics,
             )
-            train_metrics.update(compute_train_subtype_metrics(model, train_loader, dataset, train_idx, device, args.tau))
-            val_metrics, _, _, _ = evaluate_split(model, val_loader, device, args.tau, args.n_class, prefix="val")
+            if args.compute_subtype_diagnostics:
+                train_metrics.update(
+                    compute_train_subtype_metrics(
+                        model, train_loader, dataset, train_idx, device, args.tau
+                    )
+                )
+            val_metrics, _, _, _ = evaluate_split(
+                model,
+                val_loader,
+                device,
+                args.tau,
+                args.n_class,
+                prefix="val",
+                compute_classifier_diagnostics=args.compute_classifier_diagnostics,
+            )
 
             row: Dict[str, Any] = {
                 "epoch": epoch,
@@ -710,34 +802,36 @@ def run_training(args: argparse.Namespace) -> None:
                 **val_metrics,
                 **sinkhorn_diag,
             }
-            for key in METRIC_FIELDS:
+            for key in metric_fields:
                 row.setdefault(key, float("nan"))
 
             with open(dirs["train_log_csv"], "a", newline="", encoding="utf-8") as mf:
-                csv.DictWriter(mf, fieldnames=METRIC_FIELDS, extrasaction="ignore").writerow(row)
+                csv.DictWriter(mf, fieldnames=metric_fields, extrasaction="ignore").writerow(row)
             append_jsonl(row, dirs["epoch_jsonl"])
 
-            legacy_writer.writerow(
-                {
-                    "epoch": epoch,
-                    "train_loss": row["train_loss"],
-                    "loss_macro": row["loss_macro"],
-                    "loss_latent": row["loss_latent"],
-                    "val_acc": row.get("val_acc"),
-                    "val_macro_f1": row.get("val_macro_f1"),
-                    "val_balanced_acc": row.get("val_balanced_acc"),
-                    "rankme_global": row.get("rankme_global"),
-                    "c1_global": row.get("c1_global"),
-                    "c10_global": row.get("c10_global"),
-                }
-            )
+            legacy_row = {
+                "epoch": epoch,
+                "train_loss": row["train_loss"],
+                "loss_macro": row["loss_macro"],
+                "loss_latent": row["loss_latent"],
+                "val_eta2_macro_balanced": row.get("val_eta2_macro_balanced"),
+                "val_eta2_weighted": row.get("val_eta2_weighted"),
+                "rankme_global": row.get("rankme_global"),
+                "c1_global": row.get("c1_global"),
+                "c10_global": row.get("c10_global"),
+            }
+            if args.compute_classifier_diagnostics:
+                legacy_row["val_acc"] = row.get("val_acc")
+                legacy_row["val_macro_f1"] = row.get("val_macro_f1")
+                legacy_row["val_balanced_acc"] = row.get("val_balanced_acc")
+            legacy_writer.writerow(legacy_row)
             legacy_file.flush()
 
             print(
                 f"Epoch {epoch}/{args.epochs} | lr={current_lr:.6f} | "
                 f"loss={row['train_loss']:.4f} | ls1={row['ls1']:.4f} ls2={row['ls2']:.4f} ls3={row['ls3']:.4f} | "
-                f"train_acc={row.get('train_acc', float('nan')):.4f} | "
-                f"val_macro_f1={row.get('val_macro_f1', float('nan')):.4f}",
+                f"val_eta2={row.get('val_eta2_macro_balanced', float('nan')):.4f} | "
+                f"rankme={row.get('rankme_global', float('nan')):.2f}",
                 flush=True,
             )
 
@@ -753,8 +847,14 @@ def run_training(args: argparse.Namespace) -> None:
                 val_idx,
                 ema_teacher,
             )
-            if val_metrics.get("val_macro_f1", -1.0) > best_f1:
-                best_f1 = val_metrics["val_macro_f1"]
+            score = checkpoint_selection_score(
+                val_metrics,
+                args.best_checkpoint_metric,
+                args.best_checkpoint_lambda,
+            )
+            if score > best_score:
+                best_score = score
+                best_epoch = epoch
                 save_checkpoint(
                     os.path.join(dirs["checkpoints_dir"], "best_model.pt"),
                     model,
@@ -764,6 +864,13 @@ def run_training(args: argparse.Namespace) -> None:
                     val_idx,
                     ema_teacher,
                 )
+
+    config_payload["best_checkpoint_metric"] = args.best_checkpoint_metric
+    config_payload["best_checkpoint_lambda"] = args.best_checkpoint_lambda
+    config_payload["best_checkpoint_score"] = best_score
+    config_payload["best_checkpoint_epoch"] = best_epoch
+    save_config_resolved(config_payload, layout["root"])
+    save_json(config_payload, layout["configs"] / "config.json")
 
 
 def main() -> None:

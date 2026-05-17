@@ -59,4 +59,15 @@ def run_contrastive_method(method_name: str, argv: list[str] | None = None) -> i
     env = os.environ.copy()
     env["PYTHONPATH"] = os.pathsep.join([str(legacy_dir), str(TEXT_ROOT), env.get("PYTHONPATH", "")])
     print("Commande :", " ".join(cmd), flush=True)
-    return subprocess.call(cmd, cwd=str(legacy_dir), env=env)
+    rc = subprocess.call(cmd, cwd=str(legacy_dir), env=env)
+    if rc != 0:
+        return rc
+
+    from scripts.postprocess_contrastive_results import postprocess_contrastive_method
+
+    try:
+        postprocess_contrastive_method(method_name, args.config)
+    except Exception as exc:
+        print(f"[runner] Post-traitement échoué pour {method_name}: {exc}", flush=True)
+        return 1
+    return 0

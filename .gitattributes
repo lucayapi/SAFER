@@ -1,0 +1,2 @@
+# SLURM : une directive #SBATCH par ligne (évite l'affichage « une seule ligne » sur certains outils).
+*.slurm text eol=lf

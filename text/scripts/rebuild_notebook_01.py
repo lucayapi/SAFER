@@ -1,4 +1,4 @@
-"""Rebuild 01_scgm_text_btp_experiment.ipynb from 01_draft + extras (OpenAI, DataMap, optimizer)."""
+"""Rebuild 01_scgm_text_experiment.ipynb from 01_draft + extras (OpenAI, DataMap, optimizer)."""
 from __future__ import annotations
 
 import copy
@@ -7,7 +7,7 @@ from pathlib import Path
 
 NOTEBOOKS = Path(__file__).resolve().parents[1] / "notebooks"
 DRAFT = NOTEBOOKS / "01_draft.ipynb"
-OUT = NOTEBOOKS / "01_scgm_text_btp_experiment.ipynb"
+OUT = NOTEBOOKS / "01_scgm_text_experiment.ipynb"
 
 
 def cell_from_source(source: str, cell_type: str = "code", cell_id: str | None = None) -> dict:
@@ -679,6 +679,17 @@ def main() -> None:
     # Drop empty trailing cells from draft
     while cells and not get_source(cells[-1]).strip():
         cells.pop()
+
+    for c in cells:
+        if c.get("cell_type") == "markdown":
+            src = get_source(c)
+            if "SCGM Text BTP" in src:
+                c["source"] = [
+                    ln.replace("SCGM Text BTP Experiment", "SCGM Text Experiment")
+                    .replace("BTP Experiment", "Experiment")
+                    for ln in c["source"]
+                ]
+                break
 
     nb["cells"] = cells
     OUT.write_text(json.dumps(nb, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")

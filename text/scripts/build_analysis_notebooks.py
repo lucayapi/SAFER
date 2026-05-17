@@ -74,6 +74,13 @@ if "pred_label" in df.columns:
 
 
 def main() -> None:
+    import sys
+
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    from build_contrastive_view_notebooks import main as build_contrastive_views
+
     NB.mkdir(parents=True, exist_ok=True)
     (NB / "00_check_data.ipynb").write_text(
         json.dumps(_nb([_cell("# Vérification des données", "markdown"), _cell(CHECK_00)]), indent=1),
@@ -97,6 +104,7 @@ def main() -> None:
         encoding="utf-8",
     )
     print("Écrit notebooks 00 et 01 dans", NB)
+    build_contrastive_views()
 
 
 if __name__ == "__main__":
