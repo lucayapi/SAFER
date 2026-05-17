@@ -43,7 +43,7 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `scripts/` | CLI entraînement, export, évaluation, agrégation |
 | `jobs/` | Scripts SLURM Mésocentre |
 | `notebooks/` | Analyse (**.ipynb gitignored**, régénération locale via `scripts/build_*.py`) |
-| `legacy/` | Code historique (contrastif v0, anciens jobs) |
+| `legacy/` | Code historique (anciens jobs, hors contrastif) |
 | `resultats/` | **Toutes les sorties** (gitignored) |
 
 ## Sorties (`resultats/`)
@@ -89,11 +89,11 @@ python scripts/export_malt_outputs.py \
   --source_checkpoint resultats/scgm_text/checkpoints/best_model.pt \
   --output_dir resultats/malt/exports
 
-# 4. Méthodes contrastives (legacy + post-traitement automatique)
-python scripts/train_batch_triplet.py   # → resultats/batch_triplet/embeddings/ + metrics/
+# 4. Méthodes contrastives (entraînement natif, YAML configs/methods/*.yaml)
+python scripts/train_batch_triplet.py   # → resultats/<method>/embeddings/final_embeddings.csv
 python scripts/train_softtriple.py
 python scripts/train_supcon.py
-# Post-traitement manuel si besoin :
+# Recalcul métriques uniquement si besoin :
 python scripts/postprocess_contrastive_results.py --method batch_triplet
 
 # 5. Agrégation
@@ -215,13 +215,16 @@ Pas d'Accuracy / F1 / NMI dans le tableau principal de comparaison des méthodes
 
 Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les configs `configs/methods/`.
 
-## Legacy
+## Méthodes contrastives
 
-Code historique sous `legacy/` (contrastif v0, anciens scripts d'export). Les scripts `train_*` contrastifs délèguent au legacy puis exécutent automatiquement `postprocess_contrastive_results.py` (embeddings → `resultats/<method>/embeddings/final_embeddings.csv`, `metrics/metrics_geometry.csv`, `configs/config_resolved.yaml`).
+Entraînement single-run piloté par `configs/methods/batch_triplet.yaml`, `softtriple.yaml`, `supcon.yaml` (sections `data`, `model`, `training`). Split train/val par `accident_id` (`val_ratio`). Sorties standard :
 
-```bash
-python scripts/train_batch_triplet.py
-```
+- `resultats/<method>/embeddings/final_embeddings.csv` (colonnes `dim_0001` …)
+- `resultats/<method>/metrics/metrics_geometry.csv`
+- `resultats/<method>/checkpoints/best_model/`
+- `resultats/<method>/configs/config_resolved.yaml`
+
+Package : `contrastive_methods/` (`train.py`, `training_*.py`, `losses/`).
 
 ## Tests
 

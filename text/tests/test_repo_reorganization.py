@@ -69,14 +69,21 @@ def test_no_deprecated_duplicate_code_dirs():
         assert not path.exists(), f"Dossier dupliqué à supprimer : {path.name}"
 
 
-def test_legacy_contrastive_scripts_present():
-    root = TEXT_ROOT / "legacy" / "contrastive_method_v0"
-    for script in (
-        "batchTripplet/ftemb_script.py",
-        "Softriple/ftemb_script_softriple.py",
-        "Supcon/ftemb_script_supcon.py",
+def test_native_contrastive_modules_present():
+    pkg = TEXT_ROOT / "contrastive_methods"
+    for module in (
+        "config.py",
+        "data.py",
+        "export.py",
+        "metrics.py",
+        "train.py",
+        "training_triplet.py",
+        "training_supcon.py",
+        "training_softtriple.py",
+        "losses/supcon.py",
+        "losses/softtriple.py",
     ):
-        assert (root / script).is_file(), script
+        assert (pkg / module).is_file(), module
 
 
 def test_jobs_exist():

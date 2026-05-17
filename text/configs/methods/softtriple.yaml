@@ -1,14 +1,37 @@
 method_name: softtriple
-dataset_path: dataset/data_btp.csv
-text_col: sentence
-label_col: pred_label
-group_col: accident_id
+method: softtriple
 output_dir: resultats/softtriple
 use_prompt: false
 seed: 42
-backbone_name: Qwen/Qwen3-Embedding-0.6B
-batch_size: 128
-epochs: 30
-learning_rate: 2.0e-5
-use_contextual_prompt_with_summary: false
-use_fixed_instruction_prefix: false
+
+data:
+  dataset_path: dataset/data_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+  val_ratio: 0.1
+
+model:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  max_seq_length: 256
+
+training:
+  batch_size: 16
+  eval_batch_size: 64
+  encode_batch_size: 128
+  epochs: 30
+  learning_rate: 2.0e-5
+  warmup_ratio: 0.1
+  gradient_accumulation_steps: 1
+  gradient_checkpointing: false
+  use_fixed_instruction_prefix: false
+  use_contextual_prompt_with_summary: false
+
+softtriple:
+  centers_per_class: 5
+  gamma: 0.1
+  lambda: 10.0
+  delta: 0.01
+  tau: 0.01
+  center_max_similarity: 0.5

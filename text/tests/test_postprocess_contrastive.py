@@ -17,7 +17,6 @@ def test_postprocess_writes_metrics_geometry(tmp_path, monkeypatch):
     text_root = tmp_path / "text"
     (text_root / "configs" / "methods").mkdir(parents=True)
     (text_root / "dataset").mkdir(parents=True)
-    (text_root / "legacy" / "contrastive_method_v0" / "batchTripplet").mkdir(parents=True)
 
     data_csv = text_root / "dataset" / "data.csv"
     n = 40
@@ -35,33 +34,25 @@ def test_postprocess_writes_metrics_geometry(tmp_path, monkeypatch):
 
     dim = 4
     emb = pd.DataFrame({"doc_id": np.arange(1, n + 1)})
-    for i in range(dim):
-        emb[f"dim_{i}"] = rng.normal(size=n)
-    grid_dir = (
-        text_root
-        / "legacy"
-        / "contrastive_method_v0"
-        / "batchTripplet"
-        / "fnembeddings_grid"
-    )
-    grid_dir.mkdir(parents=True)
-    emb.to_csv(grid_dir / "embeddings__pred_label__lr1e-05_bs16_ep2.csv", index=False)
+    for i in range(1, dim + 1):
+        emb[f"dim_{i:04d}"] = rng.normal(size=n)
 
     cfg = {
         "method_name": "batch_triplet",
-        "dataset_path": "dataset/data.csv",
-        "label_col": "pred_label",
         "output_dir": "resultats/batch_triplet",
+        "data": {
+            "dataset_path": "dataset/data.csv",
+            "label_col": "pred_label",
+        },
     }
     (text_root / "configs" / "methods" / "batch_triplet.yaml").write_text(
         yaml.safe_dump(cfg), encoding="utf-8"
     )
 
     results = text_root / "resultats" / "batch_triplet"
-    results.mkdir(parents=True)
-    pd.DataFrame([{"combo_id": "lr1e-05_bs16_ep2", "selection_score_mean_test_delta_ratio": 0.5}]).to_csv(
-        results / "grid_search_summary.csv", index=False
-    )
+    emb_dir = results / "embeddings"
+    emb_dir.mkdir(parents=True)
+    emb.to_csv(emb_dir / "final_embeddings.csv", index=False)
 
     monkeypatch.setattr(paths_mod, "TEXT_ROOT", text_root)
     monkeypatch.setattr(paths_mod, "RESULTS_ROOT", text_root / "resultats")

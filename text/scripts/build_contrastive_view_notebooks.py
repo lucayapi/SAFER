@@ -52,32 +52,27 @@ for p in sorted(RESULTS.rglob("*"))[:80]:
 if len(list(RESULTS.rglob("*"))) > 80:
     print("…")
 
-summary_csv = RESULTS / "grid_search_summary.csv"
-if summary_csv.is_file():
-    grid = pd.read_csv(summary_csv)
-    display(grid.head(10))
-    if "selection_score_mean_test_delta_ratio" in grid.columns:
+train_log = RESULTS / "metrics" / "train_log.csv"
+if train_log.is_file():
+    tl = pd.read_csv(train_log)
+    display(tl.tail(10))
+    if "val_loss" in tl.columns:
         fig, ax = plt.subplots(figsize=(8, 4))
-        top = grid.head(min(10, len(grid)))
-        ax.barh(top["combo_id"].astype(str), top["selection_score_mean_test_delta_ratio"].astype(float))
-        ax.set_xlabel("score sélection (delta_ratio test)")
-        ax.set_title(f"{{DISPLAY_NAME}} — top combinaisons grid search")
+        ax.plot(tl["epoch"], tl["val_loss"], marker="o", label="val_loss")
+        if "train_loss" in tl.columns:
+            ax.plot(tl["epoch"], tl["train_loss"], marker="o", label="train_loss")
+        ax.set_xlabel("epoch")
+        ax.set_title(f"{{DISPLAY_NAME}} — courbe d'apprentissage")
+        ax.legend()
         plt.tight_layout()
         plt.show()
 else:
-    print("Pas de grid_search_summary.csv (entraînement non lancé ou ancien format).")
+    print("Pas de metrics/train_log.csv (entraînement non lancé).")
 
-for name in ("best_config.json", "final_full_data_training.json", "grid_search_summary.json"):
-    path = RESULTS / name
-    if path.is_file():
-        print(f"\\n=== {{name}} ===")
-        display(json.loads(path.read_text(encoding="utf-8")))
-
-# Métriques agrégées k-fold (meilleure combo ou modèle final)
-agg_candidates = sorted(RESULTS.rglob("*aggregate_metrics*.json"))
-for path in agg_candidates[:3]:
-    print(f"\\n=== {{path.relative_to(RESULTS)}} ===")
-    display(json.loads(path.read_text(encoding="utf-8")))
+resolved_cfg = RESULTS / "configs" / "config_resolved.yaml"
+if resolved_cfg.is_file():
+    print("\\n=== config_resolved.yaml ===")
+    display(yaml.safe_load(resolved_cfg.read_text(encoding="utf-8")))
 
 geom_csv = RESULTS / "metrics" / "metrics_geometry.csv"
 if geom_csv.is_file():
@@ -103,10 +98,8 @@ def _has_dim_cols(path: Path) -> bool:
     cols = pd.read_csv(path, nrows=0).columns
     return any(str(c).startswith("dim_") for c in cols)
 
-emb_csvs = [p for p in RESULTS.rglob("*.csv") if _has_dim_cols(p)]
-if not emb_csvs:
-    legacy_emb = list((ROOT / "legacy" / "contrastive_method_v0").rglob("fnembeddings_grid/*.csv"))
-    emb_csvs = legacy_emb[:5]
+final_emb = RESULTS / "embeddings" / "final_embeddings.csv"
+emb_csvs = [final_emb] if final_emb.is_file() else [p for p in RESULTS.rglob("*.csv") if _has_dim_cols(p)]
 if emb_csvs:
     print("Fichiers embeddings trouvés :")
     for p in emb_csvs[:5]:
