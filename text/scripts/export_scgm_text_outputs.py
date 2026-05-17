@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -43,7 +44,18 @@ def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
     return onehot
 
 
+def _normalize_method_root(output_dir: str) -> str:
+    """Si output_dir pointe vers un sous-dossier (ex. .../embeddings), remonter à la racine run."""
+    root = Path(output_dir).resolve()
+    if root.name in ("embeddings", "assignments", "topics", "metrics", "checkpoints", "figures"):
+        parent = root.parent
+        if (parent / "checkpoints").is_dir() or (parent / "metrics").is_dir():
+            return str(parent)
+    return str(root)
+
+
 def run_export(args: argparse.Namespace) -> None:
+    args.output_dir = _normalize_method_root(args.output_dir)
     layout = layout_method_output("scgm_text", args.output_dir)
     args.output_dir = str(layout["root"])
     emb_dir = layout["embeddings"]

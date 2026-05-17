@@ -309,7 +309,25 @@ from scgm_text.notebook_viz import plot_training_geometry_curves
 plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
-EXPORT_SOURCE = """_proj = EXPORTS_DIR / "projected_embeddings.npy"
+EXPORT_SOURCE = """def _verify_export_layout() -> None:
+    required = {
+        "projected_embeddings.npy": EXPORTS_DIR / "projected_embeddings.npy",
+        "metadata_with_predictions.csv": EXPORTS_DIR / "metadata_with_predictions.csv",
+        "themes_by_z.csv": TOPICS_DIR / "themes_by_z.csv",
+    }
+    missing = {k: str(v) for k, v in required.items() if not v.is_file()}
+    if not missing:
+        return
+    nested = EXPORTS_DIR / "embeddings" / "projected_embeddings.npy"
+    if nested.is_file():
+        raise FileNotFoundError(
+            "Export écrit sous embeddings/embeddings/ (mauvais --output_dir). "
+            f"Relancez avec --output_dir {OUTPUT_PATH} (racine du run, pas le sous-dossier embeddings/)."
+        )
+    raise FileNotFoundError(f"Export incomplet — fichiers manquants : {missing}")
+
+
+_proj = EXPORTS_DIR / "projected_embeddings.npy"
 if SKIP_EXPORT_IF_PRESENT and _proj.is_file():
     print(f"Export ignoré (déjà présent) : {_proj}")
 else:
@@ -319,7 +337,7 @@ else:
         "--data_csv", DATA_CSV,
         "--emb_csv", EMB_CSV,
         "--checkpoint", str(CHECKPOINT_PATH),
-        "--output_dir", str(EXPORTS_DIR),
+        "--output_dir", str(OUTPUT_PATH),
         "--label_col", LABEL_COL,
         "--pred_ok_col", PRED_OK_COL,
         "--group_col", GROUP_COL,
@@ -327,8 +345,14 @@ else:
         "--device", "cuda" if torch.cuda.is_available() else "cpu",
     ]
     run_cli(export_cmd)
-    exported = sorted(p.name for p in EXPORTS_DIR.iterdir())
-    print("artefacts exportés:", exported)
+    for sub in ("embeddings", "topics", "assignments"):
+        folder = OUTPUT_PATH / sub
+        if folder.is_dir():
+            names = sorted(p.name for p in folder.iterdir() if p.is_file())
+            print(f"{sub}/ ({len(names)} fichiers):", names[:12], "..." if len(names) > 12 else "")
+
+_verify_export_layout()
+print("Export OK —", _proj)
 """
 
 CHECKPOINT_SOURCE = """checkpoint = torch.load(
