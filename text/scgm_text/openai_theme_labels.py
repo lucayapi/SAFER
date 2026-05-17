@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -109,7 +110,15 @@ def _clamp_theme_summary_words(text: str, lo: int = 6, hi: int = 10) -> str:
     return " ".join(words[:hi])
 
 
-def _get_client():
+def _default_openai_timeout() -> float:
+    raw = os.environ.get("OPENAI_TIMEOUT", "120")
+    try:
+        return max(5.0, float(raw))
+    except ValueError:
+        return 120.0
+
+
+def _get_client(*, timeout: Optional[float] = None, max_retries: Optional[int] = None):
     load_openai_dotenv()
     try:
         from openai import OpenAI
@@ -123,11 +132,35 @@ def _get_client():
             "(chargé automatiquement si python-dotenv est installé), ou exportez-la dans le shell. "
             "Ne commitez jamais la clé."
         )
-    kwargs: Dict[str, Any] = {"api_key": api_key}
+    kwargs: Dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": timeout if timeout is not None else _default_openai_timeout(),
+        "max_retries": max_retries
+        if max_retries is not None
+        else int(os.environ.get("OPENAI_MAX_RETRIES", "2")),
+    }
     base_url = os.environ.get("OPENAI_BASE_URL")
     if base_url:
         kwargs["base_url"] = base_url.strip()
     return OpenAI(**kwargs)
+
+
+def probe_openai_connectivity(*, timeout: float = 20.0) -> bool:
+    """
+    Vérifie l’accès réseau à l’API (login nodes / JupyterHub souvent sans Internet sortant).
+
+    Retourne False en cas de timeout, DNS ou pare-feu — sans lever d’exception.
+    """
+    if not os.environ.get("OPENAI_API_KEY"):
+        load_openai_dotenv()
+    if not os.environ.get("OPENAI_API_KEY"):
+        return False
+    try:
+        cli = _get_client(timeout=timeout, max_retries=0)
+        cli.models.list()
+        return True
+    except Exception:
+        return False
 
 
 def _parse_json_content(content: str) -> Dict[str, Any]:
@@ -142,6 +175,22 @@ def _parse_json_content(content: str) -> Dict[str, Any]:
         raise
 
 
+def _fallback_row_labels(row: pd.Series, *, summary_words_min: int, summary_words_max: int) -> Dict[str, str]:
+    """Étiquettes dérivées des mots TF-IDF si l’API OpenAI est indisponible."""
+    z_id = int(row["z_id"])
+    macro = str(row.get("dominant_macro", ""))
+    raw_words = str(row.get("top_words", "")).replace(";", " ").replace(",", " ")
+    words = [w for w in raw_words.split() if w][:5]
+    while len(words) < 5:
+        words.append("")
+    summary_seed = " ".join(w for w in words if w) or f"topic latent z{z_id}"
+    return {
+        "theme_title": f"z{z_id} {macro}".strip()[:60],
+        "theme_summary": _clamp_theme_summary_words(summary_seed, summary_words_min, summary_words_max),
+        "theme_keywords": ";".join(w for w in words if w),
+    }
+
+
 def _one_row(
     client: Any,
     model: str,
@@ -151,6 +200,7 @@ def _one_row(
     n_example_texts: int,
     summary_words_min: int,
     summary_words_max: int,
+    request_timeout: Optional[float] = None,
 ) -> Dict[str, str]:
     examples = _split_example_sentences(str(row.get("top_sentences", "")), n_example_texts)
     if not examples:
@@ -170,6 +220,10 @@ def _one_row(
         example_block=example_block,
         n_examples_cap=int(n_example_texts),
     )
+    create_kwargs: Dict[str, Any] = {}
+    if request_timeout is not None:
+        create_kwargs["timeout"] = float(request_timeout)
+
     resp = client.chat.completions.create(
         model=model,
         temperature=temperature,
@@ -178,6 +232,7 @@ def _one_row(
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user},
         ],
+        **create_kwargs,
     )
     raw = resp.choices[0].message.content or "{}"
     data = _parse_json_content(raw)
@@ -208,6 +263,9 @@ def enrich_themes_by_z_openai(
     summary_words_max: int = 10,
     client: Any = None,
     show_progress: bool = True,
+    skip_on_error: bool = False,
+    request_timeout: Optional[float] = None,
+    max_rows: Optional[int] = None,
 ) -> pd.DataFrame:
     """
     Lit ``themes_by_z.csv`` et écrit ``themes_by_z_openai.csv`` (mêmes colonnes + titres/résumé/mots-clés).
@@ -235,20 +293,40 @@ def enrich_themes_by_z_openai(
     summaries: List[str] = []
     kw_strings: List[str] = []
     rows = list(frame.iterrows())
+    if max_rows is not None:
+        rows = rows[: max(0, int(max_rows))]
     iterator = tqdm(rows, desc="OpenAI thèmes par z", unit="topic") if show_progress else rows
+    failures = 0
     for _, row in iterator:
-        parsed = _one_row(
-            cli,
-            model=model,
-            temperature=temperature,
-            row=row,
-            n_example_texts=n_ex,
-            summary_words_min=lo,
-            summary_words_max=hi,
-        )
+        try:
+            parsed = _one_row(
+                cli,
+                model=model,
+                temperature=temperature,
+                row=row,
+                n_example_texts=n_ex,
+                summary_words_min=lo,
+                summary_words_max=hi,
+                request_timeout=request_timeout,
+            )
+        except Exception as exc:
+            if not skip_on_error:
+                raise
+            failures += 1
+            parsed = _fallback_row_labels(row, summary_words_min=lo, summary_words_max=hi)
+            warnings.warn(
+                f"z_id={row.get('z_id')}: API OpenAI indisponible ({type(exc).__name__}) — libellé local utilisé.",
+                stacklevel=2,
+            )
         titles.append(parsed["theme_title"])
         summaries.append(parsed["theme_summary"])
         kw_strings.append(parsed["theme_keywords"])
+
+    if failures:
+        print(
+            f"[openai_theme_labels] {failures}/{len(rows)} topics sans API "
+            f"(timeout réseau fréquent sur nœuds de calcul — lancez depuis le login ou OPENAI_BASE_URL)."
+        )
 
     enriched = frame.copy()
     enriched["theme_title"] = titles

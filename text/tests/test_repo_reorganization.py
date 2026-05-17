@@ -86,6 +86,7 @@ def test_jobs_exist():
         "train_softtriple.sh",
         "train_supcon.sh",
         "export_raw_embeddings.sh",
+        "enrich_scgm_themes_openai.sh",
         "compare_methods.sh",
     ):
         assert (JOBS_DIR / name).is_file(), name

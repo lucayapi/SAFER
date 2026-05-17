@@ -63,8 +63,7 @@ TSNE_SAMPLE_SIZE = 8000
 DATAMAP_MAX_POINTS = 12000
 RAW_EMBEDDING_UMAP_MAX_POINTS = 12000
 DATAMAP_SEED = 42
-DATAMAP_LABEL_MODE = "theme_summary"  # theme_summary | macro_z
-N_OPENAI_EXAMPLE_TEXTS = 5
+DATAMAP_LABEL_MODE = "theme_summary"  # theme_summary | macro_z (theme_summary exige themes_by_z_openai.csv)
 DATAMAP_SHOW_MACRO_CENTROIDS = True
 """
 
@@ -255,6 +254,8 @@ python scripts/export_scgm_text_outputs.py \\
 ```
 
 Attendu : `checkpoints/best_model.pt`, `metrics/train_log.csv` (ou `logs.csv`), puis exports sous `embeddings/` et `topics/`.
+
+Libellés OpenAI pour la carte DataMap : `bash jobs/enrich_scgm_themes_openai.sh` sur le **login** (pas dans ce notebook).
 """
 
 RESULTS_SOURCE = """require_scgm_artifacts()
@@ -382,40 +383,14 @@ PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pre
 - Interactif Plotly : `05_projection_pca_interactive.html`, `05_projection_tsne_interactive.html`
 """
 
-OPENAI_MD = """## 11 bis — Thèmes latents étiquetés par OpenAI (optionnel)
-
-Nécessite `OPENAI_API_KEY` (optionnellement `OPENAI_BASE_URL`). Définir dans `.env` à la racine ou `scgm_text/.env` ; la cellule appelle `load_openai_dotenv()`. Ne pas versionner la clé.
-"""
-
-OPENAI_CODE = """import importlib
-
-import scgm_text.openai_theme_labels as _openai_theme_labels
-
-importlib.reload(_openai_theme_labels)
-enrich_themes_by_z_openai = _openai_theme_labels.enrich_themes_by_z_openai
-load_openai_dotenv = _openai_theme_labels.load_openai_dotenv
-
-load_openai_dotenv()
-
-themes_in = TOPICS_DIR / "themes_by_z.csv"
-themes_out = TOPICS_DIR / "themes_by_z_openai.csv"
-if not themes_in.exists():
-    print(f"Fichier manquant : {themes_in} (exécuter l'export d'abord).")
-elif not os.environ.get("OPENAI_API_KEY"):
-    print("OPENAI_API_KEY non défini : enrichissement OpenAI ignoré.")
-else:
-    enrich_themes_by_z_openai(
-        themes_in,
-        themes_out,
-        n_example_texts=N_OPENAI_EXAMPLE_TEXTS,
-    )
-    print(f"Écrit : {themes_out}")
-"""
-
-DATAMAP_MD = """## 11 ter — Carte 2D des segments (UMAP + DataMapPlot)
+DATAMAP_MD = """## 11 bis — Carte 2D des segments (UMAP + DataMapPlot)
 
 Sous-échantillon (`DATAMAP_MAX_POINTS`). UMAP sur `projected_embeddings.npy`.
-Si `DATAMAP_LABEL_MODE == "theme_summary"` et `themes_by_z_openai.csv` existe, libellés = `theme_summary` via `z_hat`.
+
+Libellés OpenAI (`theme_summary`) : produits **hors notebook** avec
+`bash jobs/enrich_scgm_themes_openai.sh` sur le **login** (accès Internet), après export SCGM.
+Fichier attendu : `topics/themes_by_z_openai.csv`. Sinon `DATAMAP_LABEL_MODE = "macro_z"`.
+
 `DATAMAP_SHOW_MACRO_CENTROIDS` : marqueurs `P` = moyenne UMAP par macro (A0–C).
 
 - Statique : `datamap_segments.png`
@@ -642,11 +617,9 @@ def main() -> None:
     cells[22] = cell_from_source(LOGS_SOURCE, cell_id="386ed2ac")
     cells[24] = cell_from_source(CHECKPOINT_SOURCE, cell_id="c33b3818")
 
-    # Insert 11 bis / 11 ter after export (index 27)
+    # DataMap après export (index 27)
     insert_at = 27
     extras = [
-        cell_from_source(OPENAI_MD, cell_type="markdown", cell_id="eb38d538"),
-        cell_from_source(OPENAI_CODE, cell_id="3d4702b8"),
         cell_from_source(DATAMAP_MD, cell_type="markdown", cell_id="a429416f"),
         cell_from_source(DATAMAP_CODE, cell_id="2e816d8a"),
     ]

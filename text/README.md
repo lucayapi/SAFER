@@ -63,6 +63,8 @@ python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 python scripts/export_scgm_text_outputs.py \
   --checkpoint resultats/scgm_text/checkpoints/best_model.pt \
   --output_dir resultats/scgm_text
+# Thèmes OpenAI (login / Internet requis — pas dans le notebook Jupyter)
+bash jobs/enrich_scgm_themes_openai.sh
 python scripts/evaluate_scgm_text.py \
   --exports_dir resultats/scgm_text/embeddings \
   --output_dir resultats/scgm_text/metrics
@@ -113,11 +115,20 @@ python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 python scripts/train_scgm_text.py --config configs/scgm_text_strict_finetune_identity.yaml --strict_finetune_identity
 ```
 
-Thèmes OpenAI (optionnel) :
+Thèmes OpenAI (`themes_by_z_openai.csv`, hors notebook — accès Internet requis) :
 
 ```bash
-python -m scgm_text.openai_theme_labels resultats/scgm_text/topics/themes_by_z.csv --n-example-texts 5
+# Sur le nœud de login HPC2 (recommandé) :
+cd text && bash jobs/enrich_scgm_themes_openai.sh
+
+# Ou en CLI :
+python scripts/enrich_scgm_themes_openai.py --output_dir resultats/scgm_text
+
+# Test connectivité seulement :
+PROBE_ONLY=1 bash jobs/enrich_scgm_themes_openai.sh
 ```
+
+Prérequis : `OPENAI_API_KEY` dans `text/.env` ; export SCGM déjà fait (`topics/themes_by_z.csv`).
 
 ## MALT-EM
 
