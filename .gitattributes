@@ -1,2 +1,2 @@
-# SLURM : une directive #SBATCH par ligne (évite l'affichage « une seule ligne » sur certains outils).
-*.slurm text eol=lf
+# Jobs SLURM (bash + #SBATCH) : une directive par ligne ; fins de ligne LF.
+text/jobs/*.sh text eol=lf

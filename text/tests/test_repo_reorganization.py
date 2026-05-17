@@ -81,12 +81,12 @@ def test_legacy_contrastive_scripts_present():
 
 def test_jobs_exist():
     for name in (
-        "train_scgm_text.slurm",
-        "train_batch_triplet.slurm",
-        "train_softtriple.slurm",
-        "train_supcon.slurm",
-        "export_raw_embeddings.slurm",
-        "compare_methods.slurm",
+        "train_scgm_text.sh",
+        "train_batch_triplet.sh",
+        "train_softtriple.sh",
+        "train_supcon.sh",
+        "export_raw_embeddings.sh",
+        "compare_methods.sh",
     ):
         assert (JOBS_DIR / name).is_file(), name
 

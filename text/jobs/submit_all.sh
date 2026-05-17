@@ -11,10 +11,10 @@ mkdir -p resultats/supcon/logs
 mkdir -p resultats/comparisons/logs
 cd "$DIR"
 
-sbatch export_raw_embeddings.slurm
-sbatch train_scgm_text.slurm
-sbatch train_batch_triplet.slurm
-sbatch train_softtriple.slurm
-sbatch train_supcon.slurm
+sbatch export_raw_embeddings.sh
+sbatch train_scgm_text.sh
+sbatch train_batch_triplet.sh
+sbatch train_softtriple.sh
+sbatch train_supcon.sh
 echo "Jobs soumis. Suivi : squeue -u \$USER"
-echo "Après complétion : sbatch compare_methods.slurm"
+echo "Après complétion : sbatch compare_methods.sh"

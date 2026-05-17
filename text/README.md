@@ -88,15 +88,15 @@ python scripts/compare_methods.py
 
 ```bash
 cd jobs
-sbatch train_scgm_text.slurm
-sbatch train_batch_triplet.slurm
+sbatch train_scgm_text.sh
+sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
-sbatch compare_methods.slurm
+sbatch compare_methods.sh
 ```
 
 Logs : `resultats/<method>/logs/slurm-*.out`. Cache HF : `$SCRATCH/hf_cache` si défini.
 
-`submit_all.sh` crée les dossiers `resultats/*/logs/` **avant** `sbatch` (évite les échecs SLURM si `resultats/` n'existe pas encore). Les fichiers `*.slurm` utilisent des fins de ligne LF (voir `.gitattributes`).
+`submit_all.sh` crée les dossiers `resultats/*/logs/` **avant** `sbatch` (évite les échecs SLURM si `resultats/` n'existe pas encore). Les scripts `jobs/*.sh` utilisent des fins de ligne LF (voir `.gitattributes`).
 
 ## SCGM-Text
 
