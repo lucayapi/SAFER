@@ -1,0 +1,21 @@
+# Contraintes pip pour text/ — utiliser avec :
+#   pip install -r requirements.txt -c constraints.txt
+#
+# Empêche numpy 2.x, fsspec trop récent, et le downgrade de transformers (qwen3).
+
+numpy==1.26.4
+scipy==1.13.1
+pandas==2.2.3
+scikit-learn==1.5.2
+joblib==1.4.2
+
+transformers==4.51.3
+tokenizers==0.21.0
+accelerate==1.1.1
+safetensors>=0.4.3,<1.0
+huggingface-hub>=0.26.0,<1.0
+fsspec>=2023.1.0,<=2024.9.0
+tqdm==4.67.1
+
+sentence-transformers==3.4.1
+datasets==3.2.0

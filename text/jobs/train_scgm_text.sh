@@ -39,7 +39,7 @@ parts = tuple(int(x) for x in tr.__version__.split('.')[:3] if x.isdigit())
 if parts < (4, 51, 0):
     raise SystemExit(
         'ERREUR: transformers ' + tr.__version__ + ' < 4.51 (qwen3). '
-        'Dans text/: source .venv/bin/activate && pip install -U transformers==4.51.3 tokenizers==0.21.0'
+        'Dans text/: source .venv/bin/activate && bash scripts/install_text_venv.sh'
     )
 from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 if 'qwen3' not in CONFIG_MAPPING:

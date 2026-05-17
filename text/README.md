@@ -6,10 +6,23 @@ Analyse de récits d'accidents : SCGM-G sur embeddings BTP, transfert macro-ancr
 
 ```bash
 cd text
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate   # Windows : .venv\Scripts\activate
+pip install -U pip
+bash scripts/install_text_venv.sh
 ```
 
-SoftTriple / SupCon / batch triplet avec `Qwen/Qwen3-Embedding-0.6B` exigent **transformers ≥ 4.51** (architecture `qwen3`). Après mise à jour du dépôt : `pip install -U 'transformers>=4.51.0' 'tokenizers>=0.21.0'`.
+Le script utilise `requirements.txt` + **`constraints.txt`** pour figer **numpy 1.26** et **transformers 4.51.3** (Qwen3) et éviter les downgrades vers 4.46.x.
+
+Sur GPU HPC (CUDA 12.4) :
+
+```bash
+INSTALL_TORCH_CUDA=1 bash scripts/install_text_venv.sh
+```
+
+Installation manuelle : `pip install -r requirements.txt -c constraints.txt`
+
+**Qwen3-Embedding** exige **transformers ≥ 4.51**. Ne pas faire seulement `pip install datasets` ou `pip install -U transformers` sans `-c constraints.txt` (risque numpy 2.x ou retour à transformers 4.46).
 
 Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (modèles Hugging Face). `OPENAI_API_KEY` optionnel (enrichissement de thèmes). Ne jamais committer `.env`.
 

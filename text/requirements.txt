@@ -1,11 +1,19 @@
-# Dépendances unifiées (SCGM texte, MALT, topic_eval, BN MALT, notebooks).
-# Versions figées récentes et stables (Python 3.9–3.12 ; 3.9 : networkx ≤3.2.x).
-# Exclut la stack image historique : requirements_legacy_image.txt
+# =============================================================================
+# SAFER/text — dépendances Python (Python 3.10 recommandé sur HPC)
 #
-# NumPy 1.26.x : compatible matplotlib/scipy conda classiques ; pgmpy 0.1.x (pas 1.x qui impose numpy>=2).
-# PyTorch : roue CPU par défaut sur PyPI ; pour GPU, réinstaller depuis https://pytorch.org/get-started/locally/
+# Installation (venv vide) :
+#   cd text
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -U pip
+#   bash scripts/install_text_venv.sh
+#
+# Ou manuellement :
+#   pip install -r requirements.txt -c constraints.txt
+#
+# GPU : installer torch CUDA APRÈS (voir scripts/install_text_venv.sh).
+# =============================================================================
 
-# --- Cœur scientifique & ML ---
+# --- Cœur scientifique (numpy < 2 pour gensim, numba, umap, pgmpy 0.1.x) ---
 numpy==1.26.4
 pandas==2.2.3
 scipy==1.13.1
@@ -13,54 +21,54 @@ scikit-learn==1.5.2
 joblib==1.4.2
 pyyaml==6.0.2
 tqdm==4.67.1
+packaging>=24.0
 
-# --- PyTorch (adaptation texte) ; roue CPU — voir site PyTorch pour CUDA ---
+# --- PyTorch (CPU sur PyPI ; remplacer par roue CUDA sur cluster) ---
 torch==2.5.1
 
-# --- Encodeurs texte (input_mode=text, fine-tuning backbone) ---
-# Qwen3-Embedding (qwen3) : transformers >= 4.51.0 (voir HF model card).
+# --- Hugging Face : Qwen3-Embedding exige transformers >= 4.51 ---
+# Versions figées aussi dans constraints.txt (évite retour à 4.46.x).
 transformers==4.51.3
 tokenizers==0.21.0
 accelerate==1.1.1
-# Batch triplet / SoftTriple / SupCon (legacy sentence_transformers.SentenceTransformerTrainer)
+safetensors>=0.4.3,<1.0
+huggingface-hub>=0.26.0,<1.0
+fsspec>=2023.1.0,<=2024.9.0
+
+# --- Contrastifs legacy (batch triplet, SoftTriple, SupCon) ---
 sentence-transformers==3.4.1
 datasets==3.2.0
 
-# --- Visualisation & données tabulaires ---
+# --- Visualisation ---
 matplotlib==3.9.4
 seaborn==0.13.2
 plotly==5.24.1
 pyarrow==17.0.0
 
-# --- Jupyter (ipython : dernière 8.x dispo selon interpréteur ; éviter versions inexistantes sur PyPI) ---
+# --- Jupyter ---
 jupyter==1.1.1
 ipykernel==6.29.5
 ipython==8.18.1
 papermill==2.6.0
 
-# --- Cartographie & clustering (notebook 03) ---
+# --- Cartographie (notebook) ---
 umap-learn==0.5.7
-
-# --- Thèmes OpenAI & cartes 2D (notebook 01) ---
-# 1.59.0 absente de PyPI ; 1.59.2+ OK pour l’API Chat Completions utilisée par openai_theme_labels.
-openai==1.59.2
-python-dotenv==1.0.1
-# 0.7.x peut être indisponible selon la version Python / l’index PyPI ; 0.6.4 reste compatible notebooks.
 datamapplot==0.6.4
 
-# --- Cohérence topics (C_v, NPMI) ---
-gensim==4.3.3
+# --- OpenAI & env ---
+openai==1.59.2
+python-dotenv==1.0.1
 
-# --- Comparaison MALT / BERTopic / KMeans (notebook 03) ---
+# --- Topics ---
+gensim==4.3.3
 bertopic==0.16.4
 hdbscan==0.8.40
 nltk==3.9.1
 
-# --- Réseaux bayésiens MALT (notebook 04, bn_malt) ---
+# --- Réseaux bayésiens ---
 pgmpy==0.1.26
-# networkx 3.3+ exige Python ≥3.10 ; 3.2.1 reste OK pour 3.9 et pgmpy 0.1.x
 networkx==3.2.1
 pyvis==0.3.2
 
-# --- Tests (SCGM fidelity / probabilités) ---
+# --- Tests ---
 pytest==8.3.4
