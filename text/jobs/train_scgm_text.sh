@@ -29,30 +29,12 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 mkdir -p "${HF_HOME}"
 
-# Qwen3-Embedding exige transformers >= 4.51 dans CE venv (pas ~/.local)
-python -c "
-import sys
-import transformers as tr
-print('python', sys.executable)
-print('transformers', tr.__version__)
-parts = tuple(int(x) for x in tr.__version__.split('.')[:3] if x.isdigit())
-if parts < (4, 51, 0):
-    raise SystemExit(
-        'ERREUR: transformers ' + tr.__version__ + ' < 4.51 (qwen3). '
-        'Dans text/: source .venv/bin/activate && bash scripts/install_text_venv.sh'
-    )
-from transformers.models.auto.configuration_auto import CONFIG_MAPPING
-if 'qwen3' not in CONFIG_MAPPING:
-    raise SystemExit('ERREUR: architecture qwen3 absente — réinstaller transformers==4.51.3')
-print('qwen3 architecture OK')
-"
-
+# Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — pas de backbone en GPU
 python scripts/train_scgm_text.py \
-  --config configs/scgm_text_strict_finetune_identity.yaml \
-  --strict_finetune_identity \
+  --config configs/scgm_text_strict_fidelity.yaml \
+  --scgm_strict_mode \
   --data_csv dataset/data_btp.csv \
-  --text_col sentence \
+  --emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv \
   --label_col pred_label \
   --group_col accident_id \
-  --backbone_model_name_or_path Qwen/Qwen3-Embedding-0.6B \
-  --output_dir resultats/scgm_text_backbone
+  --output_dir resultats/scgm_text
