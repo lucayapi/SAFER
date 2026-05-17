@@ -48,7 +48,17 @@ class ContrastiveConfig:
     supcon_normalize_embeddings: bool = True
     # triplet
     triplet_distance_metric: str = "cosine"
+    final_fit_full_data: bool = False
+    selection_metric: str = "delta_macro_pct"
+    n_folds: int = 1
+    test_dataset_path: Optional[Path] = None
     extra: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def test_data_csv(self) -> Path:
+        if self.test_dataset_path is not None:
+            return self.test_dataset_path
+        return TEXT_ROOT / "dataset/test/data_metallurgie.csv"
 
     @property
     def resolved_output_dir(self) -> str:
@@ -65,9 +75,11 @@ def _section(raw: Dict[str, Any], name: str) -> Dict[str, Any]:
 def load_contrastive_config(
     method_name: str,
     config_path: str | Path | None = None,
+    raw: Dict[str, Any] | None = None,
 ) -> ContrastiveConfig:
     path = Path(config_path) if config_path else TEXT_ROOT / f"configs/methods/{method_name}.yaml"
-    raw = load_yaml(path)
+    if raw is None:
+        raw = load_yaml(path)
     data = _section(raw, "data")
     model = _section(raw, "model")
     training = _section(raw, "training")
@@ -170,8 +182,50 @@ def load_contrastive_config(
         triplet_distance_metric=str(
             pick("distance_metric", default="cosine", sources=(_section(raw, "batch_triplet"), raw))
         ),
+        final_fit_full_data=bool(
+            pick("final_fit_full_data", default=False, sources=(training, raw))
+        ),
+        selection_metric=str(
+            pick("selection_metric", default="delta_macro_pct", sources=(raw, training))
+        ),
+        n_folds=int(pick("n_folds", default=1, sources=(raw, training))),
+        test_dataset_path=(
+            TEXT_ROOT / str(test_rel)
+            if (test_rel := pick("test_dataset_path", default=None, sources=(data, raw, training)))
+            else None
+        ),
         extra={"raw": raw, "config_path": str(path)},
     )
+
+
+def load_contrastive_config_from_dict(
+    method_name: str,
+    raw: Dict[str, Any],
+    *,
+    config_path: str = "",
+) -> ContrastiveConfig:
+    """Charge une config à partir d'un dict déjà fusionné (tuning grid)."""
+    cfg = load_contrastive_config(method_name, config_path=config_path or None, raw=raw)
+    cfg.extra["raw"] = raw
+    if config_path:
+        cfg.extra["config_path"] = config_path
+    return cfg
+
+
+def merge_config_dict(base: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Fusionne des overrides en notation pointée (ex. training.lr) dans base."""
+    import copy
+
+    merged = copy.deepcopy(base)
+    for dotted, value in overrides.items():
+        parts = dotted.split(".")
+        node = merged
+        for part in parts[:-1]:
+            if part not in node or not isinstance(node[part], dict):
+                node[part] = {}
+            node = node[part]
+        node[parts[-1]] = value
+    return merged
 
 
 def config_to_resolved_dict(cfg: ContrastiveConfig) -> Dict[str, Any]:

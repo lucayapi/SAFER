@@ -51,7 +51,17 @@ CHECKPOINT_PATH = None  # None → OUTPUT_DIR/checkpoints/best_model.pt
 SKIP_EXPORT_IF_PRESENT = True  # True : export seulement si projected_embeddings.npy absent
 
 DATA_CSV = "dataset/data_btp.csv"
+DATA_TEST_CSV = "dataset/test/data_metallurgie.csv"
 EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
+EMB_TEST_CSV = "embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv"
+METRICS_BTP = "metrics/metrics_geometry_btp.csv"
+METRICS_TEST = "metrics/metrics_geometry_test.csv"
+KFOLD_SUMMARY = "metrics/kfold_summary.csv"
+KFOLD_PER_FOLD = "metrics/kfold_per_fold.csv"
+FOLDS_DIR = "folds"
+TEST_PROJ_NPY = "embeddings/projected_embeddings_test.npy"
+TEST_META_CSV = "embeddings/test_metadata.csv"
+TUNING_GRID = "tuning/grid_summary.csv"
 LABEL_COL = "pred_label"
 PRED_OK_COL = "pred_ok"
 GROUP_COL = "accident_id"
@@ -256,6 +266,151 @@ python scripts/export_scgm_text_outputs.py \\
 Attendu : `checkpoints/best_model.pt`, `metrics/train_log.csv` (ou `logs.csv`), puis exports sous `embeddings/` et `topics/`.
 
 Libellés OpenAI pour la carte DataMap : `bash jobs/enrich_scgm_themes_openai.sh` sur le **login** (pas dans ce notebook).
+"""
+
+GEOMETRY_KFOLD_SOURCE = """def _show_kfold_metrics():
+    print(
+        "K-fold = rapport validation in-domain (tableaux). "
+        "Graphiques comparatifs : §8c. Cartes 2D test : §8d. "
+        "Test/BTP ci-dessous = modèle final (100 % BTP, checkpoints/best_model.pt)."
+    )
+    paths = {
+        "K-fold val (μ±σ)": OUTPUT_PATH / KFOLD_SUMMARY,
+        "K-fold val (par fold)": OUTPUT_PATH / KFOLD_PER_FOLD,
+    }
+    for title, p in paths.items():
+        if p.is_file():
+            print(f"\\n=== {title} ===")
+            df = pd.read_csv(p)
+            display(df)
+            if "mean_delta_macro_pct" in df.columns and len(df) == 1:
+                m = float(df["mean_delta_macro_pct"].iloc[0])
+                s = float(df.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
+                print(f"  δ_macro val : {m:.2f} ± {s:.2f} %")
+        else:
+            print(f"(absent) {title} → {p.relative_to(REPO_ROOT)}")
+
+    for corpus, rel in (("BTP (modèle final)", METRICS_BTP), ("Test métallurgie (modèle final)", METRICS_TEST)):
+        p = OUTPUT_PATH / rel
+        if not p.is_file():
+            continue
+        geom = pd.read_csv(p)
+        print(f"\\n=== Géométrie {corpus} ===")
+        display(geom)
+        for col in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
+            if col in geom.columns and geom[col].notna().any():
+                fig, ax = plt.subplots(figsize=(6, 3))
+                ax.bar(geom["method"].astype(str), geom[col].astype(float))
+                ax.set_title(f"SCGM — {col} ({corpus})")
+                plt.xticks(rotation=20, ha="right")
+                plt.tight_layout()
+                plt.show()
+
+
+_show_kfold_metrics()
+"""
+
+KFOLD_VIZ_SOURCE = """from scgm_text.notebook_viz import (
+    display_plotly_html,
+    plot_kfold_metrics_bars,
+    plot_kfold_summary_errorbars,
+    plot_kfold_val_curves,
+)
+
+kfold_pf = OUTPUT_PATH / KFOLD_PER_FOLD
+kfold_sum = OUTPUT_PATH / KFOLD_SUMMARY
+if kfold_pf.is_file():
+    pf = pd.read_csv(kfold_pf)
+    plot_kfold_metrics_bars(pf, save_fig=save_fig)
+    plot_kfold_val_curves(OUTPUT_PATH, save_fig=save_fig)
+    from IPython.display import Image, display
+
+    for name in ("kfold_metrics_by_fold.png", "kfold_val_curves.png"):
+        p = FIGURES_DIR / name
+        if p.is_file():
+            display(Image(filename=str(p)))
+else:
+    print(f"(absent) {KFOLD_PER_FOLD} — relancer train_scgm_text.sh avec --kfold 5")
+
+if kfold_sum.is_file():
+    plot_kfold_summary_errorbars(pd.read_csv(kfold_sum), save_fig=save_fig)
+    p = FIGURES_DIR / "kfold_summary_errorbars.png"
+    if p.is_file():
+        from IPython.display import Image, display
+
+        display(Image(filename=str(p)))
+"""
+
+TEST_2D_SOURCE = """from scgm_text.notebook_viz import (
+    display_plotly_html,
+    plot_btp_test_umap_pair,
+    plot_corpus_projections,
+    plot_corpus_umap,
+)
+
+test_npy = OUTPUT_PATH / TEST_PROJ_NPY
+test_meta_path = OUTPUT_PATH / TEST_META_CSV
+btp_npy = EXPORTS_DIR / "projected_embeddings.npy"
+btp_meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
+
+if not test_npy.is_file():
+    print(
+        f"(absent) {TEST_PROJ_NPY} — généré par train_scgm_text (post-train) ou "
+        "scripts/export_scgm_test_projections.py"
+    )
+else:
+    proj_test = np.load(test_npy)
+    meta_test = pd.read_csv(test_meta_path) if test_meta_path.is_file() else pd.DataFrame()
+    if len(meta_test) != len(proj_test):
+        print(f"Attention : meta ({len(meta_test)}) vs projections ({len(proj_test)})")
+    elif LABEL_COL not in meta_test.columns:
+        print(f"Colonne {LABEL_COL} absente de {TEST_META_CSV}")
+    else:
+        print(
+            "Embeddings Qwen test figés → tête SCGM (best_model.pt). "
+            "Même architecture qu'en BTP, corpus métallurgie hors distribution."
+        )
+        plot_corpus_projections(
+            proj_test,
+            meta_test,
+            LABEL_COL,
+            corpus_name="Test métallurgie",
+            save_fig=save_fig,
+            figures_dir=FIGURES_DIR,
+            max_points=TSNE_SAMPLE_SIZE,
+            seed=SEED,
+        )
+        plot_corpus_umap(
+            proj_test,
+            meta_test,
+            LABEL_COL,
+            corpus_name="Test métallurgie",
+            save_fig=save_fig,
+            figures_dir=FIGURES_DIR,
+            max_points=RAW_EMBEDDING_UMAP_MAX_POINTS,
+            seed=SEED,
+        )
+        for html in (
+            "05_projection_pca_interactive.html",
+            "05_projection_tsne_interactive.html",
+            "10_test_umap_interactive.html",
+        ):
+            p = FIGURES_DIR / html
+            if p.is_file():
+                display_plotly_html(p)
+
+        if btp_npy.is_file() and btp_meta_path.is_file():
+            plot_btp_test_umap_pair(
+                np.load(btp_npy),
+                pd.read_csv(btp_meta_path),
+                proj_test,
+                meta_test,
+                LABEL_COL,
+                save_fig=save_fig,
+                figures_dir=FIGURES_DIR,
+                max_points=min(TSNE_SAMPLE_SIZE, RAW_EMBEDDING_UMAP_MAX_POINTS),
+                seed=SEED,
+            )
 """
 
 RESULTS_SOURCE = """require_scgm_artifacts()
@@ -636,11 +791,36 @@ def main() -> None:
     cells[5] = cell_from_source(SETUP_SOURCE, cell_id="c308cd48")
     cells[19] = cell_from_source(SECTION8_MD, cell_type="markdown")
     cells[20] = cell_from_source(RESULTS_SOURCE, cell_id="5144d005")
-    cells[22] = cell_from_source(LOGS_SOURCE, cell_id="386ed2ac")
-    cells[24] = cell_from_source(CHECKPOINT_SOURCE, cell_id="c33b3818")
+    cells.insert(21, cell_from_source(
+        "## 8b. Métriques K-fold et corpus test\n\n"
+        "Après `train_scgm_text.sh` : `kfold_summary.csv` (validation), puis fit final 100 % BTP → "
+        "`metrics_geometry_btp.csv` et `metrics_geometry_test.csv` (modèle `checkpoints/best_model.pt`). "
+        "Graphiques fold par fold : **§8c**. Cartes 2D test : **§8d**.\n",
+        cell_type="markdown",
+    ))
+    cells.insert(22, cell_from_source(GEOMETRY_KFOLD_SOURCE, cell_id="kfold_geom01"))
+    cells.insert(23, cell_from_source(
+        "## 8c. K-fold — visualisations comparatives\n\n"
+        "Barres par fold, courbes de validation (`folds/fold_*/metrics/train_log.csv`) "
+        "et résumé μ±σ depuis `kfold_summary.csv`.\n",
+        cell_type="markdown",
+        cell_id="kfold_viz_md",
+    ))
+    cells.insert(24, cell_from_source(KFOLD_VIZ_SOURCE, cell_id="kfold_viz01"))
+    cells.insert(25, cell_from_source(
+        "## 8d. Corpus test métallurgie — projections 2D\n\n"
+        "Charge `embeddings/projected_embeddings_test.npy` et `test_metadata.csv` "
+        "(exportés en fin de `train_scgm_text` ou via `export_scgm_test_projections.py`). "
+        "PCA, t-SNE et UMAP colorés par macro (`pred_label`).\n",
+        cell_type="markdown",
+        cell_id="test_2d_md",
+    ))
+    cells.insert(26, cell_from_source(TEST_2D_SOURCE, cell_id="test_2d01"))
+    cells[28] = cell_from_source(LOGS_SOURCE, cell_id="386ed2ac")
+    cells[30] = cell_from_source(CHECKPOINT_SOURCE, cell_id="c33b3818")
 
-    # DataMap après export (index 27)
-    insert_at = 27
+    # DataMap après export
+    insert_at = 31
     extras = [
         cell_from_source(DATAMAP_MD, cell_type="markdown", cell_id="a429416f"),
         cell_from_source(DATAMAP_CODE, cell_id="2e816d8a"),

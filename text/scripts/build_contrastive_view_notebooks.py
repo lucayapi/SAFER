@@ -56,9 +56,10 @@ train_log = RESULTS / "metrics" / "train_log.csv"
 if train_log.is_file():
     tl = pd.read_csv(train_log)
     display(tl.tail(10))
-    if "val_loss" in tl.columns:
+    ycol = "val_delta_macro_pct" if "val_delta_macro_pct" in tl.columns else "val_loss"
+    if ycol in tl.columns:
         fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(tl["epoch"], tl["val_loss"], marker="o", label="val_loss")
+        ax.plot(tl["epoch"], tl[ycol], marker="o", label=ycol)
         if "train_loss" in tl.columns:
             ax.plot(tl["epoch"], tl["train_loss"], marker="o", label="train_loss")
         ax.set_xlabel("epoch")
@@ -69,29 +70,67 @@ if train_log.is_file():
 else:
     print("Pas de metrics/train_log.csv (entraînement non lancé).")
 
+tuning_summary = RESULTS / "tuning" / "grid_summary.csv"
+if tuning_summary.is_file():
+    print("\\n=== Tuning grid_summary ===")
+    tdf = pd.read_csv(tuning_summary)
+    display(tdf.sort_values("selection_score", ascending=False).head(15))
+    if "selection_score" in tdf.columns:
+        fig, ax = plt.subplots(figsize=(8, 4))
+        top = tdf.sort_values("selection_score", ascending=False).head(min(12, len(tdf)))
+        ax.barh(top["combo_id"].astype(str), top["selection_score"].astype(float))
+        ax.set_xlabel("δ_macro (%) = selection_score")
+        ax.set_title(f"{{DISPLAY_NAME}} — grille tuning")
+        plt.tight_layout()
+        plt.show()
+
 resolved_cfg = RESULTS / "configs" / "config_resolved.yaml"
 if resolved_cfg.is_file():
     print("\\n=== config_resolved.yaml ===")
     display(yaml.safe_load(resolved_cfg.read_text(encoding="utf-8")))
 
-geom_csv = RESULTS / "metrics" / "metrics_geometry.csv"
-if geom_csv.is_file():
-    geom = pd.read_csv(geom_csv)
-    display(geom)
-    for col in ("eta2_macro_balanced", "eta2_weighted", "rankme_global"):
-        if col in geom.columns and geom[col].notna().any():
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.bar(geom["method"].astype(str), geom[col].astype(float))
-            ax.set_title(col)
-            plt.xticks(rotation=20, ha="right")
-            plt.tight_layout()
-            plt.show()
-else:
-    print(
-        "Pas de metrics/metrics_geometry.csv — après export des embeddings, lancez :\\n"
-        f"  python scripts/evaluate_embeddings_geometry.py --method_name {{METHOD_KEY}} "
-        f"--metadata_csv <metadata.csv> --embeddings_csv <embeddings dim_*.csv>"
-    )
+DATA_TEST = ROOT / "dataset/test/data_metallurgie.csv"
+print("Corpus test (hors domaine) :", DATA_TEST)
+
+print(
+    "\\nNote : le test métallurgie utilise le modèle entraîné sur 100 % BTP "
+    "(checkpoints/best_model), pas les checkpoints des folds."
+)
+
+kfold_summary = RESULTS / "metrics" / "kfold_summary.csv"
+kfold_per_fold = RESULTS / "metrics" / "kfold_per_fold.csv"
+
+if kfold_per_fold.is_file():
+    print("\\n=== K-fold validation (par fold) ===")
+    display(pd.read_csv(kfold_per_fold))
+
+if kfold_summary.is_file():
+    print("\\n=== K-fold validation (μ±σ) ===")
+    kval = pd.read_csv(kfold_summary)
+    display(kval)
+    if "mean_delta_macro_pct" in kval.columns:
+        m = float(kval["mean_delta_macro_pct"].iloc[0])
+        s = float(kval.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
+        print(f"δ_macro val : {{m:.2f}} ± {{s:.2f}} %")
+
+for corpus, stem in (("BTP (in-domain, modèle final)", "btp"), ("Test métallurgie (modèle final)", "test")):
+    geom_csv = RESULTS / "metrics" / f"metrics_geometry_{{stem}}.csv"
+    if not geom_csv.is_file():
+        geom_csv = RESULTS / "metrics" / "metrics_geometry.csv" if stem == "btp" else None
+    if geom_csv is not None and geom_csv.is_file():
+        geom = pd.read_csv(geom_csv)
+        print(f"\\n=== Géométrie {{corpus}} ===")
+        display(geom)
+        for col in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
+            if col in geom.columns and geom[col].notna().any():
+                fig, ax = plt.subplots(figsize=(6, 3))
+                ax.bar(geom["method"].astype(str), geom[col].astype(float))
+                ax.set_title(f"{{DISPLAY_NAME}} — {{col}} ({{corpus}})")
+                plt.xticks(rotation=20, ha="right")
+                plt.tight_layout()
+                plt.show()
+    else:
+        print(f"Pas de metrics_geometry_{{stem}}.csv pour {{corpus}}.")
 
 # Embeddings exportés (recherche récursive)
 def _has_dim_cols(path: Path) -> bool:

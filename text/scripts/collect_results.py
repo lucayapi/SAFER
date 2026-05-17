@@ -37,7 +37,11 @@ def parse_args() -> argparse.Namespace:
 
 def _load_method_row(method_dir: Path) -> dict | None:
     metrics_dir = method_dir / "metrics"
-    for name in ("metrics_geometry.csv", "metrics_geometry.json"):
+    for name in (
+        "metrics_geometry_btp.csv",
+        "metrics_geometry.csv",
+        "metrics_geometry.json",
+    ):
         path = metrics_dir / name
         if path.suffix == ".csv" and path.is_file():
             df = pd.read_csv(path)

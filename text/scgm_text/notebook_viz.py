@@ -312,11 +312,10 @@ def plot_evaluation_geometry_dashboard(
     eta_cols = ("eta2_macro_balanced", "eta2_weighted")
     missing_eta = [c for c in eta_cols if c not in metrics_table.columns]
     if missing_eta:
-        if "delta_macro" in metrics_table.columns:
+        if "delta_macro_pct" not in metrics_table.columns and "eta2_macro_balanced" not in metrics_table.columns:
             raise KeyError(
-                "Le tableau utilise encore delta_macro/delta_weighted (ancienne métrique). "
-                "Relancez scripts/evaluate_scgm_text.py, puis Kernel → Restart dans Jupyter "
-                "pour recharger scgm_text.notebook_viz."
+                "Colonnes delta_macro_pct / eta2_macro_balanced absentes. "
+                "Relancez l'évaluation ou le post-traitement contrastif."
             )
         raise KeyError(
             f"Colonnes manquantes dans metrics_table : {missing_eta}. "
@@ -550,3 +549,271 @@ def display_plotly_html(html_path: PathLike) -> None:
     path = Path(html_path)
     if path.is_file():
         display(HTML(path.read_text(encoding="utf-8")))
+
+
+_KFOLD_BAR_METRICS: Tuple[str, ...] = (
+    "delta_macro_pct",
+    "eta2_macro_balanced",
+    "rankme_global",
+    "c1_global",
+    "c10_global",
+)
+
+
+def _resolve_kfold_per_fold_metric_cols(df: pd.DataFrame) -> List[str]:
+    cols: List[str] = []
+    for key in _KFOLD_BAR_METRICS:
+        if key in df.columns:
+            cols.append(key)
+        elif key == "eta2_macro_balanced" and "val_eta2_macro_balanced" in df.columns:
+            cols.append("val_eta2_macro_balanced")
+    return cols
+
+
+def plot_kfold_metrics_bars(
+    kfold_per_fold: pd.DataFrame,
+    *,
+    save_fig: Callable[[str], Path],
+) -> Optional[Path]:
+    """Barres groupées des métriques géométriques par fold (validation)."""
+    import matplotlib.pyplot as plt
+
+    if kfold_per_fold.empty or "fold_id" not in kfold_per_fold.columns:
+        return None
+    metric_cols = _resolve_kfold_per_fold_metric_cols(kfold_per_fold)
+    if not metric_cols:
+        return None
+
+    df = kfold_per_fold.sort_values("fold_id")
+    folds = df["fold_id"].astype(int).tolist()
+    x = np.arange(len(folds))
+    width = 0.8 / len(metric_cols)
+    fig, ax = plt.subplots(figsize=(max(8, 2 * len(folds)), 5))
+    for i, col in enumerate(metric_cols):
+        offset = (i - (len(metric_cols) - 1) / 2) * width
+        vals = pd.to_numeric(df[col], errors="coerce").astype(float)
+        ax.bar(x + offset, vals, width=width, label=col.replace("val_", ""))
+    ax.set_xticks(x, [f"fold {f}" for f in folds])
+    ax.set_title("K-fold — métriques validation par fold")
+    ax.legend(fontsize=8, loc="best")
+    ax.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    return save_fig("kfold_metrics_by_fold.png")
+
+
+def plot_kfold_val_curves(
+    output_path: PathLike,
+    *,
+    save_fig: Callable[[str], Path],
+    folds_subdir: str = "folds",
+    log_name: str = "train_log.csv",
+) -> Optional[Path]:
+    """Courbes val_delta_macro_pct (et η²) vs epoch, une ligne par fold."""
+    import matplotlib.pyplot as plt
+
+    root = Path(output_path)
+    folds_dir = root / folds_subdir
+    if not folds_dir.is_dir():
+        return None
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+    has_any = False
+    for fold_dir in sorted(folds_dir.glob("fold_*")):
+        log_path = fold_dir / "metrics" / log_name
+        if not log_path.is_file():
+            continue
+        log = pd.read_csv(log_path)
+        if "epoch" not in log.columns:
+            continue
+        fold_id = fold_dir.name.replace("fold_", "")
+        has_any = True
+        if "val_delta_macro_pct" in log.columns:
+            axes[0].plot(
+                log["epoch"],
+                log["val_delta_macro_pct"],
+                marker="o",
+                markersize=3,
+                label=f"fold {fold_id}",
+            )
+        eta_col = "val_eta2_macro_balanced" if "val_eta2_macro_balanced" in log.columns else None
+        if eta_col:
+            axes[1].plot(
+                log["epoch"],
+                log[eta_col],
+                marker="o",
+                markersize=3,
+                label=f"fold {fold_id}",
+            )
+    if not has_any:
+        plt.close(fig)
+        return None
+    axes[0].set_title("δ_macro validation (%)")
+    axes[0].set_xlabel("epoch")
+    axes[0].legend(fontsize=8)
+    axes[1].set_title("η² macro balanced (validation)")
+    axes[1].set_xlabel("epoch")
+    axes[1].legend(fontsize=8)
+    plt.tight_layout()
+    return save_fig("kfold_val_curves.png")
+
+
+def plot_kfold_summary_errorbars(
+    kfold_summary: pd.DataFrame,
+    *,
+    save_fig: Callable[[str], Path],
+) -> Optional[Path]:
+    """Barres μ±σ depuis kfold_summary.csv."""
+    import matplotlib.pyplot as plt
+
+    if kfold_summary.empty:
+        return None
+    row = kfold_summary.iloc[0]
+    pairs: List[Tuple[str, str, str]] = []
+    for key in _KFOLD_BAR_METRICS:
+        mean_col = f"mean_{key}"
+        std_col = f"std_{key}"
+        if mean_col in row.index:
+            pairs.append((key, mean_col, std_col))
+        elif key == "eta2_macro_balanced" and "mean_val_eta2_macro_balanced" in row.index:
+            pairs.append(
+                ("val_eta2_macro_balanced", "mean_val_eta2_macro_balanced", "std_val_eta2_macro_balanced")
+            )
+    if not pairs:
+        return None
+
+    labels = [p[0].replace("val_", "") for p in pairs]
+    means = [float(row[p[1]]) for p in pairs]
+    stds = [float(row.get(p[2], 0.0)) for p in pairs]
+    x = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) * 1.4), 4))
+    ax.bar(x, means, yerr=stds, capsize=4, color="#3498db", alpha=0.85)
+    ax.set_xticks(x, labels, rotation=25, ha="right")
+    ax.set_title("K-fold validation — μ ± σ")
+    ax.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    return save_fig("kfold_summary_errorbars.png")
+
+
+def plot_corpus_projections(
+    projected: np.ndarray,
+    meta: pd.DataFrame,
+    label_col: str,
+    *,
+    corpus_name: str = "Test métallurgie",
+    save_fig: Callable[[str], Path],
+    figures_dir: PathLike,
+    max_points: int = 8000,
+    seed: int = 42,
+    png_name: str = "10_test_projection_macro.png",
+) -> List[Path]:
+    """PCA + t-SNE 2D sur embeddings SCGM projetés (matplotlib + Plotly)."""
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    figures_dir = Path(figures_dir)
+    x = np.asarray(projected, dtype=np.float64)
+    if len(meta) != x.shape[0]:
+        raise ValueError(f"meta ({len(meta)}) vs projected ({x.shape[0]})")
+
+    idx = sample_projection_indices(meta, label_col, max_points=max_points, seed=seed)
+    sample_df = meta.loc[idx].copy().reset_index(drop=True)
+    sample_x = x[idx]
+
+    pca_xy = PCA(n_components=2, random_state=seed).fit_transform(sample_x)
+    tsne_xy = TSNE(n_components=2, random_state=seed, perplexity=min(30, len(sample_x) - 1)).fit_transform(
+        sample_x
+    )
+
+    saved: List[Path] = []
+    saved.append(
+        plot_projection_matplotlib(
+            pca_xy,
+            tsne_xy,
+            sample_df,
+            label_col,
+            save_fig=save_fig,
+            png_name=png_name,
+            pca_title=f"PCA 2D — {corpus_name}",
+            tsne_title=f"t-SNE 2D — {corpus_name}",
+        )
+    )
+    pca_pair, tsne_pair = plot_projection_plotly(pca_xy, tsne_xy, sample_df, label_col, figures_dir=figures_dir)
+    saved.extend([pca_pair[1], tsne_pair[1]])
+    return saved
+
+
+def plot_corpus_umap(
+    projected: np.ndarray,
+    meta: pd.DataFrame,
+    label_col: str,
+    *,
+    corpus_name: str = "Test métallurgie",
+    save_fig: Callable[[str], Path],
+    figures_dir: PathLike,
+    max_points: int = 12000,
+    seed: int = 42,
+    png_name: str = "10_test_umap.png",
+    html_name: str = "10_test_umap_interactive.html",
+) -> List[Path]:
+    """UMAP sur corpus projeté SCGM."""
+    return plot_embedding_umap_by_macro(
+        projected,
+        meta,
+        label_col,
+        figures_dir=figures_dir,
+        save_fig=save_fig,
+        max_points=max_points,
+        seed=seed,
+        title=f"UMAP — {corpus_name} (SCGM projeté, couleur = macro)",
+        png_name=png_name,
+        html_name=html_name,
+    )
+
+
+def plot_btp_test_umap_pair(
+    btp_projected: np.ndarray,
+    btp_meta: pd.DataFrame,
+    test_projected: np.ndarray,
+    test_meta: pd.DataFrame,
+    label_col: str,
+    *,
+    save_fig: Callable[[str], Path],
+    figures_dir: PathLike,
+    max_points: int = 8000,
+    seed: int = 42,
+) -> Optional[Path]:
+    """Figure 2×2 UMAP BTP vs test (matplotlib)."""
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from umap import UMAP
+
+    figures_dir = Path(figures_dir)
+    palette = dict(zip(["A0", "A1", "B", "C"], sns.color_palette("Set2", 4)))
+
+    def _umap_panel(ax, emb: np.ndarray, meta: pd.DataFrame, title: str) -> None:
+        idx = sample_projection_indices(meta, label_col, max_points=max_points, seed=seed)
+        sample_df = meta.loc[idx]
+        sample_x = emb[idx]
+        coords = UMAP(n_components=2, random_state=seed, n_neighbors=15, min_dist=0.1).fit_transform(sample_x)
+        macros = sample_df[label_col].astype(str).to_numpy()
+        for macro in ["A0", "A1", "B", "C"]:
+            mask = macros == macro
+            if np.any(mask):
+                ax.scatter(
+                    coords[mask, 0],
+                    coords[mask, 1],
+                    s=5,
+                    alpha=0.4,
+                    label=macro,
+                    c=[palette[macro]],
+                )
+        ax.set_title(title)
+        ax.legend(fontsize=7, markerscale=2)
+
+    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    _umap_panel(axes[0, 0], btp_projected, btp_meta, "BTP — UMAP")
+    _umap_panel(axes[0, 1], test_projected, test_meta, "Test métallurgie — UMAP")
+    axes[1, 0].axis("off")
+    axes[1, 1].axis("off")
+    plt.tight_layout()
+    return save_fig("10_btp_test_umap_pair.png")

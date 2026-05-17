@@ -29,10 +29,12 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 mkdir -p "${HF_HOME}"
 
-# Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — pas de backbone en GPU
+# Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — K-fold groupé K=5
+echo "Mode entraînement : K-fold (n_folds depuis configs/scgm_text_strict_fidelity.yaml)"
 python scripts/train_scgm_text.py \
   --config configs/scgm_text_strict_fidelity.yaml \
   --scgm_strict_mode \
+  --kfold 5 \
   --data_csv dataset/data_btp.csv \
   --emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv \
   --label_col pred_label \

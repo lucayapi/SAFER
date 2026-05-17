@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="resultats/scgm_text/checkpoints/best_model.pt",
     )
-    parser.add_argument("--target_data_csv", type=str, default="dataset/data_metallurgie.csv")
+    parser.add_argument("--target_data_csv", type=str, default="dataset/test/data_metallurgie.csv")
     parser.add_argument("--target_data_csv_alt", type=str, default="dataset/data_mettalurgie.csv")
     parser.add_argument("--target_emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_metallurgie.csv")
     parser.add_argument("--target_emb_csv_alt", type=str, default="embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv")

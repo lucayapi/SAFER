@@ -26,4 +26,5 @@ export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
+echo "Mode entraînement : K-fold (n_folds=5 dans configs/methods/supcon.yaml)"
 python scripts/train_supcon.py --config configs/methods/supcon.yaml

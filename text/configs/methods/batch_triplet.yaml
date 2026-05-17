@@ -3,6 +3,9 @@ method: batch_triplet
 output_dir: resultats/batch_triplet
 use_prompt: false
 seed: 42
+n_folds: 5
+selection_metric: delta_macro_pct
+test_dataset_path: dataset/test/data_metallurgie.csv
 
 data:
   dataset_path: dataset/data_btp.csv

@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH --job-name=tune_scgm
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:1
+#SBATCH --constraint='a100|h100'
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH --time=48:00:00
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
+
+set -euo pipefail
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/_bootstrap.sh" ]]; then
+  source "${SLURM_SUBMIT_DIR}/_bootstrap.sh"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
+  source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
+else
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
+fi
+
+echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
+
+export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
+export TRANSFORMERS_CACHE="${HF_HOME}"
+mkdir -p "${HF_HOME}"
+
+python scripts/tune_scgm_text.py --grid-config configs/tuning/scgm_text_grid.yaml

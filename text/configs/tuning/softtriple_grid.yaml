@@ -1,0 +1,15 @@
+method_name: softtriple
+base_config: configs/methods/softtriple.yaml
+output_dir: resultats/softtriple/tuning
+final_output_dir: resultats/softtriple
+selection_metric: delta_macro_pct
+n_folds: 5
+test_dataset_path: dataset/test/data_metallurgie.csv
+final_fit_full_data: true
+
+grid:
+  training.learning_rate: [1.0e-5, 2.0e-5]
+  training.batch_size: [8, 16]
+  training.epochs: [15, 30]
+  softtriple.gamma: [0.1]
+  softtriple.lambda: [10.0]

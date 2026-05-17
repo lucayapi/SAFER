@@ -9,12 +9,13 @@ from contrastive_methods.data import prepare_text_dataset, split_train_val, trai
 from contrastive_methods.export import export_st_embeddings
 from contrastive_methods.losses.supcon import SupConLoss
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
+from contrastive_methods.results import TrainingResult
 from contrastive_methods.st_common import load_sentence_transformer, train_st_model
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
 
 
-def run_supcon(cfg: ContrastiveConfig) -> Path:
+def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
     root = Path(layout["root"])
     checkpoints = Path(layout["checkpoints"])
@@ -32,7 +33,7 @@ def run_supcon(cfg: ContrastiveConfig) -> Path:
         normalize_embeddings=cfg.supcon_normalize_embeddings,
     )
 
-    model = train_st_model(
+    model, val_geometry, best_score = train_st_model(
         cfg,
         model,
         train_df,
@@ -52,8 +53,15 @@ def run_supcon(cfg: ContrastiveConfig) -> Path:
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
+            "best_delta_macro_pct": best_score,
             "embeddings": str(emb_path),
         },
         root,
     )
-    return emb_path
+    return TrainingResult(
+        embeddings_path=emb_path,
+        output_root=root,
+        val_geometry=val_geometry,
+        best_delta_macro_pct=best_score,
+        train_log_path=metrics_dir / "train_log.csv",
+    )

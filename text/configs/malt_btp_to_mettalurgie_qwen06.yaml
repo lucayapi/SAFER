@@ -7,8 +7,8 @@ source:
   checkpoint: resultats/scgm_text/checkpoints/best_model.pt
 
 target:
-  data_csv: dataset/data_metallurgie.csv
-  data_csv_alt: dataset/data_mettalurgie.csv
+  data_csv: dataset/test/data_metallurgie.csv
+  data_csv_alt: dataset/test/data_metallurgie.csv
   emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
   emb_csv_alt: embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv
   filter_pred_ok: false

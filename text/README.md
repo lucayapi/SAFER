@@ -30,7 +30,8 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 
 | Dossier | Rôle |
 |---------|------|
-| `dataset/` | CSV métadonnées BTP / métallurgie |
+| `dataset/` | CSV métadonnées BTP |
+| `dataset/test/` | Corpus test hors domaine (`data_metallurgie.csv`) |
 | `embeddings/` | Embeddings pré-calculés (local, gitignored) |
 | `configs/` | `paths.yaml`, `methods/*.yaml`, configs SCGM/MALT |
 | `safer_core/` | Chemins centralisés → `resultats/` |
@@ -73,6 +74,11 @@ python scripts/export_raw_embeddings.py
 
 # 2. SCGM BTP
 python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
+# En fin de train (post-eval) : embeddings/projected_embeddings_test.npy + test_metadata.csv
+# Régénération sans réentraînement :
+python scripts/export_scgm_test_projections.py \
+  --checkpoint resultats/scgm_text/checkpoints/best_model.pt \
+  --output_dir resultats/scgm_text
 python scripts/export_scgm_text_outputs.py \
   --checkpoint resultats/scgm_text/checkpoints/best_model.pt \
   --output_dir resultats/scgm_text
@@ -96,10 +102,30 @@ python scripts/train_supcon.py
 # Recalcul métriques uniquement si besoin :
 python scripts/postprocess_contrastive_results.py --method batch_triplet
 
-# 5. Agrégation
+# 5. Embeddings test (Qwen figé, pour SCGM strict fidelity)
+python scripts/export_test_embeddings.py
+
+# 6. Tuning K-fold (sélection sur mean δ_macro %)
+sbatch jobs/tune_scgm_text.sh
+sbatch jobs/tune_batch_triplet.sh
+# Sorties : resultats/<method>/tuning/grid_summary.csv, best_combo.json
+# Puis fit final 100 % BTP → metrics_geometry_btp.csv + metrics_geometry_test.csv
+
+# 7. Agrégation
 python scripts/collect_results.py
 python scripts/compare_methods.py
 ```
+
+### Évaluation BTP vs test
+
+| Corpus | Chemin | Encodeur |
+|--------|--------|----------|
+| BTP (entraînement) | `dataset/data_btp.csv` | Best model fine-tuné (contrastifs) ou tête SCGM + embeddings Qwen figés |
+| Test métallurgie | `dataset/test/data_metallurgie.csv` | Même best model ; SCGM utilise `embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv` |
+
+**Train simple** (`jobs/train_*.sh`, `n_folds: 5`) : (1) K-fold → `kfold_summary.csv` (validation in-domain, μ ± σ) sous `folds/fold_{k}/` ; (2) **fit final 100 % BTP** → `checkpoints/best_model` ; (3) évaluation **BTP + test** → `metrics_geometry_btp.csv`, `metrics_geometry_test.csv` (un seul modèle, pas d’éval test par fold).
+
+**Tuning** (`jobs/tune_*.sh`) : même K-fold par combo pour sélectionner les hyperparamètres, puis **fit final** 100 % BTP + `metrics_geometry_btp.csv` / `metrics_geometry_test.csv`.
 
 ### Jobs SLURM
 
@@ -178,7 +204,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `01_compare_embedding_methods.ipynb` | Comparaison globale eta² / RankMe |
-| `01_scgm_text_experiment.ipynb` | **Lecture seule** — courbes, export, viz à partir de `resultats/scgm_text/` |
+| `01_scgm_text_experiment.ipynb` | **Lecture seule** — courbes, export, viz (`§8c` K-fold comparatif, `§8d` PCA/t-SNE/UMAP test) depuis `resultats/scgm_text/` |
 | `02_malt_btp_to_mettalurgie_transfer.ipynb` | **Lecture seule** — analyse MALT à partir de `resultats/malt/` |
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
 | `04_malt_to_bayesian_network.ipynb` | BN depuis MALT |
@@ -197,7 +223,7 @@ Les fichiers `notebooks/*.ipynb` ne sont **pas versionnés** (restent sur la mac
 
 ```bash
 python scripts/build_analysis_notebooks.py   # 00, 01_compare, 05_view_*
-python scripts/rebuild_notebook_01.py
+python scripts/rebuild_notebook_01.py   # inclut §8c (K-fold) et §8d (projections test 2D)
 python scripts/build_malt_notebook.py
 python scripts/build_notebook_03_compare_topics.py
 python scripts/build_notebook_04_malt_bn.py
@@ -217,14 +243,32 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 ## Méthodes contrastives
 
-Entraînement single-run piloté par `configs/methods/batch_triplet.yaml`, `softtriple.yaml`, `supcon.yaml` (sections `data`, `model`, `training`). Split train/val par `accident_id` (`val_ratio`). Sorties standard :
+**Métrique principale** : δ_macro (%) = `delta_macro_pct` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
-- `resultats/<method>/embeddings/final_embeddings.csv` (colonnes `dim_0001` …)
-- `resultats/<method>/metrics/metrics_geometry.csv`
-- `resultats/<method>/checkpoints/best_model/`
-- `resultats/<method>/configs/config_resolved.yaml`
+### Expérience single-run (configs inchangées)
 
-Package : `contrastive_methods/` (`train.py`, `training_*.py`, `losses/`).
+`configs/methods/batch_triplet.yaml`, `softtriple.yaml`, `supcon.yaml` — jobs `train_*.sh` :
+
+```bash
+python scripts/train_batch_triplet.py --config configs/methods/batch_triplet.yaml
+# K=5 par défaut (n_folds dans le YAML) → resultats/batch_triplet/metrics/kfold_summary.csv
+```
+
+Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
+
+### Tuning (grille + réentraînement final 100 %)
+
+YAML dédiés sous `configs/tuning/` (ne modifient pas les configs `methods/`) :
+
+```bash
+python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_grid.yaml
+# ou : sbatch jobs/tune_batch_triplet.sh
+```
+
+Sorties tuning : `resultats/<method>/tuning/grid_summary.csv`, `best_combo.json`, `combos/<combo_id>/`.  
+Après tuning : réentraînement sur tout le corpus → `resultats/<method>/embeddings/final_embeddings.csv`.
+
+Package : `contrastive_methods/` (`train.py`, `tuning.py`, `training_*.py`, `eval_geometry.py`).
 
 ## Tests
 

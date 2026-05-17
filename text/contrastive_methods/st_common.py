@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import torch
@@ -12,8 +12,10 @@ from datasets import Dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers.training_args import BatchSamplers, SentenceTransformerTrainingArguments
 from sentence_transformers.trainer import SentenceTransformerTrainer
+from transformers import TrainerCallback
 
 from contrastive_methods.config import ContrastiveConfig
+from contrastive_methods.eval_geometry import evaluate_st_val_geometry, selection_score
 
 
 def get_device() -> str:
@@ -36,11 +38,62 @@ def dataframe_to_hf_dataset(df: pd.DataFrame, text_col: str) -> Dataset:
     )
 
 
+class GeometrySelectionCallback(TrainerCallback):
+    """Sélection du meilleur checkpoint sur val delta_macro_pct (100×η²)."""
+
+    def __init__(
+        self,
+        model: SentenceTransformer,
+        val_df: pd.DataFrame,
+        text_col: str,
+        cfg: ContrastiveConfig,
+        best_model_dir: Path,
+        log_rows: List[Dict[str, Any]],
+    ) -> None:
+        self.model = model
+        self.val_df = val_df
+        self.text_col = text_col
+        self.cfg = cfg
+        self.best_model_dir = best_model_dir
+        self.log_rows = log_rows
+        self.best_score = float("-inf")
+        self.best_geometry: Dict[str, Any] = {}
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        epoch = int(state.epoch) if state.epoch is not None else len(self.log_rows) + 1
+        row = evaluate_st_val_geometry(self.model, self.val_df, self.cfg, self.text_col)
+        score = selection_score(row, self.cfg.selection_metric)
+        train_loss = None
+        if state.log_history:
+            for entry in reversed(state.log_history):
+                if "loss" in entry and "eval" not in entry:
+                    train_loss = entry.get("loss")
+                    break
+        self.log_rows.append(
+            {
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_delta_macro_pct": row.get("delta_macro_pct"),
+                "val_eta2_macro_balanced": row.get("eta2_macro_balanced"),
+                "val_rankme_global": row.get("rankme_global"),
+                "val_c1_global": row.get("c1_global"),
+                "val_c10_global": row.get("c10_global"),
+            }
+        )
+        if score > self.best_score:
+            self.best_score = score
+            self.best_geometry = dict(row)
+            self.best_model_dir.mkdir(parents=True, exist_ok=True)
+            self.model.save_pretrained(str(self.best_model_dir))
+        return control
+
+
 def build_training_arguments(
     cfg: ContrastiveConfig,
     output_dir: Path,
     *,
     steps_per_epoch: int,
+    use_eval: bool,
 ) -> SentenceTransformerTrainingArguments:
     device = get_device()
     use_bf16 = (
@@ -61,12 +114,9 @@ def build_training_arguments(
         fp16=use_fp16,
         bf16=use_bf16,
         batch_sampler=BatchSamplers.GROUP_BY_LABEL,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        save_total_limit=1,
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
+        eval_strategy="no",
+        save_strategy="no",
+        load_best_model_at_end=False,
         logging_strategy="steps",
         logging_steps=max(1, steps_per_epoch // 2),
         report_to=[],
@@ -101,9 +151,8 @@ def train_st_model(
     train_loss,
     checkpoints_dir: Path,
     train_log_path: Optional[Path] = None,
-) -> SentenceTransformer:
+) -> tuple[SentenceTransformer, Dict[str, Any], float]:
     train_ds = dataframe_to_hf_dataset(train_df, text_col)
-    val_ds = dataframe_to_hf_dataset(val_df, text_col)
     steps_per_epoch = max(
         1,
         math.ceil(
@@ -111,20 +160,42 @@ def train_st_model(
             / max(1, cfg.batch_size * cfg.gradient_accumulation_steps)
         ),
     )
-    args = build_training_arguments(cfg, checkpoints_dir / "trainer", steps_per_epoch=steps_per_epoch)
+    use_eval = len(val_df) > 0 and not cfg.final_fit_full_data
+    args = build_training_arguments(
+        cfg, checkpoints_dir / "trainer", steps_per_epoch=steps_per_epoch, use_eval=use_eval
+    )
+    best_dir = checkpoints_dir / "best_model"
+    best_dir.mkdir(parents=True, exist_ok=True)
+    log_rows: List[Dict[str, Any]] = []
+    callbacks = []
+    if use_eval:
+        callbacks.append(
+            GeometrySelectionCallback(model, val_df, text_col, cfg, best_dir, log_rows)
+        )
+
     trainer = SentenceTransformerTrainer(
         model=model,
         args=args,
         train_dataset=train_ds,
-        eval_dataset=val_ds,
         loss=train_loss,
+        callbacks=callbacks,
     )
     trainer.train()
-    if train_log_path is not None:
-        log_hist = trainer.state.log_history
-        if log_hist:
-            pd.DataFrame(log_hist).to_csv(train_log_path, index=False)
-    best_dir = checkpoints_dir / "best_model"
-    best_dir.mkdir(parents=True, exist_ok=True)
-    trainer.model.save_pretrained(str(best_dir))
-    return trainer.model
+
+    if use_eval and callbacks:
+        cb: GeometrySelectionCallback = callbacks[0]
+        best_geometry = cb.best_geometry
+        best_score = cb.best_score
+        if best_geometry:
+            model = SentenceTransformer(str(best_dir), trust_remote_code=True)
+    else:
+        model.save_pretrained(str(best_dir))
+        best_geometry = {}
+        best_score = float("nan")
+
+    if train_log_path is not None and log_rows:
+        pd.DataFrame(log_rows).to_csv(train_log_path, index=False)
+    elif train_log_path is not None and trainer.state.log_history:
+        pd.DataFrame(trainer.state.log_history).to_csv(train_log_path, index=False)
+
+    return model, best_geometry, best_score

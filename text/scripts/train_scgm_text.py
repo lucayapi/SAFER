@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -92,6 +93,7 @@ BASE_METRIC_FIELDS = [
     "train_eta2_weighted",
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
+    "val_delta_macro_pct",
     "rankme_global",
     "c1_global",
     "c10_global",
@@ -201,9 +203,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--best_checkpoint_metric",
         type=str,
-        default="eta2_macro_balanced",
-        choices=["eta2_macro_balanced", "composite"],
+        default="delta_macro_pct",
+        choices=["delta_macro_pct", "eta2_macro_balanced", "composite"],
         help="Critère de sélection du best_model.pt (géométrie, pas F1).",
+    )
+    parser.add_argument(
+        "--kfold",
+        type=int,
+        default=0,
+        help="Si >1, entraînement K-fold groupé (accident_id) avec kfold_summary.csv.",
+    )
+    parser.add_argument(
+        "--final_fit_full_data",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Entraînement sur 100 %% BTP (pas de split val).",
+    )
+    parser.add_argument(
+        "--test_data_csv",
+        type=str,
+        default="dataset/test/data_metallurgie.csv",
+    )
+    parser.add_argument(
+        "--test_emb_csv",
+        type=str,
+        default="embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv",
     )
     parser.add_argument(
         "--best_checkpoint_lambda",
@@ -233,6 +257,9 @@ def apply_config(args: argparse.Namespace, config_path: Optional[str]) -> None:
     flat = flatten_config_yaml(raw) if any(k in raw for k in ("model", "training", "data")) else raw
     for key, value in flat.items():
         key_norm = key.replace("-", "_")
+        if key_norm == "n_folds":
+            args.kfold = int(value)
+            continue
         if hasattr(args, key_norm):
             setattr(args, key_norm, value)
 
@@ -377,6 +404,11 @@ def checkpoint_selection_score(
     metric_name: str,
     lambda_c1: float,
 ) -> float:
+    if metric_name == "delta_macro_pct":
+        val = float(val_metrics.get("val_delta_macro_pct", float("nan")))
+        if np.isnan(val):
+            val = 100.0 * float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
+        return val if np.isfinite(val) else float("-inf")
     eta2 = float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
     if np.isnan(eta2):
         eta2 = float("-inf")
@@ -438,6 +470,7 @@ def evaluate_split(
     metrics: Dict[str, float] = {
         f"{prefix}_eta2_macro_balanced": float(geom["eta2_macro_balanced"]),
         f"{prefix}_eta2_weighted": float(geom["eta2_weighted"]),
+        f"{prefix}_delta_macro_pct": float(geom["delta_macro_pct"]),
         f"{prefix}_entropy_pz": mean_entropy(prob_z),
         f"{prefix}_entropy_py_z": mean_entropy(prob_yz),
         "n_active_z": float(count_active_clusters(z_pred_arr)),
@@ -557,7 +590,12 @@ def _smoke_backbone_step(
     verify_backbone_updated(model, args, before, change)
 
 
-def run_training(args: argparse.Namespace) -> None:
+def run_training(
+    args: argparse.Namespace,
+    *,
+    train_idx_override: Optional[np.ndarray] = None,
+    val_idx_override: Optional[np.ndarray] = None,
+) -> Dict[str, float]:
     set_seed(args.seed)
     print(describe_fidelity_mode(args), flush=True)
     print(
@@ -587,7 +625,14 @@ def run_training(args: argparse.Namespace) -> None:
         )
         tokenizer = AutoTokenizer.from_pretrained(args.backbone_model_name_or_path)
         collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
-        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+        if train_idx_override is not None and val_idx_override is not None:
+            train_idx, val_idx = train_idx_override, val_idx_override
+        elif getattr(args, "final_fit_full_data", False):
+            n = len(dataset)
+            train_idx = np.arange(n, dtype=np.int64)
+            val_idx = np.array([], dtype=np.int64)
+        else:
+            train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
         train_loader, val_loader = build_text_dataloaders(
             dataset,
             train_idx=train_idx,
@@ -605,7 +650,14 @@ def run_training(args: argparse.Namespace) -> None:
             pred_ok_col=args.pred_ok_col,
             group_col=args.group_col,
         )
-        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+        if train_idx_override is not None and val_idx_override is not None:
+            train_idx, val_idx = train_idx_override, val_idx_override
+        elif getattr(args, "final_fit_full_data", False):
+            n = len(dataset)
+            train_idx = np.arange(n, dtype=np.int64)
+            val_idx = np.array([], dtype=np.int64)
+        else:
+            train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
         train_loader, val_loader = build_dataloaders(
             dataset,
             train_idx=train_idx,
@@ -674,9 +726,10 @@ def run_training(args: argparse.Namespace) -> None:
         "train_loss",
         "loss_macro",
         "loss_latent",
-        "val_eta2_macro_balanced",
-        "val_eta2_weighted",
-        "rankme_global",
+    "val_eta2_macro_balanced",
+    "val_eta2_weighted",
+    "val_delta_macro_pct",
+    "rankme_global",
         "c1_global",
         "c10_global",
     ]
@@ -771,15 +824,26 @@ def run_training(args: argparse.Namespace) -> None:
                         model, train_loader, dataset, train_idx, device, args.tau
                     )
                 )
-            val_metrics, _, _, _ = evaluate_split(
-                model,
-                val_loader,
-                device,
-                args.tau,
-                args.n_class,
-                prefix="val",
-                compute_classifier_diagnostics=args.compute_classifier_diagnostics,
-            )
+            has_val = len(val_idx) > 0
+            if has_val:
+                val_metrics, _, _, _ = evaluate_split(
+                    model,
+                    val_loader,
+                    device,
+                    args.tau,
+                    args.n_class,
+                    prefix="val",
+                    compute_classifier_diagnostics=args.compute_classifier_diagnostics,
+                )
+            else:
+                val_metrics = {
+                    "val_eta2_macro_balanced": train_metrics.get("train_eta2_macro_balanced"),
+                    "val_eta2_weighted": train_metrics.get("train_eta2_weighted"),
+                    "val_delta_macro_pct": train_metrics.get("train_delta_macro_pct"),
+                    "rankme_global": train_metrics.get("rankme_global"),
+                    "c1_global": train_metrics.get("c1_global"),
+                    "c10_global": train_metrics.get("c10_global"),
+                }
 
             row: Dict[str, Any] = {
                 "epoch": epoch,
@@ -816,6 +880,7 @@ def run_training(args: argparse.Namespace) -> None:
                 "loss_latent": row["loss_latent"],
                 "val_eta2_macro_balanced": row.get("val_eta2_macro_balanced"),
                 "val_eta2_weighted": row.get("val_eta2_weighted"),
+                "val_delta_macro_pct": row.get("val_delta_macro_pct"),
                 "rankme_global": row.get("rankme_global"),
                 "c1_global": row.get("c1_global"),
                 "c10_global": row.get("c10_global"),
@@ -871,6 +936,71 @@ def run_training(args: argparse.Namespace) -> None:
     config_payload["best_checkpoint_epoch"] = best_epoch
     save_config_resolved(config_payload, layout["root"])
     save_json(config_payload, layout["configs"] / "config.json")
+    return {
+        "delta_macro_pct": best_score if args.best_checkpoint_metric == "delta_macro_pct" else float("nan"),
+        "val_eta2_macro_balanced": float(config_payload.get("val_eta2_macro_balanced", float("nan"))),
+        "best_checkpoint_score": best_score,
+        "best_checkpoint_epoch": best_epoch,
+    }
+
+
+def run_kfold(args: argparse.Namespace) -> None:
+    from safer_core.kfold_eval import group_kfold_splits, save_kfold_tables
+
+    if args.input_mode == "text":
+        dataset = TextRawDataset(
+            data_csv=args.data_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+            text_col=args.text_col,
+        )
+    else:
+        dataset = TextEmbeddingDataset(
+            data_csv=args.data_csv,
+            emb_csv=args.emb_csv,
+            label_col=args.label_col,
+            pred_ok_col=args.pred_ok_col,
+            group_col=args.group_col,
+        )
+    groups = dataset.metadata_df[args.group_col].to_numpy()
+    splits = group_kfold_splits(groups, args.kfold, args.seed)
+    fold_rows: List[Dict[str, Any]] = []
+    base_out = args.output_dir
+    for fold_id, (train_idx, val_idx) in enumerate(splits):
+        fold_args = argparse.Namespace(**vars(args))
+        fold_args.output_dir = os.path.join(base_out, "folds", f"fold_{fold_id}")
+        print(f"[kfold] fold {fold_id} → {fold_args.output_dir}", flush=True)
+        metrics = run_training(fold_args, train_idx_override=train_idx, val_idx_override=val_idx)
+        fold_rows.append({"fold_id": fold_id, **metrics})
+    layout = layout_method_output("scgm_text", base_out)
+    save_kfold_tables(fold_rows, layout["metrics"])
+    print(f"[kfold] Résumé val → {layout['metrics'] / 'kfold_summary.csv'}", flush=True)
+
+
+def run_post_train_eval(args: argparse.Namespace) -> None:
+    """Évalue BTP + test avec best_model.pt et exporte projections pour le notebook."""
+    from scgm_text.eval_corpus import evaluate_and_save_btp_test
+
+    layout = layout_method_output("scgm_text", args.output_dir)
+    ckpt = layout["checkpoints"] / "best_model.pt"
+    if not ckpt.is_file():
+        print(f"[eval] Checkpoint absent : {ckpt}", flush=True)
+        return
+    paths = evaluate_and_save_btp_test(
+        checkpoint_path=str(ckpt),
+        output_root=str(layout["root"]),
+        data_btp=args.data_csv,
+        emb_btp=args.emb_csv,
+        data_test=getattr(args, "test_data_csv", "dataset/test/data_metallurgie.csv"),
+        emb_test=getattr(args, "test_emb_csv", "embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv"),
+        label_col=args.label_col,
+        pred_ok_col=args.pred_ok_col,
+        group_col=args.group_col,
+        save_projections=True,
+    )
+    if paths.get("projections_test"):
+        print(f"[eval] Projections test : {paths['projections_test']}", flush=True)
 
 
 def main() -> None:
@@ -880,7 +1010,19 @@ def main() -> None:
     finalize_args(args)
     if args.smoke_epochs is not None:
         args.epochs = args.smoke_epochs
-    run_training(args)
+    if args.kfold and args.kfold > 1:
+        run_kfold(args)
+        final_args = argparse.Namespace(**vars(args))
+        final_args.final_fit_full_data = True
+        final_args.kfold = 0
+        layout = layout_method_output("scgm_text", final_args.output_dir)
+        final_args.output_dir = str(layout["root"])
+        print("[scgm] Réentraînement final 100 % BTP…", flush=True)
+        run_training(final_args)
+        run_post_train_eval(final_args)
+    else:
+        run_training(args)
+        run_post_train_eval(args)
 
 
 if __name__ == "__main__":

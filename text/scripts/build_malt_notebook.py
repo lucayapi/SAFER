@@ -36,8 +36,8 @@ cells = [
         # Parameters (Papermill : surcharger ces variables)
         SOURCE_CHECKPOINT = "resultats/scgm_text/checkpoints/best_model.pt"
         SOURCE_CONFIG = "resultats/scgm_text/configs/config.json"
-        TARGET_DATA_CSV = "dataset/data_mettalurgie.csv"
-        TARGET_DATA_CSV_ALT = "dataset/data_metallurgie.csv"
+        TARGET_DATA_CSV = "dataset/test/data_metallurgie.csv"
+        TARGET_DATA_CSV_ALT = "dataset/test/data_metallurgie.csv"
         TARGET_EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv"
         TARGET_EMB_CSV_ALT = "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv"
         OUTPUT_DIR = "resultats/malt"

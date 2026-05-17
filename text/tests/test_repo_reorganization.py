@@ -80,6 +80,8 @@ def test_native_contrastive_modules_present():
         "training_triplet.py",
         "training_supcon.py",
         "training_softtriple.py",
+        "tuning.py",
+        "eval_geometry.py",
         "losses/supcon.py",
         "losses/softtriple.py",
     ):

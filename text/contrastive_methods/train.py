@@ -7,6 +7,8 @@ import sys
 from typing import List, Optional
 
 from contrastive_methods.config import load_contrastive_config
+from contrastive_methods.eval_corpus import evaluate_btp_and_test
+from contrastive_methods.kfold_train import run_contrastive_final_fit_and_eval, run_contrastive_kfold
 from contrastive_methods.training_softtriple import run_softtriple
 from contrastive_methods.training_supcon import run_supcon
 from contrastive_methods.training_triplet import run_batch_triplet
@@ -33,8 +35,23 @@ def run_contrastive_method(method_name: str, argv: Optional[List[str]] = None) -
     if method_name not in dispatch:
         raise ValueError(f"Méthode inconnue : {method_name}")
 
-    emb_path = dispatch[method_name](cfg)
-    print(f"[{method_name}] Terminé — embeddings : {emb_path}")
+    if cfg.n_folds > 1:
+        run_contrastive_kfold(cfg)
+        run_contrastive_final_fit_and_eval(cfg)
+        return 0
+
+    result = dispatch[method_name](cfg)
+    print(f"[{method_name}] Terminé — embeddings : {result.embeddings_path}")
+    if result.val_geometry:
+        print(
+            f"[{method_name}] Meilleur val {cfg.selection_metric}: "
+            f"{result.best_delta_macro_pct:.2f}"
+        )
+    ckpt = result.output_root / "checkpoints" / "best_model"
+    if ckpt.exists() and cfg.test_data_csv.is_file():
+        paths = evaluate_btp_and_test(cfg, ckpt, result.output_root)
+        if paths.get("test"):
+            print(f"[{method_name}] Métriques test : {paths['test']}", flush=True)
     return 0
 
 

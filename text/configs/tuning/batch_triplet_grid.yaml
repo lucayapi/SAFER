@@ -1,0 +1,13 @@
+method_name: batch_triplet
+base_config: configs/methods/batch_triplet.yaml
+output_dir: resultats/batch_triplet/tuning
+final_output_dir: resultats/batch_triplet
+selection_metric: delta_macro_pct
+n_folds: 5
+test_dataset_path: dataset/test/data_metallurgie.csv
+final_fit_full_data: true
+
+grid:
+  training.learning_rate: [1.0e-5, 2.0e-5]
+  training.batch_size: [8, 16]
+  training.epochs: [15, 30]

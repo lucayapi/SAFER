@@ -64,5 +64,6 @@ def test_postprocess_writes_metrics_geometry(tmp_path, monkeypatch):
     assert metrics_csv.is_file()
     mdf = pd.read_csv(metrics_csv)
     assert "eta2_macro_balanced" in mdf.columns
+    assert "delta_macro_pct" in mdf.columns
     assert mdf.iloc[0]["method"] == "Batch Triplet"
     assert (results / "configs" / "config_resolved.yaml").is_file()

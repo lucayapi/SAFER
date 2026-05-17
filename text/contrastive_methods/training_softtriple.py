@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
+from contrastive_methods.eval_geometry import evaluate_hf_val_geometry, selection_score
 from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.losses.softtriple import (
     HFTextEncoder,
@@ -19,6 +20,7 @@ from contrastive_methods.losses.softtriple import (
     make_collate_fn,
 )
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
+from contrastive_methods.results import TrainingResult
 from contrastive_methods.st_common import get_device
 from scgm_text.dataset_text_embeddings import LABEL2ID
 from safer_core.io import save_config_resolved
@@ -66,7 +68,26 @@ def _run_epoch(
     return total / max(1, n_batches)
 
 
-def run_softtriple(cfg: ContrastiveConfig) -> Path:
+def _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir: Path) -> None:
+    best_dir.mkdir(parents=True, exist_ok=True)
+    torch.save(encoder.encoder.state_dict(), best_dir / "hf_model.bin")
+    encoder.tokenizer.save_pretrained(str(best_dir))
+    torch.save(
+        {
+            "loss_state": loss_module.state_dict(),
+            "config": {
+                "centers_per_class": cfg.centers_per_class,
+                "gamma": cfg.softtriple_gamma,
+                "lambda": cfg.softtriple_lambda,
+                "delta": cfg.softtriple_delta,
+                "tau": cfg.softtriple_tau,
+            },
+        },
+        best_dir / "softtriple_state.pt",
+    )
+
+
+def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
     root = Path(layout["root"])
     checkpoints = Path(layout["checkpoints"])
@@ -82,10 +103,9 @@ def run_softtriple(cfg: ContrastiveConfig) -> Path:
         cfg.backbone_name,
         gradient_checkpointing=cfg.gradient_checkpointing,
     ).to(device)
-    num_classes = len(LABEL2ID)
     loss_module = SoftTripleLoss(
         embedding_dim=encoder.embedding_dim,
-        num_classes=num_classes,
+        num_classes=len(LABEL2ID),
         centers_per_class=cfg.centers_per_class,
         gamma=cfg.softtriple_gamma,
         la=cfg.softtriple_lambda,
@@ -101,12 +121,14 @@ def run_softtriple(cfg: ContrastiveConfig) -> Path:
         shuffle=True,
         collate_fn=collate,
     )
-    val_loader = DataLoader(
-        _SplitDataset(val_df, dataset.text_col),
-        batch_size=cfg.eval_batch_size,
-        shuffle=False,
-        collate_fn=collate,
-    )
+    val_loader = None
+    if len(val_df) > 0 and not cfg.final_fit_full_data:
+        val_loader = DataLoader(
+            _SplitDataset(val_df, dataset.text_col),
+            batch_size=cfg.eval_batch_size,
+            shuffle=False,
+            collate_fn=collate,
+        )
 
     optimizer = torch.optim.AdamW(
         list(encoder.parameters()) + list(loss_module.parameters()),
@@ -114,35 +136,40 @@ def run_softtriple(cfg: ContrastiveConfig) -> Path:
     )
     dev = torch.device(device)
     log_rows: List[dict] = []
-    best_val = float("inf")
+    best_score = float("-inf")
+    best_geometry: dict = {}
     best_dir = checkpoints / "best_model"
-    best_dir.mkdir(parents=True, exist_ok=True)
 
     for epoch in range(cfg.epochs):
         train_loss = _run_epoch(
             encoder, loss_module, train_loader, optimizer, dev, train=True
         )
-        val_loss = _run_epoch(
-            encoder, loss_module, val_loader, optimizer, dev, train=False
-        )
-        log_rows.append({"epoch": epoch + 1, "train_loss": train_loss, "val_loss": val_loss})
-        if val_loss < best_val:
-            best_val = val_loss
-            torch.save(encoder.encoder.state_dict(), best_dir / "hf_model.bin")
-            encoder.tokenizer.save_pretrained(str(best_dir))
-            torch.save(
-                {
-                    "loss_state": loss_module.state_dict(),
-                    "config": {
-                        "centers_per_class": cfg.centers_per_class,
-                        "gamma": cfg.softtriple_gamma,
-                        "lambda": cfg.softtriple_lambda,
-                        "delta": cfg.softtriple_delta,
-                        "tau": cfg.softtriple_tau,
-                    },
-                },
-                best_dir / "softtriple_state.pt",
+        val_loss = float("nan")
+        val_delta = float("nan")
+        if val_loader is not None:
+            val_loss = _run_epoch(
+                encoder, loss_module, val_loader, optimizer, dev, train=False
             )
+            geom = evaluate_hf_val_geometry(encoder, val_df, cfg, dataset.text_col, device)
+            val_delta = float(geom.get("delta_macro_pct", float("nan")))
+            score = selection_score(geom, cfg.selection_metric)
+            log_rows.append(
+                {
+                    "epoch": epoch + 1,
+                    "train_loss": train_loss,
+                    "val_loss": val_loss,
+                    "val_delta_macro_pct": val_delta,
+                    "val_eta2_macro_balanced": geom.get("eta2_macro_balanced"),
+                    "val_rankme_global": geom.get("rankme_global"),
+                }
+            )
+            if score > best_score:
+                best_score = score
+                best_geometry = dict(geom)
+                _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
+        else:
+            log_rows.append({"epoch": epoch + 1, "train_loss": train_loss})
+            _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
 
     pd.DataFrame(log_rows).to_csv(metrics_dir / "train_log.csv", index=False)
 
@@ -171,9 +198,15 @@ def run_softtriple(cfg: ContrastiveConfig) -> Path:
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
-            "best_val_loss": best_val,
+            "best_delta_macro_pct": best_score,
             "embeddings": str(emb_path),
         },
         root,
     )
-    return emb_path
+    return TrainingResult(
+        embeddings_path=emb_path,
+        output_root=root,
+        val_geometry=best_geometry,
+        best_delta_macro_pct=best_score,
+        train_log_path=metrics_dir / "train_log.csv",
+    )
