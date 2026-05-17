@@ -27,6 +27,8 @@ cells = [
         # 02 — MALT-EM Transfer: BTP -> Métallurgie
 
         Transfert macro-ancré avec boucle EM type SCGM (E-step Sinkhorn full-dataset, M-step à q fixé).
+
+        **Lecture seule** : entraînement via `python scripts/train_malt_target.py` (ou job SLURM), puis analyse ici.
         """
     ),
     code(
@@ -39,11 +41,7 @@ cells = [
         TARGET_EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv"
         TARGET_EMB_CSV_ALT = "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv"
         OUTPUT_DIR = "resultats/malt"
-        RUN_TRAINING = True
-        # False = ne pas réentraîner si best_model.pt existe déjà (gain de temps).
-        # True = toujours réentraîner quand RUN_TRAINING=True (comportement attendu pour un notebook d'expérience).
-        FORCE_RETRAIN = True
-        EPOCHS = 50
+        SKIP_EXPORT_IF_PRESENT = True
         BATCH_SIZE = 512
         N_SUBCLASS = 32
         SEED = 42
@@ -153,79 +151,38 @@ cells = [
         pd.Series(p0.argmax(1)).value_counts()
         """
     ),
-    md("## 6. Entraînement MALT-EM"),
+    md(
+        """
+        ## 6. Résultats MALT-EM (lecture seule)
+
+        Entraînement **hors notebook** :
+
+        ```bash
+        python scripts/train_malt_target.py --config configs/malt_btp_to_mettalurgie_qwen06.yaml
+        ```
+
+        Attendu : `resultats/malt/best_model.pt` et `resultats/malt/metrics/train_log.csv`.
+        """
+    ),
     code(
         """
-        train_script = REPO_ROOT / "scripts" / "train_malt_target.py"
-        spec = importlib.util.spec_from_file_location("malt_train", train_script)
-        malt_train = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(malt_train)
-
         best_ckpt = OUTPUT_PATH / "best_model.pt"
-        epochs = 5 if EPOCHS > 5 and not FORCE_RETRAIN else EPOCHS
-        print(
-            f"RUN_TRAINING={RUN_TRAINING} | FORCE_RETRAIN={FORCE_RETRAIN} | "
-            f"best_model.pt existe={best_ckpt.is_file()} | epochs prévus={epochs}"
-        )
-
-        if not RUN_TRAINING:
-            print("Entraînement ignoré : RUN_TRAINING=False.")
-        elif best_ckpt.is_file() and not FORCE_RETRAIN:
-            print("Entraînement ignoré : checkpoint déjà présent.")
-            print("  → Mettre FORCE_RETRAIN = True dans la cellule Parameters pour relancer,")
-            print("  → ou supprimer le fichier :", best_ckpt)
-        else:
-            print("Démarrage de l'entraînement MALT-EM…")
-            args = argparse.Namespace(
-                config=None,
-                source_checkpoint=str(ckpt_path),
-                target_data_csv=TARGET_DATA_CSV,
-                target_data_csv_alt=TARGET_DATA_CSV_ALT,
-                target_emb_csv=TARGET_EMB_CSV,
-                target_emb_csv_alt=TARGET_EMB_CSV_ALT,
-                output_dir=str(OUTPUT_PATH),
-                batch_size=BATCH_SIZE,
-                epochs=epochs,
-                lr=1e-3,
-                momentum=0.9,
-                weight_decay=1e-4,
-                optimizer="adamw",
-                scheduler="none",
-                num_cycles=10,
-                tau_macro=0.1,
-                tau_z=0.1,
-                tau_yz=0.1,
-                tau_div=0.1,
-                n_subclass=N_SUBCLASS,
-                num_classes=4,
-                n_iter_estep=N_ITER_ESTEP,
-                sinkhorn_lmd=SINKHORN_LMD,
-                em_q_mode=EM_Q_MODE,
-                init_q_mode="source_scores",
-                beta_anchor=BETA_ANCHOR,
-                beta_div=BETA_DIV,
-                beta_macro=BETA_MACRO,
-                beta_balance=0.0,
-                confidence_threshold=0.0,
-                macro_weight_mode="max_prob",
-                copy_source_projector=True,
-                freeze_projector=False,
-                init_mu_target="source",
-                init_nu="kmeans",
-                save_q_every_estep=True,
-                filter_pred_ok=False,
-                disable_anchor=False,
-                disable_div=False,
-                disable_macro=False,
-                disable_balance=True,
-                seed=SEED,
-                device="cuda" if torch.cuda.is_available() else "cpu",
-                num_workers=0,
-                resolved_target_data_csv=resolved_data,
-                resolved_target_emb_csv=resolved_emb,
+        log_path = OUTPUT_PATH / "metrics" / "train_log.csv"
+        if not log_path.is_file():
+            log_path = OUTPUT_PATH / "logs.csv"
+        missing = []
+        if not best_ckpt.is_file():
+            missing.append(str(best_ckpt))
+        if not log_path.is_file():
+            missing.append("metrics/train_log.csv ou logs.csv")
+        if missing:
+            raise FileNotFoundError(
+                "Artefacts MALT manquants. Lancez d'abord :\\n"
+                "  python scripts/train_malt_target.py --config configs/malt_btp_to_mettalurgie_qwen06.yaml\\n"
+                f"Manquant : {missing}"
             )
-            malt_train.run_malt_training(args)
-            print("Entraînement MALT-EM terminé.")
+        print("Checkpoint:", best_ckpt)
+        print("Journal:", log_path)
         """
     ),
     md("## 7. Courbes d'entraînement"),
@@ -248,22 +205,32 @@ cells = [
     md("## 8. Export MALT"),
     code(
         """
-        export_script = REPO_ROOT / "scripts" / "export_malt_outputs.py"
-        spec = importlib.util.spec_from_file_location("malt_export", export_script)
-        malt_export = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(malt_export)
-        export_args = argparse.Namespace(
-            checkpoint=str(OUTPUT_PATH / "best_model.pt"),
-            source_checkpoint=str(ckpt_path),
-            target_data_csv=TARGET_DATA_CSV,
-            target_data_csv_alt=TARGET_DATA_CSV_ALT,
-            target_emb_csv=TARGET_EMB_CSV,
-            target_emb_csv_alt=TARGET_EMB_CSV_ALT,
-            output_dir=str(EXPORTS_DIR),
-            batch_size=BATCH_SIZE,
-            device="cuda" if torch.cuda.is_available() else "cpu",
-        )
-        malt_export.run_export(export_args)
+        _meta = EXPORTS_DIR / "metadata_with_malt_predictions.csv"
+        if SKIP_EXPORT_IF_PRESENT and _meta.is_file():
+            print(f"Export ignoré (déjà présent) : {_meta}")
+        else:
+            import subprocess
+
+            export_cmd = [
+                sys.executable,
+                str(REPO_ROOT / "scripts" / "export_malt_outputs.py"),
+                "--checkpoint",
+                str(OUTPUT_PATH / "best_model.pt"),
+                "--source_checkpoint",
+                str(ckpt_path),
+                "--target_data_csv",
+                TARGET_DATA_CSV,
+                "--target_emb_csv",
+                TARGET_EMB_CSV,
+                "--output_dir",
+                str(EXPORTS_DIR),
+                "--batch_size",
+                str(BATCH_SIZE),
+                "--device",
+                "cuda" if torch.cuda.is_available() else "cpu",
+            ]
+            print(" ".join(export_cmd))
+            subprocess.run(export_cmd, cwd=str(REPO_ROOT), check=True)
         sorted(p.name for p in EXPORTS_DIR.iterdir())
         """
     ),

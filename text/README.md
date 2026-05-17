@@ -9,6 +9,8 @@ cd text
 pip install -r requirements.txt
 ```
 
+SoftTriple / SupCon / batch triplet avec `Qwen/Qwen3-Embedding-0.6B` exigent **transformers ≥ 4.51** (architecture `qwen3`). Après mise à jour du dépôt : `pip install -U 'transformers>=4.51.0' 'tokenizers>=0.21.0'`.
+
 Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (modèles Hugging Face). `OPENAI_API_KEY` optionnel (enrichissement de thèmes). Ne jamais committer `.env`.
 
 ## Organisation
@@ -152,8 +154,8 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `01_compare_embedding_methods.ipynb` | Comparaison globale eta² / RankMe |
-| `01_scgm_text_experiment.ipynb` | Pipeline SCGM complet (expérimental) |
-| `02_malt_btp_to_mettalurgie_transfer.ipynb` | Transfert MALT (ex. BTP → métallurgie) |
+| `01_scgm_text_experiment.ipynb` | **Lecture seule** — courbes, export, viz à partir de `resultats/scgm_text/` |
+| `02_malt_btp_to_mettalurgie_transfer.ipynb` | **Lecture seule** — analyse MALT à partir de `resultats/malt/` |
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
 | `04_malt_to_bayesian_network.ipynb` | BN depuis MALT |
 | `04_bayesian_network_from_scgm.ipynb` | BN depuis SCGM |
@@ -162,6 +164,10 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `05_view_supcon_results.ipynb` | Résultats SupCon |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
+
+Entraînement **hors notebook** : `scripts/train_scgm_text.py`, `scripts/train_malt_target.py`, ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.
+
+**JupyterHub (HPC2)** : JupyterLab ne voit que `~/notebooks`. Créer un lien vers le projet, par ex. `ln -sfn ~/SAFER/text ~/notebooks/SAFER_text`, puis kernel Python avec le venv du projet (`ipykernel install --user --name safer-text`).
 
 Régénération :
 

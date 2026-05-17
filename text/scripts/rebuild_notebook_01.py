@@ -45,36 +45,20 @@ def replace_cell_by_prefix(cells: list, prefix: str, new_source: str, cell_type:
     return False
 
 
-PARAMS_SOURCE = """# Parameters
+PARAMS_SOURCE = """# Parameters — lecture seule (entraînement via scripts/ ou jobs/)
+OUTPUT_DIR = "resultats/scgm_text"
+CHECKPOINT_PATH = None  # None → OUTPUT_DIR/checkpoints/best_model.pt
+SKIP_EXPORT_IF_PRESENT = True  # True : export seulement si projected_embeddings.npy absent
+
 DATA_CSV = "dataset/data_btp.csv"
 EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
-INPUT_MODE = "precomputed_embeddings"  # text | precomputed_embeddings
-BACKBONE_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-TEXT_COL = None  # sentence par défaut
-POOLING = "mean"  # cls | mean
-FREEZE_BACKBONE = False
-BACKBONE_LR = 2e-5
-HEAD_LR = 1e-3
-MAX_SEQ_LENGTH = 256
-OUTPUT_DIR = "resultats/scgm_text"
 LABEL_COL = "pred_label"
 PRED_OK_COL = "pred_ok"
 GROUP_COL = "accident_id"
 SEED = 42
 VAL_RATIO = 0.1
-RUN_FULL_TRAINING = True
-EPOCHS_FAST = 10
-EPOCHS_FULL = 50
-BATCH_SIZE = 512
-HIDDIM = 128
-PROJECTION = "identity"  # identity | linear | mlp (ignoré si preset strict/pragmatic)
-N_SUBCLASS = 32
-TAU = 0.1
-ALPHA = 0.5
-LMD = 25
-N_ITER_ESTEP = 5
-LR = 1e-3
-WEIGHT_DECAY = 1e-4
+BATCH_SIZE = 512  # export / évaluation
+
 TSNE_SAMPLE_SIZE = 8000
 DATAMAP_MAX_POINTS = 12000
 RAW_EMBEDDING_UMAP_MAX_POINTS = 12000
@@ -82,27 +66,6 @@ DATAMAP_SEED = 42
 DATAMAP_LABEL_MODE = "theme_summary"  # theme_summary | macro_z
 N_OPENAI_EXAMPLE_TEXTS = 5
 DATAMAP_SHOW_MACRO_CENTROIDS = True
-
-# --- Optimiseur / fidélité SCGM-G ---
-# pragmatic : AdamW, projection linear
-# strict : SGD + cosine, embeddings pré-calculés, projection mlp
-# strict_finetune_identity : text + identity + backbone fine-tuné
-# precomputed_identity : embeddings figés + identity (≠ strict_finetune_identity)
-# custom : OPTIMIZER, SCHEDULER, PROJECTION, INPUT_MODE, LR ci-dessous
-TRAINING_PRESET = "pragmatic"  # pragmatic | strict | strict_finetune_identity | precomputed_identity | custom
-OPTIMIZER = "adamw"  # adamw | sgd (custom uniquement)
-SCHEDULER = "none"  # none | cosine (custom uniquement)
-MOMENTUM = 0.9
-NUM_CYCLES = 10
-
-# --- Self-distillation (optionnel) ---
-USE_SELF_DISTILLATION = False
-BETA1 = 1.0  # < 1.0 active ls_div1 (avec teacher)
-BETA2 = 1.0
-BETA3 = 1.0
-KD_T = 4.0
-TEACHER_MODE = "ema"  # ema | previous_epoch (ignoré si USE_SELF_DISTILLATION=False)
-EMA_DECAY = 0.999
 """
 
 SETUP_SOURCE = """def find_repo_root(start: Path) -> Path:
@@ -126,11 +89,11 @@ from scgm_text.dataset_text_embeddings import (
     TextEmbeddingDataset,
     split_by_group,
 )
-from scgm_text.fidelity import describe_fidelity_mode
 from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, save_json, set_seed
 
 OUTPUT_PATH = Path(OUTPUT_DIR)
 CHECKPOINTS_DIR = OUTPUT_PATH / "checkpoints"
+CHECKPOINT_PATH = Path(CHECKPOINT_PATH) if CHECKPOINT_PATH else CHECKPOINTS_DIR / "best_model.pt"
 EXPORTS_DIR = OUTPUT_PATH / "embeddings"
 TOPICS_DIR = OUTPUT_PATH / "topics"
 EVAL_DIR = OUTPUT_PATH / "metrics"
@@ -140,8 +103,12 @@ for folder in [OUTPUT_PATH, CHECKPOINTS_DIR, EXPORTS_DIR, TOPICS_DIR, EVAL_DIR, 
     ensure_dir(str(folder))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-epochs = EPOCHS_FULL if RUN_FULL_TRAINING else EPOCHS_FAST
 set_seed(SEED)
+
+run_config: dict = {}
+_cfg_json = OUTPUT_PATH / "configs" / "config.json"
+if _cfg_json.is_file():
+    run_config = load_json(str(_cfg_json))
 
 
 def save_fig(name: str) -> Path:
@@ -213,131 +180,98 @@ def show_training_progress(output_path=OUTPUT_PATH):
     loss_cols = [c for c in ["train_loss", "loss_macro", "loss_latent"] if c in logs_df.columns]
     if loss_cols:
         logs_df.plot(x="epoch", y=loss_cols, ax=axes[0])
-    val_cols = [c for c in ["val_macro_f1", "val_balanced_acc", "val_acc"] if c in logs_df.columns]
+    val_cols = [
+        c
+        for c in [
+            "val_eta2_macro_balanced",
+            "val_eta2_weighted",
+            "val_macro_f1",
+            "val_balanced_acc",
+            "val_acc",
+        ]
+        if c in logs_df.columns
+    ]
     if val_cols:
         logs_df.plot(x="epoch", y=val_cols, ax=axes[1])
     plt.show()
 
 
+def require_scgm_artifacts(
+    output_path: Path = OUTPUT_PATH,
+    checkpoint_path: Path = CHECKPOINT_PATH,
+) -> None:
+    missing: list[str] = []
+    ckpt = Path(checkpoint_path)
+    if not ckpt.is_file():
+        missing.append(str(ckpt))
+    try:
+        _read_training_logs(output_path)
+    except FileNotFoundError:
+        missing.append("metrics/train_log.csv ou logs.csv")
+    if missing:
+        raise FileNotFoundError(
+            "Artefacts SCGM manquants — entraînez hors notebook, par ex.:\\n"
+            "  cd text/jobs && sbatch train_scgm_text.sh\\n"
+            "  python scripts/train_scgm_text.py --config configs/scgm_text_strict_fidelity.yaml "
+            "--scgm_strict_mode --output_dir resultats/scgm_text\\n"
+            f"Manquant : {missing}"
+        )
+
+
 print(f"REPO_ROOT={REPO_ROOT}")
 print(f"OUTPUT_DIR={OUTPUT_PATH}")
-print(f"DEVICE={device} | EPOCHS={epochs} | TRAINING_PRESET={TRAINING_PRESET}")
+print(f"CHECKPOINT={CHECKPOINT_PATH}")
+print(f"DEVICE={device}")
+if run_config:
+    print(
+        "Run config:",
+        run_config.get("fidelity_mode"),
+        "| best epoch:",
+        run_config.get("best_checkpoint_epoch"),
+        "| metric:",
+        run_config.get("best_checkpoint_metric"),
+    )
 """
 
-SECTION8_MD = """## 8. Entraînement SCGM-G texte depuis le notebook
+SECTION8_MD = """## 8. Résultats d'entraînement (lecture seule)
 
-- **MODE RAPIDE** : `RUN_FULL_TRAINING = False` (10 epochs par défaut).
-- **MODE COMPLET** : `RUN_FULL_TRAINING = True` (`EPOCHS_FULL` epochs).
-- **Optimiseur** : `TRAINING_PRESET` en tête du notebook :
-  - `pragmatic` — AdamW, projection `linear`.
-  - `strict` — SGD + cosine, `precomputed_embeddings`, projection `mlp`.
-  - `strict_finetune_identity` — `text` + `identity`, backbone fine-tuné (`BACKBONE_LR` / `HEAD_LR`).
-  - `precomputed_identity` — embeddings CSV figés + `identity` (pas de θ backbone).
-  - `custom` — `INPUT_MODE`, `OPTIMIZER`, `SCHEDULER`, `PROJECTION`, `LR`.
-- **Self-distillation** : `USE_SELF_DISTILLATION`, `BETA1/2/3`, `KD_T`, `TEACHER_MODE`, `EMA_DECAY`. Les termes `ls_div*` restent à 0 si `BETA1/2/3 == 1.0` ; pour activer : `USE_SELF_DISTILLATION = True` et au moins un `BETA* < 1.0` (ex. `0.95`).
-- Entraînement via `run_training()` (même logique que `scripts/train_scgm_text.py`).
-- Journaux : `metrics/train_log.csv` ou `logs.csv`, puis `show_training_progress()`.
+**Pas d'entraînement dans ce notebook.** Produire d'abord les artefacts sous `OUTPUT_DIR` :
 
-### Identity projection with trainable backbone
+```bash
+cd text/jobs && sbatch train_scgm_text.sh
+# ou
+python scripts/train_scgm_text.py \\
+  --config configs/scgm_text_strict_fidelity.yaml \\
+  --scgm_strict_mode \\
+  --output_dir resultats/scgm_text
+```
 
-Dans ce mode (`INPUT_MODE=text`, `PROJECTION=identity`, `FREEZE_BACKBONE=False`), **identity** signifie l'absence de projecteur additionnel, mais le backbone **f_theta** est bien optimisé par la loss SCGM (`h = f_theta(x)`). Ce n'est **pas** le mode `precomputed_identity` (embeddings figés).
+Puis export (si `embeddings/projected_embeddings.npy` absent) :
+
+```bash
+python scripts/export_scgm_text_outputs.py \\
+  --checkpoint resultats/scgm_text/checkpoints/best_model.pt \\
+  --output_dir resultats/scgm_text
+```
+
+Attendu : `checkpoints/best_model.pt`, `metrics/train_log.csv` (ou `logs.csv`), puis exports sous `embeddings/` et `topics/`.
 """
 
-TRAIN_SOURCE = """import argparse
-import importlib.util
+RESULTS_SOURCE = """require_scgm_artifacts()
 
-train_script_path = REPO_ROOT / "scripts" / "train_scgm_text.py"
-train_module_name = "scgm_train_text"
-sys.modules.pop(train_module_name, None)
-train_spec = importlib.util.spec_from_file_location(train_module_name, train_script_path)
-scgm_train_text = importlib.util.module_from_spec(train_spec)
-sys.modules[train_module_name] = scgm_train_text
-train_spec.loader.exec_module(scgm_train_text)
-
-preset = str(TRAINING_PRESET).strip().lower()
-train_args = argparse.Namespace(
-    config=None,
-    run_name=None,
-    data_csv=DATA_CSV,
-    emb_csv=EMB_CSV,
-    input_mode=INPUT_MODE,
-    backbone_model_name_or_path=BACKBONE_MODEL,
-    text_col=TEXT_COL,
-    pooling=POOLING,
-    freeze_backbone=FREEZE_BACKBONE,
-    backbone_lr=BACKBONE_LR,
-    head_lr=HEAD_LR,
-    max_seq_length=MAX_SEQ_LENGTH,
-    train_last_n_layers=None,
-    backbone_weight_decay=0.01,
-    head_weight_decay=WEIGHT_DECAY,
-    strict_finetune_identity=False,
-    precomputed_identity=False,
-    verify_backbone_update=None,
-    output_dir=str(OUTPUT_PATH),
-    label_col=LABEL_COL,
-    pred_ok_col=PRED_OK_COL,
-    group_col=GROUP_COL,
-    batch_size=BATCH_SIZE,
-    epochs=epochs,
-    lr=LR,
-    momentum=MOMENTUM,
-    weight_decay=WEIGHT_DECAY,
-    optimizer=OPTIMIZER,
-    scheduler=SCHEDULER,
-    num_cycles=NUM_CYCLES,
-    hiddim=HIDDIM,
-    n_class=4,
-    n_subclass=N_SUBCLASS,
-    tau=TAU,
-    alpha=ALPHA,
-    lmd=LMD,
-    n_iter_estep=N_ITER_ESTEP,
-    val_ratio=VAL_RATIO,
-    seed=SEED,
-    device="cuda" if torch.cuda.is_available() else "cpu",
-    projection=PROJECTION,
-    with_mlp=None,
-    scgm_strict_mode=False,
-    text_pragmatic_mode=False,
-    use_self_distillation=USE_SELF_DISTILLATION,
-    kd_t=KD_T,
-    beta=1.0,
-    beta1=BETA1,
-    beta2=BETA2,
-    beta3=BETA3,
-    teacher_mode="none" if not USE_SELF_DISTILLATION else TEACHER_MODE,
-    ema_decay=EMA_DECAY,
-    resume_from_checkpoint=None,
-    num_workers=0,
-    smoke_epochs=None,
-)
-
-if preset == "strict":
-    train_args.scgm_strict_mode = True
-elif preset == "pragmatic":
-    train_args.text_pragmatic_mode = True
-elif preset == "strict_finetune_identity":
-    train_args.strict_finetune_identity = True
-elif preset == "precomputed_identity":
-    train_args.precomputed_identity = True
-elif preset != "custom":
-    raise ValueError(
-        f"TRAINING_PRESET inconnu : {TRAINING_PRESET!r} "
-        "(pragmatic | strict | strict_finetune_identity | precomputed_identity | custom)"
+if run_config:
+    display(
+        pd.Series(
+            {
+                "fidelity_mode": run_config.get("fidelity_mode"),
+                "best_checkpoint_epoch": run_config.get("best_checkpoint_epoch"),
+                "best_checkpoint_metric": run_config.get("best_checkpoint_metric"),
+                "best_checkpoint_score": run_config.get("best_checkpoint_score"),
+                "output_dir": run_config.get("output_dir", str(OUTPUT_PATH)),
+            }
+        )
     )
 
-scgm_train_text.finalize_args(train_args)
-print(describe_fidelity_mode(train_args))
-print(
-    f"input_mode={train_args.input_mode} projection={train_args.projection} "
-    f"freeze_backbone={train_args.freeze_backbone}"
-)
-print(
-    f"optimizer={train_args.optimizer} scheduler={train_args.scheduler} "
-    f"projection={train_args.projection} head_lr={train_args.head_lr}"
-)
-scgm_train_text.run_training(train_args)
 show_training_progress()
 """
 
@@ -348,9 +282,20 @@ fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 loss_cols = [c for c in ["train_loss", "loss_macro", "loss_latent"] if c in logs.columns]
 if loss_cols:
     logs.plot(x="epoch", y=loss_cols, ax=axes[0, 0])
-val_cols = [c for c in ["val_acc", "val_macro_f1", "val_balanced_acc"] if c in logs.columns]
+val_cols = [
+    c
+    for c in [
+        "val_eta2_macro_balanced",
+        "val_eta2_weighted",
+        "val_acc",
+        "val_macro_f1",
+        "val_balanced_acc",
+    ]
+    if c in logs.columns
+]
 if val_cols:
     logs.plot(x="epoch", y=val_cols, ax=axes[0, 1])
+    axes[0, 1].set_title("Validation (η² ou classif)")
 geom_cols = [c for c in ["rankme_global", "c1_global", "c10_global"] if c in logs.columns]
 if geom_cols:
     logs.plot(x="epoch", y=geom_cols, ax=axes[1, 0], marker="o", markersize=3)
@@ -364,8 +309,30 @@ from scgm_text.notebook_viz import plot_training_geometry_curves
 plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
+EXPORT_SOURCE = """_proj = EXPORTS_DIR / "projected_embeddings.npy"
+if SKIP_EXPORT_IF_PRESENT and _proj.is_file():
+    print(f"Export ignoré (déjà présent) : {_proj}")
+else:
+    export_cmd = [
+        sys.executable,
+        "scripts/export_scgm_text_outputs.py",
+        "--data_csv", DATA_CSV,
+        "--emb_csv", EMB_CSV,
+        "--checkpoint", str(CHECKPOINT_PATH),
+        "--output_dir", str(EXPORTS_DIR),
+        "--label_col", LABEL_COL,
+        "--pred_ok_col", PRED_OK_COL,
+        "--group_col", GROUP_COL,
+        "--batch_size", str(BATCH_SIZE),
+        "--device", "cuda" if torch.cuda.is_available() else "cpu",
+    ]
+    run_cli(export_cmd)
+    exported = sorted(p.name for p in EXPORTS_DIR.iterdir())
+    print("artefacts exportés:", exported)
+"""
+
 CHECKPOINT_SOURCE = """checkpoint = torch.load(
-    CHECKPOINTS_DIR / "best_model.pt", map_location="cpu", weights_only=False
+    CHECKPOINT_PATH, map_location="cpu", weights_only=False
 )
 config = load_json(str(OUTPUT_PATH / "configs" / "config.json"))
 summary_ckpt = {
@@ -623,7 +590,7 @@ notebook_summary = {
     "evaluation_dir": str(EVAL_DIR),
     "figures_dir": str(FIGURES_DIR),
     "tables_dir": str(TABLES_DIR),
-    "epochs": epochs,
+    "best_checkpoint_epoch": run_config.get("best_checkpoint_epoch"),
     "device": str(device),
     "figure_files": sorted(p.name for p in FIGURES_DIR.glob("*.png")),
     "table_files": sorted(p.name for p in TABLES_DIR.glob("*.csv")),
@@ -640,13 +607,14 @@ def main() -> None:
     cells[2]["source"] = [
         "## 2. Imports et configuration\n",
         "\n",
-        "Régler **`TRAINING_PRESET`** (`pragmatic` | `strict` | `strict_finetune_identity` | `precomputed_identity` | `custom`), **`INPUT_MODE`** et **`USE_SELF_DISTILLATION`** dans la cellule paramètres.\n",
+        "Notebook **lecture seule** : régler `OUTPUT_DIR` et `CHECKPOINT_PATH` dans la cellule paramètres. "
+        "L'entraînement se fait via `scripts/train_scgm_text.py` ou `jobs/train_scgm_text.sh`.\n",
     ]
     cells[4] = cell_from_source(PARAMS_SOURCE, cell_id="91307aa9")
     cells[4]["metadata"] = {"tags": ["parameters"]}
     cells[5] = cell_from_source(SETUP_SOURCE, cell_id="c308cd48")
     cells[19] = cell_from_source(SECTION8_MD, cell_type="markdown")
-    cells[20] = cell_from_source(TRAIN_SOURCE, cell_id="5144d005")
+    cells[20] = cell_from_source(RESULTS_SOURCE, cell_id="5144d005")
     cells[22] = cell_from_source(LOGS_SOURCE, cell_id="386ed2ac")
     cells[24] = cell_from_source(CHECKPOINT_SOURCE, cell_id="c33b3818")
 
@@ -667,6 +635,7 @@ def main() -> None:
             c["source"][-1] = c["source"][-1].rstrip("\n") + "\n"
             break
 
+    replace_cell_by_prefix(cells, "export_cmd = [", EXPORT_SOURCE)
     replace_cell_by_prefix(cells, "from sklearn.decomposition import PCA", PROJECTION_CODE)
     replace_cell_by_prefix(cells, "eval_cmd = [", EVAL_GEOMETRY_CODE)
     # Markdown UMAP embedding brut (juste avant la cellule eval)
@@ -685,10 +654,16 @@ def main() -> None:
             src = get_source(c)
             if "SCGM Text BTP" in src:
                 c["source"] = [
-                    ln.replace("SCGM Text BTP Experiment", "SCGM Text Experiment")
-                    .replace("BTP Experiment", "Experiment")
+                    ln.replace("SCGM Text BTP Experiment", "SCGM Text — analyse (lecture seule)")
+                    .replace("SCGM Text Experiment", "SCGM Text — analyse (lecture seule)")
+                    .replace("BTP Experiment", "analyse (lecture seule)")
                     for ln in c["source"]
                 ]
+                if "lecture seule" not in "".join(c["source"]):
+                    c["source"].insert(
+                        1,
+                        "\n**Analyse et visualisation** des sorties sous `resultats/scgm_text/` — pas d'entraînement ici.\n",
+                    )
                 break
 
     nb["cells"] = cells

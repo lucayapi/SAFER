@@ -18,8 +18,9 @@ tqdm==4.67.1
 torch==2.5.1
 
 # --- Encodeurs texte (input_mode=text, fine-tuning backbone) ---
-transformers==4.46.3
-tokenizers==0.20.3
+# Qwen3-Embedding (qwen3) : transformers >= 4.51.0 (voir HF model card).
+transformers==4.51.3
+tokenizers==0.21.0
 accelerate==1.1.1
 
 # --- Visualisation & données tabulaires ---

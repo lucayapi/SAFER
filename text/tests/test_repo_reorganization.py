@@ -92,13 +92,26 @@ def test_jobs_exist():
 
 
 def test_notebooks_no_training():
-    nb = TEXT_ROOT / "notebooks" / "01_compare_embedding_methods.ipynb"
-    if not nb.is_file():
-        pytest.skip("notebook not generated")
-    data = json.loads(nb.read_text(encoding="utf-8"))
-    src = "".join("".join(c.get("source", [])) for c in data["cells"])
-    assert "run_training" not in src
-    assert "trainer.fit" not in src
+    forbidden = (
+        "run_training(",
+        "run_malt_training(",
+        "trainer.fit",
+        'spec_from_file_location("malt_train"',
+        "spec_from_file_location(train_module_name",
+        "scgm_train_text.run_training",
+    )
+    for name in (
+        "01_compare_embedding_methods.ipynb",
+        "01_scgm_text_experiment.ipynb",
+        "02_malt_btp_to_mettalurgie_transfer.ipynb",
+    ):
+        nb = TEXT_ROOT / "notebooks" / name
+        if not nb.is_file():
+            pytest.skip(f"notebook not generated: {name}")
+        data = json.loads(nb.read_text(encoding="utf-8"))
+        src = "".join("".join(c.get("source", [])) for c in data["cells"])
+        for token in forbidden:
+            assert token not in src, f"{name} must not reference {token!r}"
 
 
 def test_collect_results_loader_finds_csv(tmp_path):
