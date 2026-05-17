@@ -14,7 +14,6 @@
 
 set -euo pipefail
 cd "${SLURM_SUBMIT_DIR:-$PWD}/.."
-mkdir -p resultats/scgm_text/logs
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"

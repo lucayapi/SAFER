@@ -94,9 +94,7 @@ sbatch train_batch_triplet.sh
 sbatch compare_methods.sh
 ```
 
-Logs : `resultats/<method>/logs/slurm-*.out`. Cache HF : `$SCRATCH/hf_cache` si défini.
-
-`submit_all.sh` crée les dossiers `resultats/*/logs/` **avant** `sbatch` (évite les échecs SLURM si `resultats/` n'existe pas encore). Les scripts `jobs/*.sh` utilisent des fins de ligne LF (voir `.gitattributes`).
+Logs SLURM : `jobs/slurm-<job_name>-<job_id>.out` (et `.err`) après `sbatch` depuis `jobs/`. Cache HF : `$SCRATCH/hf_cache` si défini. Jobs GPU : `--constraint='a100|h100'`, `--mem=64G`. Les scripts `jobs/*.sh` utilisent des fins de ligne LF (voir `.gitattributes`).
 
 ## SCGM-Text
 
