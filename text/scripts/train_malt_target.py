@@ -38,12 +38,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train MALT-EM on target corpus (SCGM-like EM transfer).")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--run_name", type=str, default=None)
-    parser.add_argument("--source_checkpoint", type=str, default="runs/scgm_text_qwen06/best_model.pt")
+    parser.add_argument(
+        "--source_checkpoint",
+        type=str,
+        default="resultats/scgm_text/checkpoints/best_model.pt",
+    )
     parser.add_argument("--target_data_csv", type=str, default="dataset/data_metallurgie.csv")
     parser.add_argument("--target_data_csv_alt", type=str, default="dataset/data_mettalurgie.csv")
     parser.add_argument("--target_emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_metallurgie.csv")
     parser.add_argument("--target_emb_csv_alt", type=str, default="embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv")
-    parser.add_argument("--output_dir", type=str, default="runs/malt_btp_to_mettalurgie_qwen06")
+    parser.add_argument("--output_dir", type=str, default="resultats/malt")
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=1e-3)

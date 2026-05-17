@@ -38,7 +38,7 @@ from scgm_text.utils_io import ensure_dir, save_numpy
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export MALT target outputs.")
     parser.add_argument("--checkpoint", type=str, required=True)
-    parser.add_argument("--source_checkpoint", type=str, default="runs/scgm_text_qwen06/best_model.pt")
+    parser.add_argument("--source_checkpoint", type=str, default="resultats/scgm_text/checkpoints/best_model.pt")
     parser.add_argument("--target_data_csv", type=str, default="dataset/data_mettalurgie.csv")
     parser.add_argument("--target_data_csv_alt", type=str, default="dataset/data_metallurgie.csv")
     parser.add_argument("--target_emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv")

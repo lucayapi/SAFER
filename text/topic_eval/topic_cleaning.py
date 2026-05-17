@@ -40,11 +40,15 @@ def _get_nltk_french_stopwords() -> Set[str]:
 def load_domain_stopwords(path: str | Path) -> Set[str]:
     p = Path(path)
     if not p.is_file():
-        raise FileNotFoundError(f"Fichier stopwords métier introuvable : {p.resolve()}")
+        default = Path(__file__).resolve().parents[1] / "resultats/comparisons/topics_legacy/stopwords_domain.txt"
+        if default.is_file():
+            p = default
+        else:
+            raise FileNotFoundError(f"Fichier stopwords métier introuvable : {path}")
     words: Set[str] = set()
     for line in p.read_text(encoding="utf-8").splitlines():
         w = line.strip()
-        if w:
+        if w and not w.startswith("#"):
             words.add(normalize_token(w))
     return words
 

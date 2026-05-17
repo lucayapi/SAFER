@@ -86,9 +86,9 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
             r"""
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 # Dossier `exports` du notebook 01 (SCGM BTP), après `export_scgm_text_outputs.py`.
-SCGM_EXPORTS_DIR = "runs/scgm_text_qwen06_notebook/exports"
+SCGM_RESULT_DIR = "resultats/scgm_text"
 # Sorties BN : staging/, tables/, models/, figures/static|interactive|nodes/, reports/
-OUTPUT_DIR = "outputs/bn_btp_from_scgm"
+OUTPUT_DIR = "resultats/scgm_text/bn_staging"
 CONFIDENCE_THRESHOLD = 0.50
 MIN_TOPIC_ACCIDENT_SUPPORT = 20
 MAX_TOPICS_PER_MACRO = 6
@@ -167,23 +167,25 @@ FIGURES_NODES = OUT_ROOT / "figures" / "nodes"
 MODELS = OUT_ROOT / "models"
 REPORTS = OUT_ROOT / "reports"
 
-SCGM_EXPORTS_ROOT = resolve_repo_path(SCGM_EXPORTS_DIR, REPO)
+SCGM_ROOT = resolve_repo_path(SCGM_RESULT_DIR, REPO)
+SCGM_EMB = SCGM_ROOT / "embeddings"
+SCGM_ASSIGN = SCGM_ROOT / "assignments"
+SCGM_TOPICS = SCGM_ROOT / "topics"
 MALT_LIKE = OUT_ROOT / "staging" / "malt_like_exports"
 MALT_LIKE.mkdir(parents=True, exist_ok=True)
 _copy_map = (
-    ("prob_z_x.npy", "pt_z_target.npy"),
-    ("prob_y_x.npy", "pt_y_target.npy"),
-    ("prob_y_z.npy", "pt_y_given_z.npy"),
-    ("metadata_with_predictions.csv", "metadata_with_malt_predictions.csv"),
-    ("z_assignments.csv", "z_assignments_target.csv"),
+    (SCGM_EMB / "prob_z_x.npy", "pt_z_target.npy"),
+    (SCGM_EMB / "prob_y_x.npy", "pt_y_target.npy"),
+    (SCGM_EMB / "prob_y_z.npy", "pt_y_given_z.npy"),
+    (SCGM_EMB / "metadata_with_predictions.csv", "metadata_with_malt_predictions.csv"),
+    (SCGM_ASSIGN / "z_assignments.csv", "z_assignments_target.csv"),
 )
-for _src_name, _dst_name in _copy_map:
-    _src = SCGM_EXPORTS_ROOT / _src_name
+for _src, _dst_name in _copy_map:
     _dst = MALT_LIKE / _dst_name
     if not _src.is_file():
         raise FileNotFoundError(f"Export SCGM manquant pour le BN : {_src}")
     shutil.copy2(_src, _dst)
-_openai_themes_src = SCGM_EXPORTS_ROOT / "themes_by_z_openai.csv"
+_openai_themes_src = SCGM_TOPICS / "themes_by_z_openai.csv"
 if _openai_themes_src.is_file():
     shutil.copy2(_openai_themes_src, MALT_LIKE / "themes_by_z_openai.csv")
     print("Copié :", MALT_LIKE / "themes_by_z_openai.csv")
@@ -257,7 +259,9 @@ ensure_output_dirs(OUT_ROOT)
 np.random.seed(int(RANDOM_SEED))
 warnings.filterwarnings("ignore", category=UserWarning)
 print("REPO =", REPO)
-print("SCGM_EXPORTS_ROOT =", SCGM_EXPORTS_ROOT)
+print("SCGM_ROOT =", SCGM_ROOT)
+print("SCGM_EMB =", SCGM_EMB)
+print("SCGM_TOPICS =", SCGM_TOPICS)
 print("EXPORTS (malt_like) =", EXPORTS)
 print("OUT_ROOT =", OUT_ROOT)
 """
@@ -444,12 +448,12 @@ if str(THEMES_OPENAI_CSV).strip():
         _explicit_themes = _tp
 
 themes_df = load_openai_themes_for_bn(
-    SCGM_EXPORTS_ROOT,
+    SCGM_TOPICS,
     staging_dir=OUT_ROOT / "staging",
     explicit_path=_explicit_themes,
 )
 _themes_path = resolve_openai_themes_path(
-    SCGM_EXPORTS_ROOT, OUT_ROOT / "staging", _explicit_themes
+    SCGM_TOPICS, OUT_ROOT / "staging", _explicit_themes
 )
 print("Libellés BN : theme_summary OpenAI depuis", _themes_path)
 display(themes_df[["z_id", "dominant_macro", "theme_summary"]].head(8))

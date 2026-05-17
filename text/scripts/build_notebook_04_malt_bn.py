@@ -83,8 +83,8 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
         py(
             r"""
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
-MALT_EXPORTS_DIR = "runs/malt_btp_to_mettalurgie_qwen06/exports"
-OUTPUT_DIR = "outputs/bn_malt"
+MALT_EXPORTS_DIR = "resultats/malt/exports"
+OUTPUT_DIR = "resultats/malt/bn_staging"
 CONFIDENCE_THRESHOLD = 0.50
 MIN_TOPIC_ACCIDENT_SUPPORT = 20
 MAX_TOPICS_PER_MACRO = 6

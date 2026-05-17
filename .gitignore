@@ -25,7 +25,8 @@ Untitled.ipynb
 text/embeddings/
 text/runs/
 text/outputs/
-!text/outputs/topic_comparison/stopwords_domain.txt
+text/resultats/
+!text/resultats/comparisons/topics_legacy/stopwords_domain.txt
 text/**/*.pt
 text/**/*.pth
 

@@ -17,6 +17,7 @@ from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_embeddings import ID2LABEL, TextEmbeddingDataset
 from scgm_text.dataset_text_raw import TextRawDataset
 from scgm_text.topic_export import export_topic_tables
+from safer_core.paths import layout_method_output
 from scgm_text.utils_io import ensure_dir, save_numpy
 
 
@@ -43,7 +44,13 @@ def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
 
 
 def run_export(args: argparse.Namespace) -> None:
-    ensure_dir(args.output_dir)
+    layout = layout_method_output("scgm_text", args.output_dir)
+    args.output_dir = str(layout["root"])
+    emb_dir = layout["embeddings"]
+    assign_dir = layout["assignments"]
+    topics_dir = layout["topics"]
+    for d in (emb_dir, assign_dir, topics_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     model, checkpoint_args, _ = load_scgm_checkpoint(args.checkpoint, map_location="cpu")
@@ -140,24 +147,24 @@ def run_export(args: argparse.Namespace) -> None:
     prob_y_z = torch.exp(mu_z_norm @ mu_y_norm.T)
     prob_y_z = prob_y_z / prob_y_z.sum(dim=1, keepdim=True)
     prob_y_z = prob_y_z.numpy()
-    save_numpy(mu_y.numpy(), os.path.join(args.output_dir, "mu_y.npy"))
-    save_numpy(mu_z.numpy(), os.path.join(args.output_dir, "mu_z.npy"))
-    save_numpy(raw_embeddings_arr, os.path.join(args.output_dir, "raw_embeddings.npy"))
-    save_numpy(projected_embeddings, os.path.join(args.output_dir, "projected_embeddings.npy"))
-    save_numpy(prob_y_x, os.path.join(args.output_dir, "prob_y_x.npy"))
-    save_numpy(prob_z_x, os.path.join(args.output_dir, "prob_z_x.npy"))
-    save_numpy(prob_y_z, os.path.join(args.output_dir, "prob_y_z.npy"))
+    save_numpy(mu_y.numpy(), str(emb_dir / "mu_y.npy"))
+    save_numpy(mu_z.numpy(), str(emb_dir / "mu_z.npy"))
+    save_numpy(raw_embeddings_arr, str(emb_dir / "raw_embeddings.npy"))
+    save_numpy(projected_embeddings, str(emb_dir / "projected_embeddings.npy"))
+    save_numpy(prob_y_x, str(emb_dir / "prob_y_x.npy"))
+    save_numpy(prob_z_x, str(emb_dir / "prob_z_x.npy"))
+    save_numpy(prob_y_z, str(emb_dir / "prob_y_z.npy"))
 
     z_assignments = metadata_df[["doc_id", "accident_id", "fact_id", args.label_col]].copy()
     z_assignments["z_hat"] = z_hat_arr
     z_assignments["max_prob_z"] = max_prob_z_arr
-    z_assignments.to_csv(os.path.join(args.output_dir, "z_assignments.csv"), index=False)
+    z_assignments.to_csv(assign_dir / "z_assignments.csv", index=False)
 
     macro_predictions = metadata_df[["doc_id", args.label_col]].copy()
     macro_predictions["pred_macro_id"] = macro_pred_arr
     macro_predictions["pred_macro_name"] = [ID2LABEL[int(value)] for value in macro_pred_arr]
     macro_predictions["max_prob_y"] = max_prob_y_arr
-    macro_predictions.to_csv(os.path.join(args.output_dir, "macro_predictions.csv"), index=False)
+    macro_predictions.to_csv(assign_dir / "macro_predictions.csv", index=False)
 
     enriched = metadata_df.copy()
     enriched["pred_macro_id"] = macro_pred_arr
@@ -165,14 +172,14 @@ def run_export(args: argparse.Namespace) -> None:
     enriched["z_hat"] = z_hat_arr
     enriched["max_prob_y"] = max_prob_y_arr
     enriched["max_prob_z"] = max_prob_z_arr
-    enriched.to_csv(os.path.join(args.output_dir, "metadata_with_predictions.csv"), index=False)
+    enriched.to_csv(emb_dir / "metadata_with_predictions.csv", index=False)
 
     export_topic_tables(
         metadata_df=metadata_df,
         projected_embeddings=projected_embeddings,
         mu_z=mu_z.numpy(),
         z_hat=z_hat_arr,
-        output_dir=args.output_dir,
+        output_dir=str(topics_dir),
         sentence_col="sentence",
         label_col=args.label_col,
     )

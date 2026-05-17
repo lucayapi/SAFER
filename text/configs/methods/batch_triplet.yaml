@@ -1,0 +1,14 @@
+method_name: batch_triplet
+dataset_path: dataset/data_btp.csv
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+output_dir: resultats/batch_triplet
+use_prompt: false
+seed: 42
+backbone_name: Qwen/Qwen3-Embedding-0.6B
+batch_size: 128
+epochs: 30
+learning_rate: 2.0e-5
+use_contextual_prompt_with_summary: false
+use_fixed_instruction_prefix: false

@@ -61,7 +61,10 @@ from scgm_text.training_diagnostics import (
     warn_identity_frozen_backbone,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
-from scgm_text.utils_io import ensure_dir, load_yaml_config, save_json, set_seed
+from safer_core.io import save_config_resolved
+from safer_core.paths import layout_method_output, resolve_output_dir
+from safer_core.seed import set_seed
+from scgm_text.utils_io import ensure_dir, load_yaml_config, save_json
 
 METRIC_FIELDS = [
     "epoch",
@@ -130,7 +133,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--data_csv", type=str, default="dataset/data_btp.csv")
     parser.add_argument("--emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_btp.csv")
-    parser.add_argument("--output_dir", type=str, default="runs/scgm_text_qwen06")
+    parser.add_argument("--output_dir", type=str, default="resultats/scgm_text")
     parser.add_argument("--label_col", type=str, default="pred_label")
     parser.add_argument("--pred_ok_col", type=str, default="pred_ok")
     parser.add_argument("--group_col", type=str, default="accident_id")
@@ -228,7 +231,8 @@ def finalize_args(args: argparse.Namespace) -> None:
         args.teacher_mode = "ema"
 
     if args.run_name:
-        args.output_dir = os.path.join("runs", "scgm_text", args.run_name)
+        args.output_dir = os.path.join("resultats", "scgm_text", args.run_name)
+    args.output_dir = str(resolve_output_dir("scgm_text", args.output_dir))
 
     if getattr(args, "with_mlp", None) is not None:
         args.projection = normalize_projection_name(None, args.with_mlp)
@@ -492,8 +496,13 @@ def run_training(args: argparse.Namespace) -> None:
         flush=True,
     )
 
+    layout = layout_method_output("scgm_text", args.output_dir)
+    args.output_dir = str(layout["root"])
     dirs = create_run_dirs(args.output_dir)
-    ensure_dir(args.output_dir)
+    dirs["checkpoints_dir"] = str(layout["checkpoints"])
+    dirs["logs_dir"] = str(layout["logs"])
+    ensure_dir(layout["checkpoints"])
+    ensure_dir(layout["logs"])
 
     collate_fn = None
     if args.input_mode == "text":
@@ -584,8 +593,9 @@ def run_training(args: argparse.Namespace) -> None:
     config_payload["train_idx"] = train_idx.tolist()
     config_payload["val_idx"] = val_idx.tolist()
     config_payload["label_distribution"] = dataset.get_label_distribution()
-    save_json(config_payload, os.path.join(args.output_dir, "config.json"))
-    save_json(LABEL2ID, os.path.join(args.output_dir, "label2id.json"))
+    save_config_resolved(config_payload, layout["root"])
+    save_json(config_payload, layout["configs"] / "config.json")
+    save_json(LABEL2ID, layout["configs"] / "label2id.json")
 
     init_metrics_csv(dirs["train_log_csv"], METRIC_FIELDS)
     legacy_fields = [
@@ -735,7 +745,7 @@ def run_training(args: argparse.Namespace) -> None:
                 ema_teacher.update(model)
 
             save_checkpoint(
-                os.path.join(args.output_dir, "last_model.pt"),
+                os.path.join(dirs["checkpoints_dir"], "last_model.pt"),
                 model,
                 args,
                 input_dim,
@@ -746,7 +756,7 @@ def run_training(args: argparse.Namespace) -> None:
             if val_metrics.get("val_macro_f1", -1.0) > best_f1:
                 best_f1 = val_metrics["val_macro_f1"]
                 save_checkpoint(
-                    os.path.join(args.output_dir, "best_model.pt"),
+                    os.path.join(dirs["checkpoints_dir"], "best_model.pt"),
                     model,
                     args,
                     input_dim,

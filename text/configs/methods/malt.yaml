@@ -1,0 +1,13 @@
+method_name: malt
+dataset_path: dataset/data_metallurgie.csv
+source_dataset_path: dataset/data_btp.csv
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+output_dir: resultats/malt
+use_prompt: false
+seed: 42
+source_checkpoint: resultats/scgm_text/checkpoints/best_model.pt
+batch_size: 256
+epochs: 50
+learning_rate: 0.001

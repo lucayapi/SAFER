@@ -100,7 +100,7 @@ def resolve_openai_themes_path(
         "Fichier themes_by_z_openai.csv introuvable pour les libellés du réseau bayésien.\n"
         f"Chemins testés :\n{searched}\n\n"
         "Exécutez la cellule OpenAI (notebook 01, section 11 bis) pour produire "
-        "exports/themes_by_z_openai.csv avec la colonne theme_summary."
+        "resultats/scgm_text/topics/themes_by_z_openai.csv avec la colonne theme_summary."
     )
 
 

@@ -1,10 +1,10 @@
 run:
   name: malt_btp_to_mettalurgie_qwen06
   seed: 42
-  output_dir: runs/malt_btp_to_mettalurgie_qwen06
+  output_dir: resultats/malt
 
 source:
-  checkpoint: runs/scgm_text_qwen06/best_model.pt
+  checkpoint: resultats/scgm_text/checkpoints/best_model.pt
 
 target:
   data_csv: dataset/data_metallurgie.csv

@@ -32,13 +32,13 @@ cells = [
     code(
         """
         # Parameters (Papermill : surcharger ces variables)
-        SOURCE_CHECKPOINT = "runs/scgm_text_qwen06/best_model.pt"
-        SOURCE_CONFIG = "runs/scgm_text_qwen06/config.json"
+        SOURCE_CHECKPOINT = "resultats/scgm_text/checkpoints/best_model.pt"
+        SOURCE_CONFIG = "resultats/scgm_text/configs/config.json"
         TARGET_DATA_CSV = "dataset/data_mettalurgie.csv"
         TARGET_DATA_CSV_ALT = "dataset/data_metallurgie.csv"
         TARGET_EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_mettalurgie.csv"
         TARGET_EMB_CSV_ALT = "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv"
-        OUTPUT_DIR = "runs/malt_btp_to_mettalurgie_qwen06"
+        OUTPUT_DIR = "resultats/malt"
         RUN_TRAINING = True
         # False = ne pas réentraîner si best_model.pt existe déjà (gain de temps).
         # True = toujours réentraîner quand RUN_TRAINING=True (comportement attendu pour un notebook d'expérience).
@@ -122,7 +122,7 @@ cells = [
         """
         ckpt_path = REPO_ROOT / SOURCE_CHECKPOINT
         if not ckpt_path.exists():
-            alt = REPO_ROOT / "runs/scgm_text_qwen06_notebook/best_model.pt"
+            alt = REPO_ROOT / "resultats/scgm_text/checkpoints/best_model.pt"
             ckpt_path = alt if alt.exists() else ckpt_path
         checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=False)
         print({k: checkpoint.get(k) for k in ["input_dim", "label2id"]})

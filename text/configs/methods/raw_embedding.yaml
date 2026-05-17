@@ -1,0 +1,11 @@
+method_name: raw_embedding
+dataset_path: dataset/data_btp.csv
+emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+output_dir: resultats/raw_embedding
+use_prompt: false
+seed: 42
+backbone_name: Qwen/Qwen3-Embedding-0.6B
+batch_size: 64

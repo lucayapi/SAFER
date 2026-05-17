@@ -4,16 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from safer_core.paths import find_text_root as _find_text_root
+
 
 def find_repo_root() -> Path:
     """Racine du pipeline texte (dossier contenant ``topic_eval/``)."""
-    here = Path.cwd().resolve()
-    for candidate in [here, *here.parents]:
-        if (candidate / "topic_eval" / "__init__.py").is_file():
-            return candidate
-        if (candidate / "text" / "topic_eval" / "__init__.py").is_file():
-            return candidate / "text"
-    return here
+    return _find_text_root()
 
 
 def resolve_repo_path(path: str | Path, repo_root: Path | None = None) -> Path:

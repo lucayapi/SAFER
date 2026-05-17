@@ -9,7 +9,9 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from metrics.embedding_geometry_separation import METRICS_TABLE_COLUMNS, build_geometry_metrics_row
+from metrics.geometry import METRICS_TABLE_COLUMNS, build_geometry_metrics_row
+from safer_core.io import save_metrics_geometry
+from safer_core.paths import layout_method_output, resolve_output_dir
 from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
 from scgm_text.utils_io import ensure_dir, save_json
 
@@ -65,9 +67,16 @@ def main() -> None:
     )
 
     table = pd.DataFrame(rows, columns=METRICS_TABLE_COLUMNS)
+    layout = layout_method_output("scgm_text", resolve_output_dir("scgm_text", args.output_dir))
+    metrics_dir = layout["metrics"]
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    for row in rows:
+        save_metrics_geometry(row, metrics_dir, stem=f"metrics_geometry_{row.get('method', 'row')}".replace(" ", "_"))
+    table.to_csv(metrics_dir / "metrics_table.csv", index=False)
+    table.to_csv(metrics_dir / "metrics_geometry.csv", index=False)
+    save_json({"metrics_table": rows}, metrics_dir / "metrics_summary.json")
+    ensure_dir(args.output_dir)
     table.to_csv(os.path.join(args.output_dir, "metrics_table.csv"), index=False)
-    table.to_csv(os.path.join(args.output_dir, "metrics_summary.csv"), index=False)
-    save_json({"metrics_table": rows}, os.path.join(args.output_dir, "metrics_summary.json"))
 
 
 if __name__ == "__main__":

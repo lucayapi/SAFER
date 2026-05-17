@@ -1,0 +1,17 @@
+# Racines du pipeline SAFER (relatives à text/)
+
+text_root: .
+dataset_dir: dataset
+config_dir: configs
+results_root: resultats
+jobs_dir: jobs
+notebooks_dir: notebooks
+
+methods:
+  raw_embedding: resultats/raw_embedding
+  scgm_text: resultats/scgm_text
+  batch_triplet: resultats/batch_triplet
+  softtriple: resultats/softtriple
+  supcon: resultats/supcon
+  malt: resultats/malt
+  comparisons: resultats/comparisons

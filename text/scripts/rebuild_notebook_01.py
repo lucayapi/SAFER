@@ -56,7 +56,7 @@ FREEZE_BACKBONE = False
 BACKBONE_LR = 2e-5
 HEAD_LR = 1e-3
 MAX_SEQ_LENGTH = 256
-OUTPUT_DIR = "runs/scgm_text_qwen06_notebook"
+OUTPUT_DIR = "resultats/scgm_text"
 LABEL_COL = "pred_label"
 PRED_OK_COL = "pred_ok"
 GROUP_COL = "accident_id"
@@ -130,11 +130,13 @@ from scgm_text.fidelity import describe_fidelity_mode
 from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, save_json, set_seed
 
 OUTPUT_PATH = Path(OUTPUT_DIR)
-EXPORTS_DIR = OUTPUT_PATH / "exports"
-EVAL_DIR = OUTPUT_PATH / "evaluation"
+CHECKPOINTS_DIR = OUTPUT_PATH / "checkpoints"
+EXPORTS_DIR = OUTPUT_PATH / "embeddings"
+TOPICS_DIR = OUTPUT_PATH / "topics"
+EVAL_DIR = OUTPUT_PATH / "metrics"
 FIGURES_DIR = OUTPUT_PATH / "figures"
 TABLES_DIR = OUTPUT_PATH / "tables"
-for folder in [OUTPUT_PATH, EXPORTS_DIR, EVAL_DIR, FIGURES_DIR, TABLES_DIR]:
+for folder in [OUTPUT_PATH, CHECKPOINTS_DIR, EXPORTS_DIR, TOPICS_DIR, EVAL_DIR, FIGURES_DIR, TABLES_DIR]:
     ensure_dir(str(folder))
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -363,9 +365,9 @@ plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
 CHECKPOINT_SOURCE = """checkpoint = torch.load(
-    OUTPUT_PATH / "best_model.pt", map_location="cpu", weights_only=False
+    CHECKPOINTS_DIR / "best_model.pt", map_location="cpu", weights_only=False
 )
-config = load_json(str(OUTPUT_PATH / "config.json"))
+config = load_json(str(OUTPUT_PATH / "configs" / "config.json"))
 summary_ckpt = {
     "input_dim": checkpoint.get("input_dim"),
     "label2id": checkpoint.get("label2id"),
@@ -404,8 +406,8 @@ load_openai_dotenv = _openai_theme_labels.load_openai_dotenv
 
 load_openai_dotenv()
 
-themes_in = EXPORTS_DIR / "themes_by_z.csv"
-themes_out = EXPORTS_DIR / "themes_by_z_openai.csv"
+themes_in = TOPICS_DIR / "themes_by_z.csv"
+themes_out = TOPICS_DIR / "themes_by_z_openai.csv"
 if not themes_in.exists():
     print(f"Fichier manquant : {themes_in} (exécuter l'export d'abord).")
 elif not os.environ.get("OPENAI_API_KEY"):
@@ -441,7 +443,7 @@ from scgm_text.notebook_viz import (
 
 emb_path = EXPORTS_DIR / "projected_embeddings.npy"
 meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
-themes_openai_path = EXPORTS_DIR / "themes_by_z_openai.csv"
+themes_openai_path = TOPICS_DIR / "themes_by_z_openai.csv"
 
 if not emb_path.exists() or not meta_path.exists():
     print("Embeddings projetés ou métadonnées manquants ; exécuter l'export.")

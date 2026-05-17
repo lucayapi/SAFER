@@ -48,9 +48,9 @@ def main() -> None:
             r"""
 # --- Paramètres (Papermill / exécution manuelle) ---
 # Chemins relatifs ci-dessous : racine = dossier du dépôt (parent de topic_eval/), pas notebooks/.
-MALT_EXPORTS_DIR = "runs/malt_btp_to_mettalurgie_qwen06/exports"
-MALT_EVAL_DIR = "runs/malt_btp_to_mettalurgie_qwen06/evaluation"
-OUTPUT_DIR = "outputs/topic_comparison"
+MALT_EXPORTS_DIR = "resultats/malt/exports"
+MALT_EVAL_DIR = "resultats/malt/evaluation"
+OUTPUT_DIR = "resultats/comparisons/topics_legacy"
 TEXT_COL = "sentence"
 MACRO_P0_COL = "p0_macro_name"
 MACRO_PT_COL = "pt_macro_name"
