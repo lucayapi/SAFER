@@ -24,12 +24,8 @@ if [[ -f ".venv/bin/activate" ]]; then
   source .venv/bin/activate
 fi
 
-if [[ -f ".env" ]]; then
-  set -a
-  # shellcheck disable=SC1091
-  source .env
-  set +a
-fi
+# Ne pas « source .env » : format shell KEY=value uniquement (pas KEY: valeur).
+# La clé est chargée par python-dotenv dans scripts/enrich_scgm_themes_openai.py
 
 OUTPUT_DIR="${SCGM_OUTPUT_DIR:-resultats/scgm_text}"
 PROBE_ONLY="${PROBE_ONLY:-0}"
