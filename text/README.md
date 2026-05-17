@@ -29,7 +29,7 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `bn_malt/` | Réseaux bayésiens (pgmpy) |
 | `scripts/` | CLI entraînement, export, évaluation, agrégation |
 | `jobs/` | Scripts SLURM Mésocentre |
-| `notebooks/` | Analyse et pipelines expérimentaux |
+| `notebooks/` | Analyse (**.ipynb gitignored**, régénération locale via `scripts/build_*.py`) |
 | `legacy/` | Code historique (contrastif v0, anciens jobs) |
 | `resultats/` | **Toutes les sorties** (gitignored) |
 
@@ -180,7 +180,7 @@ Entraînement **hors notebook** : `scripts/train_scgm_text.py`, `scripts/train_m
 
 **JupyterHub (HPC2)** : JupyterLab ne voit que `~/notebooks`. Créer un lien vers le projet, par ex. `ln -sfn ~/SAFER/text ~/notebooks/SAFER_text`, puis kernel Python avec le venv du projet (`ipykernel install --user --name safer-text`).
 
-Régénération :
+Les fichiers `notebooks/*.ipynb` ne sont **pas versionnés** (restent sur la machine / le cluster). Après `git pull`, régénérer :
 
 ```bash
 python scripts/build_analysis_notebooks.py   # 00, 01_compare, 05_view_*

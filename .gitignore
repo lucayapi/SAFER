@@ -21,6 +21,10 @@ scgm_text/.env
 *.ipynb.bak
 Untitled.ipynb
 
+# Notebooks (local uniquement — régénérer : scripts/build_*.py, rebuild_notebook_01.py)
+text/notebooks/**
+!text/notebooks/.gitkeep
+
 # Artefacts texte (lourds / régénérables)
 text/embeddings/
 text/runs/
