@@ -28,9 +28,15 @@ def batch_to_device(
 
 
 def forward_features(model: nn.Module, batch: Any) -> torch.Tensor:
+    """Forward jusqu'aux features normalisées h (dict HF, tuple DataLoader, ou tenseur)."""
     if isinstance(batch, dict):
         return model(batch)
-    return model(batch)
+    if isinstance(batch, (list, tuple)):
+        # DataLoader precomputed : (embeddings, label_ids, indices)
+        return model(batch[0])
+    if isinstance(batch, torch.Tensor):
+        return model(batch)
+    raise TypeError(f"Unsupported batch type for forward_features: {type(batch)!r}")
 
 
 def unpack_batch(

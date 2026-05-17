@@ -82,6 +82,24 @@ def test_identity_text_backbone_updates_after_step():
     assert change > 0.0
 
 
+def test_forward_features_tuple_batch_precomputed():
+    model = SCGMTextModel(
+        input_dim=32,
+        hiddim=16,
+        num_classes=4,
+        num_subclasses=8,
+        projection="mlp",
+        input_mode="precomputed_embeddings",
+    )
+    batch = (
+        torch.randn(3, 32),
+        torch.tensor([0, 1, 2], dtype=torch.long),
+        torch.tensor([0, 1, 2], dtype=torch.long),
+    )
+    features = forward_features(model, batch)
+    assert features.shape == (3, 16)
+
+
 def test_precomputed_identity_has_no_backbone():
     model = SCGMTextModel(
         input_dim=32,
