@@ -13,7 +13,7 @@ load_text_dotenv() {
     trimmed="${line#"${line%%[![:space:]]*}"}"
     [[ -z "${trimmed}" || "${trimmed}" == \#* ]] && continue
 
-    if [[ "${trimmed}" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+    if [[ "${trimmed}" =~ ^([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
       key="${BASH_REMATCH[1]}"
       val="${BASH_REMATCH[2]}"
     elif [[ "${trimmed}" =~ ^([A-Za-z_][A-Za-z0-9_]*):[[:space:]]*(.*)$ ]]; then
@@ -25,6 +25,9 @@ load_text_dotenv() {
       continue
     fi
 
+    # Espaces en bord de valeur
+    val="${val#"${val%%[![:space:]]*}"}"
+    val="${val%"${val##*[![:space:]]}"}"
     # Retirer guillemets optionnels
     if [[ "${val}" =~ ^\"(.*)\"$ ]]; then
       val="${BASH_REMATCH[1]}"
