@@ -27,8 +27,25 @@ echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
 
 export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
+
+# Qwen3-Embedding exige transformers >= 4.51 dans CE venv (pas ~/.local)
+python -c "
+import sys
+import transformers as tr
+print('python', sys.executable)
+print('transformers', tr.__version__)
+parts = tuple(int(x) for x in tr.__version__.split('.')[:3] if x.isdigit())
+if parts < (4, 51, 0):
+    raise SystemExit(
+        'ERREUR: transformers ' + tr.__version__ + ' < 4.51 (qwen3). '
+        'Dans text/: source .venv/bin/activate && pip install -U transformers==4.51.3 tokenizers==0.21.0'
+    )
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
+if 'qwen3' not in CONFIG_MAPPING:
+    raise SystemExit('ERREUR: architecture qwen3 absente — réinstaller transformers==4.51.3')
+print('qwen3 architecture OK')
+"
 
 python scripts/train_scgm_text.py \
   --config configs/scgm_text_strict_finetune_identity.yaml \
