@@ -23,16 +23,28 @@ def group_kfold_splits(
     n_splits: int,
     seed: int,
 ) -> List[Tuple[np.ndarray, np.ndarray]]:
-    """Retourne une liste de (train_idx, val_idx) pour GroupKFold."""
+    """Retourne une liste de (train_idx, val_idx) pour GroupKFold.
+
+    GroupKFold (sklearn) n'accepte pas shuffle/random_state : on permute l'ordre
+    des groupes avec ``seed`` puis on réattribue des ids entiers pour des folds reproductibles.
+    """
     groups = np.asarray(groups).astype(str)
-    n_splits = min(int(n_splits), len(np.unique(groups)))
+    unique_groups = np.unique(groups)
+    n_splits = min(int(n_splits), len(unique_groups))
     if n_splits < 2:
-        raise ValueError(f"n_splits doit être >= 2 (unique groups={len(np.unique(groups))}).")
-    splitter = GroupKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        raise ValueError(f"n_splits doit être >= 2 (unique groups={len(unique_groups)}).")
+
+    perm = unique_groups.copy()
+    rng = np.random.RandomState(int(seed))
+    rng.shuffle(perm)
+    remap = {g: i for i, g in enumerate(perm)}
+    group_ids = np.array([remap[g] for g in groups], dtype=np.int64)
+
+    splitter = GroupKFold(n_splits=n_splits)
     indices = np.arange(len(groups))
     return [
         (train_idx.astype(np.int64), val_idx.astype(np.int64))
-        for train_idx, val_idx in splitter.split(indices, groups=groups)
+        for train_idx, val_idx in splitter.split(indices, groups=group_ids)
     ]
 
 
