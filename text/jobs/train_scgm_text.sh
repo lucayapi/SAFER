@@ -31,9 +31,11 @@ export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
 python scripts/train_scgm_text.py \
-  --config configs/scgm_text_strict_fidelity.yaml \
+  --config configs/scgm_text_strict_finetune_identity.yaml \
+  --strict_finetune_identity \
   --data_csv dataset/data_btp.csv \
   --text_col sentence \
   --label_col pred_label \
   --group_col accident_id \
-  --output_dir resultats/scgm_text
+  --backbone_model_name_or_path Qwen/Qwen3-Embedding-0.6B \
+  --output_dir resultats/scgm_text_backbone
