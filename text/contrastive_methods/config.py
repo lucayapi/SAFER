@@ -24,8 +24,8 @@ class ContrastiveConfig:
     backbone_name: str = "Qwen/Qwen3-Embedding-0.6B"
     max_seq_length: int = 256
     batch_size: int = 16
-    eval_batch_size: int = 64
-    encode_batch_size: int = 128
+    eval_batch_size: int = 16
+    encode_batch_size: int = 16
     epochs: int = 30
     learning_rate: float = 2.0e-5
     warmup_ratio: float = 0.1
@@ -124,10 +124,10 @@ def load_contrastive_config(
         max_seq_length=int(pick("max_seq_length", default=256, sources=(model, training, raw))),
         batch_size=int(pick("batch_size", default=16, sources=(training, raw))),
         eval_batch_size=int(
-            pick("eval_batch_size", default=64, sources=(training, raw))
+            pick("eval_batch_size", default=16, sources=(training, raw))
         ),
         encode_batch_size=int(
-            pick("encode_batch_size", default=128, sources=(training, raw))
+            pick("encode_batch_size", default=16, sources=(training, raw))
         ),
         epochs=int(pick("epochs", default=30, sources=(training, raw))),
         learning_rate=float(pick("learning_rate", default=2.0e-5, sources=(training, raw))),

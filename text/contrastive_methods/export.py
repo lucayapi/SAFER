@@ -34,7 +34,7 @@ def export_st_embeddings(
     dataset: TextRawDataset,
     dest_csv: Path,
     *,
-    batch_size: int = 128,
+    batch_size: int = 16,
     normalize: bool = True,
     show_progress: bool = False,
 ) -> Path:

@@ -18,8 +18,8 @@ model:
 
 training:
   batch_size: 16
-  eval_batch_size: 64
-  encode_batch_size: 128
+  eval_batch_size: 16
+  encode_batch_size: 16
   epochs: 30
   learning_rate: 2.0e-5
   warmup_ratio: 0.1
