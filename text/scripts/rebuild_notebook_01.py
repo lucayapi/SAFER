@@ -61,6 +61,7 @@ KFOLD_PER_FOLD = "metrics/kfold_per_fold.csv"
 FOLDS_DIR = "folds"
 TEST_PROJ_NPY = "embeddings/projected_embeddings_test.npy"
 TEST_META_CSV = "embeddings/test_metadata.csv"
+AUTO_EXPORT_TEST_IF_MISSING = True  # tente save_scgm_projected_corpus si checkpoint + emb test OK
 TUNING_GRID = "tuning/grid_summary.csv"
 LABEL_COL = "pred_label"
 PRED_OK_COL = "pred_ok"
@@ -352,13 +353,55 @@ test_npy = OUTPUT_PATH / TEST_PROJ_NPY
 test_meta_path = OUTPUT_PATH / TEST_META_CSV
 btp_npy = EXPORTS_DIR / "projected_embeddings.npy"
 btp_meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
+test_data_path = REPO_ROOT / DATA_TEST_CSV
+test_emb_path = REPO_ROOT / EMB_TEST_CSV
+ckpt_path = Path(CHECKPOINT_PATH) if CHECKPOINT_PATH else CHECKPOINTS_DIR / "best_model.pt"
+
+def _diagnose_test_export() -> list[str]:
+    issues = []
+    if not ckpt_path.is_file():
+        issues.append(f"checkpoint manquant : {ckpt_path.relative_to(REPO_ROOT)}")
+    if not test_data_path.is_file():
+        issues.append(f"CSV test manquant : {test_data_path.relative_to(REPO_ROOT)}")
+    if not test_emb_path.is_file():
+        issues.append(
+            f"embeddings Qwen test manquants : {test_emb_path.relative_to(REPO_ROOT)}\\n"
+            "    → python scripts/export_test_embeddings.py"
+        )
+    return issues
 
 if not test_npy.is_file():
-    print(
-        f"(absent) {TEST_PROJ_NPY} — généré par train_scgm_text (post-train) ou "
-        "scripts/export_scgm_test_projections.py"
-    )
-else:
+    issues = _diagnose_test_export()
+    if issues:
+        print(f"(absent) {TEST_PROJ_NPY}")
+        for line in issues:
+            print(f"  • {line}")
+        print(
+            "Sinon, après correction : python scripts/export_scgm_test_projections.py "
+            f"--output_dir {OUTPUT_DIR}"
+        )
+    elif AUTO_EXPORT_TEST_IF_MISSING and ckpt_path.is_file():
+        from scgm_text.eval_corpus import save_scgm_projected_corpus
+
+        print(f"Export automatique des projections test depuis {ckpt_path.name}…")
+        saved = save_scgm_projected_corpus(
+            str(ckpt_path),
+            str(REPO_ROOT / DATA_TEST_CSV),
+            str(REPO_ROOT / EMB_TEST_CSV),
+            EXPORTS_DIR,
+            stem="test",
+            label_col=LABEL_COL,
+            pred_ok_col=PRED_OK_COL,
+            group_col=GROUP_COL,
+            batch_size=BATCH_SIZE,
+        )
+        print(f"  → {saved['projections'].relative_to(REPO_ROOT)}")
+    else:
+        print(
+            f"(absent) {TEST_PROJ_NPY} — AUTO_EXPORT_TEST_IF_MISSING=False ou checkpoint absent"
+        )
+
+if test_npy.is_file():
     proj_test = np.load(test_npy)
     meta_test = pd.read_csv(test_meta_path) if test_meta_path.is_file() else pd.DataFrame()
     if len(meta_test) != len(proj_test):

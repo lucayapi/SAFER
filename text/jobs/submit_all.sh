@@ -9,7 +9,9 @@ cd "$DIR"
 # Les jobs résolvent text/ via SLURM_SUBMIT_DIR + jobs/_bootstrap.sh (pas /tmp/slurmd/...).
 
 sbatch export_raw_embeddings.sh
-sbatch train_scgm_text.sh
+TRAIN_SCGM_ID=$(sbatch --parsable train_scgm_text.sh)
+echo "train_scgm_text job_id=${TRAIN_SCGM_ID}"
+sbatch --dependency=afterok:"${TRAIN_SCGM_ID}" postprocess_scgm_text.sh
 sbatch train_batch_triplet.sh
 sbatch train_softtriple.sh
 sbatch train_supcon.sh

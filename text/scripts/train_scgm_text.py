@@ -1001,6 +1001,8 @@ def run_post_train_eval(args: argparse.Namespace) -> None:
     )
     if paths.get("projections_test"):
         print(f"[eval] Projections test : {paths['projections_test']}", flush=True)
+    elif paths.get("test"):
+        print("[eval] Métriques test OK mais projections .npy non écrites (voir messages ci-dessus).", flush=True)
 
 
 def main() -> None:

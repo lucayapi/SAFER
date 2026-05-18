@@ -231,6 +231,14 @@ def evaluate_and_save_btp_test(
         paths["projections_btp"] = saved["projections"]
     test_data = TEXT_ROOT / data_test if not Path(data_test).is_absolute() else Path(data_test)
     test_emb = TEXT_ROOT / emb_test if not Path(emb_test).is_absolute() else Path(emb_test)
+    if not test_data.is_file():
+        print(f"[eval] Projections test ignorées : data absent → {test_data}", flush=True)
+    elif not test_emb.is_file():
+        print(
+            f"[eval] Projections test ignorées : embeddings test absents → {test_emb}\n"
+            "  Lancez : python scripts/export_test_embeddings.py",
+            flush=True,
+        )
     if test_data.is_file() and test_emb.is_file():
         saved_test = save_scgm_projected_corpus(
             checkpoint_path,

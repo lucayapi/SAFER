@@ -73,20 +73,16 @@ cd text
 python scripts/export_raw_embeddings.py
 
 # 2. SCGM BTP
-python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
-# En fin de train (post-eval) : embeddings/projected_embeddings_test.npy + test_metadata.csv
-# Régénération sans réentraînement :
-python scripts/export_scgm_test_projections.py \
-  --checkpoint resultats/scgm_text/checkpoints/best_model.pt \
-  --output_dir resultats/scgm_text
-python scripts/export_scgm_text_outputs.py \
-  --checkpoint resultats/scgm_text/checkpoints/best_model.pt \
-  --output_dir resultats/scgm_text
-# Thèmes OpenAI (login / Internet requis — pas dans le notebook Jupyter)
-bash jobs/enrich_scgm_themes_openai.sh
-python scripts/evaluate_scgm_text.py \
-  --exports_dir resultats/scgm_text/embeddings \
-  --output_dir resultats/scgm_text/metrics
+sbatch jobs/train_scgm_text.sh
+# Post-traitement (un seul job : emb. test, export topics, projections test, OpenAI optionnel) :
+sbatch jobs/postprocess_scgm_text.sh
+# Thèmes OpenAI sur login si le nœud GPU n'a pas Internet :
+SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh
+# Équivalent manuel (détail) :
+# python scripts/export_test_embeddings.py
+# python scripts/export_scgm_text_outputs.py --checkpoint resultats/scgm_text/checkpoints/best_model.pt --output_dir resultats/scgm_text
+# python scripts/export_scgm_test_projections.py --checkpoint ... --output_dir resultats/scgm_text
+# bash jobs/enrich_scgm_themes_openai.sh
 
 # 3. MALT (BTP → métallurgie)
 python scripts/train_malt_target.py --config configs/malt_btp_to_mettalurgie_qwen06.yaml
@@ -132,9 +128,17 @@ python scripts/compare_methods.py
 ```bash
 cd jobs
 sbatch train_scgm_text.sh
+sbatch postprocess_scgm_text.sh    # après train : topics, projections test, OpenAI (SKIP_OPENAI=1 par défaut)
 sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
 sbatch compare_methods.sh
+```
+
+**Chaînage train → postprocess** (optionnel) :
+
+```bash
+TRAIN_ID=$(sbatch --parsable jobs/train_scgm_text.sh)
+sbatch --dependency=afterok:"${TRAIN_ID}" jobs/postprocess_scgm_text.sh
 ```
 
 Logs SLURM : `jobs/slurm-<job_name>-<job_id>.out` (et `.err`) après `sbatch` depuis `jobs/`. Cache HF : `$SCRATCH/hf_cache` si défini. Jobs GPU : `--constraint='a100|h100'`, `--mem=64G`. Les scripts `jobs/*.sh` utilisent des fins de ligne LF (voir `.gitattributes`).

@@ -40,3 +40,7 @@ python scripts/train_scgm_text.py \
   --label_col pred_label \
   --group_col accident_id \
   --output_dir resultats/scgm_text
+
+# Post-traitement (export topics, projections test, OpenAI optionnel) :
+#   sbatch jobs/postprocess_scgm_text.sh
+#   SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh   # thèmes OpenAI (login / Internet)

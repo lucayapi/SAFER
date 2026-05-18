@@ -91,6 +91,7 @@ def test_native_contrastive_modules_present():
 def test_jobs_exist():
     for name in (
         "train_scgm_text.sh",
+        "postprocess_scgm_text.sh",
         "train_batch_triplet.sh",
         "train_softtriple.sh",
         "train_supcon.sh",
