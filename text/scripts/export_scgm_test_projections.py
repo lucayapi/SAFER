@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--emb_csv",
         type=str,
-        default="embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv",
+        default="embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv",
     )
     p.add_argument("--label_col", type=str, default="pred_label")
     p.add_argument("--group_col", type=str, default="accident_id")

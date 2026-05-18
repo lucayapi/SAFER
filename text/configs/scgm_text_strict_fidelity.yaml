@@ -5,7 +5,7 @@ data:
   data_csv: dataset/data_btp.csv
   emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
   test_data_csv: dataset/test/data_metallurgie.csv
-  test_emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv
+  test_emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
   group_col: accident_id
   val_ratio: 0.1
 

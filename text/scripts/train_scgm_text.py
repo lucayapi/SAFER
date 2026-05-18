@@ -227,7 +227,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--test_emb_csv",
         type=str,
-        default="embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv",
+        default="embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv",
     )
     parser.add_argument(
         "--best_checkpoint_lambda",
@@ -993,7 +993,7 @@ def run_post_train_eval(args: argparse.Namespace) -> None:
         data_btp=args.data_csv,
         emb_btp=args.emb_csv,
         data_test=getattr(args, "test_data_csv", "dataset/test/data_metallurgie.csv"),
-        emb_test=getattr(args, "test_emb_csv", "embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv"),
+        emb_test=getattr(args, "test_emb_csv", "embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv"),
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,
         group_col=args.group_col,

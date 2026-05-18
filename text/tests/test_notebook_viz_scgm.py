@@ -21,6 +21,8 @@ from scgm_text.notebook_viz import (
     plot_kfold_metrics_bars,
     plot_kfold_summary_errorbars,
     plot_kfold_val_curves,
+    plot_topics_distribution_by_macro,
+    plot_topics_n_units_by_z,
 )
 
 
@@ -98,6 +100,31 @@ def test_plot_kfold_summary_errorbars(tmp_path):
 
     out = plot_kfold_summary_errorbars(summary, save_fig=_save)
     assert out is not None
+
+
+def test_plot_topics_bars(tmp_path):
+    themes = pd.DataFrame(
+        {
+            "z_id": [0, 1, 2],
+            "dominant_macro": ["A0", "A0", "B"],
+            "n_units": [100, 50, 80],
+        }
+    )
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    plot_topics_distribution_by_macro(themes, save_fig=_save)
+    plot_topics_n_units_by_z(themes, save_fig=_save)
+    assert (fig_dir / "topics_by_macro.png").is_file()
+    assert (fig_dir / "topics_n_units_by_z.png").is_file()
 
 
 @patch("scgm_text.eval_corpus.project_embedding_corpus")

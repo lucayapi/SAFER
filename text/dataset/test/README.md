@@ -9,4 +9,5 @@
 Les métriques de test (`metrics_geometry_test.csv`) utilisent les **best models** entraînés sur BTP :
 
 - **Contrastifs** : encodeur fine-tuné → embeddings du corpus test
-- **SCGM** (strict fidelity) : embeddings Qwen figés (`embeddings/*_metallurgie_test.csv`) + checkpoint SCGM
+- **SCGM** (strict fidelity) : embeddings Qwen figés (`embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv`) + checkpoint SCGM
+- **Embedding brut** (référence) : `resultats/raw_embedding_test/metrics/metrics_geometry.csv` (postprocess ou `export_raw_embeddings.py` + `configs/methods/raw_embedding_test.yaml`)

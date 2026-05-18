@@ -74,15 +74,14 @@ python scripts/export_raw_embeddings.py
 
 # 2. SCGM BTP
 sbatch jobs/train_scgm_text.sh
-# Post-traitement (un seul job : emb. test, export topics, projections test, OpenAI optionnel) :
+# Post-traitement (emb. test → embeddings/test/, métriques raw BTP+test, export SCGM, projections test, metrics SCGM test, OpenAI optionnel) :
 sbatch jobs/postprocess_scgm_text.sh
 # Thèmes OpenAI sur login si le nœud GPU n'a pas Internet :
 SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh
-# Équivalent manuel (détail) :
-# python scripts/export_test_embeddings.py
-# python scripts/export_scgm_text_outputs.py --checkpoint resultats/scgm_text/checkpoints/best_model.pt --output_dir resultats/scgm_text
-# python scripts/export_scgm_test_projections.py --checkpoint ... --output_dir resultats/scgm_text
-# bash jobs/enrich_scgm_themes_openai.sh
+# Sorties clés : resultats/raw_embedding/metrics/metrics_geometry.csv,
+#   resultats/raw_embedding_test/metrics/metrics_geometry.csv,
+#   resultats/scgm_text/metrics/metrics_geometry_test.csv,
+#   embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
 
 # 3. MALT (BTP → métallurgie)
 python scripts/train_malt_target.py --config configs/malt_btp_to_mettalurgie_qwen06.yaml
@@ -98,8 +97,8 @@ python scripts/train_supcon.py
 # Recalcul métriques uniquement si besoin :
 python scripts/postprocess_contrastive_results.py --method batch_triplet
 
-# 5. Embeddings test (Qwen figé, pour SCGM strict fidelity)
-python scripts/export_test_embeddings.py
+# 5. Embeddings test (Qwen figé) — inclus dans postprocess ; manuel :
+python scripts/export_test_embeddings.py  # → embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
 
 # 6. Tuning K-fold (sélection sur mean δ_macro %)
 sbatch jobs/tune_scgm_text.sh
@@ -117,7 +116,7 @@ python scripts/compare_methods.py
 | Corpus | Chemin | Encodeur |
 |--------|--------|----------|
 | BTP (entraînement) | `dataset/data_btp.csv` | Best model fine-tuné (contrastifs) ou tête SCGM + embeddings Qwen figés |
-| Test métallurgie | `dataset/test/data_metallurgie.csv` | Même best model ; SCGM utilise `embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv` |
+| Test métallurgie | `dataset/test/data_metallurgie.csv` | SCGM : `embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv` ; métriques raw : `resultats/raw_embedding_test/` |
 
 **Train simple** (`jobs/train_*.sh`, `n_folds: 5`) : (1) K-fold → `kfold_summary.csv` (validation in-domain, μ ± σ) sous `folds/fold_{k}/` ; (2) **fit final 100 % BTP** → `checkpoints/best_model` ; (3) évaluation **BTP + test** → `metrics_geometry_btp.csv`, `metrics_geometry_test.csv` (un seul modèle, pas d’éval test par fold).
 
@@ -128,7 +127,7 @@ python scripts/compare_methods.py
 ```bash
 cd jobs
 sbatch train_scgm_text.sh
-sbatch postprocess_scgm_text.sh    # après train : topics, projections test, OpenAI (SKIP_OPENAI=1 par défaut)
+sbatch postprocess_scgm_text.sh    # après train : emb. test, raw metrics BTP/test, topics, projections, SCGM test metrics (SKIP_OPENAI=1 par défaut)
 sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
 sbatch compare_methods.sh
@@ -208,7 +207,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `01_compare_embedding_methods.ipynb` | Comparaison globale eta² / RankMe |
-| `01_scgm_text_experiment.ipynb` | **Lecture seule** — courbes, export, viz (`§8c` K-fold comparatif, `§8d` PCA/t-SNE/UMAP test) depuis `resultats/scgm_text/` |
+| `01_scgm_text_experiment.ipynb` | **Lecture seule** — §3 chargement ; §4 K-fold (tables) ; §5 BTP ; §6 test (SCGM + raw). Après `postprocess_scgm_text.sh` (métriques raw BTP/test incluses). |
 | `02_malt_btp_to_mettalurgie_transfer.ipynb` | **Lecture seule** — analyse MALT à partir de `resultats/malt/` |
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
 | `04_malt_to_bayesian_network.ipynb` | BN depuis MALT |
@@ -227,7 +226,7 @@ Les fichiers `notebooks/*.ipynb` ne sont **pas versionnés** (restent sur la mac
 
 ```bash
 python scripts/build_analysis_notebooks.py   # 00, 01_compare, 05_view_*
-python scripts/rebuild_notebook_01.py   # inclut §8c (K-fold) et §8d (projections test 2D)
+python scripts/rebuild_notebook_01.py   # notebook 01 : §3–§6 (viz allégées ; §5g → export_raw_embeddings.py)
 python scripts/build_malt_notebook.py
 python scripts/build_notebook_03_compare_topics.py
 python scripts/build_notebook_04_malt_bn.py

@@ -817,3 +817,66 @@ def plot_btp_test_umap_pair(
     axes[1, 1].axis("off")
     plt.tight_layout()
     return save_fig("10_btp_test_umap_pair.png")
+
+
+def plot_topics_distribution_by_macro(
+    themes_z: pd.DataFrame,
+    *,
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: str = "topics_by_macro.png",
+) -> None:
+    """Barplot : somme ``n_units`` par ``dominant_macro``."""
+    import matplotlib.pyplot as plt
+
+    if "dominant_macro" not in themes_z.columns or "n_units" not in themes_z.columns:
+        print("themes_by_z : colonnes dominant_macro ou n_units absentes")
+        return
+
+    agg = (
+        themes_z[themes_z["dominant_macro"].astype(str).str.len() > 0]
+        .groupby("dominant_macro", as_index=False)["n_units"]
+        .sum()
+        .sort_values("dominant_macro")
+    )
+    if agg.empty:
+        print("Aucune macro dominante à tracer")
+        return
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.bar(agg["dominant_macro"].astype(str), agg["n_units"].astype(float))
+    ax.set_xlabel("Macro dominante")
+    ax.set_ylabel("Segments (n_units)")
+    ax.set_title("Distribution des topics par macro")
+    plt.tight_layout()
+    if save_fig is not None:
+        save_fig(png_name)
+    else:
+        plt.show()
+
+
+def plot_topics_n_units_by_z(
+    themes_z: pd.DataFrame,
+    *,
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: str = "topics_n_units_by_z.png",
+) -> None:
+    """Barplot : ``n_units`` par ``z_id`` (abscisse = composante z)."""
+    import matplotlib.pyplot as plt
+
+    if "z_id" not in themes_z.columns or "n_units" not in themes_z.columns:
+        print("themes_by_z : colonnes z_id ou n_units absentes")
+        return
+
+    df = themes_z.sort_values("z_id")
+    fig_w = max(10.0, len(df) * 0.28)
+    fig, ax = plt.subplots(figsize=(fig_w, 4))
+    ax.bar(df["z_id"].astype(str), df["n_units"].astype(float))
+    ax.set_xlabel("Composante z")
+    ax.set_ylabel("n_units")
+    ax.set_title("Effectif par composante z")
+    plt.xticks(rotation=90, fontsize=7)
+    plt.tight_layout()
+    if save_fig is not None:
+        save_fig(png_name)
+    else:
+        plt.show()

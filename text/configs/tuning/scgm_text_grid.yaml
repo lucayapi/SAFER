@@ -4,7 +4,7 @@ final_output_dir: resultats/scgm_text
 selection_metric: delta_macro_pct
 n_folds: 5
 test_dataset_path: dataset/test/data_metallurgie.csv
-test_emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv
+test_emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
 final_fit_full_data: true
 
 grid:

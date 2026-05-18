@@ -48,14 +48,15 @@ def replace_cell_by_prefix(cells: list, prefix: str, new_source: str, cell_type:
 PARAMS_SOURCE = """# Parameters — lecture seule (entraînement via scripts/ ou jobs/)
 OUTPUT_DIR = "resultats/scgm_text"
 CHECKPOINT_PATH = None  # None → OUTPUT_DIR/checkpoints/best_model.pt
-SKIP_EXPORT_IF_PRESENT = True  # True : export seulement si projected_embeddings.npy absent
 
 DATA_CSV = "dataset/data_btp.csv"
 DATA_TEST_CSV = "dataset/test/data_metallurgie.csv"
 EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
-EMB_TEST_CSV = "embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv"
+EMB_TEST_CSV = "embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv"
 METRICS_BTP = "metrics/metrics_geometry_btp.csv"
 METRICS_TEST = "metrics/metrics_geometry_test.csv"
+METRICS_RAW = "resultats/raw_embedding/metrics/metrics_geometry.csv"
+METRICS_RAW_TEST = "resultats/raw_embedding_test/metrics/metrics_geometry.csv"
 KFOLD_SUMMARY = "metrics/kfold_summary.csv"
 KFOLD_PER_FOLD = "metrics/kfold_per_fold.csv"
 FOLDS_DIR = "folds"
@@ -101,9 +102,11 @@ from scgm_text.dataset_text_embeddings import (
 )
 from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, save_json, set_seed
 
-OUTPUT_PATH = Path(OUTPUT_DIR)
+_output = Path(OUTPUT_DIR)
+OUTPUT_PATH = _output.resolve() if _output.is_absolute() else (REPO_ROOT / _output).resolve()
 CHECKPOINTS_DIR = OUTPUT_PATH / "checkpoints"
-CHECKPOINT_PATH = Path(CHECKPOINT_PATH) if CHECKPOINT_PATH else CHECKPOINTS_DIR / "best_model.pt"
+_checkpoint = Path(CHECKPOINT_PATH) if CHECKPOINT_PATH else CHECKPOINTS_DIR / "best_model.pt"
+CHECKPOINT_PATH = _checkpoint.resolve() if _checkpoint.is_absolute() else (REPO_ROOT / _checkpoint).resolve()
 EXPORTS_DIR = OUTPUT_PATH / "embeddings"
 TOPICS_DIR = OUTPUT_PATH / "topics"
 EVAL_DIR = OUTPUT_PATH / "metrics"
@@ -134,6 +137,28 @@ def display_df_for_paper(df: pd.DataFrame, name: str) -> Path:
     df.to_csv(path, index=False)
     display(df)
     return path
+
+
+GEOM_DISPLAY_COLS = [
+    "eta2_macro_balanced",
+    "delta_macro_pct",
+    "eta2_weighted",
+    "rankme_global",
+    "c1_global",
+    "c10_global",
+]
+
+
+def _slim_geom_df(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [c for c in GEOM_DISPLAY_COLS if c in df.columns]
+    if "method" in df.columns:
+        cols = ["method"] + cols
+    return df[cols] if cols else df
+
+
+def _display_geom_metrics(df: pd.DataFrame, title: str) -> None:
+    print(title)
+    display(_slim_geom_df(df))
 
 
 def run_cli(cmd, stream=True):
@@ -206,28 +231,6 @@ def show_training_progress(output_path=OUTPUT_PATH):
     plt.show()
 
 
-def require_scgm_artifacts(
-    output_path: Path = OUTPUT_PATH,
-    checkpoint_path: Path = CHECKPOINT_PATH,
-) -> None:
-    missing: list[str] = []
-    ckpt = Path(checkpoint_path)
-    if not ckpt.is_file():
-        missing.append(str(ckpt))
-    try:
-        _read_training_logs(output_path)
-    except FileNotFoundError:
-        missing.append("metrics/train_log.csv ou logs.csv")
-    if missing:
-        raise FileNotFoundError(
-            "Artefacts SCGM manquants — entraînez hors notebook, par ex.:\\n"
-            "  cd text/jobs && sbatch train_scgm_text.sh\\n"
-            "  python scripts/train_scgm_text.py --config configs/scgm_text_strict_fidelity.yaml "
-            "--scgm_strict_mode --output_dir resultats/scgm_text\\n"
-            f"Manquant : {missing}"
-        )
-
-
 print(f"REPO_ROOT={REPO_ROOT}")
 print(f"OUTPUT_DIR={OUTPUT_PATH}")
 print(f"CHECKPOINT={CHECKPOINT_PATH}")
@@ -243,222 +246,152 @@ if run_config:
     )
 """
 
-SECTION8_MD = """## 8. Résultats d'entraînement (lecture seule)
+NOTEBOOK_TOC_MD = """## Sommaire
 
-**Pas d'entraînement dans ce notebook.** Produire d'abord les artefacts sous `OUTPUT_DIR` :
-
-```bash
-cd text/jobs && sbatch train_scgm_text.sh
-# ou
-python scripts/train_scgm_text.py \\
-  --config configs/scgm_text_strict_fidelity.yaml \\
-  --scgm_strict_mode \\
-  --output_dir resultats/scgm_text
-```
-
-Puis export (si `embeddings/projected_embeddings.npy` absent) :
-
-```bash
-python scripts/export_scgm_text_outputs.py \\
-  --checkpoint resultats/scgm_text/checkpoints/best_model.pt \\
-  --output_dir resultats/scgm_text
-```
-
-Attendu : `checkpoints/best_model.pt`, `metrics/train_log.csv` (ou `logs.csv`), puis exports sous `embeddings/` et `topics/`.
-
-Libellés OpenAI pour la carte DataMap : `bash jobs/enrich_scgm_themes_openai.sh` sur le **login** (pas dans ce notebook).
+1. Paramètres  
+2. Setup (helpers)  
+3. **Chargement des artefacts**  
+4. Validation **K-fold** (in-domain)  
+5. **Corpus BTP** — train / modèle final  
+6. **Corpus test** — métallurgie
 """
 
-GEOMETRY_KFOLD_SOURCE = """def _show_kfold_metrics():
-    print(
-        "K-fold = rapport validation in-domain (tableaux). "
-        "Graphiques comparatifs : §8c. Cartes 2D test : §8d. "
-        "Test/BTP ci-dessous = modèle final (100 % BTP, checkpoints/best_model.pt)."
-    )
-    paths = {
-        "K-fold val (μ±σ)": OUTPUT_PATH / KFOLD_SUMMARY,
-        "K-fold val (par fold)": OUTPUT_PATH / KFOLD_PER_FOLD,
-    }
-    for title, p in paths.items():
-        if p.is_file():
-            print(f"\\n=== {title} ===")
-            df = pd.read_csv(p)
-            display(df)
-            if "mean_delta_macro_pct" in df.columns and len(df) == 1:
-                m = float(df["mean_delta_macro_pct"].iloc[0])
-                s = float(df.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
-                print(f"  δ_macro val : {m:.2f} ± {s:.2f} %")
-        else:
-            print(f"(absent) {title} → {p.relative_to(REPO_ROOT)}")
+LOAD_MD = """## 3. Chargement des résultats
 
-    for corpus, rel in (("BTP (modèle final)", METRICS_BTP), ("Test métallurgie (modèle final)", METRICS_TEST)):
-        p = OUTPUT_PATH / rel
-        if not p.is_file():
-            continue
-        geom = pd.read_csv(p)
-        print(f"\\n=== Géométrie {corpus} ===")
-        display(geom)
-        for col in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
-            if col in geom.columns and geom[col].notna().any():
-                fig, ax = plt.subplots(figsize=(6, 3))
-                ax.bar(geom["method"].astype(str), geom[col].astype(float))
-                ax.set_title(f"SCGM — {col} ({corpus})")
-                plt.xticks(rotation=20, ha="right")
-                plt.tight_layout()
-                plt.show()
+Tous les fichiers sont lus ici. Les sections suivantes utilisent les variables en mémoire (pas d'export subprocess).
 
-
-_show_kfold_metrics()
+```bash
+sbatch jobs/train_scgm_text.sh
+sbatch jobs/postprocess_scgm_text.sh
+```
 """
 
-KFOLD_VIZ_SOURCE = """from scgm_text.notebook_viz import (
-    display_plotly_html,
-    plot_kfold_metrics_bars,
-    plot_kfold_summary_errorbars,
-    plot_kfold_val_curves,
+LOAD_ARTIFACTS_SOURCE = """def _artifact_status(path: Path) -> str:
+    return "OK" if path.is_file() else "absent"
+
+
+def _load_csv_optional(path: Path):
+    return pd.read_csv(path) if path.is_file() else None
+
+
+def _load_npy_optional(path: Path):
+    return np.load(path) if path.is_file() else None
+
+
+def _path_display(path: Path) -> str:
+    \"\"\"Chemin relatif à REPO_ROOT (Windows-safe : resolve avant relative_to).\"\"\"
+    p = path.expanduser().resolve()
+    root = REPO_ROOT.resolve()
+    try:
+        return str(p.relative_to(root))
+    except ValueError:
+        return str(p).replace("\\\\", "/")
+
+
+def require_scgm_artifacts() -> None:
+    missing: list[str] = []
+    if not Path(CHECKPOINT_PATH).resolve().is_file():
+        missing.append(_path_display(Path(CHECKPOINT_PATH)))
+    if not (OUTPUT_PATH / "metrics" / "train_log.csv").is_file() and not (OUTPUT_PATH / "logs.csv").is_file():
+        missing.append("metrics/train_log.csv ou logs.csv")
+    if missing:
+        raise FileNotFoundError(
+            "Artefacts minimaux manquants — sbatch jobs/train_scgm_text.sh\\n"
+            f"Manquant : {missing}"
+        )
+
+
+PATHS = {
+    "checkpoint": Path(CHECKPOINT_PATH).resolve(),
+    "kfold_summary": (OUTPUT_PATH / KFOLD_SUMMARY).resolve(),
+    "kfold_per_fold": (OUTPUT_PATH / KFOLD_PER_FOLD).resolve(),
+    "metrics_btp": (OUTPUT_PATH / METRICS_BTP).resolve(),
+    "metrics_test": (OUTPUT_PATH / METRICS_TEST).resolve(),
+    "metrics_raw": (REPO_ROOT / METRICS_RAW).resolve(),
+    "metrics_raw_test": (REPO_ROOT / METRICS_RAW_TEST).resolve(),
+    "projected_btp": (EXPORTS_DIR / "projected_embeddings.npy").resolve(),
+    "meta_btp": (EXPORTS_DIR / "metadata_with_predictions.csv").resolve(),
+    "projected_test": (OUTPUT_PATH / TEST_PROJ_NPY).resolve(),
+    "meta_test": (OUTPUT_PATH / TEST_META_CSV).resolve(),
+    "themes_z": (TOPICS_DIR / "themes_by_z.csv").resolve(),
+    "themes_openai": (TOPICS_DIR / "themes_by_z_openai.csv").resolve(),
+    "themes_macro": (TOPICS_DIR / "themes_by_macro_z.csv").resolve(),
+    "raw_embeddings": (EXPORTS_DIR / "raw_embeddings.npy").resolve(),
+}
+
+require_scgm_artifacts()
+
+logs = _load_csv_optional(OUTPUT_PATH / "metrics" / "train_log.csv")
+if logs is None:
+    logs = _load_csv_optional(OUTPUT_PATH / "logs.csv")
+
+kfold_summary = _load_csv_optional(PATHS["kfold_summary"])
+kfold_per_fold = _load_csv_optional(PATHS["kfold_per_fold"])
+metrics_btp = _load_csv_optional(PATHS["metrics_btp"])
+metrics_test = _load_csv_optional(PATHS["metrics_test"])
+metrics_raw = _load_csv_optional(PATHS["metrics_raw"])
+metrics_raw_test = _load_csv_optional(PATHS["metrics_raw_test"])
+projected_btp = _load_npy_optional(PATHS["projected_btp"])
+meta_btp = _load_csv_optional(PATHS["meta_btp"])
+projected_test = _load_npy_optional(PATHS["projected_test"])
+meta_test = _load_csv_optional(PATHS["meta_test"])
+themes_z = _load_csv_optional(PATHS["themes_z"])
+themes_openai = _load_csv_optional(PATHS["themes_openai"])
+themes_macro = _load_csv_optional(PATHS["themes_macro"])
+raw_embeddings = _load_npy_optional(PATHS["raw_embeddings"])
+
+if themes_z is None and (EXPORTS_DIR / "themes_by_z.csv").is_file():
+    themes_z = pd.read_csv(EXPORTS_DIR / "themes_by_z.csv")
+if themes_macro is None and (EXPORTS_DIR / "themes_by_macro_z.csv").is_file():
+    themes_macro = pd.read_csv(EXPORTS_DIR / "themes_by_macro_z.csv")
+
+inventory_rows = [
+    {"artifact": k, "path": _path_display(v), "status": _artifact_status(v)}
+    for k, v in PATHS.items()
+]
+inventory_rows.append(
+    {"artifact": "logs", "path": "train_log", "status": "OK" if logs is not None else "absent"}
 )
+display(pd.DataFrame(inventory_rows).sort_values("artifact"))
 
-kfold_pf = OUTPUT_PATH / KFOLD_PER_FOLD
-kfold_sum = OUTPUT_PATH / KFOLD_SUMMARY
-if kfold_pf.is_file():
-    pf = pd.read_csv(kfold_pf)
-    plot_kfold_metrics_bars(pf, save_fig=save_fig)
-    plot_kfold_val_curves(OUTPUT_PATH, save_fig=save_fig)
-    from IPython.display import Image, display
+for hint, cond in (
+    ("sbatch jobs/postprocess_scgm_text.sh", projected_btp is None or themes_z is None),
+    (f"export_scgm_test_projections.py --output_dir {OUTPUT_DIR}", projected_test is None),
+    ("SKIP_OPENAI=0 bash jobs/enrich_scgm_themes_openai.sh", themes_openai is None),
+):
+    if cond:
+        print("→", hint)
+"""
 
-    for name in ("kfold_metrics_by_fold.png", "kfold_val_curves.png"):
-        p = FIGURES_DIR / name
-        if p.is_file():
-            display(Image(filename=str(p)))
+KFOLD_MD = """## 4. Validation K-fold (in-domain)
+
+Validation croisée sur le **BTP** (groupes `accident_id`). Distinct du corpus **test** (§6).
+"""
+
+KFOLD_TABLES_SOURCE = """if kfold_summary is not None:
+    print("=== K-fold — résumé μ±σ ===")
+    display(kfold_summary)
+    if "mean_delta_macro_pct" in kfold_summary.columns and len(kfold_summary) == 1:
+        m = float(kfold_summary["mean_delta_macro_pct"].iloc[0])
+        s = float(kfold_summary.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
+        print(f"  δ_macro val : {m:.2f} ± {s:.2f} %")
 else:
-    print(f"(absent) {KFOLD_PER_FOLD} — relancer train_scgm_text.sh avec --kfold 5")
+    print(f"(absent) {KFOLD_SUMMARY}")
 
-if kfold_sum.is_file():
-    plot_kfold_summary_errorbars(pd.read_csv(kfold_sum), save_fig=save_fig)
-    p = FIGURES_DIR / "kfold_summary_errorbars.png"
-    if p.is_file():
-        from IPython.display import Image, display
-
-        display(Image(filename=str(p)))
+if kfold_per_fold is not None:
+    print("\\n=== K-fold — par fold ===")
+    display(kfold_per_fold)
+else:
+    print(f"(absent) {KFOLD_PER_FOLD}")
 """
 
-TEST_2D_SOURCE = """from scgm_text.notebook_viz import (
-    display_plotly_html,
-    plot_btp_test_umap_pair,
-    plot_corpus_projections,
-    plot_corpus_umap,
-)
+BTP_MD = """## 5. Corpus BTP (train / modèle final)
 
-test_npy = OUTPUT_PATH / TEST_PROJ_NPY
-test_meta_path = OUTPUT_PATH / TEST_META_CSV
-btp_npy = EXPORTS_DIR / "projected_embeddings.npy"
-btp_meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
-test_data_path = REPO_ROOT / DATA_TEST_CSV
-test_emb_path = REPO_ROOT / EMB_TEST_CSV
-ckpt_path = Path(CHECKPOINT_PATH) if CHECKPOINT_PATH else CHECKPOINTS_DIR / "best_model.pt"
-
-def _diagnose_test_export() -> list[str]:
-    issues = []
-    if not ckpt_path.is_file():
-        issues.append(f"checkpoint manquant : {ckpt_path.relative_to(REPO_ROOT)}")
-    if not test_data_path.is_file():
-        issues.append(f"CSV test manquant : {test_data_path.relative_to(REPO_ROOT)}")
-    if not test_emb_path.is_file():
-        issues.append(
-            f"embeddings Qwen test manquants : {test_emb_path.relative_to(REPO_ROOT)}\\n"
-            "    → python scripts/export_test_embeddings.py"
-        )
-    return issues
-
-if not test_npy.is_file():
-    issues = _diagnose_test_export()
-    if issues:
-        print(f"(absent) {TEST_PROJ_NPY}")
-        for line in issues:
-            print(f"  • {line}")
-        print(
-            "Sinon, après correction : python scripts/export_scgm_test_projections.py "
-            f"--output_dir {OUTPUT_DIR}"
-        )
-    elif AUTO_EXPORT_TEST_IF_MISSING and ckpt_path.is_file():
-        from scgm_text.eval_corpus import save_scgm_projected_corpus
-
-        print(f"Export automatique des projections test depuis {ckpt_path.name}…")
-        saved = save_scgm_projected_corpus(
-            str(ckpt_path),
-            str(REPO_ROOT / DATA_TEST_CSV),
-            str(REPO_ROOT / EMB_TEST_CSV),
-            EXPORTS_DIR,
-            stem="test",
-            label_col=LABEL_COL,
-            pred_ok_col=PRED_OK_COL,
-            group_col=GROUP_COL,
-            batch_size=BATCH_SIZE,
-        )
-        print(f"  → {saved['projections'].relative_to(REPO_ROOT)}")
-    else:
-        print(
-            f"(absent) {TEST_PROJ_NPY} — AUTO_EXPORT_TEST_IF_MISSING=False ou checkpoint absent"
-        )
-
-if test_npy.is_file():
-    proj_test = np.load(test_npy)
-    meta_test = pd.read_csv(test_meta_path) if test_meta_path.is_file() else pd.DataFrame()
-    if len(meta_test) != len(proj_test):
-        print(f"Attention : meta ({len(meta_test)}) vs projections ({len(proj_test)})")
-    elif LABEL_COL not in meta_test.columns:
-        print(f"Colonne {LABEL_COL} absente de {TEST_META_CSV}")
-    else:
-        print(
-            "Embeddings Qwen test figés → tête SCGM (best_model.pt). "
-            "Même architecture qu'en BTP, corpus métallurgie hors distribution."
-        )
-        plot_corpus_projections(
-            proj_test,
-            meta_test,
-            LABEL_COL,
-            corpus_name="Test métallurgie",
-            save_fig=save_fig,
-            figures_dir=FIGURES_DIR,
-            max_points=TSNE_SAMPLE_SIZE,
-            seed=SEED,
-        )
-        plot_corpus_umap(
-            proj_test,
-            meta_test,
-            LABEL_COL,
-            corpus_name="Test métallurgie",
-            save_fig=save_fig,
-            figures_dir=FIGURES_DIR,
-            max_points=RAW_EMBEDDING_UMAP_MAX_POINTS,
-            seed=SEED,
-        )
-        for html in (
-            "05_projection_pca_interactive.html",
-            "05_projection_tsne_interactive.html",
-            "10_test_umap_interactive.html",
-        ):
-            p = FIGURES_DIR / html
-            if p.is_file():
-                display_plotly_html(p)
-
-        if btp_npy.is_file() and btp_meta_path.is_file():
-            plot_btp_test_umap_pair(
-                np.load(btp_npy),
-                pd.read_csv(btp_meta_path),
-                proj_test,
-                meta_test,
-                LABEL_COL,
-                save_fig=save_fig,
-                figures_dir=FIGURES_DIR,
-                max_points=min(TSNE_SAMPLE_SIZE, RAW_EMBEDDING_UMAP_MAX_POINTS),
-                seed=SEED,
-            )
+Fit final **100 % BTP** après K-fold ; checkpoint `checkpoints/best_model.pt`.  
+Visualisations et topics sur les segments d'entraînement uniquement.
 """
 
-RESULTS_SOURCE = """require_scgm_artifacts()
-
-if run_config:
+BTP_CONFIG_SOURCE = """if run_config:
     display(
         pd.Series(
             {
@@ -466,16 +399,102 @@ if run_config:
                 "best_checkpoint_epoch": run_config.get("best_checkpoint_epoch"),
                 "best_checkpoint_metric": run_config.get("best_checkpoint_metric"),
                 "best_checkpoint_score": run_config.get("best_checkpoint_score"),
-                "output_dir": run_config.get("output_dir", str(OUTPUT_PATH)),
             }
         )
     )
 
-show_training_progress()
+checkpoint = torch.load(CHECKPOINT_PATH, map_location="cpu", weights_only=False)
+summary_ckpt = {
+    "input_dim": checkpoint.get("input_dim"),
+    "train_size": len(checkpoint.get("train_idx", [])),
+    "val_size": len(checkpoint.get("val_idx", [])),
+}
+display(pd.Series(summary_ckpt))
+if checkpoint.get("args"):
+    display(pd.json_normalize(checkpoint["args"]))
 """
 
-LOGS_SOURCE = """logs = _read_training_logs(OUTPUT_PATH)
-display(logs.tail())
+BTP_METRICS_SOURCE = """if metrics_btp is not None:
+    _display_geom_metrics(metrics_btp, "=== Géométrie BTP (modèle final, 100 % train) ===")
+else:
+    print(f"(absent) {METRICS_BTP}")
+"""
+
+TEST_MD = """## 6. Corpus test — métallurgie
+
+Évaluation **hors distribution** : mêmes embeddings Qwen figés + tête SCGM entraînée sur BTP.  
+Distinct du K-fold (§4) et des viz BTP (§5).
+"""
+
+TEST_METRICS_SOURCE = """if metrics_test is not None:
+    _display_geom_metrics(metrics_test, "=== Géométrie SCGM — test métallurgie ===")
+else:
+    print(f"(absent) {METRICS_TEST}")
+    print("  → sbatch jobs/postprocess_scgm_text.sh (étape métriques SCGM test)")
+
+if metrics_raw_test is not None:
+    _display_geom_metrics(metrics_raw_test, "=== Embedding brut — test métallurgie ===")
+else:
+    print(f"(absent) {METRICS_RAW_TEST}")
+    print("  → postprocess (étape métriques raw test) ou export_raw_embeddings.py + raw_embedding_test.yaml")
+"""
+
+TEST_VIZ_SOURCE = """from scgm_text.notebook_viz import (
+    display_plotly_html,
+    plot_btp_test_umap_pair,
+    plot_corpus_projections,
+    plot_corpus_umap,
+)
+
+if projected_test is None or meta_test is None:
+    print(f"(absent) projections test — voir §3 (postprocess / export_scgm_test_projections)")
+elif len(meta_test) != len(projected_test):
+    print(f"Attention : meta ({len(meta_test)}) vs projections ({len(projected_test)})")
+elif LABEL_COL not in meta_test.columns:
+    print(f"Colonne {LABEL_COL} absente de test_metadata")
+else:
+    plot_corpus_projections(
+        projected_test,
+        meta_test,
+        LABEL_COL,
+        corpus_name="Test métallurgie",
+        save_fig=save_fig,
+        figures_dir=FIGURES_DIR,
+        max_points=TSNE_SAMPLE_SIZE,
+        seed=SEED,
+    )
+    plot_corpus_umap(
+        projected_test,
+        meta_test,
+        LABEL_COL,
+        corpus_name="Test métallurgie",
+        save_fig=save_fig,
+        figures_dir=FIGURES_DIR,
+        max_points=RAW_EMBEDDING_UMAP_MAX_POINTS,
+        seed=SEED,
+    )
+    display_plotly_html(FIGURES_DIR / "10_test_umap_interactive.html")
+    if projected_btp is not None and meta_btp is not None:
+        plot_btp_test_umap_pair(
+            projected_btp,
+            meta_btp,
+            projected_test,
+            meta_test,
+            LABEL_COL,
+            save_fig=save_fig,
+            figures_dir=FIGURES_DIR,
+            max_points=min(TSNE_SAMPLE_SIZE, RAW_EMBEDDING_UMAP_MAX_POINTS),
+            seed=SEED,
+        )
+"""
+
+BTP_LOGS_MD = """### 5b. Courbes d'entraînement (BTP)
+"""
+
+LOGS_SOURCE = """if logs is None:
+    print("(absent) metrics/train_log.csv — pas de courbes")
+else:
+    display(logs.tail())
 
 fig, axes = plt.subplots(2, 2, figsize=(12, 8))
 loss_cols = [c for c in ["train_loss", "loss_macro", "loss_latent"] if c in logs.columns]
@@ -508,94 +527,38 @@ from scgm_text.notebook_viz import plot_training_geometry_curves
 plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
-EXPORT_SOURCE = """def _verify_export_layout() -> None:
-    required = {
-        "projected_embeddings.npy": EXPORTS_DIR / "projected_embeddings.npy",
-        "metadata_with_predictions.csv": EXPORTS_DIR / "metadata_with_predictions.csv",
-        "themes_by_z.csv": TOPICS_DIR / "themes_by_z.csv",
-    }
-    missing = {k: str(v) for k, v in required.items() if not v.is_file()}
-    if not missing:
-        return
-    nested = EXPORTS_DIR / "embeddings" / "projected_embeddings.npy"
-    if nested.is_file():
-        raise FileNotFoundError(
-            "Export écrit sous embeddings/embeddings/ (mauvais --output_dir). "
-            f"Relancez avec --output_dir {OUTPUT_PATH} (racine du run, pas le sous-dossier embeddings/)."
-        )
-    raise FileNotFoundError(f"Export incomplet — fichiers manquants : {missing}")
-
-
-_proj = EXPORTS_DIR / "projected_embeddings.npy"
-if SKIP_EXPORT_IF_PRESENT and _proj.is_file():
-    print(f"Export ignoré (déjà présent) : {_proj}")
-else:
-    export_cmd = [
-        sys.executable,
-        "scripts/export_scgm_text_outputs.py",
-        "--data_csv", DATA_CSV,
-        "--emb_csv", EMB_CSV,
-        "--checkpoint", str(CHECKPOINT_PATH),
-        "--output_dir", str(OUTPUT_PATH),
-        "--label_col", LABEL_COL,
-        "--pred_ok_col", PRED_OK_COL,
-        "--group_col", GROUP_COL,
-        "--batch_size", str(BATCH_SIZE),
-        "--device", "cuda" if torch.cuda.is_available() else "cpu",
-    ]
-    run_cli(export_cmd)
-    for sub in ("embeddings", "topics", "assignments"):
-        folder = OUTPUT_PATH / sub
-        if folder.is_dir():
-            names = sorted(p.name for p in folder.iterdir() if p.is_file())
-            print(f"{sub}/ ({len(names)} fichiers):", names[:12], "..." if len(names) > 12 else "")
-
-_verify_export_layout()
-print("Export OK —", _proj)
-"""
-
-THEMES_SOURCE = """def _topics_csv(name: str) -> Path:
-    \"\"\"themes_by_z*.csv : topics/ (export SCGM) ; repli embeddings/ (anciens runs).\"\"\"
-    for base in (TOPICS_DIR, EXPORTS_DIR):
-        path = base / name
-        if path.is_file():
-            if base != TOPICS_DIR:
-                print(f"WARN: {name} sous {base} — attendu {TOPICS_DIR}")
-            return path
-    raise FileNotFoundError(
-        f"{name} introuvable sous {TOPICS_DIR} ni {EXPORTS_DIR}. "
-        "Relancer l'export : python scripts/export_scgm_text_outputs.py "
-        f"--checkpoint {CHECKPOINT_PATH} --output_dir {OUTPUT_PATH}"
-    )
-
-
-themes_z = pd.read_csv(_topics_csv("themes_by_z.csv"))
-themes_macro = pd.read_csv(_topics_csv("themes_by_macro_z.csv"))
-display(themes_macro)
-top_components = themes_z.sort_values("n_units", ascending=False).head(15)
-display_df_for_paper(top_components, "top_themes_by_z.csv")
-"""
-
-CHECKPOINT_SOURCE = """checkpoint = torch.load(
-    CHECKPOINT_PATH, map_location="cpu", weights_only=False
+THEMES_SOURCE = """from scgm_text.notebook_viz import (
+    plot_topics_distribution_by_macro,
+    plot_topics_n_units_by_z,
 )
-config = load_json(str(OUTPUT_PATH / "configs" / "config.json"))
-summary_ckpt = {
-    "input_dim": checkpoint.get("input_dim"),
-    "label2id": checkpoint.get("label2id"),
-    "train_size": len(checkpoint.get("train_idx", [])),
-    "val_size": len(checkpoint.get("val_idx", [])),
-    "args": checkpoint.get("args", {}),
-}
-display(pd.json_normalize(summary_ckpt["args"]))
-pd.Series({
-    "input_dim": summary_ckpt["input_dim"],
-    "train_size": summary_ckpt["train_size"],
-    "val_size": summary_ckpt["val_size"],
-})
+
+if themes_z is None:
+    print("(absent) themes_by_z — sbatch jobs/postprocess_scgm_text.sh")
+else:
+    topics_tbl = themes_z.copy()
+    if themes_openai is not None and "theme_summary" in themes_openai.columns:
+        topics_tbl = topics_tbl.merge(
+            themes_openai[["z_id", "theme_summary"]],
+            on="z_id",
+            how="left",
+        )
+    else:
+        topics_tbl["theme_summary"] = pd.NA
+        print("→ SKIP_OPENAI=0 bash jobs/enrich_scgm_themes_openai.sh (libellés topics)")
+
+    topics_tbl = topics_tbl.sort_values("n_units", ascending=False)
+    print("=== Topics par composante z ===")
+    display(topics_tbl)
+    display_df_for_paper(topics_tbl, "topics_by_z_with_openai.csv")
+
+    plot_topics_distribution_by_macro(topics_tbl, save_fig=save_fig)
+    plot_topics_n_units_by_z(topics_tbl, save_fig=save_fig)
 """
 
-SECTION12_MD = """## 12. Visualisation des embeddings projetés
+BTP_PROJECTION_MD = """### 5e. PCA / t-SNE — embeddings projetés BTP
+"""
+
+SECTION12_MD = """### 5e. PCA / t-SNE — embeddings projetés BTP
 
 PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pred_label`).
 
@@ -603,7 +566,7 @@ PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pre
 - Interactif Plotly : `05_projection_pca_interactive.html`, `05_projection_tsne_interactive.html`
 """
 
-DATAMAP_MD = """## 11 bis — Carte 2D des segments (UMAP + DataMapPlot)
+DATAMAP_MD = """### 5f. Carte 2D BTP (UMAP + DataMapPlot)
 
 Sous-échantillon (`DATAMAP_MAX_POINTS`). UMAP sur `projected_embeddings.npy`.
 
@@ -627,15 +590,11 @@ from scgm_text.notebook_viz import (
     resolve_datamap_labels,
 )
 
-emb_path = EXPORTS_DIR / "projected_embeddings.npy"
-meta_path = EXPORTS_DIR / "metadata_with_predictions.csv"
-themes_openai_path = TOPICS_DIR / "themes_by_z_openai.csv"
-
-if not emb_path.exists() or not meta_path.exists():
-    print("Embeddings projetés ou métadonnées manquants ; exécuter l'export.")
+if projected_btp is None or meta_btp is None:
+    print("(absent) projected_btp / meta_btp — postprocess_scgm_text.sh")
 else:
-    projected_all = np.load(emb_path)
-    meta_all = pd.read_csv(meta_path)
+    projected_all = projected_btp
+    meta_all = meta_btp
     if len(meta_all) != len(projected_all):
         raise ValueError(f"Alignement meta/embeddings : {len(meta_all)} vs {len(projected_all)}")
     n = min(DATAMAP_MAX_POINTS, len(projected_all))
@@ -648,10 +607,10 @@ else:
         lab,
         label_col=LABEL_COL,
         label_mode=DATAMAP_LABEL_MODE,
-        themes_openai_path=themes_openai_path,
+        themes_openai_path=PATHS["themes_openai"],
     )
-    if label_kind == "theme_summary":
-        _to = pd.read_csv(themes_openai_path)
+    if label_kind == "theme_summary" and themes_openai is not None:
+        _to = themes_openai
         _z2s = dict(zip(_to["z_id"].astype(int), _to["theme_summary"].astype(str)))
         lab["hover_theme"] = lab["z_hat"].map(lambda z: _z2s.get(int(z), f"z={int(z)}"))
     else:
@@ -703,105 +662,87 @@ from scgm_text.notebook_viz import (
     sample_projection_indices,
 )
 
-projected = np.load(EXPORTS_DIR / "projected_embeddings.npy")
-meta_pred = pd.read_csv(EXPORTS_DIR / "metadata_with_predictions.csv")
-
-idx = sample_projection_indices(meta_pred, LABEL_COL, max_points=TSNE_SAMPLE_SIZE, seed=SEED)
-sample_df = meta_pred.loc[idx]
-sample_x = projected[idx]
-
-pca = PCA(n_components=2, random_state=SEED)
-pca_xy = pca.fit_transform(sample_x)
-tsne = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
-tsne_xy = tsne.fit_transform(sample_x)
-
-plot_projection_matplotlib(pca_xy, tsne_xy, sample_df, LABEL_COL, save_fig=save_fig)
-_, pca_html = plot_projection_plotly(pca_xy, tsne_xy, sample_df, LABEL_COL, figures_dir=FIGURES_DIR)
-print(pca_html)
-display_plotly_html(FIGURES_DIR / "05_projection_pca_interactive.html")
-display_plotly_html(FIGURES_DIR / "05_projection_tsne_interactive.html")
+if projected_btp is None or meta_btp is None:
+    print("(absent) projections BTP")
+else:
+    idx = sample_projection_indices(meta_btp, LABEL_COL, max_points=TSNE_SAMPLE_SIZE, seed=SEED)
+    sample_df = meta_btp.loc[idx]
+    sample_x = projected_btp[idx]
+    pca_xy = PCA(n_components=2, random_state=SEED).fit_transform(sample_x)
+    tsne_xy = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto").fit_transform(sample_x)
+    plot_projection_matplotlib(
+        pca_xy, tsne_xy, sample_df, LABEL_COL, save_fig=save_fig,
+        pca_title="PCA 2D — BTP", tsne_title="t-SNE 2D — BTP",
+    )
+    plot_projection_plotly(pca_xy, tsne_xy, sample_df, LABEL_COL, figures_dir=FIGURES_DIR)
+    display_plotly_html(FIGURES_DIR / "05_projection_pca_interactive.html")
+    display_plotly_html(FIGURES_DIR / "05_projection_tsne_interactive.html")
 """
 
-EVAL_RAW_PROJ_MD = """### Carte 2D — embedding brut (PCA + t-SNE statiques, couleur = macro)
+EVAL_RAW_PROJ_MD = """### 5g. Embedding brut BTP
 
-Sous-échantillon (`RAW_EMBEDDING_UMAP_MAX_POINTS`) sur les vecteurs **encodeur** (`EMB_CSV` / `raw_embeddings.npy`), colorés par `pred_label` (A0–C). Figure statique : `09_raw_embedding_pca_tsne.png`.
+Tableau géométrie sur les vecteurs **encodeur** (`metrics_geometry.csv` de `export_raw_embeddings.py`) : η², δ_macro, RankMe, C1, C10.
+
+PCA + t-SNE (`RAW_EMBEDDING_UMAP_MAX_POINTS`) sur `raw_embeddings.npy` / `EMB_CSV`, couleur = macro. Figure : `09_raw_embedding_pca_tsne.png`.
 """
 
-EVAL_GEOMETRY_CODE = """eval_cmd = [
-    sys.executable,
-    "scripts/evaluate_scgm_text.py",
-    "--exports_dir", str(EXPORTS_DIR),
-    "--output_dir", str(EVAL_DIR),
-    "--label_col", LABEL_COL,
-    "--emb_csv", EMB_CSV,
-]
-run_cli(eval_cmd)
-
-import importlib
-import scgm_text.notebook_viz as _notebook_viz
-importlib.reload(_notebook_viz)
-from sklearn.decomposition import PCA
+EVAL_GEOMETRY_CODE = """from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
-from scgm_text.notebook_viz import (
-    display_plotly_html,
-    plot_evaluation_geometry_dashboard,
-    plot_projection_matplotlib,
-    sample_projection_indices,
-)
+from scgm_text.notebook_viz import plot_projection_matplotlib, sample_projection_indices
 
-metrics_table = pd.read_csv(EVAL_DIR / "metrics_table.csv")
-display(metrics_table)
+if metrics_raw is not None:
+    _display_geom_metrics(metrics_raw, "=== Embedding brut (encodeur Qwen) ===")
+else:
+    print(f"(absent) {METRICS_RAW}")
+    print("  → python scripts/export_raw_embeddings.py")
+    if metrics_btp is not None:
+        print("  (metrics_btp = SCGM projeté — non affiché ici)")
 
-html_paths = plot_evaluation_geometry_dashboard(
-    metrics_table,
-    figures_dir=FIGURES_DIR,
-    save_fig=save_fig,
-)
-for p in html_paths:
-    print(p)
-display_plotly_html(FIGURES_DIR / "09_eta2_macro_interactive.html")
-display_plotly_html(FIGURES_DIR / "09_rankme_c1_c10_global_interactive.html")
-
-# --- PCA / t-SNE 2D embedding brut (macro, statique) ---
-meta_eval = pd.read_csv(EXPORTS_DIR / "metadata_with_predictions.csv")
-raw_npy = EXPORTS_DIR / "raw_embeddings.npy"
-if raw_npy.is_file():
-    raw_emb = np.load(raw_npy)
-elif Path(EMB_CSV).is_file():
+# --- PCA / t-SNE embedding brut BTP ---
+if meta_btp is None:
+    print("(absent) meta_btp pour carte embedding brut")
+elif raw_embeddings is not None:
+    raw_emb = raw_embeddings
+elif Path(REPO_ROOT / EMB_CSV).is_file():
     from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
-    slim = meta_eval.drop(columns=[c for c in meta_eval.columns if c.startswith("dim_")], errors="ignore")
-    merged, dim_cols = merge_metadata_with_embeddings(slim, EMB_CSV)
+    slim = meta_btp.drop(columns=[c for c in meta_btp.columns if c.startswith("dim_")], errors="ignore")
+    merged, dim_cols = merge_metadata_with_embeddings(slim, str(REPO_ROOT / EMB_CSV))
     raw_emb = merged[dim_cols].to_numpy(dtype=np.float64)
 else:
-    raise FileNotFoundError("raw_embeddings.npy ou EMB_CSV requis pour la carte embedding brut.")
+    raw_emb = None
 
-idx_raw = sample_projection_indices(
-    meta_eval, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
-)
-sample_raw_df = meta_eval.loc[idx_raw]
-sample_raw_x = raw_emb[idx_raw]
-
-pca_raw = PCA(n_components=2, random_state=SEED)
-pca_raw_xy = pca_raw.fit_transform(sample_raw_x)
-tsne_raw = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto")
-tsne_raw_xy = tsne_raw.fit_transform(sample_raw_x)
-
-p_raw = plot_projection_matplotlib(
-    pca_raw_xy,
-    tsne_raw_xy,
-    sample_raw_df,
-    LABEL_COL,
-    save_fig=save_fig,
-    png_name="09_raw_embedding_pca_tsne.png",
-    pca_title="PCA 2D — embedding brut (macro)",
-    tsne_title="t-SNE 2D — embedding brut (macro)",
-)
-print(p_raw)
+if raw_emb is not None:
+    idx_raw = sample_projection_indices(
+        meta_btp, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
+    )
+    sample_raw_df = meta_btp.loc[idx_raw]
+    sample_raw_x = raw_emb[idx_raw]
+    pca_raw_xy = PCA(n_components=2, random_state=SEED).fit_transform(sample_raw_x)
+    tsne_raw_xy = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto").fit_transform(
+        sample_raw_x
+    )
+    p_raw = plot_projection_matplotlib(
+        pca_raw_xy,
+        tsne_raw_xy,
+        sample_raw_df,
+        LABEL_COL,
+        save_fig=save_fig,
+        png_name="09_raw_embedding_pca_tsne.png",
+        pca_title="PCA 2D — BTP embedding brut",
+        tsne_title="t-SNE 2D — BTP embedding brut",
+    )
+    print(p_raw)
 """
 
-PAPER_TABLES_CODE = """display_df_for_paper(metrics_table, "paper_metrics_summary.csv")
-display_df_for_paper(themes_macro, "paper_themes_by_macro.csv")
+PAPER_TABLES_CODE = """if metrics_btp is not None:
+    display_df_for_paper(_slim_geom_df(metrics_btp), "paper_metrics_btp.csv")
+if metrics_raw is not None:
+    display_df_for_paper(_slim_geom_df(metrics_raw), "paper_metrics_raw.csv")
+if metrics_raw_test is not None:
+    display_df_for_paper(_slim_geom_df(metrics_raw_test), "paper_metrics_raw_test.csv")
+if metrics_test is not None:
+    display_df_for_paper(_slim_geom_df(metrics_test), "paper_metrics_test.csv")
 
 notebook_summary = {
     "output_dir": str(OUTPUT_PATH),
@@ -820,96 +761,55 @@ notebook_summary
 
 
 def main() -> None:
-    nb = strip_outputs(json.loads(DRAFT.read_text(encoding="utf-8")))
-    cells = nb["cells"]
+    draft = strip_outputs(json.loads(DRAFT.read_text(encoding="utf-8")))
+    objective_md = draft["cells"][1]["source"]
+    imports_code = draft["cells"][3]["source"]
 
-    cells[2]["source"] = [
-        "## 2. Imports et configuration\n",
-        "\n",
-        "Notebook **lecture seule** : régler `OUTPUT_DIR` et `CHECKPOINT_PATH` dans la cellule paramètres. "
-        "L'entraînement se fait via `scripts/train_scgm_text.py` ou `jobs/train_scgm_text.sh`.\n",
+    cells: list[dict] = [
+        cell_from_source(
+            "# 01 — SCGM Text (lecture seule)\n\n"
+            "Analyse des sorties sous `resultats/scgm_text/`. "
+            "Entraînement et export : `train_scgm_text.sh` puis `postprocess_scgm_text.sh`.\n",
+            "markdown",
+            "nb_title",
+        ),
+        cell_from_source(NOTEBOOK_TOC_MD, "markdown", "nb_toc"),
+        cell_from_source("".join(objective_md), "markdown"),
+        cell_from_source(
+            "## 2. Imports\n\nRégler `OUTPUT_DIR` dans la cellule **Parameters**.\n",
+            "markdown",
+        ),
+        {"cell_type": "code", "metadata": {}, "source": imports_code, "execution_count": None, "outputs": []},
+        cell_from_source(PARAMS_SOURCE, cell_id="91307aa9"),
+        cell_from_source(SETUP_SOURCE, cell_id="c308cd48"),
+        cell_from_source(LOAD_MD, "markdown", "load_md"),
+        cell_from_source(LOAD_ARTIFACTS_SOURCE, cell_id="load01"),
+        cell_from_source(KFOLD_MD, "markdown", "kfold_md"),
+        cell_from_source(KFOLD_TABLES_SOURCE, cell_id="kfold_tables"),
+        cell_from_source(BTP_MD, "markdown", "btp_md"),
+        cell_from_source(BTP_CONFIG_SOURCE, cell_id="btp_config"),
+        cell_from_source(BTP_LOGS_MD, "markdown"),
+        cell_from_source(LOGS_SOURCE, cell_id="386ed2ac"),
+        cell_from_source("### 5c. Géométrie BTP\n", "markdown"),
+        cell_from_source(BTP_METRICS_SOURCE, cell_id="btp_metrics"),
+        cell_from_source("### 5d. Topics par composante z\n", "markdown"),
+        cell_from_source(THEMES_SOURCE, cell_id="themes01"),
+        cell_from_source(BTP_PROJECTION_MD, "markdown"),
+        cell_from_source(PROJECTION_CODE, cell_id="proj01"),
+        cell_from_source(DATAMAP_MD, "markdown", cell_id="datamap_md"),
+        cell_from_source(DATAMAP_CODE, cell_id="datamap01"),
+        cell_from_source(EVAL_RAW_PROJ_MD, "markdown"),
+        cell_from_source(EVAL_GEOMETRY_CODE, cell_id="eval_geom"),
+        cell_from_source(TEST_MD, "markdown", "test_md"),
+        cell_from_source(TEST_METRICS_SOURCE, cell_id="test_metrics"),
+        cell_from_source("### 6b. Projections 2D test\n", "markdown"),
+        cell_from_source(TEST_VIZ_SOURCE, cell_id="test_viz"),
+        cell_from_source("## Synthèse — tables export papier\n", "markdown"),
+        cell_from_source(PAPER_TABLES_CODE, cell_id="paper_tables"),
     ]
-    cells[4] = cell_from_source(PARAMS_SOURCE, cell_id="91307aa9")
-    cells[4]["metadata"] = {"tags": ["parameters"]}
-    cells[5] = cell_from_source(SETUP_SOURCE, cell_id="c308cd48")
-    cells[19] = cell_from_source(SECTION8_MD, cell_type="markdown")
-    cells[20] = cell_from_source(RESULTS_SOURCE, cell_id="5144d005")
-    cells.insert(21, cell_from_source(
-        "## 8b. Métriques K-fold et corpus test\n\n"
-        "Après `train_scgm_text.sh` : `kfold_summary.csv` (validation), puis fit final 100 % BTP → "
-        "`metrics_geometry_btp.csv` et `metrics_geometry_test.csv` (modèle `checkpoints/best_model.pt`). "
-        "Graphiques fold par fold : **§8c**. Cartes 2D test : **§8d**.\n",
-        cell_type="markdown",
-    ))
-    cells.insert(22, cell_from_source(GEOMETRY_KFOLD_SOURCE, cell_id="kfold_geom01"))
-    cells.insert(23, cell_from_source(
-        "## 8c. K-fold — visualisations comparatives\n\n"
-        "Barres par fold, courbes de validation (`folds/fold_*/metrics/train_log.csv`) "
-        "et résumé μ±σ depuis `kfold_summary.csv`.\n",
-        cell_type="markdown",
-        cell_id="kfold_viz_md",
-    ))
-    cells.insert(24, cell_from_source(KFOLD_VIZ_SOURCE, cell_id="kfold_viz01"))
-    cells.insert(25, cell_from_source(
-        "## 8d. Corpus test métallurgie — projections 2D\n\n"
-        "Charge `embeddings/projected_embeddings_test.npy` et `test_metadata.csv` "
-        "(exportés en fin de `train_scgm_text` ou via `export_scgm_test_projections.py`). "
-        "PCA, t-SNE et UMAP colorés par macro (`pred_label`).\n",
-        cell_type="markdown",
-        cell_id="test_2d_md",
-    ))
-    cells.insert(26, cell_from_source(TEST_2D_SOURCE, cell_id="test_2d01"))
-    cells[28] = cell_from_source(LOGS_SOURCE, cell_id="386ed2ac")
-    cells[30] = cell_from_source(CHECKPOINT_SOURCE, cell_id="c33b3818")
+    cells[5]["metadata"] = {"tags": ["parameters"]}
 
-    # DataMap après export
-    insert_at = 31
-    extras = [
-        cell_from_source(DATAMAP_MD, cell_type="markdown", cell_id="a429416f"),
-        cell_from_source(DATAMAP_CODE, cell_id="2e816d8a"),
-    ]
-    cells[insert_at:insert_at] = extras
-
-    # Section 12 markdown + projection / évaluation
-    for c in cells:
-        if get_source(c).startswith("## 12. Visualisation"):
-            c["source"] = [line + "\n" for line in SECTION12_MD.strip().split("\n")]
-            c["source"][-1] = c["source"][-1].rstrip("\n") + "\n"
-            break
-
-    replace_cell_by_prefix(cells, "export_cmd = [", EXPORT_SOURCE)
-    replace_cell_by_prefix(cells, "themes_z = pd.read_csv", THEMES_SOURCE)
-    replace_cell_by_prefix(cells, "def _topics_csv", THEMES_SOURCE)
-    replace_cell_by_prefix(cells, "from sklearn.decomposition import PCA", PROJECTION_CODE)
-    replace_cell_by_prefix(cells, "eval_cmd = [", EVAL_GEOMETRY_CODE)
-    # Markdown UMAP embedding brut (juste avant la cellule eval)
-    for i, c in enumerate(cells):
-        if get_source(c).startswith("eval_cmd = ["):
-            cells.insert(i, cell_from_source(EVAL_RAW_PROJ_MD, cell_type="markdown"))
-            break
-    replace_cell_by_prefix(cells, "confusion = pd.read_csv", PAPER_TABLES_CODE)
-
-    # Drop empty trailing cells from draft
-    while cells and not get_source(cells[-1]).strip():
-        cells.pop()
-
-    for c in cells:
-        if c.get("cell_type") == "markdown":
-            src = get_source(c)
-            if "SCGM Text BTP" in src:
-                c["source"] = [
-                    ln.replace("SCGM Text BTP Experiment", "SCGM Text — analyse (lecture seule)")
-                    .replace("SCGM Text Experiment", "SCGM Text — analyse (lecture seule)")
-                    .replace("BTP Experiment", "analyse (lecture seule)")
-                    for ln in c["source"]
-                ]
-                if "lecture seule" not in "".join(c["source"]):
-                    c["source"].insert(
-                        1,
-                        "\n**Analyse et visualisation** des sorties sous `resultats/scgm_text/` — pas d'entraînement ici.\n",
-                    )
-                break
-
+    nb = draft
     nb["cells"] = cells
     OUT.write_text(json.dumps(nb, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"Wrote {OUT} ({len(cells)} cells)")

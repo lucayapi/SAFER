@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output_csv",
         type=str,
-        default="embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv",
+        default="embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv",
     )
     p.add_argument("--backbone_name", type=str, default="Qwen/Qwen3-Embedding-0.6B")
     p.add_argument("--batch_size", type=int, default=16)

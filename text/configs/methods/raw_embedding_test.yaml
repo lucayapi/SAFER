@@ -1,0 +1,10 @@
+method_name: raw_embedding_test
+dataset_path: dataset/test/data_metallurgie.csv
+emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+output_dir: resultats/raw_embedding_test
+method_display_name: "Embedding brut (test métallurgie)"
+use_prompt: false
+seed: 42

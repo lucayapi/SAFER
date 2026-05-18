@@ -1,9 +1,12 @@
 #!/bin/bash
 # Post-traitement SCGM après train_scgm_text.sh :
-#   1) embeddings Qwen test (si absents)
-#   2) export SCGM complet BTP (topics, assignations, projected_embeddings.npy)
-#   3) projections test (.npy pour notebook §8d)
-#   4) enrichissement OpenAI (optionnel, SKIP_OPENAI=1 par défaut)
+#   1) embeddings Qwen test → embeddings/test/ (si absents)
+#   2) métriques géométrie embedding brut BTP
+#   3) export SCGM complet BTP (topics, assignations, projected_embeddings.npy)
+#   4) projections test SCGM (.npy pour notebook)
+#   5) métriques géométrie embedding brut test
+#   6) métriques géométrie SCGM test (si absentes)
+#   7) enrichissement OpenAI (optionnel, SKIP_OPENAI=1 par défaut)
 #
 # Usage :
 #   cd ~/SAFER/text && sbatch jobs/postprocess_scgm_text.sh
@@ -13,8 +16,9 @@
 #   SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh
 #
 # Variables : SCGM_OUTPUT_DIR, CHECKPOINT, DATA_CSV, EMB_CSV, DATA_TEST_CSV,
-#   EMB_TEST_CSV, BACKBONE_NAME, SKIP_TEST_EMB, SKIP_FULL_EXPORT, SKIP_TEST_PROJ,
-#   SKIP_OPENAI, FORCE_EXPORT
+#   EMB_TEST_CSV, RAW_OUTPUT_DIR, RAW_TEST_OUTPUT_DIR, BACKBONE_NAME,
+#   SKIP_TEST_EMB, SKIP_RAW_METRICS, SKIP_FULL_EXPORT, SKIP_TEST_PROJ,
+#   SKIP_SCGM_TEST_METRICS, SKIP_OPENAI, FORCE_EXPORT
 
 #SBATCH --job-name=scgm_post
 #SBATCH --partition=gpu
@@ -45,16 +49,23 @@ CHECKPOINT="${CHECKPOINT:-${SCGM_OUTPUT_DIR}/checkpoints/best_model.pt}"
 DATA_CSV="${DATA_CSV:-dataset/data_btp.csv}"
 EMB_CSV="${EMB_CSV:-embeddings/Qwen3-Embedding-0.6B_btp.csv}"
 DATA_TEST_CSV="${DATA_TEST_CSV:-dataset/test/data_metallurgie.csv}"
-EMB_TEST_CSV="${EMB_TEST_CSV:-embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv}"
+EMB_TEST_CSV="${EMB_TEST_CSV:-embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv}"
+RAW_OUTPUT_DIR="${RAW_OUTPUT_DIR:-resultats/raw_embedding}"
+RAW_TEST_OUTPUT_DIR="${RAW_TEST_OUTPUT_DIR:-resultats/raw_embedding_test}"
 BACKBONE_NAME="${BACKBONE_NAME:-Qwen/Qwen3-Embedding-0.6B}"
 SKIP_TEST_EMB="${SKIP_TEST_EMB:-0}"
+SKIP_RAW_METRICS="${SKIP_RAW_METRICS:-0}"
 SKIP_FULL_EXPORT="${SKIP_FULL_EXPORT:-0}"
 SKIP_TEST_PROJ="${SKIP_TEST_PROJ:-0}"
+SKIP_SCGM_TEST_METRICS="${SKIP_SCGM_TEST_METRICS:-0}"
 SKIP_OPENAI="${SKIP_OPENAI:-1}"
 FORCE_EXPORT="${FORCE_EXPORT:-0}"
 
 THEMES_CSV="${SCGM_OUTPUT_DIR}/topics/themes_by_z.csv"
 TEST_PROJ_NPY="${SCGM_OUTPUT_DIR}/embeddings/projected_embeddings_test.npy"
+RAW_BTP_METRICS="${RAW_OUTPUT_DIR}/metrics/metrics_geometry.csv"
+RAW_TEST_METRICS="${RAW_TEST_OUTPUT_DIR}/metrics/metrics_geometry.csv"
+SCGM_TEST_METRICS="${SCGM_OUTPUT_DIR}/metrics/metrics_geometry_test.csv"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "SCGM_OUTPUT_DIR=${SCGM_OUTPUT_DIR}"
@@ -67,13 +78,27 @@ if [[ ! -f "${CHECKPOINT}" ]]; then
   exit 1
 fi
 
-# --- Étape 1/4 : embeddings Qwen test ---
+mkdir -p embeddings/test
+if [[ ! -f "${EMB_TEST_CSV}" ]]; then
+  for legacy in \
+    "embeddings/Qwen3-Embedding-0.6B_metallurgie_test.csv" \
+    "embeddings/Qwen3-Embedding-0.6B__metallurgie.csv" \
+    "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv"; do
+    if [[ -f "${legacy}" ]]; then
+      echo "[postprocess] Copie legacy → ${EMB_TEST_CSV} (${legacy})"
+      cp "${legacy}" "${EMB_TEST_CSV}"
+      break
+    fi
+  done
+fi
+
+# --- Étape 1/7 : embeddings Qwen test ---
 if [[ "${SKIP_TEST_EMB}" == "1" ]]; then
-  echo "[postprocess] étape 1/4 — SKIP_TEST_EMB=1 (embeddings test ignorés)"
+  echo "[postprocess] étape 1/7 — SKIP_TEST_EMB=1 (embeddings test ignorés)"
 elif [[ -f "${EMB_TEST_CSV}" ]]; then
-  echo "[postprocess] étape 1/4 — déjà présent : ${EMB_TEST_CSV}"
+  echo "[postprocess] étape 1/7 — déjà présent : ${EMB_TEST_CSV}"
 else
-  echo "[postprocess] étape 1/4 — export embeddings test (Qwen figé)…"
+  echo "[postprocess] étape 1/7 — export embeddings test (Qwen figé)…"
   python scripts/export_test_embeddings.py \
     --data_csv "${DATA_TEST_CSV}" \
     --output_csv "${EMB_TEST_CSV}" \
@@ -81,13 +106,30 @@ else
   echo "[postprocess]   → ${EMB_TEST_CSV}"
 fi
 
-# --- Étape 2/4 : export SCGM BTP complet ---
-if [[ "${SKIP_FULL_EXPORT}" == "1" ]]; then
-  echo "[postprocess] étape 2/4 — SKIP_FULL_EXPORT=1"
-elif [[ "${FORCE_EXPORT}" != "1" && -f "${THEMES_CSV}" ]]; then
-  echo "[postprocess] étape 2/4 — déjà présent : ${THEMES_CSV} (FORCE_EXPORT=1 pour régénérer)"
+# --- Étape 2/7 : métriques embedding brut BTP ---
+if [[ "${SKIP_RAW_METRICS}" == "1" ]]; then
+  echo "[postprocess] étape 2/7 — SKIP_RAW_METRICS=1"
+elif [[ "${FORCE_EXPORT}" != "1" && -f "${RAW_BTP_METRICS}" ]]; then
+  echo "[postprocess] étape 2/7 — déjà présent : ${RAW_BTP_METRICS}"
 else
-  echo "[postprocess] étape 2/4 — export SCGM BTP (topics, assignations, embeddings projetés)…"
+  echo "[postprocess] étape 2/7 — métriques embedding brut BTP…"
+  python scripts/export_raw_embeddings.py \
+    --config configs/methods/raw_embedding.yaml \
+    --data_csv "${DATA_CSV}" \
+    --emb_csv "${EMB_CSV}" \
+    --output_dir "${RAW_OUTPUT_DIR}" \
+    --method_name "Embedding brut" \
+    --skip_npy
+  echo "[postprocess]   → ${RAW_BTP_METRICS}"
+fi
+
+# --- Étape 3/7 : export SCGM BTP complet ---
+if [[ "${SKIP_FULL_EXPORT}" == "1" ]]; then
+  echo "[postprocess] étape 3/7 — SKIP_FULL_EXPORT=1"
+elif [[ "${FORCE_EXPORT}" != "1" && -f "${THEMES_CSV}" ]]; then
+  echo "[postprocess] étape 3/7 — déjà présent : ${THEMES_CSV} (FORCE_EXPORT=1 pour régénérer)"
+else
+  echo "[postprocess] étape 3/7 — export SCGM BTP (topics, assignations, embeddings projetés)…"
   python scripts/export_scgm_text_outputs.py \
     --checkpoint "${CHECKPOINT}" \
     --output_dir "${SCGM_OUTPUT_DIR}" \
@@ -97,15 +139,15 @@ else
   echo "[postprocess]   → ${SCGM_OUTPUT_DIR}/embeddings/projected_embeddings.npy"
 fi
 
-# --- Étape 3/4 : projections test SCGM ---
+# --- Étape 4/7 : projections test SCGM ---
 if [[ "${SKIP_TEST_PROJ}" == "1" ]]; then
-  echo "[postprocess] étape 3/4 — SKIP_TEST_PROJ=1"
+  echo "[postprocess] étape 4/7 — SKIP_TEST_PROJ=1"
 elif [[ ! -f "${EMB_TEST_CSV}" ]]; then
-  echo "[postprocess] étape 3/4 — ignorée : ${EMB_TEST_CSV} absent" >&2
+  echo "[postprocess] étape 4/7 — ignorée : ${EMB_TEST_CSV} absent" >&2
 elif [[ "${FORCE_EXPORT}" != "1" && -f "${TEST_PROJ_NPY}" ]]; then
-  echo "[postprocess] étape 3/4 — déjà présent : ${TEST_PROJ_NPY}"
+  echo "[postprocess] étape 4/7 — déjà présent : ${TEST_PROJ_NPY}"
 else
-  echo "[postprocess] étape 3/4 — projections test SCGM…"
+  echo "[postprocess] étape 4/7 — projections test SCGM…"
   python scripts/export_scgm_test_projections.py \
     --checkpoint "${CHECKPOINT}" \
     --output_dir "${SCGM_OUTPUT_DIR}" \
@@ -114,19 +156,55 @@ else
   echo "[postprocess]   → ${TEST_PROJ_NPY}"
 fi
 
-# --- Étape 4/4 : OpenAI (optionnel) ---
+# --- Étape 5/7 : métriques embedding brut test ---
+if [[ "${SKIP_RAW_METRICS}" == "1" ]]; then
+  echo "[postprocess] étape 5/7 — SKIP_RAW_METRICS=1"
+elif [[ ! -f "${EMB_TEST_CSV}" ]]; then
+  echo "[postprocess] étape 5/7 — ignorée : ${EMB_TEST_CSV} absent" >&2
+elif [[ "${FORCE_EXPORT}" != "1" && -f "${RAW_TEST_METRICS}" ]]; then
+  echo "[postprocess] étape 5/7 — déjà présent : ${RAW_TEST_METRICS}"
+else
+  echo "[postprocess] étape 5/7 — métriques embedding brut test…"
+  python scripts/export_raw_embeddings.py \
+    --config configs/methods/raw_embedding_test.yaml \
+    --data_csv "${DATA_TEST_CSV}" \
+    --emb_csv "${EMB_TEST_CSV}" \
+    --output_dir "${RAW_TEST_OUTPUT_DIR}" \
+    --method_name "Embedding brut (test métallurgie)" \
+    --skip_npy
+  echo "[postprocess]   → ${RAW_TEST_METRICS}"
+fi
+
+# --- Étape 6/7 : métriques SCGM test ---
+if [[ "${SKIP_SCGM_TEST_METRICS}" == "1" ]]; then
+  echo "[postprocess] étape 6/7 — SKIP_SCGM_TEST_METRICS=1"
+elif [[ ! -f "${EMB_TEST_CSV}" ]]; then
+  echo "[postprocess] étape 6/7 — ignorée : ${EMB_TEST_CSV} absent" >&2
+elif [[ "${FORCE_EXPORT}" != "1" && -f "${SCGM_TEST_METRICS}" ]]; then
+  echo "[postprocess] étape 6/7 — déjà présent : ${SCGM_TEST_METRICS}"
+else
+  echo "[postprocess] étape 6/7 — métriques SCGM test…"
+  python scripts/eval_scgm_test_metrics.py \
+    --checkpoint "${CHECKPOINT}" \
+    --output_dir "${SCGM_OUTPUT_DIR}" \
+    --data_csv "${DATA_TEST_CSV}" \
+    --emb_csv "${EMB_TEST_CSV}"
+  echo "[postprocess]   → ${SCGM_TEST_METRICS}"
+fi
+
+# --- Étape 7/7 : OpenAI (optionnel) ---
 if [[ "${SKIP_OPENAI}" == "1" ]]; then
-  echo "[postprocess] étape 4/4 — SKIP_OPENAI=1 (thèmes OpenAI non générés)"
+  echo "[postprocess] étape 7/7 — SKIP_OPENAI=1 (thèmes OpenAI non générés)"
   echo "[postprocess] Terminé. Pour OpenAI : SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh"
   exit 0
 fi
 
 if [[ ! -f "${THEMES_CSV}" ]]; then
-  echo "[postprocess] étape 4/4 — ERREUR : ${THEMES_CSV} absent (étape 2 requise)" >&2
+  echo "[postprocess] étape 7/7 — ERREUR : ${THEMES_CSV} absent (étape 3 requise)" >&2
   exit 1
 fi
 
-echo "[postprocess] étape 4/4 — enrichissement OpenAI (themes_by_z → themes_by_z_openai)…"
+echo "[postprocess] étape 7/7 — enrichissement OpenAI (themes_by_z → themes_by_z_openai)…"
 OPENAI_ARGS=(
   --output_dir "${SCGM_OUTPUT_DIR}"
   --timeout "${OPENAI_TIMEOUT:-120}"
