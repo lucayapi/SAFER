@@ -193,6 +193,8 @@ def train_st_model(
         best_geometry = {}
         best_score = float("nan")
 
+    if train_log_path is not None:
+        train_log_path.parent.mkdir(parents=True, exist_ok=True)
     if train_log_path is not None and log_rows:
         pd.DataFrame(log_rows).to_csv(train_log_path, index=False)
     elif train_log_path is not None and trainer.state.log_history:

@@ -132,21 +132,70 @@ for corpus, stem in (("BTP (in-domain, modèle final)", "btp"), ("Test métallur
     else:
         print(f"Pas de metrics_geometry_{{stem}}.csv pour {{corpus}}.")
 
-# Embeddings exportés (recherche récursive)
-def _has_dim_cols(path: Path) -> bool:
-    cols = pd.read_csv(path, nrows=0).columns
-    return any(str(c).startswith("dim_") for c in cols)
-
-final_emb = RESULTS / "embeddings" / "final_embeddings.csv"
-emb_csvs = [final_emb] if final_emb.is_file() else [p for p in RESULTS.rglob("*.csv") if _has_dim_cols(p)]
-if emb_csvs:
-    print("Fichiers embeddings trouvés :")
-    for p in emb_csvs[:5]:
-        print(" ", p)
-else:
-    print("Aucun CSV dim_* trouvé sous", RESULTS)
-
 # Lecture seule — pas d'entraînement dans ce notebook.
+'''
+
+PCA_BTP_MD = """### PCA / t-SNE — BTP (embeddings fine-tunés)
+
+Carte 2D sur `embeddings/final_embeddings_btp.csv` (ou repli `final_embeddings.csv`), couleur = macro, centroïdes macro.
+"""
+
+PCA_BTP_CODE = '''
+from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne
+
+FIGURES_DIR = RESULTS / "figures"
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+def save_fig(name: str) -> Path:
+    path = FIGURES_DIR / name
+    plt.tight_layout()
+    plt.savefig(path, dpi=160, bbox_inches="tight")
+    plt.show()
+    return path
+
+emb_btp = RESULTS / "embeddings" / "final_embeddings_btp.csv"
+if not emb_btp.is_file():
+    emb_btp = RESULTS / "embeddings" / "final_embeddings.csv"
+
+p_btp = plot_embeddings_csv_pca_tsne(
+    emb_btp,
+    DATASET_CSV,
+    LABEL_COL,
+    corpus_name=f"{DISPLAY_NAME} — BTP",
+    save_fig=save_fig,
+    png_name=f"{METHOD_KEY}_btp_pca_tsne.png",
+    max_points=8000,
+    seed=42,
+)
+if p_btp is None:
+    print(f"(absent) embeddings BTP — relancer : python scripts/train_{METHOD_KEY}.py")
+else:
+    print(p_btp)
+'''
+
+PCA_TEST_MD = """### PCA / t-SNE — Test métallurgie
+
+Carte 2D sur `embeddings/final_embeddings_test.csv`, couleur = macro, centroïdes macro.
+"""
+
+PCA_TEST_CODE = '''
+from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne
+
+emb_test = RESULTS / "embeddings" / "final_embeddings_test.csv"
+p_test = plot_embeddings_csv_pca_tsne(
+    emb_test,
+    DATA_TEST,
+    LABEL_COL,
+    corpus_name=f"{DISPLAY_NAME} — test métallurgie",
+    save_fig=save_fig,
+    png_name=f"{METHOD_KEY}_test_pca_tsne.png",
+    max_points=8000,
+    seed=42,
+)
+if p_test is None:
+    print(f"(absent) embeddings test — relancer train après fit final + eval test")
+else:
+    print(p_test)
 '''
 
 
@@ -170,6 +219,7 @@ def _nb(cells: list) -> dict:
 
 def _setup_cell() -> str:
     return """
+import sys
 from pathlib import Path
 
 ROOT = Path.cwd()
@@ -177,6 +227,8 @@ if not (ROOT / "configs").is_dir() and (ROOT / "text" / "configs").is_dir():
     ROOT = ROOT / "text"
 elif (ROOT / "text").is_dir() and not (ROOT / "configs").is_dir():
     ROOT = ROOT / "text"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 """
 
 
@@ -199,6 +251,10 @@ def main() -> None:
             _cell(md, "markdown"),
             _cell(_setup_cell()),
             _cell(view_code),
+            _cell(PCA_BTP_MD, "markdown"),
+            _cell(PCA_BTP_CODE),
+            _cell(PCA_TEST_MD, "markdown"),
+            _cell(PCA_TEST_CODE),
         ]
         out = NB / nb_name
         out.write_text(json.dumps(_nb(cells), indent=1), encoding="utf-8")

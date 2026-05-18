@@ -99,7 +99,9 @@ def save_scgm_projected_corpus(
     label_col: str = "pred_label",
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
+    text_col: Optional[str] = None,
     batch_size: int = 512,
+    max_seq_length: int = 256,
 ) -> Dict[str, Path]:
     """Projette et persiste .npy + metadata CSV pour le notebook (PCA / UMAP)."""
     emb_dir = Path(emb_dir)
@@ -112,6 +114,10 @@ def save_scgm_projected_corpus(
     if not emb_path.is_absolute():
         emb_path = TEXT_ROOT / emb_path
 
+    _, checkpoint_args, _ = load_scgm_checkpoint(checkpoint_path, map_location="cpu")
+    input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
+    eff_text_col = text_col or "sentence"
+
     projected, _ = project_embedding_corpus(
         checkpoint_path,
         str(data_path),
@@ -119,7 +125,9 @@ def save_scgm_projected_corpus(
         label_col=label_col,
         pred_ok_col=pred_ok_col,
         group_col=group_col,
+        text_col=eff_text_col,
         batch_size=batch_size,
+        max_seq_length=max_seq_length,
     )
 
     npy_name = "projected_embeddings.npy" if stem == "btp" else f"projected_embeddings_{stem}.npy"
@@ -128,13 +136,22 @@ def save_scgm_projected_corpus(
     meta_path = emb_dir / meta_name
     np.save(npy_path, projected.astype(np.float32))
 
-    dataset = TextEmbeddingDataset(
-        data_csv=str(data_path),
-        emb_csv=str(emb_path),
-        label_col=label_col,
-        pred_ok_col=pred_ok_col,
-        group_col=group_col,
-    )
+    if input_mode == "text":
+        dataset = TextRawDataset(
+            data_csv=str(data_path),
+            label_col=label_col,
+            pred_ok_col=pred_ok_col,
+            group_col=group_col,
+            text_col=eff_text_col,
+        )
+    else:
+        dataset = TextEmbeddingDataset(
+            data_csv=str(data_path),
+            emb_csv=str(emb_path),
+            label_col=label_col,
+            pred_ok_col=pred_ok_col,
+            group_col=group_col,
+        )
     meta = dataset.get_metadata_df()
     keep: List[str] = [c for c in ("doc_id", "accident_id", "fact_id", label_col, "sentence") if c in meta.columns]
     meta[keep].to_csv(meta_path, index=False)

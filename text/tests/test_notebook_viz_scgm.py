@@ -19,6 +19,7 @@ if str(TEXT_ROOT) not in sys.path:
 
 from scgm_text.notebook_viz import (
     macro_centroids_2d,
+    plot_embeddings_csv_pca_tsne,
     plot_kfold_metrics_bars,
     plot_kfold_summary_errorbars,
     plot_kfold_val_curves,
@@ -178,11 +179,13 @@ def test_plot_topics_bars(tmp_path):
     assert (fig_dir / "topics_n_units_by_z.png").is_file()
 
 
+@patch("scgm_text.eval_corpus.load_scgm_checkpoint")
 @patch("scgm_text.eval_corpus.project_embedding_corpus")
 @patch("scgm_text.eval_corpus.TextEmbeddingDataset")
-def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, tmp_path):
+def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, mock_load_ckpt, tmp_path):
     from scgm_text.eval_corpus import save_scgm_projected_corpus
 
+    mock_load_ckpt.return_value = (None, {"input_mode": "precomputed_embeddings"}, None)
     mock_project.return_value = (np.ones((3, 4), dtype=np.float32), np.array(["A0", "A1", "B"]))
     meta = pd.DataFrame(
         {
@@ -206,3 +209,50 @@ def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, tmp_path):
     assert paths["metadata"].name == "test_metadata.csv"
     assert np.load(paths["projections"]).shape == (3, 4)
     assert paths["metadata"].is_file()
+
+
+def test_plot_embeddings_csv_pca_tsne(tmp_path):
+    n = 40
+    labels = ["A0", "A1", "B", "C"] * (n // 4)
+    meta = pd.DataFrame(
+        {
+            "doc_id": list(range(n)),
+            "accident_id": [f"a{i // 4}" for i in range(n)],
+            "pred_label": labels,
+            "pred_ok": [True] * n,
+        }
+    )
+    meta_path = tmp_path / "meta.csv"
+    meta.to_csv(meta_path, index=False)
+
+    emb = meta[["doc_id"]].copy()
+    rng = np.random.default_rng(0)
+    for j in range(8):
+        emb[f"dim_{j}"] = rng.standard_normal(n)
+    emb_path = tmp_path / "emb.csv"
+    emb.to_csv(emb_path, index=False)
+
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    out = plot_embeddings_csv_pca_tsne(
+        emb_path,
+        meta_path,
+        "pred_label",
+        corpus_name="test",
+        save_fig=_save,
+        png_name="emb_pca_tsne.png",
+        max_points=n,
+        seed=0,
+    )
+    assert out is not None
+    assert out.is_file()
+    assert plot_embeddings_csv_pca_tsne(tmp_path / "missing.csv", meta_path) is None

@@ -171,6 +171,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             log_rows.append({"epoch": epoch + 1, "train_loss": train_loss})
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
 
+    metrics_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(log_rows).to_csv(metrics_dir / "train_log.csv", index=False)
 
     ckpt_path = best_dir / "hf_model.bin"

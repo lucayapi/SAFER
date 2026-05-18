@@ -339,6 +339,76 @@ def plot_umap_plotly(
     return fig
 
 
+def plot_embeddings_csv_pca_tsne(
+    emb_csv: PathLike,
+    meta_csv: PathLike,
+    label_col: str = "pred_label",
+    *,
+    corpus_name: str = "BTP",
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: Optional[str] = None,
+    max_points: int = 8000,
+    seed: int = 42,
+    show_macro_centroids: bool = True,
+    pred_ok_col: str = "pred_ok",
+    group_col: str = "accident_id",
+) -> Optional[Path]:
+    """PCA + t-SNE sur un CSV d'embeddings (dim_*) fusionné avec les métadonnées."""
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    from scgm_text.dataset_text_embeddings import load_filtered_metadata, merge_metadata_with_embeddings
+
+    emb_path = Path(emb_csv)
+    if not emb_path.is_file():
+        return None
+
+    meta_df = load_filtered_metadata(
+        str(meta_csv),
+        label_col=label_col,
+        pred_ok_col=pred_ok_col,
+        group_col=group_col,
+    )
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
+
+    idx = sample_projection_indices(merged, label_col, max_points=max_points, seed=seed)
+    sample_df = merged.loc[idx]
+    sample_x = sample_x[idx]
+
+    pca_xy = PCA(n_components=2, random_state=seed).fit_transform(sample_x)
+    tsne_xy = TSNE(
+        n_components=2,
+        random_state=seed,
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(sample_x)
+
+    if save_fig is None:
+        def _show_only(name: str) -> Path:
+            import matplotlib.pyplot as plt
+
+            plt.tight_layout()
+            plt.show()
+            return Path(name)
+
+        save_fig = _show_only
+
+    out_name = png_name or "pca_tsne.png"
+    return plot_projection_matplotlib(
+        pca_xy,
+        tsne_xy,
+        sample_df,
+        label_col,
+        save_fig=save_fig,
+        png_name=out_name,
+        pca_title=f"PCA 2D — {corpus_name}",
+        tsne_title=f"t-SNE 2D — {corpus_name}",
+        show_macro_centroids=show_macro_centroids,
+        show_z_centroids=False,
+    )
+
+
 def plot_projection_matplotlib(
     pca_xy: np.ndarray,
     tsne_xy: np.ndarray,

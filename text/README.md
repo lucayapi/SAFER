@@ -212,9 +212,9 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
 | `04_malt_to_bayesian_network.ipynb` | BN depuis MALT |
 | `04_bayesian_network_from_scgm.ipynb` | BN depuis SCGM |
-| `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`resultats/batch_triplet/`) |
-| `05_view_softtriple_results.ipynb` | Résultats SoftTriple |
-| `05_view_supcon_results.ipynb` | Résultats SupCon |
+| `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`resultats/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
+| `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
+| `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
 
