@@ -124,20 +124,33 @@ def plot_umap_datamap_static(
     return fig, ax
 
 
-def macro_umap_centroids(
+def _macro_color_map(macros_order: Sequence[str] = ("A0", "A1", "B", "C")) -> Dict[str, str]:
+    from matplotlib import colors as mcolors
+
+    try:
+        import seaborn as sns
+
+        pal = sns.color_palette("Set2", len(macros_order))
+    except ImportError:
+        import matplotlib.pyplot as plt
+
+        cmap = plt.get_cmap("Set2")
+        pal = [cmap(i / max(len(macros_order) - 1, 1)) for i in range(len(macros_order))]
+    pal_hex = [mcolors.to_hex(c) for c in pal]
+    return dict(zip(macros_order, pal_hex))
+
+
+def macro_centroids_2d(
     coords: np.ndarray,
     macro_labels: np.ndarray,
     macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
 ) -> Tuple[List[float], List[float], List[str], Dict[str, str]]:
-    """Centroïdes UMAP par macro pour overlay matplotlib."""
-    from matplotlib import colors as mcolors
-    import seaborn as sns
-
-    pal_hex = [mcolors.to_hex(c) for c in sns.color_palette("Set2", 4)]
-    macro_to_color = dict(zip(macros_order, pal_hex))
+    """Moyenne 2D des points par macro (PCA, t-SNE ou UMAP)."""
+    labels = np.asarray(macro_labels).astype(str)
+    macro_to_color = _macro_color_map(macros_order)
     cx, cy, names = [], [], []
     for m in macros_order:
-        mask = macro_labels == m
+        mask = labels == m
         if not np.any(mask):
             continue
         mu = coords[mask].mean(axis=0)
@@ -145,6 +158,146 @@ def macro_umap_centroids(
         cy.append(float(mu[1]))
         names.append(m)
     return cx, cy, names, macro_to_color
+
+
+def macro_umap_centroids(
+    coords: np.ndarray,
+    macro_labels: np.ndarray,
+    macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> Tuple[List[float], List[float], List[str], Dict[str, str]]:
+    """Centroïdes UMAP par macro pour overlay matplotlib."""
+    return macro_centroids_2d(coords, macro_labels, macros_order=macros_order)
+
+
+def z_to_macro_map(themes_z: Optional[pd.DataFrame]) -> Dict[int, str]:
+    if themes_z is None or "z_id" not in themes_z.columns:
+        return {}
+    macro_col = "dominant_macro" if "dominant_macro" in themes_z.columns else None
+    if macro_col is None:
+        return {}
+    out: Dict[int, str] = {}
+    for _, row in themes_z.iterrows():
+        z_id = int(row["z_id"])
+        macro = str(row.get(macro_col, "")).strip()
+        if macro:
+            out[z_id] = macro
+    return out
+
+
+def z_centroids_2d(
+    coords: np.ndarray,
+    z_ids: np.ndarray,
+    z_to_macro: Dict[int, str],
+    macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> Tuple[List[float], List[float], List[int], List[str]]:
+    """Moyenne 2D des points par composante z ; couleur = macro dominante du topic."""
+    macro_to_color = _macro_color_map(macros_order)
+    z_arr = np.asarray(z_ids)
+    cx, cy, z_list, colors = [], [], [], []
+    for z in sorted(np.unique(z_arr)):
+        mask = z_arr == z
+        if not np.any(mask):
+            continue
+        mu = coords[mask].mean(axis=0)
+        cx.append(float(mu[0]))
+        cy.append(float(mu[1]))
+        z_list.append(int(z))
+        macro = z_to_macro.get(int(z), "")
+        colors.append(macro_to_color.get(macro, "#888888"))
+    return cx, cy, z_list, colors
+
+
+def overlay_projection_centroids(
+    ax,
+    coords: np.ndarray,
+    sample_df: pd.DataFrame,
+    label_col: str,
+    *,
+    z_col: str = "z_hat",
+    themes_z: Optional[pd.DataFrame] = None,
+    show_macro: bool = True,
+    show_z: bool = False,
+) -> None:
+    """Superpose centroïdes macro (X) et composantes z (*) sur un axe PCA/t-SNE."""
+    from matplotlib.lines import Line2D
+
+    n = len(sample_df)
+    if coords.shape[0] != n:
+        raise ValueError(f"coords ({coords.shape[0]}) vs sample_df ({n})")
+
+    macro_labels = sample_df[label_col].astype(str).to_numpy()
+    legend_handles: List[Line2D] = []
+
+    if show_macro:
+        cx, cy, names, macro_to_color = macro_centroids_2d(coords, macro_labels)
+        if names:
+            ax.scatter(
+                cx,
+                cy,
+                s=140,
+                c=[macro_to_color[m] for m in names],
+                marker="X",
+                edgecolors="#111111",
+                linewidths=1.0,
+                zorder=90,
+            )
+            for xi, yi, m in zip(cx, cy, names):
+                ax.annotate(
+                    m,
+                    (xi, yi),
+                    xytext=(5, 5),
+                    textcoords="offset points",
+                    fontsize=8,
+                    fontweight="bold",
+                    color="#111111",
+                    zorder=91,
+                )
+            legend_handles.extend(
+                Line2D(
+                    [0],
+                    [0],
+                    linestyle="None",
+                    marker="X",
+                    color="w",
+                    markerfacecolor=macro_to_color[m],
+                    markeredgecolor="#111111",
+                    markersize=9,
+                    label=f"{m} — centroïde macro",
+                )
+                for m in names
+            )
+
+    if show_z and z_col in sample_df.columns:
+        z_ids = sample_df[z_col].astype(int).to_numpy()
+        z_map = z_to_macro_map(themes_z)
+        zx, zy, z_list, z_colors = z_centroids_2d(coords, z_ids, z_map)
+        if z_list:
+            ax.scatter(
+                zx,
+                zy,
+                s=55,
+                c=z_colors,
+                marker="*",
+                edgecolors="#111111",
+                linewidths=0.4,
+                zorder=85,
+            )
+            legend_handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    linestyle="None",
+                    marker="*",
+                    color="w",
+                    markerfacecolor="#888888",
+                    markeredgecolor="#111111",
+                    markersize=10,
+                    label="Centroïde composante z (couleur = macro dominante)",
+                )
+            )
+
+    if legend_handles:
+        ax.legend(handles=legend_handles, loc="best", fontsize=7, frameon=True)
 
 
 def plot_umap_plotly(
@@ -196,20 +349,49 @@ def plot_projection_matplotlib(
     png_name: str = "05_projection_macro.png",
     pca_title: str = "PCA 2D (macro)",
     tsne_title: str = "t-SNE 2D (macro)",
+    show_macro_centroids: bool = True,
+    show_z_centroids: bool = False,
+    z_col: str = "z_hat",
+    themes_z: Optional[pd.DataFrame] = None,
 ) -> Path:
     """PCA + t-SNE côte à côte (matplotlib statique)."""
     import matplotlib.pyplot as plt
-    import seaborn as sns
 
+    macros_order = ["A0", "A1", "B", "C"]
+    macro_colors = _macro_color_map(macros_order)
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    for label, color in zip(["A0", "A1", "B", "C"], sns.color_palette("Set2", 4)):
-        mask = sample_df[label_col].values == label
+    sample_reset = sample_df.reset_index(drop=True)
+    for label in macros_order:
+        color = macro_colors[label]
+        mask = sample_reset[label_col].values == label
         axes[0].scatter(pca_xy[mask, 0], pca_xy[mask, 1], s=8, alpha=0.5, label=label, c=[color])
         axes[1].scatter(tsne_xy[mask, 0], tsne_xy[mask, 1], s=8, alpha=0.5, label=label, c=[color])
     axes[0].set_title(pca_title)
     axes[1].set_title(tsne_title)
-    axes[0].legend()
-    axes[1].legend()
+    if show_macro_centroids or show_z_centroids:
+        overlay_projection_centroids(
+            axes[0],
+            pca_xy,
+            sample_reset,
+            label_col,
+            z_col=z_col,
+            themes_z=themes_z,
+            show_macro=show_macro_centroids,
+            show_z=show_z_centroids,
+        )
+        overlay_projection_centroids(
+            axes[1],
+            tsne_xy,
+            sample_reset,
+            label_col,
+            z_col=z_col,
+            themes_z=themes_z,
+            show_macro=show_macro_centroids,
+            show_z=show_z_centroids,
+        )
+    else:
+        axes[0].legend(fontsize=8)
+        axes[1].legend(fontsize=8)
     return save_fig(png_name)
 
 
@@ -705,6 +887,10 @@ def plot_corpus_projections(
     max_points: int = 8000,
     seed: int = 42,
     png_name: str = "10_test_projection_macro.png",
+    show_macro_centroids: bool = True,
+    show_z_centroids: bool = True,
+    z_col: str = "z_hat",
+    themes_z: Optional[pd.DataFrame] = None,
 ) -> List[Path]:
     """PCA + t-SNE 2D sur embeddings SCGM projetés (matplotlib + Plotly)."""
     from sklearn.decomposition import PCA
@@ -735,6 +921,10 @@ def plot_corpus_projections(
             png_name=png_name,
             pca_title=f"PCA 2D — {corpus_name}",
             tsne_title=f"t-SNE 2D — {corpus_name}",
+            show_macro_centroids=show_macro_centroids,
+            show_z_centroids=show_z_centroids,
+            z_col=z_col,
+            themes_z=themes_z,
         )
     )
     pca_pair, tsne_pair = plot_projection_plotly(pca_xy, tsne_xy, sample_df, label_col, figures_dir=figures_dir)
@@ -860,21 +1050,36 @@ def plot_topics_n_units_by_z(
     save_fig: Optional[Callable[[str], Path]] = None,
     png_name: str = "topics_n_units_by_z.png",
 ) -> None:
-    """Barplot : ``n_units`` par ``z_id`` (abscisse = composante z)."""
+    """Barplot : ``n_units`` par ``z_id`` ; couleur = macro dominante du topic."""
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     if "z_id" not in themes_z.columns or "n_units" not in themes_z.columns:
         print("themes_by_z : colonnes z_id ou n_units absentes")
         return
 
-    df = themes_z.sort_values("z_id")
+    df = themes_z.sort_values("z_id").copy()
+    macros_order = ["A0", "A1", "B", "C"]
+    macro_to_color = _macro_color_map(macros_order)
+    if "dominant_macro" in df.columns:
+        bar_colors = [
+            macro_to_color.get(str(m).strip(), "#888888")
+            for m in df["dominant_macro"].astype(str)
+        ]
+    else:
+        bar_colors = ["#888888"] * len(df)
+
     fig_w = max(10.0, len(df) * 0.28)
     fig, ax = plt.subplots(figsize=(fig_w, 4))
-    ax.bar(df["z_id"].astype(str), df["n_units"].astype(float))
+    ax.bar(df["z_id"].astype(str), df["n_units"].astype(float), color=bar_colors)
     ax.set_xlabel("Composante z")
     ax.set_ylabel("n_units")
-    ax.set_title("Effectif par composante z")
+    ax.set_title("Effectif par composante z (couleur = macro dominante)")
     plt.xticks(rotation=90, fontsize=7)
+    legend_patches = [
+        Patch(facecolor=macro_to_color[m], edgecolor="#111111", label=m) for m in macros_order
+    ]
+    ax.legend(handles=legend_patches, title="Macro dominante", loc="upper right", fontsize=8)
     plt.tight_layout()
     if save_fig is not None:
         save_fig(png_name)

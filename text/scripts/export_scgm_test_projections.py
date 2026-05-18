@@ -31,6 +31,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--label_col", type=str, default="pred_label")
     p.add_argument("--group_col", type=str, default="accident_id")
     p.add_argument("--pred_ok_col", type=str, default="pred_ok")
+    p.add_argument("--text_col", type=str, default="sentence")
+    p.add_argument("--max_seq_length", type=int, default=256)
+    p.add_argument("--batch_size", type=int, default=512)
     return p.parse_args()
 
 
@@ -46,6 +49,9 @@ def main() -> None:
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,
         group_col=args.group_col,
+        text_col=args.text_col,
+        batch_size=args.batch_size,
+        max_seq_length=args.max_seq_length,
     )
     print(f"Exporté : {paths['projections']}")
     print(f"Métadonnées : {paths['metadata']}")

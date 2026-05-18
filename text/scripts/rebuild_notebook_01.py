@@ -161,6 +161,25 @@ def _display_geom_metrics(df: pd.DataFrame, title: str) -> None:
     display(_slim_geom_df(df))
 
 
+def _corpus_metrics_comparison(raw_df, scgm_df, corpus_label: str) -> pd.DataFrame:
+    rows = []
+    if raw_df is not None:
+        r = _slim_geom_df(raw_df).copy()
+        r.insert(0, "représentation", "Embedding brut")
+        rows.append(r)
+    if scgm_df is not None:
+        s = _slim_geom_df(scgm_df).copy()
+        s.insert(0, "représentation", "SCGM projeté")
+        rows.append(s)
+    out = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    if not out.empty:
+        print(f"=== {corpus_label} — brut vs SCGM ===")
+        display(out)
+        slug = corpus_label.lower().replace(" ", "_").replace("(", "").replace(")", "")
+        display_df_for_paper(out, f"paper_comparison_{slug}.csv")
+    return out
+
+
 def run_cli(cmd, stream=True):
     print(" ".join(cmd))
     env = os.environ.copy()
@@ -439,6 +458,49 @@ else:
     print("  → postprocess (étape métriques raw test) ou export_raw_embeddings.py + raw_embedding_test.yaml")
 """
 
+TEST_RAW_VIZ_MD = """### 6b bis. Embedding brut test — PCA / t-SNE
+
+PCA + t-SNE sur les vecteurs encodeur Qwen (`EMB_TEST_CSV`), couleur = macro. Centroïdes macro affichés.
+"""
+
+TEST_RAW_VIZ_CODE = """from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+from scgm_text.notebook_viz import plot_projection_matplotlib, sample_projection_indices
+
+if meta_test is None:
+    print("(absent) meta_test pour carte embedding brut test")
+elif not Path(REPO_ROOT / EMB_TEST_CSV).is_file():
+    print(f"(absent) {EMB_TEST_CSV}")
+else:
+    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+
+    slim = meta_test.drop(columns=[c for c in meta_test.columns if c.startswith("dim_")], errors="ignore")
+    merged_test, dim_cols = merge_metadata_with_embeddings(slim, str(REPO_ROOT / EMB_TEST_CSV))
+    raw_test = merged_test[dim_cols].to_numpy(dtype=np.float64)
+    idx_rt = sample_projection_indices(
+        meta_test, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
+    )
+    sample_rt_df = meta_test.loc[idx_rt]
+    sample_rt_x = raw_test[idx_rt]
+    pca_rt = PCA(n_components=2, random_state=SEED).fit_transform(sample_rt_x)
+    tsne_rt = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto").fit_transform(
+        sample_rt_x
+    )
+    plot_projection_matplotlib(
+        pca_rt,
+        tsne_rt,
+        sample_rt_df,
+        LABEL_COL,
+        save_fig=save_fig,
+        png_name="10_raw_test_pca_tsne.png",
+        pca_title="PCA 2D — test embedding brut",
+        tsne_title="t-SNE 2D — test embedding brut",
+        show_macro_centroids=True,
+        show_z_centroids=False,
+    )
+"""
+
 TEST_VIZ_SOURCE = """from scgm_text.notebook_viz import (
     display_plotly_html,
     plot_btp_test_umap_pair,
@@ -457,11 +519,15 @@ else:
         projected_test,
         meta_test,
         LABEL_COL,
-        corpus_name="Test métallurgie",
+        corpus_name="Test métallurgie (SCGM projeté)",
         save_fig=save_fig,
         figures_dir=FIGURES_DIR,
         max_points=TSNE_SAMPLE_SIZE,
         seed=SEED,
+        png_name="10_test_scgm_pca_tsne.png",
+        show_macro_centroids=True,
+        show_z_centroids=True,
+        themes_z=themes_z,
     )
     plot_corpus_umap(
         projected_test,
@@ -671,8 +737,16 @@ else:
     pca_xy = PCA(n_components=2, random_state=SEED).fit_transform(sample_x)
     tsne_xy = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto").fit_transform(sample_x)
     plot_projection_matplotlib(
-        pca_xy, tsne_xy, sample_df, LABEL_COL, save_fig=save_fig,
-        pca_title="PCA 2D — BTP", tsne_title="t-SNE 2D — BTP",
+        pca_xy,
+        tsne_xy,
+        sample_df,
+        LABEL_COL,
+        save_fig=save_fig,
+        pca_title="PCA 2D — BTP (SCGM projeté)",
+        tsne_title="t-SNE 2D — BTP (SCGM projeté)",
+        show_macro_centroids=True,
+        show_z_centroids=True,
+        themes_z=themes_z,
     )
     plot_projection_plotly(pca_xy, tsne_xy, sample_df, LABEL_COL, figures_dir=FIGURES_DIR)
     display_plotly_html(FIGURES_DIR / "05_projection_pca_interactive.html")
@@ -731,18 +805,14 @@ if raw_emb is not None:
         png_name="09_raw_embedding_pca_tsne.png",
         pca_title="PCA 2D — BTP embedding brut",
         tsne_title="t-SNE 2D — BTP embedding brut",
+        show_macro_centroids=True,
+        show_z_centroids=False,
     )
     print(p_raw)
 """
 
-PAPER_TABLES_CODE = """if metrics_btp is not None:
-    display_df_for_paper(_slim_geom_df(metrics_btp), "paper_metrics_btp.csv")
-if metrics_raw is not None:
-    display_df_for_paper(_slim_geom_df(metrics_raw), "paper_metrics_raw.csv")
-if metrics_raw_test is not None:
-    display_df_for_paper(_slim_geom_df(metrics_raw_test), "paper_metrics_raw_test.csv")
-if metrics_test is not None:
-    display_df_for_paper(_slim_geom_df(metrics_test), "paper_metrics_test.csv")
+SUMMARY_TABLES_CODE = """_corpus_metrics_comparison(metrics_raw, metrics_btp, "Train (BTP)")
+_corpus_metrics_comparison(metrics_raw_test, metrics_test, "Test (métallurgie)")
 
 notebook_summary = {
     "output_dir": str(OUTPUT_PATH),
@@ -802,10 +872,12 @@ def main() -> None:
         cell_from_source(EVAL_GEOMETRY_CODE, cell_id="eval_geom"),
         cell_from_source(TEST_MD, "markdown", "test_md"),
         cell_from_source(TEST_METRICS_SOURCE, cell_id="test_metrics"),
-        cell_from_source("### 6b. Projections 2D test\n", "markdown"),
+        cell_from_source(TEST_RAW_VIZ_MD, "markdown", "test_raw_viz_md"),
+        cell_from_source(TEST_RAW_VIZ_CODE, cell_id="test_raw_viz"),
+        cell_from_source("### 6c. Projections 2D test (SCGM projeté)\n", "markdown"),
         cell_from_source(TEST_VIZ_SOURCE, cell_id="test_viz"),
-        cell_from_source("## Synthèse — tables export papier\n", "markdown"),
-        cell_from_source(PAPER_TABLES_CODE, cell_id="paper_tables"),
+        cell_from_source("## Synthèse — comparaison géométrie train / test\n", "markdown"),
+        cell_from_source(SUMMARY_TABLES_CODE, cell_id="summary_tables"),
     ]
     cells[5]["metadata"] = {"tags": ["parameters"]}
 

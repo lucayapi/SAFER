@@ -12,9 +12,11 @@ import torch
 from metrics.geometry import build_geometry_metrics_row
 from safer_core.io import save_metrics_geometry
 from safer_core.paths import TEXT_ROOT, layout_method_output
-from scgm_text.batch_utils import forward_features
+from scgm_text.batch_utils import batch_to_device, forward_features
 from scgm_text.checkpoint_io import load_scgm_checkpoint
+from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_embeddings import TextEmbeddingDataset
+from scgm_text.dataset_text_raw import TextRawDataset
 
 
 def project_embedding_corpus(
@@ -25,36 +27,64 @@ def project_embedding_corpus(
     label_col: str = "pred_label",
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
+    text_col: Optional[str] = None,
     batch_size: int = 512,
+    max_seq_length: int = 256,
     device: str = "cuda",
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Projette un CSV + embeddings figés via best_model.pt."""
+    """Projette un corpus via best_model.pt (embeddings figés ou mode texte tokenisé)."""
     dev = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
     model, checkpoint_args, _ = load_scgm_checkpoint(checkpoint_path, map_location="cpu")
     model.to(dev)
     model.eval()
 
-    dataset = TextEmbeddingDataset(
-        data_csv=data_csv,
-        emb_csv=emb_csv,
-        label_col=label_col,
-        pred_ok_col=pred_ok_col,
-        group_col=group_col,
-    )
-    meta = dataset.get_metadata_df()
-    labels = meta[label_col].to_numpy()
+    input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
     projected: list[np.ndarray] = []
 
-    with torch.no_grad():
-        for start in range(0, len(dataset), batch_size):
-            end = min(start + batch_size, len(dataset))
-            batch_embeddings = []
-            for index in range(start, end):
-                embedding, _, _ = dataset[index]
-                batch_embeddings.append(embedding)
-            embeddings = torch.stack(batch_embeddings).to(dev)
-            features = model(embeddings)
-            projected.append(features.cpu().numpy())
+    if input_mode == "text":
+        dataset = TextRawDataset(
+            data_csv=data_csv,
+            label_col=label_col,
+            pred_ok_col=pred_ok_col,
+            group_col=group_col,
+            text_col=text_col or "sentence",
+        )
+        from transformers import AutoTokenizer
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            checkpoint_args.get("backbone_model_name_or_path", "Qwen/Qwen3-Embedding-0.6B")
+        )
+        collate_fn = make_text_collate_fn(tokenizer, max_seq_length)
+        eff_batch = min(batch_size, 32)
+        meta = dataset.get_metadata_df()
+        labels = meta[label_col].to_numpy()
+        with torch.no_grad():
+            for start in range(0, len(dataset), eff_batch):
+                end = min(start + eff_batch, len(dataset))
+                items = [dataset[index] for index in range(start, end)]
+                batch = batch_to_device(collate_fn(items), dev)
+                features = forward_features(model, batch)
+                projected.append(features.cpu().numpy())
+    else:
+        dataset = TextEmbeddingDataset(
+            data_csv=data_csv,
+            emb_csv=emb_csv,
+            label_col=label_col,
+            pred_ok_col=pred_ok_col,
+            group_col=group_col,
+        )
+        meta = dataset.get_metadata_df()
+        labels = meta[label_col].to_numpy()
+        with torch.no_grad():
+            for start in range(0, len(dataset), batch_size):
+                end = min(start + batch_size, len(dataset))
+                batch_embeddings = []
+                for index in range(start, end):
+                    embedding, _, _ = dataset[index]
+                    batch_embeddings.append(embedding)
+                embeddings = torch.stack(batch_embeddings).to(dev)
+                features = forward_features(model, embeddings)
+                projected.append(features.cpu().numpy())
 
     return np.concatenate(projected, axis=0), labels
 
