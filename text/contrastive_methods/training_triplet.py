@@ -33,7 +33,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
 
     model = load_sentence_transformer(cfg)
-    distance_fn = resolve_triplet_distance(cfg.triplet_distance_metric)
+    distance_fn = resolve_triplet_distance(cfg.distance_metric)
     train_loss = losses.BatchHardSoftMarginTripletLoss(model=model, distance_metric=distance_fn)
 
     model, val_geometry, best_score = train_st_model(

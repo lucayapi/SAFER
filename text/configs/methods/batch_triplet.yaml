@@ -30,6 +30,7 @@ training:
   gradient_checkpointing: false
   use_fixed_instruction_prefix: false
   use_contextual_prompt_with_summary: false
+  distance_metric: euclidean
 
 batch_triplet:
-  distance_metric: cosine
+  distance_metric: euclidean

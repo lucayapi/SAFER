@@ -23,14 +23,16 @@ import yaml
 
 METHOD_KEY = "{method_key}"
 DISPLAY_NAME = "{display_name}"
-CONFIG_PATH = ROOT / "configs/methods/{config_file}"
+CONFIG_PATH = ROOT / "configs/methods" / "{method_key}.yaml"
 
 cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-DATASET_CSV = ROOT / cfg.get("dataset_path", "dataset/data_btp.csv")
+_data = cfg.get("data") or {{}}
+_model = cfg.get("model") or {{}}
+DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
 OUTPUT_DIR = cfg.get("output_dir", f"resultats/{{METHOD_KEY}}")
 RESULTS = ROOT / OUTPUT_DIR
-LABEL_COL = cfg.get("label_col", "pred_label")
-BACKBONE = cfg.get("backbone_name", "(non défini)")
+LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
+BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
 
 print("Méthode :", DISPLAY_NAME)
 print("Config   :", CONFIG_PATH.relative_to(ROOT))
@@ -222,11 +224,22 @@ def _setup_cell() -> str:
 import sys
 from pathlib import Path
 
-ROOT = Path.cwd()
-if not (ROOT / "configs").is_dir() and (ROOT / "text" / "configs").is_dir():
-    ROOT = ROOT / "text"
-elif (ROOT / "text").is_dir() and not (ROOT / "configs").is_dir():
-    ROOT = ROOT / "text"
+ROOT = Path.cwd().resolve()
+for _ in range(6):
+    if (ROOT / "configs" / "methods").is_dir():
+        break
+    nested = ROOT / "text" / "configs" / "methods"
+    if nested.is_dir():
+        ROOT = (ROOT / "text").resolve()
+        break
+    if ROOT.parent == ROOT:
+        break
+    ROOT = ROOT.parent
+if not (ROOT / "configs" / "methods").is_dir():
+    raise FileNotFoundError(
+        "Racine projet introuvable (configs/methods/). "
+        "Lancez Jupyter depuis text/ ou SAFER/, ou placez le notebook sous text/notebooks/."
+    )
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 """
@@ -239,13 +252,12 @@ def main() -> None:
         md = (
             f"# Résultats — {display_name}\n\n"
             f"Lecture des sorties sous `resultats/{method_key}/` (chemins définis dans "
-            f"`configs/methods/{config_file}.yaml`). **Pas d'entraînement** — le corpus "
+            f"`configs/methods/{method_key}.yaml`). **Pas d'entraînement** — le corpus "
             f"dépend du CSV configuré, pas du nom du notebook.\n"
         )
         view_code = VIEW_CODE_TEMPLATE.format(
             method_key=method_key,
             display_name=display_name,
-            config_file=config_file,
         )
         cells = [
             _cell(md, "markdown"),

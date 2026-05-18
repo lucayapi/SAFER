@@ -10,6 +10,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
+from contrastive_methods.distance import (
+    center_pairwise_penalty,
+    embedding_to_center_scores,
+    maybe_l2_normalize,
+    normalize_distance_metric,
+)
+
 
 def mean_pooling(last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
     mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
@@ -82,6 +89,8 @@ class SoftTripleLoss(nn.Module):
         normalize_embeddings: bool = True,
         normalize_centers: bool = True,
         center_max_similarity: float = 0.50,
+        center_min_distance: float = 0.30,
+        distance_metric: str = "euclidean",
     ) -> None:
         super().__init__()
         self.embedding_dim = int(embedding_dim)
@@ -91,29 +100,29 @@ class SoftTripleLoss(nn.Module):
         self.la = float(la)
         self.delta = float(delta)
         self.tau = float(tau)
-        self.normalize_embeddings = bool(normalize_embeddings)
-        self.normalize_centers = bool(normalize_centers)
+        self.distance_metric = normalize_distance_metric(distance_metric)
+        use_cosine = self.distance_metric == "cosine"
+        self.normalize_embeddings = bool(normalize_embeddings) and use_cosine
+        self.normalize_centers = bool(normalize_centers) and use_cosine
         self.center_max_similarity = float(center_max_similarity)
+        self.center_min_distance = float(center_min_distance)
         centers = torch.randn(num_classes, centers_per_class, embedding_dim) * 0.02
-        centers = F.normalize(centers, p=2, dim=-1)
+        if self.normalize_centers:
+            centers = F.normalize(centers, p=2, dim=-1)
         self.centers = nn.Parameter(centers)
 
     def _get_embeddings(self, embeddings: torch.Tensor) -> torch.Tensor:
-        if self.normalize_embeddings:
-            return F.normalize(embeddings, p=2, dim=-1)
-        return embeddings
+        return maybe_l2_normalize(embeddings, self.normalize_embeddings)
 
     def _get_centers(self) -> torch.Tensor:
-        if self.normalize_centers:
-            return F.normalize(self.centers, p=2, dim=-1)
-        return self.centers
+        return maybe_l2_normalize(self.centers, self.normalize_centers)
 
     def compute_relaxed_class_similarity(
         self, embeddings: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         z = self._get_embeddings(embeddings)
         centers = self._get_centers()
-        raw_sim = torch.einsum("bd,ckd->bck", z, centers)
+        raw_sim = embedding_to_center_scores(z, centers, metric=self.distance_metric)
         if self.centers_per_class == 1:
             relaxed_sim = raw_sim.squeeze(-1)
         else:
@@ -126,16 +135,15 @@ class SoftTripleLoss(nn.Module):
             return torch.tensor(0.0, device=self.centers.device)
         centers = self._get_centers()
         penalties = []
-        iu = torch.triu_indices(
-            self.centers_per_class, self.centers_per_class, offset=1, device=centers.device
-        )
         for c in range(self.num_classes):
-            wc = centers[c]
-            sim = torch.clamp(wc @ wc.T, -1.0, 1.0)
-            pair_sim = sim[iu[0], iu[1]]
-            penalty = F.relu(pair_sim - self.center_max_similarity).pow(2)
+            penalty = center_pairwise_penalty(
+                centers[c],
+                metric=self.distance_metric,
+                center_max_similarity=self.center_max_similarity,
+                center_min_distance=self.center_min_distance,
+            )
             if penalty.numel() > 0:
-                penalties.append(penalty.mean())
+                penalties.append(penalty)
         if not penalties:
             return torch.tensor(0.0, device=self.centers.device)
         return self.tau * torch.stack(penalties).mean()

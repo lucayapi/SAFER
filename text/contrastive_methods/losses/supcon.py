@@ -6,7 +6,8 @@ from typing import Any, Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+
+from contrastive_methods.distance import maybe_l2_normalize, normalize_distance_metric, pairwise_logits
 
 
 class SupConLoss(nn.Module):
@@ -15,19 +16,20 @@ class SupConLoss(nn.Module):
         model: Any,
         temperature: float = 0.07,
         normalize_embeddings: bool = True,
+        distance_metric: str = "euclidean",
     ) -> None:
         super().__init__()
         self.model = model
         self.temperature = float(temperature)
         self.normalize_embeddings = bool(normalize_embeddings)
+        self.distance_metric = normalize_distance_metric(distance_metric)
 
     def forward(self, sentence_features, labels: Optional[torch.Tensor] = None):
         if labels is None:
             raise ValueError("SupConLoss nécessite des labels.")
 
         embeddings = self.model(sentence_features[0])["sentence_embedding"]
-        if self.normalize_embeddings:
-            embeddings = F.normalize(embeddings, p=2, dim=1)
+        embeddings = maybe_l2_normalize(embeddings, self.normalize_embeddings)
 
         labels = labels.view(-1)
         device = embeddings.device
@@ -35,7 +37,11 @@ class SupConLoss(nn.Module):
         if batch_size < 2:
             return embeddings.sum() * 0.0
 
-        logits = torch.matmul(embeddings, embeddings.T) / self.temperature
+        logits = pairwise_logits(
+            embeddings,
+            metric=self.distance_metric,
+            temperature=self.temperature,
+        )
         eye_mask = torch.eye(batch_size, dtype=torch.bool, device=device)
         logits = logits.masked_fill(eye_mask, float("-inf"))
 

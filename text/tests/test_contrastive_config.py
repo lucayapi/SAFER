@@ -17,7 +17,7 @@ def test_load_batch_triplet_yaml():
     assert cfg.method_name == "batch_triplet"
     assert cfg.val_ratio == 0.1
     assert cfg.batch_size == 16
-    assert cfg.triplet_distance_metric == "cosine"
+    assert cfg.distance_metric == "euclidean"
 
 
 def test_load_softtriple_yaml():
@@ -30,3 +30,10 @@ def test_load_supcon_yaml():
     cfg = load_contrastive_config("supcon")
     assert cfg.supcon_temperature == 0.07
     assert cfg.supcon_normalize_embeddings is True
+    assert cfg.distance_metric == "euclidean"
+
+
+def test_load_softtriple_distance_euclidean():
+    cfg = load_contrastive_config("softtriple")
+    assert cfg.distance_metric == "euclidean"
+    assert cfg.center_min_distance == 0.3

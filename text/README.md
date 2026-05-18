@@ -248,6 +248,8 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 **Métrique principale** : δ_macro (%) = `delta_macro_pct` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
+**Distance d'entraînement** (défaut `training.distance_metric: euclidean`) : SupCon (−‖z_i−z_j‖²/τ), SoftTriple (−‖z−c‖² vers centroïdes), batch triplet (`BatchHardSoftMarginTripletLoss` euclidienne). Les métriques val/export restent η² sur distance euclidienne² (embeddings L2-normalisés à l'encode).
+
 ### Expérience single-run (configs inchangées)
 
 `configs/methods/batch_triplet.yaml`, `softtriple.yaml`, `supcon.yaml` — jobs `train_*.sh` :

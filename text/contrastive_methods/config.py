@@ -43,11 +43,12 @@ class ContrastiveConfig:
     softtriple_delta: float = 0.01
     softtriple_tau: float = 0.01
     center_max_similarity: float = 0.5
+    center_min_distance: float = 0.3
     # supcon
     supcon_temperature: float = 0.07
     supcon_normalize_embeddings: bool = True
-    # triplet
-    triplet_distance_metric: str = "cosine"
+    # distance (SupCon, SoftTriple, batch triplet)
+    distance_metric: str = "euclidean"
     final_fit_full_data: bool = False
     selection_metric: str = "delta_macro_pct"
     n_folds: int = 1
@@ -85,6 +86,7 @@ def load_contrastive_config(
     training = _section(raw, "training")
     softtriple = _section(raw, "softtriple")
     supcon = _section(raw, "supcon")
+    batch_triplet = _section(raw, "batch_triplet")
 
     flat = {k: v for k, v in raw.items() if not isinstance(v, dict)}
     for block in (data, model, training, flat):
@@ -173,14 +175,21 @@ def load_contrastive_config(
         center_max_similarity=float(
             pick("center_max_similarity", default=0.5, sources=(softtriple,))
         ),
+        center_min_distance=float(
+            pick("center_min_distance", default=0.3, sources=(softtriple,))
+        ),
         supcon_temperature=float(
             pick("temperature", default=0.07, sources=(supcon,))
         ),
         supcon_normalize_embeddings=bool(
             pick("normalize_embeddings", default=True, sources=(supcon,))
         ),
-        triplet_distance_metric=str(
-            pick("distance_metric", default="cosine", sources=(_section(raw, "batch_triplet"), raw))
+        distance_metric=str(
+            pick(
+                "distance_metric",
+                default="euclidean",
+                sources=(training, supcon, softtriple, batch_triplet, raw),
+            )
         ),
         final_fit_full_data=bool(
             pick("final_fit_full_data", default=False, sources=(training, raw))

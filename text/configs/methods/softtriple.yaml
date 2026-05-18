@@ -30,6 +30,7 @@ training:
   gradient_checkpointing: false
   use_fixed_instruction_prefix: false
   use_contextual_prompt_with_summary: false
+  distance_metric: euclidean
 
 softtriple:
   centers_per_class: 5
@@ -38,3 +39,5 @@ softtriple:
   delta: 0.01
   tau: 0.01
   center_max_similarity: 0.5
+  center_min_distance: 0.3
+  distance_metric: euclidean

@@ -81,6 +81,8 @@ def _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir: Path) -> No
                 "lambda": cfg.softtriple_lambda,
                 "delta": cfg.softtriple_delta,
                 "tau": cfg.softtriple_tau,
+                "distance_metric": cfg.distance_metric,
+                "center_min_distance": cfg.center_min_distance,
             },
         },
         best_dir / "softtriple_state.pt",
@@ -112,6 +114,8 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         delta=cfg.softtriple_delta,
         tau=cfg.softtriple_tau,
         center_max_similarity=cfg.center_max_similarity,
+        center_min_distance=cfg.center_min_distance,
+        distance_metric=cfg.distance_metric,
     ).to(device)
 
     collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)

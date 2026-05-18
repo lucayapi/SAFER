@@ -31,6 +31,7 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
         model=model,
         temperature=cfg.supcon_temperature,
         normalize_embeddings=cfg.supcon_normalize_embeddings,
+        distance_metric=cfg.distance_metric,
     )
 
     model, val_geometry, best_score = train_st_model(

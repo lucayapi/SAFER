@@ -130,7 +130,7 @@ def resolve_triplet_distance(name: str):
     cls = losses.BatchHardTripletLossDistanceFunction
     cosine_fn = getattr(cls, "cosine_distance", None)
     euclid_fn = getattr(cls, "eucledian_distance", None) or getattr(cls, "euclidean_distance", None)
-    key = (name or "cosine").strip().lower()
+    key = (name or "euclidean").strip().lower()
     mapping = {
         "cosine": cosine_fn,
         "euclidean": euclid_fn,
