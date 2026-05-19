@@ -44,6 +44,10 @@ class ContrastiveConfig:
     softtriple_tau: float = 0.01
     center_max_similarity: float = 0.5
     center_min_distance: float = 0.3
+    center_regularization_type: str = "none"
+    export_effective_centers: bool = False
+    effective_center_distance_threshold: float = 0.05
+    effective_center_similarity_threshold: float = 0.995
     # supcon
     supcon_temperature: float = 0.07
     supcon_normalize_embeddings: bool = True
@@ -71,6 +75,26 @@ class ContrastiveConfig:
 def _section(raw: Dict[str, Any], name: str) -> Dict[str, Any]:
     block = raw.get(name)
     return block if isinstance(block, dict) else {}
+
+
+def resolve_center_regularization_type(
+    explicit: Optional[str],
+    tau: float,
+) -> str:
+    """
+    Rétrocompatibilité SoftTriple :
+    - si center_regularization_type absent du YAML : tau <= 0 → none, tau > 0 → diversity
+    - sinon : valeur explicite (none | merge_l21 | diversity)
+    """
+    if explicit is None or str(explicit).strip() == "":
+        return "none" if float(tau) <= 0.0 else "diversity"
+    reg = str(explicit).strip().lower()
+    valid = {"none", "merge_l21", "diversity"}
+    if reg not in valid:
+        raise ValueError(
+            f"center_regularization_type invalide : {explicit!r} (attendu : {sorted(valid)})"
+        )
+    return reg
 
 
 def load_contrastive_config(
@@ -122,6 +146,8 @@ def load_contrastive_config(
             "Represent this workplace accident narrative for semantic retrieval "
             "and safety classification."
         )
+
+    _metric_default = "cosine" if method_name == "supcon" else "euclidean"
 
     return ContrastiveConfig(
         method_name=str(pick("method_name", default=method_name, sources=(raw,))),
@@ -187,12 +213,25 @@ def load_contrastive_config(
         distance_metric=str(
             pick(
                 "distance_metric",
-                default="euclidean",
-                sources=(training, supcon, softtriple, batch_triplet, raw),
+                default=_metric_default,
+                sources=(training, raw),
             )
         ),
         final_fit_full_data=bool(
             pick("final_fit_full_data", default=False, sources=(training, raw))
+        ),
+        center_regularization_type=resolve_center_regularization_type(
+            pick("center_regularization_type", default=None, sources=(softtriple,)),
+            float(pick("tau", default=0.01, sources=(softtriple,))),
+        ),
+        export_effective_centers=bool(
+            pick("export_effective_centers", default=False, sources=(softtriple,))
+        ),
+        effective_center_distance_threshold=float(
+            pick("effective_center_distance_threshold", default=0.05, sources=(softtriple,))
+        ),
+        effective_center_similarity_threshold=float(
+            pick("effective_center_similarity_threshold", default=0.995, sources=(softtriple,))
         ),
         selection_metric=str(
             pick("selection_metric", default="eta2_macro_balanced_perc", sources=(raw, training))

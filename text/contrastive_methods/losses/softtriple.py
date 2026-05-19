@@ -11,11 +11,14 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
 
 from contrastive_methods.distance import (
+    center_merge_l21_penalty,
     center_pairwise_penalty,
     embedding_to_center_scores,
     maybe_l2_normalize,
     normalize_distance_metric,
 )
+
+VALID_CENTER_REGULARIZATION_TYPES = frozenset({"none", "merge_l21", "diversity"})
 
 
 def mean_pooling(last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
@@ -91,6 +94,7 @@ class SoftTripleLoss(nn.Module):
         center_max_similarity: float = 0.50,
         center_min_distance: float = 0.30,
         distance_metric: str = "euclidean",
+        center_regularization_type: str = "none",
     ) -> None:
         super().__init__()
         self.embedding_dim = int(embedding_dim)
@@ -100,6 +104,13 @@ class SoftTripleLoss(nn.Module):
         self.la = float(la)
         self.delta = float(delta)
         self.tau = float(tau)
+        reg_type = str(center_regularization_type).strip().lower()
+        if reg_type not in VALID_CENTER_REGULARIZATION_TYPES:
+            raise ValueError(
+                f"center_regularization_type invalide : {center_regularization_type!r} "
+                f"(attendu : {sorted(VALID_CENTER_REGULARIZATION_TYPES)})"
+            )
+        self.center_regularization_type = reg_type
         self.distance_metric = normalize_distance_metric(distance_metric)
         use_cosine = self.distance_metric == "cosine"
         self.normalize_embeddings = bool(normalize_embeddings) and use_cosine
@@ -133,15 +144,23 @@ class SoftTripleLoss(nn.Module):
     def regularization(self) -> torch.Tensor:
         if self.tau <= 0.0 or self.centers_per_class <= 1:
             return torch.tensor(0.0, device=self.centers.device)
+        if self.center_regularization_type == "none":
+            return torch.tensor(0.0, device=self.centers.device)
         centers = self._get_centers()
         penalties = []
         for c in range(self.num_classes):
-            penalty = center_pairwise_penalty(
-                centers[c],
-                metric=self.distance_metric,
-                center_max_similarity=self.center_max_similarity,
-                center_min_distance=self.center_min_distance,
-            )
+            if self.center_regularization_type == "diversity":
+                penalty = center_pairwise_penalty(
+                    centers[c],
+                    metric=self.distance_metric,
+                    center_max_similarity=self.center_max_similarity,
+                    center_min_distance=self.center_min_distance,
+                )
+            else:
+                penalty = center_merge_l21_penalty(
+                    centers[c],
+                    metric=self.distance_metric,
+                )
             if penalty.numel() > 0:
                 penalties.append(penalty)
         if not penalties:

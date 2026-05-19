@@ -78,3 +78,28 @@ def center_pairwise_penalty(
     sim = torch.clamp(centers_class @ centers_class.T, -1.0, 1.0)
     pair_sim = sim[iu[0], iu[1]]
     return F.relu(pair_sim - float(center_max_similarity)).pow(2).mean()
+
+
+def center_merge_l21_penalty(
+    centers_class: torch.Tensor,
+    *,
+    metric: str,
+    eps: float = 1e-8,
+) -> torch.Tensor:
+    """
+    Régularisation merge L2,1 : somme des distances intra-classe entre centres.
+    Encourage les centres proches / redondants à fusionner (minimiser les distances).
+    """
+    metric = normalize_distance_metric(metric)
+    k = centers_class.shape[0]
+    if k <= 1:
+        return torch.tensor(0.0, device=centers_class.device)
+    iu = torch.triu_indices(k, k, offset=1, device=centers_class.device)
+    if metric == "euclidean":
+        dist = torch.cdist(centers_class, centers_class, p=2)
+        pair_dist = dist[iu[0], iu[1]]
+        return pair_dist.sum()
+    sim = torch.clamp(centers_class @ centers_class.T, -1.0, 1.0)
+    pair_sim = sim[iu[0], iu[1]]
+    chord = torch.sqrt(torch.clamp(2.0 - 2.0 * pair_sim + float(eps), min=0.0))
+    return chord.sum()

@@ -157,7 +157,7 @@ python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 python scripts/train_scgm_text.py --config configs/scgm_text_strict_finetune_identity.yaml --strict_finetune_identity
 ```
 
-Thèmes OpenAI (`themes_by_z_openai.csv`, hors notebook — accès Internet requis) :
+Thèmes OpenAI (`themes_by_z_openai.csv`, hors notebook — accès Internet requis) : prompt minimal en anglais (extraits seuls → libellé court **en français** dans `theme_summary`, 3–12 mots) :
 
 ```bash
 # Sur le nœud de login HPC2 (recommandé) :
@@ -248,7 +248,37 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 **Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
-**Distance d'entraînement** (défaut `training.distance_metric: euclidean`) : SupCon (−‖z_i−z_j‖²/τ), SoftTriple (−‖z−c‖² vers centroïdes), batch triplet (`BatchHardSoftMarginTripletLoss` euclidienne). Les métriques val/export restent η² sur distance euclidienne² (embeddings L2-normalisés à l'encode).
+**Distance d'entraînement** (`training.distance_metric`, une seule clé par config) : **SupCon** = cosinus (`z_i·z_j/τ`, aligné `ftemb_supcon`) ; **SoftTriple** et **batch triplet** = euclidien par défaut. Les métriques val/export restent η² sur distance euclidienne² (embeddings L2-normalisés à l'encode).
+
+### SoftTriple — régularisation des centres et centres effectifs
+
+`centers_per_class` (**K**) est le **nombre maximal initial** de centres latents par macro-classe, pas le nombre final de sous-classes.
+
+| `center_regularization_type` | Effet |
+|------------------------------|--------|
+| `none` | K centres fixes, pas de régularisation (`tau: 0`) |
+| `diversity` | Régularisation historique : éloigne les centres trop proches (marges `center_min_distance` / `center_max_similarity`) |
+| `merge_l21` | Régularisation inspirée de l’article SoftTriple : minimise les distances intra-classe entre centres pour encourager la fusion des centres redondants |
+
+**Rétrocompatibilité** : si `center_regularization_type` est absent du YAML, `tau <= 0` → `none`, sinon → `diversity` (comportement des runs existants avec `softtriple.yaml`).
+
+Dans la variante `merge_l21`, K ne doit pas être interprété comme le nombre final de sous-classes : après apprentissage, les centres proches sont regroupés (composantes connexes) pour estimer un **nombre effectif de centres uniques** par macro.
+
+Configs d’expérience :
+
+```bash
+python scripts/train_softtriple.py --config configs/methods/softtriple_no_reg.yaml
+python scripts/train_softtriple.py --config configs/methods/softtriple_merge_l21.yaml
+python scripts/train_softtriple.py --config configs/methods/softtriple_diversity.yaml
+```
+
+Export (si `export_effective_centers: true` et régularisation ≠ `none`) dans `{output_dir}/centers/` et `checkpoints/best_model/centers/` :
+
+- `softtriple_centers_raw.pt`, `softtriple_effective_centers.pt`
+- `softtriple_effective_centers.csv`, `softtriple_center_assignments.csv`
+- `softtriple_center_diagnostics.json` (effectifs par macro, hyperparamètres)
+
+Grille tuning : `softtriple.center_regularization_type` × `softtriple.tau` — combinaisons invalides filtrées (`none` → `tau=0`, `merge_l21` exclut `tau<=0`).
 
 ### Expérience single-run (configs inchangées)
 
@@ -271,7 +301,7 @@ python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_
 # Limiter la grille : --max-combos 8
 ```
 
-Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`, `softtriple.gamma`, `training.distance_metric`, etc.). Chaque YAML inclut les hyperparamètres method-specific essentiels (distance euclidienne par défaut, température SupCon, γ/λ SoftTriple, …).
+Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`, `softtriple.gamma`, `training.distance_metric`, etc.). Hyperparamètres spécifiques sous `supcon:` / `softtriple:` / `batch_triplet:` uniquement (pas de `distance_metric` dupliqué).
 
 **Log d'entraînement** : `metrics/train_log.csv` — `epoch`, `train_loss`, `val_loss` (SoftTriple), puis `val_{k}` pour chaque `k` dans `GEOMETRY_METRIC_KEYS` (aligné sur `metrics_geometry_*.csv`). Plus de repli vers le log Hugging Face brut (`grad_norm`, `step`, …).
 

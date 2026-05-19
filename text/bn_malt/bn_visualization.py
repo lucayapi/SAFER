@@ -172,7 +172,7 @@ def build_node_summary_label(
     max_len: int = 80,
 ) -> str:
     """
-    Libellé affiché sur le graphe BN : ``theme_summary`` OpenAI (6–10 mots) pour les ``Z_*``.
+    Libellé affiché sur le graphe BN : ``theme_summary`` OpenAI (libellé court FR) pour les ``Z_*``.
     """
     n = str(node)
     macro = _macro_from_node(n, variable_macro_map)

@@ -11,5 +11,5 @@ grid:
   training.learning_rate: [1.0e-5, 2.0e-5]
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
-  training.distance_metric: [euclidean]
+  training.distance_metric: [cosine]
   supcon.temperature: [0.05, 0.07]

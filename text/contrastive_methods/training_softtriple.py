@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import List
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader
 
+from contrastive_methods.center_diagnostics import export_softtriple_center_artifacts
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.eval_geometry import evaluate_hf_val_geometry, selection_score
@@ -23,7 +24,7 @@ from contrastive_methods.losses.softtriple import (
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.st_common import get_device
-from scgm_text.dataset_text_embeddings import LABEL2ID
+from scgm_text.dataset_text_embeddings import ID2LABEL, LABEL2ID
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
 
@@ -69,25 +70,63 @@ def _run_epoch(
     return total / max(1, n_batches)
 
 
-def _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir: Path) -> None:
+def _softtriple_hyperparams_dict(cfg: ContrastiveConfig) -> Dict[str, Any]:
+    return {
+        "centers_per_class": cfg.centers_per_class,
+        "gamma": cfg.softtriple_gamma,
+        "lambda": cfg.softtriple_lambda,
+        "delta": cfg.softtriple_delta,
+        "tau": cfg.softtriple_tau,
+        "center_regularization_type": cfg.center_regularization_type,
+        "distance_metric": cfg.distance_metric,
+        "center_max_similarity": cfg.center_max_similarity,
+        "center_min_distance": cfg.center_min_distance,
+        "effective_center_distance_threshold": cfg.effective_center_distance_threshold,
+        "effective_center_similarity_threshold": cfg.effective_center_similarity_threshold,
+    }
+
+
+def _maybe_export_centers(
+    loss_module: SoftTripleLoss,
+    cfg: ContrastiveConfig,
+    export_dir: Path,
+) -> Optional[Path]:
+    if not cfg.export_effective_centers or cfg.center_regularization_type == "none":
+        return None
+    class_names = [ID2LABEL[i] for i in range(len(LABEL2ID))]
+    normalize = loss_module.normalize_centers
+    return export_softtriple_center_artifacts(
+        loss_module.centers.detach().cpu(),
+        export_dir,
+        class_names=class_names,
+        metric=cfg.distance_metric,
+        distance_threshold=cfg.effective_center_distance_threshold,
+        similarity_threshold=cfg.effective_center_similarity_threshold,
+        normalize_centers=normalize,
+        hyperparams=_softtriple_hyperparams_dict(cfg),
+    )
+
+
+def _save_softtriple_checkpoint(
+    encoder,
+    loss_module: SoftTripleLoss,
+    cfg: ContrastiveConfig,
+    best_dir: Path,
+    *,
+    export_centers: bool = True,
+) -> None:
     best_dir.mkdir(parents=True, exist_ok=True)
     torch.save(encoder.encoder.state_dict(), best_dir / "hf_model.bin")
     encoder.tokenizer.save_pretrained(str(best_dir))
     torch.save(
         {
             "loss_state": loss_module.state_dict(),
-            "config": {
-                "centers_per_class": cfg.centers_per_class,
-                "gamma": cfg.softtriple_gamma,
-                "lambda": cfg.softtriple_lambda,
-                "delta": cfg.softtriple_delta,
-                "tau": cfg.softtriple_tau,
-                "distance_metric": cfg.distance_metric,
-                "center_min_distance": cfg.center_min_distance,
-            },
+            "config": _softtriple_hyperparams_dict(cfg),
         },
         best_dir / "softtriple_state.pt",
     )
+    if export_centers:
+        _maybe_export_centers(loss_module, cfg, best_dir)
 
 
 def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
@@ -96,6 +135,11 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     checkpoints = Path(layout["checkpoints"])
     embeddings_dir = Path(layout["embeddings"])
     metrics_dir = Path(layout["metrics"])
+    run_root = Path(cfg.resolved_output_dir)
+    if not run_root.is_absolute():
+        from safer_core.paths import TEXT_ROOT
+
+        run_root = TEXT_ROOT / run_root
 
     dataset = prepare_text_dataset(cfg)
     train_idx, val_idx = split_train_val(dataset, cfg)
@@ -117,6 +161,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         center_max_similarity=cfg.center_max_similarity,
         center_min_distance=cfg.center_min_distance,
         distance_metric=cfg.distance_metric,
+        center_regularization_type=cfg.center_regularization_type,
     ).to(device)
 
     collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
@@ -150,7 +195,6 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             encoder, loss_module, train_loader, optimizer, dev, train=True
         )
         val_loss = float("nan")
-        val_delta = float("nan")
         if val_loader is not None:
             val_loss = _run_epoch(
                 encoder, loss_module, val_loader, optimizer, dev, train=False
@@ -188,6 +232,17 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     except TypeError:
         state = torch.load(ckpt_path, map_location=dev)
     encoder.encoder.load_state_dict(state)
+    loss_state_path = best_dir / "softtriple_state.pt"
+    if loss_state_path.is_file():
+        try:
+            ckpt_loss = torch.load(loss_state_path, map_location=dev, weights_only=True)
+        except TypeError:
+            ckpt_loss = torch.load(loss_state_path, map_location=dev)
+        if isinstance(ckpt_loss, dict) and "loss_state" in ckpt_loss:
+            loss_module.load_state_dict(ckpt_loss["loss_state"])
+
+    _maybe_export_centers(loss_module, cfg, run_root)
+
     emb_path = embeddings_dir / "final_embeddings.csv"
     texts = dataset.metadata_df[dataset.text_col].astype(str).tolist()
     embeddings = encode_texts_with_hf_encoder(
@@ -209,6 +264,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             "val_rows": len(val_df),
             "best_eta2_macro_balanced_perc": best_score,
             "embeddings": str(emb_path),
+            "center_regularization_type": cfg.center_regularization_type,
         },
         root,
     )

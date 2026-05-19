@@ -12,4 +12,3 @@ grid:
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
   training.distance_metric: [euclidean]
-  batch_triplet.distance_metric: [euclidean]

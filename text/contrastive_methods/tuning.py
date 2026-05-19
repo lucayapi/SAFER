@@ -42,6 +42,30 @@ def expand_grid(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [dict(zip(keys, vals)) for vals in itertools.product(*values_list)]
 
 
+def filter_softtriple_tuning_combos(combos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Filtre les combinaisons invalides SoftTriple :
+    - center_regularization_type == none → tau forcé à 0
+    - merge_l21 → exclure tau <= 0
+    """
+    filtered: List[Dict[str, Any]] = []
+    for combo in combos:
+        reg = combo.get("softtriple.center_regularization_type")
+        tau_key = "softtriple.tau"
+        tau = combo.get(tau_key)
+        if reg is not None:
+            reg = str(reg).strip().lower()
+            if reg == "none":
+                combo = dict(combo)
+                combo[tau_key] = 0.0
+                filtered.append(combo)
+                continue
+            if reg == "merge_l21" and tau is not None and float(tau) <= 0.0:
+                continue
+        filtered.append(combo)
+    return filtered
+
+
 def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=f"Tuning contrastif : {method_name}")
     parser.add_argument(
@@ -66,6 +90,8 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     test_dataset = str(spec.get("test_dataset_path", "dataset/test/data_metallurgie.csv"))
 
     combos = expand_grid(grid)
+    if method_name == "softtriple":
+        combos = filter_softtriple_tuning_combos(combos)
     if args.max_combos is not None:
         combos = combos[: args.max_combos]
 

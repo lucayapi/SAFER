@@ -1,6 +1,6 @@
 method_name: softtriple
 method: softtriple
-output_dir: resultats/softtriple
+output_dir: resultats/softtriple_diversity
 use_prompt: false
 seed: 42
 n_folds: 5
@@ -33,10 +33,14 @@ training:
   distance_metric: euclidean
 
 softtriple:
-  centers_per_class: 5
+  centers_per_class: 10
   gamma: 0.1
   lambda: 10.0
   delta: 0.01
   tau: 0.01
+  center_regularization_type: "diversity"
+  export_effective_centers: true
+  effective_center_distance_threshold: 0.05
+  effective_center_similarity_threshold: 0.995
   center_max_similarity: 0.5
   center_min_distance: 0.3

@@ -1,4 +1,4 @@
-"""Enrichissement des lignes de ``themes_by_z.csv`` via l’API OpenAI (contexte professionnel générique)."""
+"""Enrichissement des lignes de ``themes_by_z.csv`` via l’API OpenAI (libellé court par topic)."""
 
 from __future__ import annotations
 
@@ -14,33 +14,36 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 _SYSTEM_PROMPT = (
-    "Tu nommes des topics issus d’un modèle hiérarchique (topic modeling) sur des segments "
-    "de textes décrivant des situations de travail, des incidents ou des accidents en milieu "
-    "professionnel ou industriel (domaine non imposé : adapte le vocabulaire aux extraits fournis). "
-    "Chaque topic correspond à une composante latente z. "
-    "Les macros dominantes possibles sur les segments du cluster sont parmi : A0, A1, B, C. "
-    "Reste factuel, cohérent avec la macro dominante et les exemples fournis ; n’invente pas un secteur "
-    "si les extraits n’en parlent pas ; pas de récit long. "
-    "Réponds uniquement en JSON valide, sans markdown."
+    "You assign short topic labels to groups of text excerpts about workplace safety and accidents. "
+    "Reply only with valid JSON, no markdown. "
+    "The label must be in French."
 )
 
-# Placeholders : z_id, dominant_macro, n_units, top_words, example_block, n_example_texts
-_USER_TEMPLATE = """Topic latent (composante) z_id={z_id}
-- Macro dominante sur les segments du cluster : {dominant_macro}
-- Effectif segments : {n_units}
-- Mots fréquents (TF-IDF) : {top_words}
+_USER_TEMPLATE = """I have a topic that contains the following documents:
 
-Segments d’exemple (jusqu’à {n_examples_cap} segments les plus centraux du topic) :
-{example_block}
+{documents}
 
-Produis un JSON avec exactement les clés suivantes :
-{{
-  "theme_title": "titre très court (≤ 60 caractères), style intitulé de topic",
-  "theme_summary": "une seule étiquette de topic en français : EXACTEMENT entre 6 et 10 mots, séparés par des espaces, sans ponctuation finale, sans guillemets. Ce libellé sera utilisé pour annoter une carte 2D de segments.",
-  "theme_keywords": ["mot1", "mot2", "mot3", "mot4", "mot5"]
-}}
-Les 5 mots-clés doivent être compacts et alignés sur le contenu des extraits (sécurité, équipements, causes, conséquences, etc., selon ce qui est pertinent).
-"""
+Based on the above information, can you give a short label of the topic?
+
+Respond with JSON: {{"label": "your short French topic label"}}"""
+
+
+def build_documents_block(top_sentences: str, n_example_texts: int) -> str:
+    """Formate les extraits (``top_sentences``, séparateur `` || ``) pour le prompt utilisateur."""
+    examples = _split_example_sentences(top_sentences, n_example_texts)
+    if not examples:
+        return "(no documents available for this topic)"
+    lines = []
+    for i, ex in enumerate(examples, start=1):
+        short = ex[:800] + ("…" if len(ex) > 800 else "")
+        lines.append(f"Document {i}:\n{short}")
+    return "\n\n".join(lines)
+
+
+def build_user_prompt(top_sentences: str, n_example_texts: int = 5) -> str:
+    """Construit le message user (documents seuls, sans métadonnées SCGM)."""
+    documents = build_documents_block(top_sentences, n_example_texts)
+    return _USER_TEMPLATE.format(documents=documents)
 
 
 def load_openai_dotenv() -> bool:
@@ -91,7 +94,7 @@ _SUMMARY_PAD_WORDS = (
 )
 
 
-def _clamp_theme_summary_words(text: str, lo: int = 6, hi: int = 10) -> str:
+def _clamp_theme_summary_words(text: str, lo: int = 3, hi: int = 12) -> str:
     """Force ``theme_summary`` à une étiquette de ``lo`` à ``hi`` mots (troncature ou padding discret)."""
     cleaned = re.sub(r"\s+", " ", (text or "").replace("\n", " ")).strip()
     words = [w for w in cleaned.split(" ") if w]
@@ -108,6 +111,48 @@ def _clamp_theme_summary_words(text: str, lo: int = 6, hi: int = 10) -> str:
     while len(words) < lo:
         words.append("analyse")
     return " ".join(words[:hi])
+
+
+def _keywords_from_label(label: str, row: pd.Series) -> str:
+    words = [w for w in label.split() if w][:5]
+    if len(words) < 5:
+        raw_words = str(row.get("top_words", "")).replace(";", " ").replace(",", " ")
+        for w in raw_words.split():
+            if w and w not in words:
+                words.append(w)
+            if len(words) >= 5:
+                break
+    while len(words) < 5:
+        words.append("")
+    return ";".join(words[:5])
+
+
+def _labels_from_api_response(
+    data: Dict[str, Any],
+    row: pd.Series,
+    *,
+    summary_words_min: int,
+    summary_words_max: int,
+) -> Dict[str, str]:
+    """Mappe ``label`` (ou legacy ``theme_summary``) vers colonnes CSV."""
+    raw_label = str(data.get("label") or data.get("theme_summary") or "").strip()
+    if not raw_label and data.get("theme_title"):
+        raw_label = str(data.get("theme_title", "")).strip()
+    summary = _clamp_theme_summary_words(raw_label, summary_words_min, summary_words_max)
+    title = summary[:60]
+    kws = data.get("theme_keywords")
+    if isinstance(kws, list) and any(str(x).strip() for x in kws):
+        kw_list = [str(x).strip() for x in kws if str(x).strip()][:5]
+        while len(kw_list) < 5:
+            kw_list.append("")
+        kw_str = ";".join(kw_list)
+    else:
+        kw_str = _keywords_from_label(summary, row)
+    return {
+        "theme_title": title,
+        "theme_summary": summary,
+        "theme_keywords": kw_str,
+    }
 
 
 def _default_openai_timeout() -> float:
@@ -178,15 +223,13 @@ def _parse_json_content(content: str) -> Dict[str, Any]:
 def _fallback_row_labels(row: pd.Series, *, summary_words_min: int, summary_words_max: int) -> Dict[str, str]:
     """Étiquettes dérivées des mots TF-IDF si l’API OpenAI est indisponible."""
     z_id = int(row["z_id"])
-    macro = str(row.get("dominant_macro", ""))
     raw_words = str(row.get("top_words", "")).replace(";", " ").replace(",", " ")
     words = [w for w in raw_words.split() if w][:5]
-    while len(words) < 5:
-        words.append("")
-    summary_seed = " ".join(w for w in words if w) or f"topic latent z{z_id}"
+    summary_seed = " ".join(w for w in words if w) or f"topic {z_id}"
+    summary = _clamp_theme_summary_words(summary_seed, summary_words_min, summary_words_max)
     return {
-        "theme_title": f"z{z_id} {macro}".strip()[:60],
-        "theme_summary": _clamp_theme_summary_words(summary_seed, summary_words_min, summary_words_max),
+        "theme_title": summary[:60],
+        "theme_summary": summary,
         "theme_keywords": ";".join(w for w in words if w),
     }
 
@@ -202,24 +245,7 @@ def _one_row(
     summary_words_max: int,
     request_timeout: Optional[float] = None,
 ) -> Dict[str, str]:
-    examples = _split_example_sentences(str(row.get("top_sentences", "")), n_example_texts)
-    if not examples:
-        example_block = "(aucun extrait disponible pour ce z)"
-    else:
-        lines = []
-        for i, ex in enumerate(examples, start=1):
-            short = ex[:800] + ("…" if len(ex) > 800 else "")
-            lines.append(f"Exemple {i}: {short}")
-        example_block = "\n".join(lines)
-
-    user = _USER_TEMPLATE.format(
-        z_id=int(row["z_id"]),
-        dominant_macro=str(row.get("dominant_macro", "")),
-        n_units=int(row.get("n_units", 0)),
-        top_words=str(row.get("top_words", ""))[:4000],
-        example_block=example_block,
-        n_examples_cap=int(n_example_texts),
-    )
+    user = build_user_prompt(str(row.get("top_sentences", "")), n_example_texts)
     create_kwargs: Dict[str, Any] = {}
     if request_timeout is not None:
         create_kwargs["timeout"] = float(request_timeout)
@@ -236,20 +262,12 @@ def _one_row(
     )
     raw = resp.choices[0].message.content or "{}"
     data = _parse_json_content(raw)
-    title = str(data.get("theme_title", "")).strip()
-    summary_raw = str(data.get("theme_summary", "")).strip()
-    summary = _clamp_theme_summary_words(summary_raw, summary_words_min, summary_words_max)
-    kws = data.get("theme_keywords") or []
-    if not isinstance(kws, list):
-        kws = []
-    kws = [str(x).strip() for x in kws if str(x).strip()][:5]
-    while len(kws) < 5:
-        kws.append("")
-    return {
-        "theme_title": title,
-        "theme_summary": summary,
-        "theme_keywords": ";".join(x for x in kws if x),
-    }
+    return _labels_from_api_response(
+        data,
+        row,
+        summary_words_min=summary_words_min,
+        summary_words_max=summary_words_max,
+    )
 
 
 def enrich_themes_by_z_openai(
@@ -259,8 +277,8 @@ def enrich_themes_by_z_openai(
     model: str = "gpt-4o-mini",
     temperature: float = 0.3,
     n_example_texts: int = 5,
-    summary_words_min: int = 6,
-    summary_words_max: int = 10,
+    summary_words_min: int = 3,
+    summary_words_max: int = 12,
     client: Any = None,
     show_progress: bool = True,
     skip_on_error: bool = False,
@@ -270,7 +288,7 @@ def enrich_themes_by_z_openai(
     """
     Lit ``themes_by_z.csv`` et écrit ``themes_by_z_openai.csv`` (mêmes colonnes + titres/résumé/mots-clés).
 
-    ``theme_summary`` est contraint à une étiquelle de topic de ``summary_words_min`` à ``summary_words_max`` mots.
+    ``theme_summary`` est un libellé court en français (``summary_words_min``–``summary_words_max`` mots).
     """
     load_openai_dotenv()
     themes_path = Path(themes_csv)
@@ -347,10 +365,10 @@ def _cli(argv: Optional[List[str]] = None) -> None:
         "--n-example-texts",
         type=int,
         default=5,
-        help="Nombre max d’extraits (segments) numérotés à fournir au modèle (découpe de top_sentences).",
+        help="Nombre max d’extraits (segments) fournis comme documents (découpe de top_sentences).",
     )
-    parser.add_argument("--summary-words-min", type=int, default=6)
-    parser.add_argument("--summary-words-max", type=int, default=10)
+    parser.add_argument("--summary-words-min", type=int, default=3)
+    parser.add_argument("--summary-words-max", type=int, default=12)
     args = parser.parse_args(argv)
     enrich_themes_by_z_openai(
         args.themes_csv,

@@ -33,7 +33,7 @@ def test_load_supcon_yaml():
     cfg = load_contrastive_config("supcon")
     assert cfg.supcon_temperature == 0.07
     assert cfg.supcon_normalize_embeddings is True
-    assert cfg.distance_metric == "euclidean"
+    assert cfg.distance_metric == "cosine"
 
 
 def test_load_softtriple_distance_euclidean():
@@ -52,7 +52,7 @@ def _grid_cfg(method: str):
 
 def test_tuning_grid_supcon_merges_distance_and_temperature():
     cfg = _grid_cfg("supcon")
-    assert cfg.distance_metric == "euclidean"
+    assert cfg.distance_metric == "cosine"
     assert cfg.supcon_temperature in (0.05, 0.07)
 
 
