@@ -1,7 +1,7 @@
 base_config: configs/scgm_text_strict_fidelity.yaml
 output_dir: resultats/scgm_text/tuning
 final_output_dir: resultats/scgm_text
-selection_metric: delta_macro_pct
+selection_metric: eta2_macro_balanced_perc
 n_folds: 5
 test_dataset_path: dataset/test/data_metallurgie.csv
 test_emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv

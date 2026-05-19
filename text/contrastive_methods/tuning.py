@@ -1,4 +1,4 @@
-"""Grid search contrastif avec K-fold — sélection par mean delta_macro_pct."""
+"""Grid search contrastif avec K-fold — sélection par mean eta2_macro_balanced_perc."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from contrastive_methods.config import load_contrastive_config_from_dict, merge_
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
 from contrastive_methods.eval_geometry import selection_score
 from contrastive_methods.kfold_train import get_contrastive_runner, run_tuning_combo_kfold
+from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
 from safer_core.io import ensure_dir, load_yaml, save_config_resolved
 from safer_core.paths import TEXT_ROOT
 
@@ -56,7 +57,7 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     base_path = TEXT_ROOT / str(spec.get("base_config", f"configs/methods/{method_name}.yaml"))
     base_raw = load_yaml(base_path)
     grid = spec.get("grid") or {}
-    selection_metric = str(spec.get("selection_metric", "delta_macro_pct"))
+    selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
     n_folds = int(spec.get("n_folds", 5))
     seed = int(spec.get("seed", base_raw.get("seed", 42)))
     tuning_output = str(spec.get("output_dir", f"resultats/{method_name}/tuning"))
@@ -94,11 +95,11 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
             row = {
                 "combo_id": cid,
                 "selection_metric": selection_metric,
-                "selection_score": result.best_delta_macro_pct,
+                "selection_score": result.best_eta2_macro_balanced_perc,
                 **{k.replace(".", "_"): v for k, v in overrides.items()},
             }
             if result.val_geometry:
-                for key in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
+                for key in GEOMETRY_METRIC_KEYS:
                     row[f"val_{key}"] = result.val_geometry.get(key)
         summary_rows.append(row)
         score = float(row.get("selection_score", row.get("selection_score", float("-inf"))))

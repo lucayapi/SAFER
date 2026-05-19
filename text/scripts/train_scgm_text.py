@@ -93,7 +93,7 @@ BASE_METRIC_FIELDS = [
     "train_eta2_weighted",
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
-    "val_delta_macro_pct",
+    "val_eta2_macro_balanced_perc",
     "rankme_global",
     "c1_global",
     "c10_global",
@@ -203,8 +203,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--best_checkpoint_metric",
         type=str,
-        default="delta_macro_pct",
-        choices=["delta_macro_pct", "eta2_macro_balanced", "composite"],
+        default="eta2_macro_balanced_perc",
+        choices=["eta2_macro_balanced_perc", "eta2_macro_balanced", "composite"],
         help="Critère de sélection du best_model.pt (géométrie, pas F1).",
     )
     parser.add_argument(
@@ -404,8 +404,10 @@ def checkpoint_selection_score(
     metric_name: str,
     lambda_c1: float,
 ) -> float:
-    if metric_name == "delta_macro_pct":
-        val = float(val_metrics.get("val_delta_macro_pct", float("nan")))
+    if metric_name == "eta2_macro_balanced_perc":
+        val = float(val_metrics.get("val_eta2_macro_balanced_perc", float("nan")))
+        if np.isnan(val):
+            val = float(val_metrics.get("val_delta_macro_pct", float("nan")))
         if np.isnan(val):
             val = 100.0 * float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
         return val if np.isfinite(val) else float("-inf")
@@ -470,7 +472,7 @@ def evaluate_split(
     metrics: Dict[str, float] = {
         f"{prefix}_eta2_macro_balanced": float(geom["eta2_macro_balanced"]),
         f"{prefix}_eta2_weighted": float(geom["eta2_weighted"]),
-        f"{prefix}_delta_macro_pct": float(geom["delta_macro_pct"]),
+        f"{prefix}_eta2_macro_balanced_perc": float(geom["eta2_macro_balanced_perc"]),
         f"{prefix}_entropy_pz": mean_entropy(prob_z),
         f"{prefix}_entropy_py_z": mean_entropy(prob_yz),
         "n_active_z": float(count_active_clusters(z_pred_arr)),
@@ -728,7 +730,7 @@ def run_training(
         "loss_latent",
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
-    "val_delta_macro_pct",
+    "val_eta2_macro_balanced_perc",
     "rankme_global",
         "c1_global",
         "c10_global",
@@ -839,7 +841,7 @@ def run_training(
                 val_metrics = {
                     "val_eta2_macro_balanced": train_metrics.get("train_eta2_macro_balanced"),
                     "val_eta2_weighted": train_metrics.get("train_eta2_weighted"),
-                    "val_delta_macro_pct": train_metrics.get("train_delta_macro_pct"),
+                    "val_eta2_macro_balanced_perc": train_metrics.get("train_eta2_macro_balanced_perc"),
                     "rankme_global": train_metrics.get("rankme_global"),
                     "c1_global": train_metrics.get("c1_global"),
                     "c10_global": train_metrics.get("c10_global"),
@@ -880,7 +882,7 @@ def run_training(
                 "loss_latent": row["loss_latent"],
                 "val_eta2_macro_balanced": row.get("val_eta2_macro_balanced"),
                 "val_eta2_weighted": row.get("val_eta2_weighted"),
-                "val_delta_macro_pct": row.get("val_delta_macro_pct"),
+                "val_eta2_macro_balanced_perc": row.get("val_eta2_macro_balanced_perc"),
                 "rankme_global": row.get("rankme_global"),
                 "c1_global": row.get("c1_global"),
                 "c10_global": row.get("c10_global"),
@@ -937,7 +939,9 @@ def run_training(
     save_config_resolved(config_payload, layout["root"])
     save_json(config_payload, layout["configs"] / "config.json")
     return {
-        "delta_macro_pct": best_score if args.best_checkpoint_metric == "delta_macro_pct" else float("nan"),
+        "eta2_macro_balanced_perc": best_score
+        if args.best_checkpoint_metric == "eta2_macro_balanced_perc"
+        else float("nan"),
         "val_eta2_macro_balanced": float(config_payload.get("val_eta2_macro_balanced", float("nan"))),
         "best_checkpoint_score": best_score,
         "best_checkpoint_epoch": best_epoch,

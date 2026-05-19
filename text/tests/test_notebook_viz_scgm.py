@@ -33,7 +33,7 @@ def test_plot_kfold_metrics_bars(tmp_path):
     df = pd.DataFrame(
         {
             "fold_id": [0, 1, 2, 3, 4],
-            "delta_macro_pct": [10.0, 12.0, 11.0, 9.5, 10.5],
+            "eta2_macro_balanced_perc": [10.0, 12.0, 11.0, 9.5, 10.5],
             "val_eta2_macro_balanced": [0.5, 0.52, 0.48, 0.51, 0.49],
             "rankme_global": [8.0, 8.2, 7.9, 8.1, 8.0],
             "c1_global": [0.3, 0.31, 0.29, 0.3, 0.3],
@@ -64,7 +64,7 @@ def test_plot_kfold_val_curves(tmp_path):
         log = pd.DataFrame(
             {
                 "epoch": [1, 2, 3],
-                "val_delta_macro_pct": [5.0 + fold_id, 6.0, 7.0],
+                "val_eta2_macro_balanced_perc": [5.0 + fold_id, 6.0, 7.0],
                 "val_eta2_macro_balanced": [0.4, 0.45, 0.5],
             }
         )
@@ -88,7 +88,7 @@ def test_plot_kfold_val_curves(tmp_path):
 
 def test_plot_kfold_summary_errorbars(tmp_path):
     summary = pd.DataFrame(
-        [{"mean_delta_macro_pct": 10.0, "std_delta_macro_pct": 1.0, "mean_rankme_global": 8.0, "std_rankme_global": 0.2}]
+        [{"mean_eta2_macro_balanced_perc": 10.0, "std_eta2_macro_balanced_perc": 1.0, "mean_rankme_global": 8.0, "std_rankme_global": 0.2}]
     )
     fig_dir = tmp_path / "figures"
     fig_dir.mkdir()

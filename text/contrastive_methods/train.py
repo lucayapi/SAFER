@@ -45,7 +45,7 @@ def run_contrastive_method(method_name: str, argv: Optional[List[str]] = None) -
     if result.val_geometry:
         print(
             f"[{method_name}] Meilleur val {cfg.selection_metric}: "
-            f"{result.best_delta_macro_pct:.2f}"
+            f"{result.best_eta2_macro_balanced_perc:.2f}"
         )
     ckpt = result.output_root / "checkpoints" / "best_model"
     if ckpt.exists() and cfg.test_data_csv.is_file():

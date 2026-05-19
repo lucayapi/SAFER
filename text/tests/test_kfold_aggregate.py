@@ -14,14 +14,14 @@ from safer_core.kfold_eval import aggregate_fold_rows, group_kfold_splits
 
 def test_aggregate_fold_rows_mean_std():
     rows = [
-        {"fold_id": 0, "delta_macro_pct": 10.0, "rankme_global": 5.0},
-        {"fold_id": 1, "delta_macro_pct": 20.0, "rankme_global": 7.0},
+        {"fold_id": 0, "eta2_macro_balanced_perc": 10.0, "rankme_global": 5.0},
+        {"fold_id": 1, "eta2_macro_balanced_perc": 20.0, "rankme_global": 7.0},
     ]
     agg = aggregate_fold_rows(rows)
     assert agg["n_folds"] == 2
-    assert abs(agg["mean_delta_macro_pct"] - 15.0) < 1e-6
-    assert agg["selection_score"] == agg["mean_delta_macro_pct"]
-    assert agg["std_delta_macro_pct"] > 0
+    assert abs(agg["mean_eta2_macro_balanced_perc"] - 15.0) < 1e-6
+    assert agg["selection_score"] == agg["mean_eta2_macro_balanced_perc"]
+    assert agg["std_eta2_macro_balanced_perc"] > 0
 
 
 def test_group_kfold_splits():

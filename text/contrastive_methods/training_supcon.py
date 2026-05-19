@@ -54,7 +54,7 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
-            "best_delta_macro_pct": best_score,
+            "best_eta2_macro_balanced_perc": best_score,
             "embeddings": str(emb_path),
         },
         root,
@@ -63,6 +63,6 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
         embeddings_path=emb_path,
         output_root=root,
         val_geometry=val_geometry,
-        best_delta_macro_pct=best_score,
+        best_eta2_macro_balanced_perc=best_score,
         train_log_path=metrics_dir / "train_log.csv",
     )

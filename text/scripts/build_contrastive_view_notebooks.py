@@ -58,7 +58,7 @@ train_log = RESULTS / "metrics" / "train_log.csv"
 if train_log.is_file():
     tl = pd.read_csv(train_log)
     display(tl.tail(10))
-    ycol = "val_delta_macro_pct" if "val_delta_macro_pct" in tl.columns else "val_loss"
+    ycol = "val_eta2_macro_balanced_perc" if "val_eta2_macro_balanced_perc" in tl.columns else "val_loss"
     if ycol in tl.columns:
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.plot(tl["epoch"], tl[ycol], marker="o", label=ycol)
@@ -81,7 +81,7 @@ if tuning_summary.is_file():
         fig, ax = plt.subplots(figsize=(8, 4))
         top = tdf.sort_values("selection_score", ascending=False).head(min(12, len(tdf)))
         ax.barh(top["combo_id"].astype(str), top["selection_score"].astype(float))
-        ax.set_xlabel("δ_macro (%) = selection_score")
+        ax.set_xlabel("η² macro balanced (%) = selection_score")
         ax.set_title(f"{{DISPLAY_NAME}} — grille tuning")
         plt.tight_layout()
         plt.show()
@@ -110,10 +110,10 @@ if kfold_summary.is_file():
     print("\\n=== K-fold validation (μ±σ) ===")
     kval = pd.read_csv(kfold_summary)
     display(kval)
-    if "mean_delta_macro_pct" in kval.columns:
-        m = float(kval["mean_delta_macro_pct"].iloc[0])
-        s = float(kval.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
-        print(f"δ_macro val : {{m:.2f}} ± {{s:.2f}} %")
+    if "mean_eta2_macro_balanced_perc" in kval.columns:
+        m = float(kval["mean_eta2_macro_balanced_perc"].iloc[0])
+        s = float(kval.get("std_eta2_macro_balanced_perc", pd.Series([0])).iloc[0])
+        print(f"η² macro balanced (%) val : {{m:.2f}} ± {{s:.2f}}")
 
 for corpus, stem in (("BTP (in-domain, modèle final)", "btp"), ("Test métallurgie (modèle final)", "test")):
     geom_csv = RESULTS / "metrics" / f"metrics_geometry_{{stem}}.csv"
@@ -123,7 +123,13 @@ for corpus, stem in (("BTP (in-domain, modèle final)", "btp"), ("Test métallur
         geom = pd.read_csv(geom_csv)
         print(f"\\n=== Géométrie {{corpus}} ===")
         display(geom)
-        for col in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
+        for col in (
+            "eta2_macro_balanced_perc",
+            "eta2_macro_balanced",
+            "rankme_global",
+            "c1_global",
+            "c10_global",
+        ):
             if col in geom.columns and geom[col].notna().any():
                 fig, ax = plt.subplots(figsize=(6, 3))
                 ax.bar(geom["method"].astype(str), geom[col].astype(float))

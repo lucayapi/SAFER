@@ -70,12 +70,12 @@ def test_build_geometry_metrics_row_has_rankme():
     assert row["method"] == "SCGM"
     assert "rankme_global" in row
     assert "eta2_macro_balanced" in row
-    assert "delta_macro_pct" in row
+    assert "eta2_macro_balanced_perc" in row
 
 
-def test_delta_macro_pct_is_100_times_eta2():
+def test_eta2_macro_balanced_perc_is_100_times_eta2():
     z = np.random.default_rng(4).normal(size=(40, 8))
     labels = ["A0"] * 10 + ["A1"] * 10 + ["B"] * 10 + ["C"] * 10
     row = build_geometry_metrics_row(z, labels, method="test")
     eta2 = row["eta2_macro_balanced"]
-    assert abs(row["delta_macro_pct"] - 100.0 * eta2) < 1e-6
+    assert abs(row["eta2_macro_balanced_perc"] - 100.0 * eta2) < 1e-6

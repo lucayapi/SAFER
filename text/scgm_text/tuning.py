@@ -85,7 +85,9 @@ def _run_combo(
     metrics = run_training(combo_args)
     run_post_train_eval(combo_args)
     return {
-        "selection_score": metrics.get("delta_macro_pct", metrics.get("best_checkpoint_score")),
+        "selection_score": metrics.get(
+            "eta2_macro_balanced_perc", metrics.get("best_checkpoint_score")
+        ),
         **metrics,
     }
 
@@ -103,7 +105,7 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     base_config = TEXT_ROOT / str(spec.get("base_config", "configs/scgm_text_strict_fidelity.yaml"))
     grid = spec.get("grid") or {}
     n_folds = int(spec.get("n_folds", 5))
-    selection_metric = str(spec.get("selection_metric", "delta_macro_pct"))
+    selection_metric = str(spec.get("selection_metric", "eta2_macro_balanced_perc"))
     tuning_output = str(spec.get("output_dir", "resultats/scgm_text/tuning"))
     final_output = str(spec.get("final_output_dir", "resultats/scgm_text"))
 

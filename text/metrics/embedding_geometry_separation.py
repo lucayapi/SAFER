@@ -12,10 +12,35 @@ from scgm_text.metrics import pca_energy_c1_c10, rankme_effective_rank
 
 MACRO_NAMES: Tuple[str, ...] = ("A0", "A1", "B", "C")
 
+PRIMARY_SELECTION_METRIC = "eta2_macro_balanced_perc"
+
+GEOMETRY_METRIC_KEYS: Tuple[str, ...] = (
+    "eta2_macro_balanced",
+    "eta2_macro_balanced_perc",
+    "eta2_weighted",
+    "T_macro_balanced",
+    "W_macro_balanced",
+    "B_macro_balanced",
+    "T_weighted",
+    "W_weighted",
+    "B_weighted",
+    "W_A0",
+    "n_A0",
+    "W_A1",
+    "n_A1",
+    "W_B",
+    "n_B",
+    "W_C",
+    "n_C",
+    "rankme_global",
+    "c1_global",
+    "c10_global",
+)
+
 METRICS_TABLE_COLUMNS: List[str] = [
     "method",
     "eta2_macro_balanced",
-    "delta_macro_pct",
+    "eta2_macro_balanced_perc",
     "eta2_weighted",
     "T_macro_balanced",
     "W_macro_balanced",
@@ -246,9 +271,9 @@ def build_geometry_metrics_row(
 
     eta2 = row.get("eta2_macro_balanced", float("nan"))
     if np.isfinite(eta2):
-        row["delta_macro_pct"] = float(100.0 * eta2)
+        row["eta2_macro_balanced_perc"] = float(100.0 * eta2)
     else:
-        row["delta_macro_pct"] = float("nan")
+        row["eta2_macro_balanced_perc"] = float("nan")
 
     ordered: Dict[str, Any] = {"method": method}
     for col in METRICS_TABLE_COLUMNS:

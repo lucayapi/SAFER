@@ -32,8 +32,8 @@ def test_run_kfold_loop_mock_two_folds(tmp_path):
         return TrainingResult(
             embeddings_path=Path(fold_cfg.output_dir) / "emb.csv",
             output_root=Path(fold_cfg.output_dir),
-            val_geometry={"delta_macro_pct": score, "eta2_macro_balanced": score / 100.0},
-            best_delta_macro_pct=score,
+            val_geometry={"eta2_macro_balanced_perc": score, "eta2_macro_balanced": score / 100.0},
+            best_eta2_macro_balanced_perc=score,
         )
 
     splits = [(np.array([0, 1]), np.array([2])), (np.array([2]), np.array([0, 1]))]
@@ -42,11 +42,11 @@ def test_run_kfold_loop_mock_two_folds(tmp_path):
         with patch("contrastive_methods.kfold_train.get_group_kfold_splits", return_value=splits):
             mock_ds.return_value = MagicMock()
             fold_rows, agg = run_kfold_loop(cfg, fake_runner, save_tables=True)
-    assert "test_delta_macro_pct" not in fold_rows[0]
+    assert "test_eta2_macro_balanced_perc" not in fold_rows[0]
 
     assert len(fold_rows) == 2
     assert agg["n_folds"] == 2
-    assert abs(agg["mean_delta_macro_pct"] - 10.5) < 1e-6
+    assert abs(agg["mean_eta2_macro_balanced_perc"] - 10.5) < 1e-6
     summary = tmp_path / "run" / "metrics" / "kfold_summary.csv"
     assert summary.is_file()
 
@@ -59,4 +59,4 @@ def test_methods_yaml_n_folds_is_five():
         TEXT_ROOT / "configs/methods/batch_triplet.yaml",
     )
     assert cfg.n_folds == 5
-    assert cfg.selection_metric == "delta_macro_pct"
+    assert cfg.selection_metric == "eta2_macro_balanced_perc"

@@ -564,9 +564,9 @@ def plot_evaluation_geometry_dashboard(
     eta_cols = ("eta2_macro_balanced", "eta2_weighted")
     missing_eta = [c for c in eta_cols if c not in metrics_table.columns]
     if missing_eta:
-        if "delta_macro_pct" not in metrics_table.columns and "eta2_macro_balanced" not in metrics_table.columns:
+        if "eta2_macro_balanced_perc" not in metrics_table.columns and "eta2_macro_balanced" not in metrics_table.columns:
             raise KeyError(
-                "Colonnes delta_macro_pct / eta2_macro_balanced absentes. "
+                "Colonnes eta2_macro_balanced_perc / eta2_macro_balanced absentes. "
                 "Relancez l'évaluation ou le post-traitement contrastif."
             )
         raise KeyError(
@@ -804,7 +804,7 @@ def display_plotly_html(html_path: PathLike) -> None:
 
 
 _KFOLD_BAR_METRICS: Tuple[str, ...] = (
-    "delta_macro_pct",
+    "eta2_macro_balanced_perc",
     "eta2_macro_balanced",
     "rankme_global",
     "c1_global",
@@ -860,7 +860,7 @@ def plot_kfold_val_curves(
     folds_subdir: str = "folds",
     log_name: str = "train_log.csv",
 ) -> Optional[Path]:
-    """Courbes val_delta_macro_pct (et η²) vs epoch, une ligne par fold."""
+    """Courbes val_eta2_macro_balanced_perc (et η²) vs epoch, une ligne par fold."""
     import matplotlib.pyplot as plt
 
     root = Path(output_path)
@@ -879,10 +879,10 @@ def plot_kfold_val_curves(
             continue
         fold_id = fold_dir.name.replace("fold_", "")
         has_any = True
-        if "val_delta_macro_pct" in log.columns:
+        if "val_eta2_macro_balanced_perc" in log.columns:
             axes[0].plot(
                 log["epoch"],
-                log["val_delta_macro_pct"],
+                log["val_eta2_macro_balanced_perc"],
                 marker="o",
                 markersize=3,
                 label=f"fold {fold_id}",

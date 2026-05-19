@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.eval_geometry import evaluate_hf_val_geometry, selection_score
+from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row
 from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.losses.softtriple import (
     HFTextEncoder,
@@ -155,28 +156,31 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
                 encoder, loss_module, val_loader, optimizer, dev, train=False
             )
             geom = evaluate_hf_val_geometry(encoder, val_df, cfg, dataset.text_col, device)
-            val_delta = float(geom.get("delta_macro_pct", float("nan")))
             score = selection_score(geom, cfg.selection_metric)
             log_rows.append(
-                {
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "val_delta_macro_pct": val_delta,
-                    "val_eta2_macro_balanced": geom.get("eta2_macro_balanced"),
-                    "val_rankme_global": geom.get("rankme_global"),
-                }
+                build_train_log_row(
+                    epoch + 1,
+                    train_loss,
+                    val_geometry=geom,
+                    val_loss=val_loss,
+                )
             )
             if score > best_score:
                 best_score = score
                 best_geometry = dict(geom)
                 _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
         else:
-            log_rows.append({"epoch": epoch + 1, "train_loss": train_loss})
+            log_rows.append(build_train_log_row(epoch + 1, train_loss))
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
 
     metrics_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(log_rows).to_csv(metrics_dir / "train_log.csv", index=False)
+    log_df = pd.DataFrame(log_rows)
+    for col in TRAIN_LOG_COLUMNS:
+        if col not in log_df.columns:
+            log_df[col] = None
+    log_df[[c for c in TRAIN_LOG_COLUMNS if c in log_df.columns]].to_csv(
+        metrics_dir / "train_log.csv", index=False
+    )
 
     ckpt_path = best_dir / "hf_model.bin"
     try:
@@ -203,7 +207,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
-            "best_delta_macro_pct": best_score,
+            "best_eta2_macro_balanced_perc": best_score,
             "embeddings": str(emb_path),
         },
         root,
@@ -212,6 +216,6 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         embeddings_path=emb_path,
         output_root=root,
         val_geometry=best_geometry,
-        best_delta_macro_pct=best_score,
+        best_eta2_macro_balanced_perc=best_score,
         train_log_path=metrics_dir / "train_log.csv",
     )

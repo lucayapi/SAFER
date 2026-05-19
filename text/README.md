@@ -100,7 +100,7 @@ python scripts/postprocess_contrastive_results.py --method batch_triplet
 # 5. Embeddings test (Qwen figé) — inclus dans postprocess ; manuel :
 python scripts/export_test_embeddings.py  # → embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
 
-# 6. Tuning K-fold (sélection sur mean δ_macro %)
+# 6. Tuning K-fold (sélection sur mean eta2_macro_balanced_perc)
 sbatch jobs/tune_scgm_text.sh
 sbatch jobs/tune_batch_triplet.sh
 # Sorties : resultats/<method>/tuning/grid_summary.csv, best_combo.json
@@ -246,7 +246,7 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 ## Méthodes contrastives
 
-**Métrique principale** : δ_macro (%) = `delta_macro_pct` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
+**Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
 **Distance d'entraînement** (défaut `training.distance_metric: euclidean`) : SupCon (−‖z_i−z_j‖²/τ), SoftTriple (−‖z−c‖² vers centroïdes), batch triplet (`BatchHardSoftMarginTripletLoss` euclidienne). Les métriques val/export restent η² sur distance euclidienne² (embeddings L2-normalisés à l'encode).
 
@@ -268,12 +268,17 @@ YAML dédiés sous `configs/tuning/` (ne modifient pas les configs `methods/`) :
 ```bash
 python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_grid.yaml
 # ou : sbatch jobs/tune_batch_triplet.sh
+# Limiter la grille : --max-combos 8
 ```
+
+Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`, `softtriple.gamma`, `training.distance_metric`, etc.). Chaque YAML inclut les hyperparamètres method-specific essentiels (distance euclidienne par défaut, température SupCon, γ/λ SoftTriple, …).
+
+**Log d'entraînement** : `metrics/train_log.csv` — `epoch`, `train_loss`, `val_loss` (SoftTriple), puis `val_{k}` pour chaque `k` dans `GEOMETRY_METRIC_KEYS` (aligné sur `metrics_geometry_*.csv`). Plus de repli vers le log Hugging Face brut (`grad_norm`, `step`, …).
 
 Sorties tuning : `resultats/<method>/tuning/grid_summary.csv`, `best_combo.json`, `combos/<combo_id>/`.  
 Après tuning : réentraînement sur tout le corpus → `resultats/<method>/embeddings/final_embeddings.csv`.
 
-Package : `contrastive_methods/` (`train.py`, `tuning.py`, `training_*.py`, `eval_geometry.py`).
+Package : `contrastive_methods/` (`train.py`, `tuning.py`, `training_*.py`, `eval_geometry.py`, `training_log.py`).
 
 ## Tests
 

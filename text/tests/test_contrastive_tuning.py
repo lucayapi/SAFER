@@ -32,5 +32,5 @@ def test_merge_config_dotted():
 
 
 def test_selection_score_nan():
-    assert selection_score({"delta_macro_pct": float("nan")}) == float("-inf")
-    assert selection_score({"delta_macro_pct": 42.0}) == 42.0
+    assert selection_score({"eta2_macro_balanced_perc": float("nan")}) == float("-inf")
+    assert selection_score({"eta2_macro_balanced_perc": 42.0}) == 42.0

@@ -77,6 +77,8 @@ def main() -> None:
         return
 
     df = pd.DataFrame(rows)
+    if "eta2_macro_balanced_perc" not in df.columns and "delta_macro_pct" in df.columns:
+        df["eta2_macro_balanced_perc"] = df["delta_macro_pct"]
     for col in METRICS_TABLE_COLUMNS:
         if col not in df.columns:
             df[col] = float("nan") if col not in ("method", "macros_ignored", "macros_valid") else ""

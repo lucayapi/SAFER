@@ -2,7 +2,7 @@ method_name: softtriple
 base_config: configs/methods/softtriple.yaml
 output_dir: resultats/softtriple/tuning
 final_output_dir: resultats/softtriple
-selection_metric: delta_macro_pct
+selection_metric: eta2_macro_balanced_perc
 n_folds: 5
 test_dataset_path: dataset/test/data_metallurgie.csv
 final_fit_full_data: true
@@ -11,5 +11,9 @@ grid:
   training.learning_rate: [1.0e-5, 2.0e-5]
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
-  softtriple.gamma: [0.1]
-  softtriple.lambda: [10.0]
+  training.distance_metric: [euclidean]
+  softtriple.gamma: [0.1, 0.2]
+  softtriple.lambda: [5.0, 10.0]
+  softtriple.delta: [0.01]
+  softtriple.tau: [0.01]
+  softtriple.centers_per_class: [5]

@@ -16,6 +16,11 @@ from transformers import TrainerCallback
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.eval_geometry import evaluate_st_val_geometry, selection_score
+from contrastive_methods.training_log import (
+    TRAIN_LOG_COLUMNS,
+    build_train_log_row,
+    mean_train_loss_for_epoch,
+)
 
 
 def get_device() -> str:
@@ -38,8 +43,8 @@ def dataframe_to_hf_dataset(df: pd.DataFrame, text_col: str) -> Dataset:
     )
 
 
-class GeometrySelectionCallback(TrainerCallback):
-    """Sélection du meilleur checkpoint sur val delta_macro_pct (100×η²)."""
+class ContrastiveEpochCallback(TrainerCallback):
+    """Log epoch (train_loss + val géométrie) et sélection best_model sur δ_macro val."""
 
     def __init__(
         self,
@@ -49,6 +54,8 @@ class GeometrySelectionCallback(TrainerCallback):
         cfg: ContrastiveConfig,
         best_model_dir: Path,
         log_rows: List[Dict[str, Any]],
+        *,
+        use_val_geometry: bool,
     ) -> None:
         self.model = model
         self.val_df = val_df
@@ -56,35 +63,29 @@ class GeometrySelectionCallback(TrainerCallback):
         self.cfg = cfg
         self.best_model_dir = best_model_dir
         self.log_rows = log_rows
+        self.use_val_geometry = use_val_geometry
         self.best_score = float("-inf")
         self.best_geometry: Dict[str, Any] = {}
 
     def on_epoch_end(self, args, state, control, **kwargs):
         epoch = int(state.epoch) if state.epoch is not None else len(self.log_rows) + 1
-        row = evaluate_st_val_geometry(self.model, self.val_df, self.cfg, self.text_col)
-        score = selection_score(row, self.cfg.selection_metric)
-        train_loss = None
-        if state.log_history:
-            for entry in reversed(state.log_history):
-                if "loss" in entry and "eval" not in entry:
-                    train_loss = entry.get("loss")
-                    break
+        train_loss = mean_train_loss_for_epoch(state.log_history, epoch)
+
+        val_geometry: Optional[Dict[str, Any]] = None
+        if self.use_val_geometry and len(self.val_df) > 0:
+            val_geometry = evaluate_st_val_geometry(
+                self.model, self.val_df, self.cfg, self.text_col
+            )
+            score = selection_score(val_geometry, self.cfg.selection_metric)
+            if score > self.best_score:
+                self.best_score = score
+                self.best_geometry = dict(val_geometry)
+                self.best_model_dir.mkdir(parents=True, exist_ok=True)
+                self.model.save_pretrained(str(self.best_model_dir))
+
         self.log_rows.append(
-            {
-                "epoch": epoch,
-                "train_loss": train_loss,
-                "val_delta_macro_pct": row.get("delta_macro_pct"),
-                "val_eta2_macro_balanced": row.get("eta2_macro_balanced"),
-                "val_rankme_global": row.get("rankme_global"),
-                "val_c1_global": row.get("c1_global"),
-                "val_c10_global": row.get("c10_global"),
-            }
+            build_train_log_row(epoch, train_loss, val_geometry=val_geometry)
         )
-        if score > self.best_score:
-            self.best_score = score
-            self.best_geometry = dict(row)
-            self.best_model_dir.mkdir(parents=True, exist_ok=True)
-            self.model.save_pretrained(str(self.best_model_dir))
         return control
 
 
@@ -167,10 +168,18 @@ def train_st_model(
     best_dir = checkpoints_dir / "best_model"
     best_dir.mkdir(parents=True, exist_ok=True)
     log_rows: List[Dict[str, Any]] = []
-    callbacks = []
-    if use_eval:
+    callbacks: List[TrainerCallback] = []
+    if train_log_path is not None:
         callbacks.append(
-            GeometrySelectionCallback(model, val_df, text_col, cfg, best_dir, log_rows)
+            ContrastiveEpochCallback(
+                model,
+                val_df,
+                text_col,
+                cfg,
+                best_dir,
+                log_rows,
+                use_val_geometry=use_eval,
+            )
         )
 
     trainer = SentenceTransformerTrainer(
@@ -182,22 +191,25 @@ def train_st_model(
     )
     trainer.train()
 
+    best_geometry: Dict[str, Any] = {}
+    best_score = float("nan")
     if use_eval and callbacks:
-        cb: GeometrySelectionCallback = callbacks[0]
+        cb: ContrastiveEpochCallback = callbacks[0]  # type: ignore[assignment]
         best_geometry = cb.best_geometry
         best_score = cb.best_score
         if best_geometry:
             model = SentenceTransformer(str(best_dir), trust_remote_code=True)
     else:
         model.save_pretrained(str(best_dir))
-        best_geometry = {}
-        best_score = float("nan")
 
     if train_log_path is not None:
         train_log_path.parent.mkdir(parents=True, exist_ok=True)
-    if train_log_path is not None and log_rows:
-        pd.DataFrame(log_rows).to_csv(train_log_path, index=False)
-    elif train_log_path is not None and trainer.state.log_history:
-        pd.DataFrame(trainer.state.log_history).to_csv(train_log_path, index=False)
+        if log_rows:
+            df = pd.DataFrame(log_rows)
+            for col in TRAIN_LOG_COLUMNS:
+                if col not in df.columns:
+                    df[col] = None
+            df = df[[c for c in TRAIN_LOG_COLUMNS if c in df.columns]]
+            df.to_csv(train_log_path, index=False)
 
     return model, best_geometry, best_score

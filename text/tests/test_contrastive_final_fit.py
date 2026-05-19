@@ -26,7 +26,7 @@ def test_run_contrastive_final_fit_and_eval_calls_eval_once(tmp_path):
     fake_result = TrainingResult(
         embeddings_path=tmp_path / "emb.csv",
         output_root=tmp_path / "run",
-        best_delta_macro_pct=42.0,
+        best_eta2_macro_balanced_perc=42.0,
     )
     ckpt_dir = tmp_path / "run" / "checkpoints" / "best_model"
     ckpt_dir.mkdir(parents=True)

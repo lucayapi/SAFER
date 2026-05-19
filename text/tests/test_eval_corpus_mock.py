@@ -20,7 +20,7 @@ def test_evaluate_embeddings_geometry_columns():
     emb = rng.standard_normal((40, 8)).astype(np.float32)
     labels = np.array(["A"] * 20 + ["B"] * 20)
     row = evaluate_embeddings_geometry(emb, labels, method="mock")
-    for col in ("delta_macro_pct", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
+    for col in ("eta2_macro_balanced_perc", "eta2_macro_balanced", "rankme_global", "c1_global", "c10_global"):
         assert col in row
 
 
@@ -55,4 +55,4 @@ def test_evaluate_contrastive_on_csv_mock(mock_dataset, mock_load_model, tmp_pat
         tmp_path / "data.csv",
         corpus="btp",
     )
-    assert "delta_macro_pct" in row
+    assert "eta2_macro_balanced_perc" in row

@@ -141,7 +141,7 @@ def display_df_for_paper(df: pd.DataFrame, name: str) -> Path:
 
 GEOM_DISPLAY_COLS = [
     "eta2_macro_balanced",
-    "delta_macro_pct",
+    "eta2_macro_balanced_perc",
     "eta2_weighted",
     "rankme_global",
     "c1_global",
@@ -390,10 +390,10 @@ Validation croisée sur le **BTP** (groupes `accident_id`). Distinct du corpus *
 KFOLD_TABLES_SOURCE = """if kfold_summary is not None:
     print("=== K-fold — résumé μ±σ ===")
     display(kfold_summary)
-    if "mean_delta_macro_pct" in kfold_summary.columns and len(kfold_summary) == 1:
-        m = float(kfold_summary["mean_delta_macro_pct"].iloc[0])
-        s = float(kfold_summary.get("std_delta_macro_pct", pd.Series([0])).iloc[0])
-        print(f"  δ_macro val : {m:.2f} ± {s:.2f} %")
+    if "mean_eta2_macro_balanced_perc" in kfold_summary.columns and len(kfold_summary) == 1:
+        m = float(kfold_summary["mean_eta2_macro_balanced_perc"].iloc[0])
+        s = float(kfold_summary.get("std_eta2_macro_balanced_perc", pd.Series([0])).iloc[0])
+        print(f"  η² macro balanced (%) val : {m:.2f} ± {s:.2f}")
 else:
     print(f"(absent) {KFOLD_SUMMARY}")
 

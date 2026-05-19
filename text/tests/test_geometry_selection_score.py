@@ -13,6 +13,6 @@ from contrastive_methods.eval_geometry import selection_score
 
 
 def test_selection_score_prefers_higher_delta():
-    low = {"delta_macro_pct": 10.0}
-    high = {"delta_macro_pct": 40.0}
+    low = {"eta2_macro_balanced_perc": 10.0}
+    high = {"eta2_macro_balanced_perc": 40.0}
     assert selection_score(high) > selection_score(low)

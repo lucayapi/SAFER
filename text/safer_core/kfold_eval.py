@@ -8,14 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-GEOMETRY_METRIC_KEYS: Tuple[str, ...] = (
-    "delta_macro_pct",
-    "eta2_macro_balanced",
-    "eta2_weighted",
-    "rankme_global",
-    "c1_global",
-    "c10_global",
-)
+from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
 
 
 def group_kfold_splits(
@@ -52,8 +45,9 @@ def aggregate_fold_rows(
     fold_rows: List[Dict[str, Any]],
     *,
     metric_keys: Sequence[str] = GEOMETRY_METRIC_KEYS,
+    selection_metric: str = PRIMARY_SELECTION_METRIC,
 ) -> Dict[str, Any]:
-    """Agrège des lignes par fold → mean/std + selection_score (mean delta_macro_pct)."""
+    """Agrège des lignes par fold → mean/std + selection_score (mean du critère principal)."""
     if not fold_rows:
         return {}
     df = pd.DataFrame(fold_rows)
@@ -68,8 +62,9 @@ def aggregate_fold_rows(
         else:
             out[f"mean_{key}"] = float(vals.mean())
             out[f"std_{key}"] = float(vals.std(ddof=1)) if len(vals) > 1 else 0.0
-    if "mean_delta_macro_pct" in out:
-        out["selection_score"] = out["mean_delta_macro_pct"]
+    mean_sel = f"mean_{selection_metric}"
+    if mean_sel in out:
+        out["selection_score"] = out[mean_sel]
     return out
 
 
@@ -82,8 +77,7 @@ def extract_test_metric_rows(fold_rows: List[Dict[str, Any]]) -> List[Dict[str, 
             test_key = f"test_{key}"
             if test_key in row:
                 entry[key] = row[test_key]
-        if len(entry) > 1:
-            out.append(entry)
+        out.append(entry)
     return out
 
 
@@ -92,18 +86,13 @@ def save_kfold_tables(
     metrics_dir,
     *,
     prefix: str = "kfold",
-) -> Tuple[Any, Any]:
+    selection_metric: str = PRIMARY_SELECTION_METRIC,
+) -> None:
+    """Écrit kfold_per_fold.csv et kfold_summary.csv."""
     from pathlib import Path
 
-    from safer_core.io import ensure_dir
-
     metrics_dir = Path(metrics_dir)
-    ensure_dir(metrics_dir)
-    per_fold = pd.DataFrame(fold_rows)
-    per_fold_path = metrics_dir / f"{prefix}_per_fold.csv"
-    per_fold.to_csv(per_fold_path, index=False)
-    summary = aggregate_fold_rows(fold_rows)
-    summary_df = pd.DataFrame([summary])
-    summary_path = metrics_dir / f"{prefix}_summary.csv"
-    summary_df.to_csv(summary_path, index=False)
-    return per_fold_path, summary_path
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(fold_rows).to_csv(metrics_dir / f"{prefix}_per_fold.csv", index=False)
+    summary = aggregate_fold_rows(fold_rows, selection_metric=selection_metric)
+    pd.DataFrame([summary]).to_csv(metrics_dir / f"{prefix}_summary.csv", index=False)

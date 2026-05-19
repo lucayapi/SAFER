@@ -14,11 +14,11 @@ from safer_core.kfold_eval import aggregate_fold_rows, extract_test_metric_rows
 
 def test_extract_test_metric_rows():
     fold_rows = [
-        {"fold_id": 0, "delta_macro_pct": 10.0, "test_delta_macro_pct": 5.0},
-        {"fold_id": 1, "delta_macro_pct": 20.0, "test_delta_macro_pct": 15.0},
+        {"fold_id": 0, "eta2_macro_balanced_perc": 10.0, "test_eta2_macro_balanced_perc": 5.0},
+        {"fold_id": 1, "eta2_macro_balanced_perc": 20.0, "test_eta2_macro_balanced_perc": 15.0},
     ]
     test_rows = extract_test_metric_rows(fold_rows)
     assert len(test_rows) == 2
-    assert test_rows[0]["delta_macro_pct"] == 5.0
+    assert test_rows[0]["eta2_macro_balanced_perc"] == 5.0
     agg = aggregate_fold_rows(test_rows)
-    assert abs(agg["mean_delta_macro_pct"] - 10.0) < 1e-6
+    assert abs(agg["mean_eta2_macro_balanced_perc"] - 10.0) < 1e-6

@@ -9,31 +9,11 @@ import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset
-from contrastive_methods.eval_geometry import evaluate_embeddings_geometry
-from contrastive_methods.export import export_st_embeddings, embeddings_to_dataframe
+from contrastive_methods.eval_geometry import encode_contrastive_texts, evaluate_embeddings_geometry
+from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.metrics import METHOD_DISPLAY
 from safer_core.io import save_metrics_geometry
 from safer_core.paths import layout_method_output
-
-
-def _load_st_model(checkpoint_dir: Path, cfg: ContrastiveConfig):
-    from sentence_transformers import SentenceTransformer
-
-    return SentenceTransformer(str(checkpoint_dir), trust_remote_code=True)
-
-
-def _load_softtriple_encoder(checkpoint_dir: Path, cfg: ContrastiveConfig, device: str):
-    import torch
-    from contrastive_methods.losses.softtriple import HFTextEncoder, encode_texts_with_hf_encoder
-
-    encoder = HFTextEncoder(cfg.backbone_name, gradient_checkpointing=False).to(device)
-    ckpt = checkpoint_dir / "hf_model.bin"
-    try:
-        state = torch.load(ckpt, map_location=device, weights_only=True)
-    except TypeError:
-        state = torch.load(ckpt, map_location=device)
-    encoder.encoder.load_state_dict(state)
-    return encoder, encode_texts_with_hf_encoder
 
 
 def evaluate_contrastive_on_csv(
@@ -63,27 +43,12 @@ def evaluate_contrastive_on_csv(
     labels = dataset.metadata_df[cfg.label_col].to_numpy()
     display = METHOD_DISPLAY.get(cfg.method_name, cfg.method_name)
 
-    if cfg.method_name == "softtriple":
-        from contrastive_methods.st_common import get_device
-
-        device = get_device()
-        encoder, encode_fn = _load_softtriple_encoder(checkpoint_dir, cfg, device)
-        emb = encode_fn(
-            encoder,
-            texts,
-            batch_size=cfg.encode_batch_size,
-            device=device,
-            max_length=cfg.max_seq_length,
-        )
-    else:
-        model = _load_st_model(checkpoint_dir, cfg)
-        emb = model.encode(
-            texts,
-            batch_size=cfg.encode_batch_size,
-            show_progress_bar=False,
-            normalize_embeddings=True,
-            convert_to_numpy=True,
-        )
+    emb = encode_contrastive_texts(
+        cfg,
+        texts,
+        checkpoint_dir=checkpoint_dir,
+        batch_size=cfg.encode_batch_size,
+    )
 
     if embeddings_out is not None:
         frame = embeddings_to_dataframe(dataset.metadata_df["doc_id"].to_numpy(), emb)

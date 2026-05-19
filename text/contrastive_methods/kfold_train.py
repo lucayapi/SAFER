@@ -75,7 +75,7 @@ def run_kfold_loop(
         print(f"[{log_prefix}] fold {fold_id} → {fold_out}", flush=True)
         result = runner(fold_cfg)
         row: Dict[str, Any] = {"fold_id": fold_id, **(result.val_geometry or {})}
-        row["fold_selection_score"] = result.best_delta_macro_pct
+        row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
         fold_rows.append(row)
 
     agg = aggregate_fold_rows(fold_rows)
@@ -92,8 +92,8 @@ def run_contrastive_kfold(cfg: ContrastiveConfig) -> Dict[str, Any]:
     metrics_dir = Path(layout["metrics"])
     print(
         f"[{cfg.method_name}] K-fold val → {metrics_dir / 'kfold_summary.csv'} | "
-        f"mean_delta_macro_pct={agg.get('mean_delta_macro_pct', float('nan')):.2f} "
-        f"± {agg.get('std_delta_macro_pct', float('nan')):.2f}",
+        f"mean_eta2_macro_balanced_perc={agg.get('mean_eta2_macro_balanced_perc', float('nan')):.2f} "
+        f"± {agg.get('std_eta2_macro_balanced_perc', float('nan')):.2f}",
         flush=True,
     )
     return agg

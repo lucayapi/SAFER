@@ -50,7 +50,7 @@ class ContrastiveConfig:
     # distance (SupCon, SoftTriple, batch triplet)
     distance_metric: str = "euclidean"
     final_fit_full_data: bool = False
-    selection_metric: str = "delta_macro_pct"
+    selection_metric: str = "eta2_macro_balanced_perc"
     n_folds: int = 1
     test_dataset_path: Optional[Path] = None
     extra: Dict[str, Any] = field(default_factory=dict)
@@ -195,7 +195,7 @@ def load_contrastive_config(
             pick("final_fit_full_data", default=False, sources=(training, raw))
         ),
         selection_metric=str(
-            pick("selection_metric", default="delta_macro_pct", sources=(raw, training))
+            pick("selection_metric", default="eta2_macro_balanced_perc", sources=(raw, training))
         ),
         n_folds=int(pick("n_folds", default=1, sources=(raw, training))),
         test_dataset_path=(
