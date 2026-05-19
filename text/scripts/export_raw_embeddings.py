@@ -14,6 +14,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from metrics.embedding_dims import QWEN3_EMBEDDING_06B_DIM
 from metrics.geometry import build_geometry_metrics_row
 from safer_core.data_loading import load_metadata_with_embeddings
 from safer_core.io import ensure_dir, save_metrics_geometry
@@ -87,6 +88,7 @@ def main() -> None:
         emb,
         merged[args.label_col].to_numpy(),
         method=str(args.method_name),
+        embedding_dim=QWEN3_EMBEDDING_06B_DIM,
     )
     save_metrics_geometry(row, layout["metrics"])
     print(f"Métriques : {layout['metrics'] / 'metrics_geometry.csv'}")

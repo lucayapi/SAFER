@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import torch
 
+from metrics.embedding_dims import SCGM_DEFAULT_HIDIM
 from metrics.geometry import build_geometry_metrics_row
 from safer_core.io import save_metrics_geometry
 from safer_core.paths import TEXT_ROOT, layout_method_output
@@ -177,11 +178,13 @@ def evaluate_scgm_on_corpus(
         pred_ok_col=pred_ok_col,
         group_col=group_col,
     )
+    d = int(projected.shape[1]) if projected.ndim == 2 else SCGM_DEFAULT_HIDIM
     row = build_geometry_metrics_row(
         projected,
         labels,
         method=f"SCGM_{corpus}",
         l2_normalize=True,
+        embedding_dim=d,
     )
     if metrics_dir is not None:
         save_metrics_geometry(row, metrics_dir, stem=f"metrics_geometry_{corpus}")

@@ -106,9 +106,10 @@ sbatch jobs/tune_batch_triplet.sh
 # Sorties : resultats/<method>/tuning/grid_summary.csv, best_combo.json
 # Puis fit final 100 % BTP → metrics_geometry_btp.csv + metrics_geometry_test.csv
 
-# 7. Agrégation
+# 7. Agrégation (tableaux BTP + test → notebooks/01_compare_embedding_methods.ipynb)
 python scripts/collect_results.py
 python scripts/compare_methods.py
+python scripts/compare_methods.py --corpus test
 ```
 
 ### Évaluation BTP vs test
@@ -206,7 +207,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | Notebook | Rôle |
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
-| `01_compare_embedding_methods.ipynb` | Comparaison globale eta² / RankMe |
+| `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — deux tableaux (BTP + test métallurgie), η² / RankMe |
 | `01_scgm_text_experiment.ipynb` | **Lecture seule** — §3 chargement ; §4 K-fold (tables) ; §5 BTP ; §6 test (SCGM + raw). Après `postprocess_scgm_text.sh` (métriques raw BTP/test incluses). |
 | `02_malt_btp_to_mettalurgie_transfer.ipynb` | **Lecture seule** — analyse MALT à partir de `resultats/malt/` |
 | `03_compare_malt_bertopic_kmeans_topics.ipynb` | Qualité topics |
@@ -248,7 +249,12 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 **Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
-**Distance d'entraînement** (`training.distance_metric`, une seule clé par config) : **SupCon** = cosinus (`z_i·z_j/τ`, aligné `ftemb_supcon`) ; **SoftTriple** et **batch triplet** = euclidien par défaut. Les métriques val/export restent η² sur distance euclidienne² (embeddings L2-normalisés à l'encode).
+**Losses d'entraînement** :
+- **Batch triplet** : [`BatchHardSoftMarginTripletLoss`](https://sbert.net/docs/sentence_transformer/loss_overview.html) (Sentence Transformers) + sampler `GROUP_BY_LABEL` ; `training.distance_metric` = euclidien par défaut.
+- **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) (`SupConLoss`, cosinus L2, 1 vue par phrase) ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
+- **SoftTriple** : loss native ; euclidien par défaut.
+
+Les métriques val/export (η², RankMe) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
 
 ### SoftTriple — régularisation des centres et centres effectifs
 

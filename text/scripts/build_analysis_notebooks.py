@@ -26,36 +26,93 @@ def _nb(cells: list) -> dict:
     }
 
 
-COMPARE_01 = """
-import pandas as pd
+COMPARE_01_SETUP = """
+import os
+import sys
 from pathlib import Path
-import matplotlib.pyplot as plt
 
-ROOT = Path.cwd()
-if not (ROOT / "resultats").is_dir() and (ROOT / "text" / "resultats").is_dir():
-    ROOT = ROOT / "text"
-elif (ROOT / "text").is_dir() and not (ROOT / "resultats").is_dir():
-    ROOT = ROOT / "text"
+import pandas as pd
 
-table_path = ROOT / "resultats/comparisons/tables/embedding_geometry_comparison.csv"
-if not table_path.is_file():
+
+def _find_text_root(start: Path) -> Path:
+    \"\"\"Racine text/ (contient safer_core/ ou metrics/).\"\"\"
+    here = start.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / "safer_core" / "paths.py").is_file():
+            return candidate
+        nested = candidate / "text"
+        if (nested / "safer_core" / "paths.py").is_file():
+            return nested
+    return here
+
+
+ROOT = _find_text_root(Path.cwd())
+os.chdir(ROOT)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from metrics.compare_display import EMBEDDING_COMPARE_METHODS, METHOD_DISPLAY, slim_geometry_table
+
+TABLES = ROOT / "resultats/comparisons/tables"
+PATH_BTP = TABLES / "embedding_geometry_comparison_btp.csv"
+PATH_TEST = TABLES / "embedding_geometry_comparison_test.csv"
+EXPECTED = [METHOD_DISPLAY[k] for k in EMBEDDING_COMPARE_METHODS]
+
+if not PATH_BTP.is_file():
     raise FileNotFoundError(
-        "Lancez d'abord : python scripts/collect_results.py && python scripts/compare_methods.py"
+        "Lancez d'abord : python scripts/collect_results.py\\n"
+        f"  (attendu : {PATH_BTP})"
     )
 
-df = pd.read_csv(table_path)
-display(df)
+df_btp = pd.read_csv(PATH_BTP)
+df_test = pd.read_csv(PATH_TEST) if PATH_TEST.is_file() else pd.DataFrame()
 
-for col in ["eta2_macro_balanced", "eta2_weighted", "rankme_global"]:
-    if col in df.columns:
-        fig, ax = plt.subplots(figsize=(9, 4))
-        ax.bar(df["method"], df[col].astype(float))
-        ax.set_title(col)
-        plt.xticks(rotation=45, ha="right")
+for frame, corpus_name in [(df_btp, "BTP"), (df_test, "test métallurgie")]:
+    present = (
+        set(frame["method"].astype(str))
+        if not frame.empty and "method" in frame.columns
+        else set()
+    )
+    for name in EXPECTED:
+        if name not in present:
+            print(f"[absent] {name} — pas de métriques {corpus_name} (relancer fit final + éval)")
+"""
+
+COMPARE_01_DISPLAY = """
+import matplotlib.pyplot as plt
+
+print("## Corpus BTP (entraînement)")
+display(slim_geometry_table(df_btp))
+
+print("\\n## Corpus test — métallurgie")
+if df_test.empty:
+    print("(tableau test absent — python scripts/collect_results.py après éval test)")
+else:
+    display(slim_geometry_table(df_test))
+
+BAR_METRICS = [
+    ("eta2_macro_balanced_perc", "η² macro balancé (%)"),
+    ("rankme_over_d", "RankMe / d"),
+]
+
+def _barplot_corpus(df, title_prefix):
+    if df.empty:
+        return
+    for col, ylab in BAR_METRICS:
+        if col not in df.columns:
+            continue
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(df["method"].astype(str), df[col].astype(float))
+        ax.set_ylabel(ylab)
+        ax.set_title(f"{title_prefix} — {ylab}")
+        plt.xticks(rotation=30, ha="right")
         plt.tight_layout()
         plt.show()
 
-# Dans ce notebook : aucun entraînement — uniquement lecture de resultats/.
+_barplot_corpus(df_btp, "BTP")
+_barplot_corpus(df_test, "Test métallurgie")
+
+# Lecture seule — aucun entraînement.
 """
 
 CHECK_00 = """
@@ -92,11 +149,16 @@ def main() -> None:
                 [
                     _cell(
                         "# Comparaison des méthodes d'embedding\n\n"
-                        "Charge `resultats/comparisons/tables/embedding_geometry_comparison.csv`. "
+                        "Cinq lignes : **Embedding brut**, **Batch Triplet**, **SupCon**, "
+                        "**SoftTriple**, **SCGM** (BTP + test métallurgie).\n\n"
+                        "Prérequis : `python scripts/collect_results.py` "
+                        "(tableaux `embedding_geometry_comparison_btp.csv` et "
+                        "`embedding_geometry_comparison_test.csv`). "
                         "**Pas d'entraînement** dans ce notebook.",
                         "markdown",
                     ),
-                    _cell(COMPARE_01),
+                    _cell(COMPARE_01_SETUP),
+                    _cell(COMPARE_01_DISPLAY),
                 ]
             ),
             indent=1,

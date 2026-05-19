@@ -9,6 +9,7 @@ import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.export import dim_column_names
+from metrics.embedding_dims import QWEN3_EMBEDDING_06B_DIM
 from metrics.geometry import build_geometry_metrics_row
 from safer_core.io import save_metrics_geometry
 
@@ -35,6 +36,12 @@ def compute_and_save_geometry_metrics(
     emb = merged[dim_cols].to_numpy(dtype=float)
     labels = merged[cfg.label_col].to_numpy()
     display = METHOD_DISPLAY.get(cfg.method_name, cfg.method_name)
-    row = build_geometry_metrics_row(emb, labels, method=display, l2_normalize=True)
+    row = build_geometry_metrics_row(
+        emb,
+        labels,
+        method=display,
+        l2_normalize=True,
+        embedding_dim=QWEN3_EMBEDDING_06B_DIM,
+    )
     save_metrics_geometry(row, metrics_dir)
     return row

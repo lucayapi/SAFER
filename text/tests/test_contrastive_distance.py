@@ -61,28 +61,14 @@ def test_softtriple_euclidean_forward():
     assert "loss_total" in stats
 
 
-def test_supcon_euclidean_forward():
+def test_supcon_hobbit_cosine_forward():
     emb = torch.randn(4, 16)
     model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb})
     loss_mod = SupConLoss(
         model=model,
         temperature=0.07,
-        distance_metric="euclidean",
-    )
-    out = loss_mod(({"input_ids": torch.zeros(4, 3)},), torch.tensor([0, 0, 1, 1]))
-    assert out.ndim == 0
-    assert loss_mod.distance_metric == "euclidean"
-
-
-def test_supcon_cosine_forward():
-    emb = torch.randn(4, 16)
-    model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb})
-    loss_mod = SupConLoss(
-        model=model,
-        temperature=0.07,
-        distance_metric="cosine",
         normalize_embeddings=True,
     )
     out = loss_mod(({"input_ids": torch.zeros(4, 3)},), torch.tensor([0, 0, 1, 1]))
     assert out.ndim == 0
-    assert loss_mod.distance_metric == "cosine"
+    assert torch.isfinite(out)

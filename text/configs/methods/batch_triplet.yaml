@@ -31,3 +31,7 @@ training:
   use_fixed_instruction_prefix: false
   use_contextual_prompt_with_summary: false
   distance_metric: euclidean
+
+# BatchHardSoftMarginTripletLoss (SBERT) — voir loss_overview SBERT
+batch_triplet:
+  # triplet_margin: 5.0  # optionnel si supporté par votre version sentence-transformers

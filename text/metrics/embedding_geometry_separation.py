@@ -33,6 +33,8 @@ GEOMETRY_METRIC_KEYS: Tuple[str, ...] = (
     "W_C",
     "n_C",
     "rankme_global",
+    "rankme_over_d",
+    "embedding_dim",
     "c1_global",
     "c10_global",
 )
@@ -57,6 +59,8 @@ METRICS_TABLE_COLUMNS: List[str] = [
     "W_C",
     "n_C",
     "rankme_global",
+    "rankme_over_d",
+    "embedding_dim",
     "c1_global",
     "c10_global",
     "macros_ignored",
@@ -241,6 +245,7 @@ def build_geometry_metrics_row(
     method: str,
     labels: Sequence[str] = MACRO_NAMES,
     l2_normalize: bool = False,
+    embedding_dim: Optional[int] = None,
     eps: float = 1e-12,
 ) -> Dict[str, Any]:
     """Full metrics table row: eta2 geometry + RankMe / C1 / C10."""
@@ -259,13 +264,21 @@ def build_geometry_metrics_row(
     )
     row["method"] = method
 
+    d = int(embedding_dim) if embedding_dim is not None else int(z_valid.shape[1])
+    row["embedding_dim"] = d
+
     if z_valid.shape[0] >= 2:
         c1, c10 = pca_energy_c1_c10(z_valid)
-        row["rankme_global"] = rankme_effective_rank(z_valid)
+        rankme = rankme_effective_rank(z_valid)
+        row["rankme_global"] = rankme
         row["c1_global"] = c1
         row["c10_global"] = c10
+        row["rankme_over_d"] = (
+            float(rankme) / float(d) if d > 0 and np.isfinite(rankme) else float("nan")
+        )
     else:
         row["rankme_global"] = float("nan")
+        row["rankme_over_d"] = float("nan")
         row["c1_global"] = float("nan")
         row["c10_global"] = float("nan")
 

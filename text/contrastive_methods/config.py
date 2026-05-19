@@ -48,9 +48,13 @@ class ContrastiveConfig:
     export_effective_centers: bool = False
     effective_center_distance_threshold: float = 0.05
     effective_center_similarity_threshold: float = 0.995
-    # supcon
+    # supcon (HobbitLong / SupContrast)
     supcon_temperature: float = 0.07
+    supcon_base_temperature: float = 0.07
+    supcon_contrast_mode: str = "all"
     supcon_normalize_embeddings: bool = True
+    # batch triplet (Sentence Transformers)
+    batch_triplet_margin: Optional[float] = None
     # distance (SupCon, SoftTriple, batch triplet)
     distance_metric: str = "euclidean"
     final_fit_full_data: bool = False
@@ -207,8 +211,23 @@ def load_contrastive_config(
         supcon_temperature=float(
             pick("temperature", default=0.07, sources=(supcon,))
         ),
+        supcon_base_temperature=float(
+            pick(
+                "base_temperature",
+                default=float(pick("temperature", default=0.07, sources=(supcon,))),
+                sources=(supcon,),
+            )
+        ),
+        supcon_contrast_mode=str(
+            pick("contrast_mode", default="all", sources=(supcon,))
+        ),
         supcon_normalize_embeddings=bool(
             pick("normalize_embeddings", default=True, sources=(supcon,))
+        ),
+        batch_triplet_margin=(
+            float(m)
+            if (m := pick("triplet_margin", default=None, sources=(batch_triplet,))) is not None
+            else None
         ),
         distance_metric=str(
             pick(

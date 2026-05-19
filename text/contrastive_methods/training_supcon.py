@@ -7,7 +7,7 @@ from pathlib import Path
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.export import export_st_embeddings
-from contrastive_methods.losses.supcon import SupConLoss
+from contrastive_methods.losses.supcon_hobbit import build_supcon_loss
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.st_common import load_sentence_transformer, train_st_model
@@ -27,12 +27,7 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
     train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
 
     model = load_sentence_transformer(cfg)
-    train_loss = SupConLoss(
-        model=model,
-        temperature=cfg.supcon_temperature,
-        normalize_embeddings=cfg.supcon_normalize_embeddings,
-        distance_metric=cfg.distance_metric,
-    )
+    train_loss = build_supcon_loss(cfg, model)
 
     model, val_geometry, best_score = train_st_model(
         cfg,

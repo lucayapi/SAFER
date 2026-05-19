@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig
+from metrics.embedding_dims import QWEN3_EMBEDDING_06B_DIM
 from metrics.geometry import PRIMARY_SELECTION_METRIC, build_geometry_metrics_row
 
 SELECTION_METRIC_DEFAULT = PRIMARY_SELECTION_METRIC
@@ -29,12 +30,14 @@ def evaluate_embeddings_geometry(
     labels: np.ndarray,
     *,
     method: str = "val",
+    embedding_dim: int = QWEN3_EMBEDDING_06B_DIM,
 ) -> Dict[str, Any]:
     return build_geometry_metrics_row(
         embeddings,
         labels,
         method=method,
         l2_normalize=True,
+        embedding_dim=embedding_dim,
     )
 
 

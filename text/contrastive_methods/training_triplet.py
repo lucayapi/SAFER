@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sentence_transformers import losses
-
 from contrastive_methods.config import ContrastiveConfig
+from contrastive_methods.losses.triplet_st import build_batch_hard_soft_margin_loss
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.eval_geometry import evaluate_st_val_geometry
 from contrastive_methods.export import export_st_embeddings
@@ -33,8 +32,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
 
     model = load_sentence_transformer(cfg)
-    distance_fn = resolve_triplet_distance(cfg.distance_metric)
-    train_loss = losses.BatchHardSoftMarginTripletLoss(model=model, distance_metric=distance_fn)
+    train_loss = build_batch_hard_soft_margin_loss(cfg, model)
 
     model, val_geometry, best_score = train_st_model(
         cfg,

@@ -34,8 +34,9 @@ def test_softtriple_forward_shape():
 def test_supcon_loss_with_mock_model():
     emb = torch.randn(4, 16)
     model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb})
-    loss_mod = SupConLoss(model=model, temperature=0.07, distance_metric="euclidean")
+    loss_mod = SupConLoss(model=model, temperature=0.07)
     features = ({"input_ids": torch.zeros(4, 3)},)
     labels = torch.tensor([0, 0, 1, 1])
     out = loss_mod(features, labels)
     assert out.ndim == 0
+    assert torch.isfinite(out)
