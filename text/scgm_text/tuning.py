@@ -16,8 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from safer_core.io import load_yaml
-from safer_core.paths import TEXT_ROOT, ensure_dir
+from safer_core.io import ensure_dir, load_yaml
+from safer_core.paths import TEXT_ROOT
 
 
 def expand_grid(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
