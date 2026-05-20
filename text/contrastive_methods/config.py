@@ -33,9 +33,6 @@ class ContrastiveConfig:
     gradient_accumulation_steps: int = 1
     gradient_checkpointing: bool = False
     use_prompt: bool = False
-    use_fixed_instruction_prefix: bool = False
-    fixed_instruction_prefix: Optional[str] = None
-    use_contextual_prompt_with_summary: bool = False
     # softtriple
     centers_per_class: int = 5
     softtriple_gamma: float = 0.1
@@ -138,21 +135,6 @@ def load_contrastive_config(
         sources=(data, raw),
     )
     use_prompt = bool(pick("use_prompt", default=False, sources=(raw, training)))
-    warn_if_prompt_enabled(use_prompt)
-
-    fixed_prefix = pick("fixed_instruction_prefix", default=None, sources=(training, raw))
-    use_fixed = bool(
-        pick(
-            "use_fixed_instruction_prefix",
-            default=False,
-            sources=(training, raw),
-        )
-    )
-    if use_fixed and fixed_prefix is None:
-        fixed_prefix = (
-            "Represent this workplace accident narrative for semantic retrieval "
-            "and safety classification."
-        )
 
     _metric_default = "cosine" if method_name == "supcon" else "euclidean"
 
@@ -187,15 +169,6 @@ def load_contrastive_config(
             pick("gradient_checkpointing", default=False, sources=(training, raw))
         ),
         use_prompt=use_prompt,
-        use_fixed_instruction_prefix=use_fixed,
-        fixed_instruction_prefix=str(fixed_prefix) if fixed_prefix else None,
-        use_contextual_prompt_with_summary=bool(
-            pick(
-                "use_contextual_prompt_with_summary",
-                default=False,
-                sources=(training, raw),
-            )
-        ),
         centers_per_class=int(
             pick("centers_per_class", default=5, sources=(softtriple, raw))
         ),

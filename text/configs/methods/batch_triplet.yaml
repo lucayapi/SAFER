@@ -28,8 +28,6 @@ training:
   warmup_ratio: 0.1
   gradient_accumulation_steps: 1
   gradient_checkpointing: false
-  use_fixed_instruction_prefix: false
-  use_contextual_prompt_with_summary: false
   distance_metric: euclidean
 
 # BatchHardSoftMarginTripletLoss (SBERT) — voir loss_overview SBERT

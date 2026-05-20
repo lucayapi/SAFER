@@ -25,7 +25,7 @@ def run_contrastive_method(method_name: str, argv: Optional[List[str]] = None) -
     args, _ = parser.parse_known_args(argv)
 
     cfg = load_contrastive_config(method_name, args.config)
-    warn_if_prompt_enabled(cfg.use_prompt or cfg.use_contextual_prompt_with_summary)
+    warn_if_prompt_enabled(cfg.use_prompt)
 
     dispatch = {
         "batch_triplet": run_batch_triplet,
