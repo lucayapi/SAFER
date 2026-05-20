@@ -86,27 +86,47 @@ def test_fill_eta2_perc_from_balanced_when_nan():
     assert abs(out.iloc[0]["eta2_macro_balanced_perc"] - 65.124) < 0.01
 
 
+def test_fill_rankme_over_d_when_embedding_dim_column_is_nan():
+    df = pd.DataFrame(
+        {
+            "method": ["Embedding brut", "SoftTriple", "SCGM", "SupCon"],
+            "rankme_global": [649.65, 604.1, 57.9, 520.5],
+            "embedding_dim": [float("nan"), float("nan"), float("nan"), 1024.0],
+        }
+    )
+    out = fill_rankme_over_d(df)
+    assert out.loc[0, "embedding_dim"] == 1024
+    assert out.loc[2, "embedding_dim"] == 128
+    assert abs(out.loc[0, "rankme_over_d"] - 649.65 / 1024) < 0.01
+    assert abs(out.loc[2, "rankme_over_d"] - 57.9 / 128) < 0.01
+
+
 def test_normalize_method_display_name_strips_suffix():
     assert normalize_method_display_name("Batch Triplet_btp", "batch_triplet") == "Batch Triplet"
 
 
 def test_raw_test_uses_raw_embedding_test_dir(tmp_path):
     _write_metrics(
-        tmp_path / "raw_embedding_test" / "metrics",
+        tmp_path / "metallurgie" / "raw_embedding" / "metrics",
         "metrics_geometry",
         "Embedding brut_test",
         0.08,
     )
-    df = collect_embedding_comparison(tmp_path, corpus="test")
+    df = collect_embedding_comparison(tmp_path, corpus="test", test_corpus_id="metallurgie")
     assert len(df) == 1
     assert df.iloc[0]["method"] == "Embedding brut"
 
 
 def test_collect_btp_and_test_separate(tmp_path):
     _write_metrics(tmp_path / "supcon" / "metrics", "metrics_geometry_btp", "SupCon", 0.5)
-    _write_metrics(tmp_path / "supcon" / "metrics", "metrics_geometry_test", "SupCon_test", 0.2)
+    _write_metrics(
+        tmp_path / "metallurgie" / "supcon" / "metrics",
+        "metrics_geometry_test",
+        "SupCon_test",
+        0.2,
+    )
     df_btp = collect_embedding_comparison(tmp_path, corpus="btp")
-    df_test = collect_embedding_comparison(tmp_path, corpus="test")
+    df_test = collect_embedding_comparison(tmp_path, corpus="test", test_corpus_id="metallurgie")
     assert len(df_btp) == 1
     assert len(df_test) == 1
 

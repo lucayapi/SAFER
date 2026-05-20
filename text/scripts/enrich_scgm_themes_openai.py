@@ -25,7 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="resultats/scgm_text",
+        default="output/scgm_text",
         help="Racine du run SCGM (contient topics/themes_by_z.csv).",
     )
     parser.add_argument(
@@ -79,7 +79,7 @@ def main() -> int:
             "nœud de login (hpclogin01), pas depuis JupyterHub / un nœud GPU.",
             file=sys.stderr,
         )
-        print("  bash jobs/enrich_scgm_themes_openai.sh", file=sys.stderr)
+        print("  python scripts/enrich_scgm_themes_openai.py (legacy BTP)", file=sys.stderr)
         return 2
 
     if args.probe_only:

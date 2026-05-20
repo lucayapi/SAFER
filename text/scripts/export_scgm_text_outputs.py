@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--max_seq_length", type=int, default=256)
+    parser.add_argument(
+        "--skip-topic-tables",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Ne pas produire topics/themes_by_z.csv (topics via macro_transfer uniquement).",
+    )
     return parser.parse_args()
 
 
@@ -61,8 +67,10 @@ def run_export(args: argparse.Namespace) -> None:
     emb_dir = layout["embeddings"]
     assign_dir = layout["assignments"]
     topics_dir = layout["topics"]
-    for d in (emb_dir, assign_dir, topics_dir):
+    for d in (emb_dir, assign_dir):
         d.mkdir(parents=True, exist_ok=True)
+    if not args.skip_topic_tables:
+        topics_dir.mkdir(parents=True, exist_ok=True)
 
     device = torch.device(args.device if torch.cuda.is_available() or args.device == "cpu" else "cpu")
     model, checkpoint_args, _ = load_scgm_checkpoint(args.checkpoint, map_location="cpu")
@@ -186,15 +194,16 @@ def run_export(args: argparse.Namespace) -> None:
     enriched["max_prob_z"] = max_prob_z_arr
     enriched.to_csv(emb_dir / "metadata_with_predictions.csv", index=False)
 
-    export_topic_tables(
-        metadata_df=metadata_df,
-        projected_embeddings=projected_embeddings,
-        mu_z=mu_z.numpy(),
-        z_hat=z_hat_arr,
-        output_dir=str(topics_dir),
-        sentence_col="sentence",
-        label_col=args.label_col,
-    )
+    if not args.skip_topic_tables:
+        export_topic_tables(
+            metadata_df=metadata_df,
+            projected_embeddings=projected_embeddings,
+            mu_z=mu_z.numpy(),
+            z_hat=z_hat_arr,
+            output_dir=str(topics_dir),
+            sentence_col="sentence",
+            label_col=args.label_col,
+        )
 
 
 def main() -> None:

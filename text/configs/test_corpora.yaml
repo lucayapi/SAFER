@@ -1,0 +1,16 @@
+# Registre des corpus de test (hors domaine BTP).
+# Convention : dataset/test/data_<id>.csv, embeddings/test/Qwen3-Embedding-0.6B_<id>.csv
+
+default: metallurgie
+
+corpora:
+  metallurgie:
+    display_name: Métallurgie
+    data_csv: dataset/test/data_metallurgie.csv
+    emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
+
+  # Exemple pour un second corpus (décommenter après ajout des fichiers) :
+  # chimie:
+  #   display_name: Chimie
+  #   data_csv: dataset/test/data_chimie.csv
+  #   emb_csv: embeddings/test/Qwen3-Embedding-0.6B_chimie.csv

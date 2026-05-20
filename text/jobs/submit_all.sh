@@ -8,12 +8,13 @@ cd "$DIR"
 # Logs SLURM : slurm-<job_name>-<job_id>.out|.err dans ce dossier (jobs/).
 # Les jobs résolvent text/ via SLURM_SUBMIT_DIR + jobs/_bootstrap.sh (pas /tmp/slurmd/...).
 
-sbatch export_raw_embeddings.sh
+sbatch export_raw_geometry.sh
 TRAIN_SCGM_ID=$(sbatch --parsable train_scgm_text.sh)
 echo "train_scgm_text job_id=${TRAIN_SCGM_ID}"
-sbatch --dependency=afterok:"${TRAIN_SCGM_ID}" postprocess_scgm_text.sh
 sbatch train_batch_triplet.sh
 sbatch train_softtriple.sh
 sbatch train_supcon.sh
 echo "Jobs soumis. Suivi : squeue -u \$USER"
-echo "Après complétion : sbatch compare_methods.sh"
+echo "Après train SCGM : sbatch export_test_embeddings.sh  # si CSV test absent"
+echo "Puis : CORPUS=metallurgie bash run_macro_transfer.sh"
+echo "Comparaisons : sbatch compare_methods.sh"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -14,7 +15,12 @@ from contrastive_methods.config import (
 from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
 from contrastive_methods.results import TrainingResult
-from safer_core.kfold_eval import aggregate_fold_rows, save_kfold_tables
+from safer_core.kfold_eval import (
+    KFOLD_AGGREGATE_METRIC_KEYS,
+    aggregate_fold_rows,
+    record_final_fit_wall_time,
+    save_kfold_tables,
+)
 from safer_core.paths import layout_method_output
 
 
@@ -76,9 +82,10 @@ def run_kfold_loop(
         result = runner(fold_cfg)
         row: Dict[str, Any] = {"fold_id": fold_id, **(result.val_geometry or {})}
         row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
+        row["train_wall_time_sec"] = float(result.train_wall_time_sec)
         fold_rows.append(row)
 
-    agg = aggregate_fold_rows(fold_rows)
+    agg = aggregate_fold_rows(fold_rows, metric_keys=KFOLD_AGGREGATE_METRIC_KEYS)
     if save_tables:
         save_kfold_tables(fold_rows, metrics_dir)
     return fold_rows, agg
@@ -115,7 +122,10 @@ def run_contrastive_final_fit_and_eval(cfg: ContrastiveConfig) -> None:
     cfg_final.extra.pop("fold_val_idx", None)
 
     print(f"[{cfg.method_name}] Réentraînement final 100 % BTP…", flush=True)
+    t0 = time.perf_counter()
     result = runner(cfg_final)
+    metrics_dir = Path(layout_method_output(cfg.method_name, cfg.resolved_output_dir)["metrics"])
+    record_final_fit_wall_time(metrics_dir, time.perf_counter() - t0)
     ckpt = result.output_root / "checkpoints" / "best_model"
     if not ckpt.exists():
         print(f"[{cfg.method_name}] Checkpoint final absent : {ckpt}", flush=True)

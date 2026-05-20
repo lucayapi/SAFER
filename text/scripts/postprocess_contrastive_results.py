@@ -35,8 +35,8 @@ def _has_dim_cols(path: Path) -> bool:
     return any(str(c).startswith("dim_") for c in cols)
 
 
-def _resolve_embeddings(results_root: Path) -> Path:
-    final = results_root / "embeddings" / "final_embeddings.csv"
+def _resolve_embeddings(output_root: Path) -> Path:
+    final = output_root / "embeddings" / "final_embeddings.csv"
     if final.is_file() and _has_dim_cols(final):
         return final
     candidates = [
@@ -54,10 +54,10 @@ def _resolve_embeddings(results_root: Path) -> Path:
 def postprocess_contrastive_method(method_name: str, config_path: Optional[str] = None) -> Path:
     cfg = load_contrastive_config(method_name, config_path)
     layout = layout_method_output(method_name, cfg.resolved_output_dir)
-    results_root = Path(layout["root"])
+    output_root = Path(layout["root"])
     metrics_dir = Path(layout["metrics"])
     emb_path = _resolve_embeddings(results_root)
-    dest = results_root / "embeddings" / "final_embeddings.csv"
+    dest = output_root / "embeddings" / "final_embeddings.csv"
     if emb_path.resolve() != dest.resolve():
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(emb_path.read_bytes())

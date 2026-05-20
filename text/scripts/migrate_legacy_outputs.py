@@ -1,4 +1,4 @@
-"""Déplace runs/ et outputs/ connus vers text/resultats/ (symlinks ou copie)."""
+"""Déplace runs/ et outputs/ connus vers text/output/ (symlinks ou copie)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import argparse
 import shutil
 from pathlib import Path
 
-from safer_core.paths import TEXT_ROOT, _LEGACY_TO_RESULTATS
+from safer_core.paths import TEXT_ROOT, _LEGACY_TO_OUTPUT
 
 
 def _migrate_one(src_rel: str, dst_rel: str, *, dry_run: bool, use_symlink: bool) -> None:
@@ -29,7 +29,7 @@ def _migrate_one(src_rel: str, dst_rel: str, *, dry_run: bool, use_symlink: bool
 
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Migrer runs/outputs legacy vers resultats/.")
+    p = argparse.ArgumentParser(description="Migrer runs/outputs legacy vers output/.")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument(
         "--symlink",
@@ -37,8 +37,8 @@ def main() -> None:
         help="Créer un lien symbolique au lieu de copier (économise l'espace).",
     )
     args = p.parse_args()
-    print("Migration legacy -> resultats/")
-    for src_rel, dst_rel in _LEGACY_TO_RESULTATS.items():
+    print("Migration legacy -> output/")
+    for src_rel, dst_rel in _LEGACY_TO_OUTPUT.items():
         _migrate_one(src_rel, dst_rel, dry_run=args.dry_run, use_symlink=args.symlink)
     print("Terminé.")
 

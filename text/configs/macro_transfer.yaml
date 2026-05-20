@@ -1,0 +1,53 @@
+# Transfert macro + topics intra-macro sur corpus de test.
+# Corpus : configs/test_corpora.yaml (clé ``corpus`` ci-dessous).
+# Usage :
+#   python scripts/run_macro_transfer_discovery.py --method scgm_text --corpus metallurgie
+#   CORPUS=metallurgie CONFIG=configs/macro_transfer.yaml bash jobs/run_macro_transfer.sh
+
+corpus: metallurgie
+
+checkpoints:
+  scgm_text: output/scgm_text/checkpoints/best_model.pt
+  softtriple: output/softtriple/checkpoints/best_model
+
+text_col: sentence
+label_col: pred_label
+pred_ok_col: pred_ok
+
+confidence_threshold: 0.5
+macro_temperature: 1.0
+softtriple_gamma: 0.1
+scgm_tau: null
+
+batch_size: 512
+infer_batch_size: 4096
+device: cuda
+
+bertopic:
+  min_topic_size: 10
+  nr_topics: null
+  random_state: 42
+
+gmm:
+  k_min: 2
+  k_max: 8
+  n_components_per_macro: null
+  covariance_type: full
+  max_iter: 200
+  n_init: 1
+  reg_covar: 1.0e-6
+  random_state: 42
+
+topics_export:
+  top_k_words: 12
+  top_k_sentences: 5
+
+openai:
+  model: gpt-4o-mini
+  n_example_texts: 5
+  skip_on_error: true
+  request_timeout: 120
+
+skip_bertopic: false
+skip_gmm: false
+skip_openai: true

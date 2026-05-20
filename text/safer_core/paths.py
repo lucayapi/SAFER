@@ -13,7 +13,6 @@ METHOD_NAMES = (
     "batch_triplet",
     "softtriple",
     "supcon",
-    "malt",
 )
 
 METHOD_SUBDIRS = (
@@ -31,27 +30,44 @@ COMPARISON_SUBDIRS = ("tables", "figures", "reports", "notebooks_exports")
 
 _LEGACY_RUNS_PREFIX = "runs/"
 _LEGACY_OUTPUTS_PREFIX = "outputs/"
-_LEGACY_TO_RESULTATS: Dict[str, str] = {
-    "runs/scgm_text_qwen06": "resultats/scgm_text",
-    "runs/scgm_text_qwen06_notebook": "resultats/scgm_text",
-    "runs/malt_btp_to_mettalurgie_qwen06": "resultats/malt",
-    "outputs/bn_malt": "resultats/malt/bn_staging",
-    "outputs/bn_btp_from_scgm": "resultats/scgm_text/bn_staging",
-    "outputs/topic_comparison": "resultats/comparisons/topics_legacy",
+_LEGACY_TO_OUTPUT: Dict[str, str] = {
+    "runs/scgm_text_qwen06": "output/scgm_text",
+    "runs/scgm_text_qwen06_notebook": "output/scgm_text",
+    "outputs/bn_btp_from_scgm": "output/scgm_text/bn_staging",
+    "outputs/topic_comparison": "output/comparisons/topics_legacy",
+    "resultats/scgm_text": "output/scgm_text",
+    "resultats/raw_embedding": "output/raw_embedding",
+    "resultats/comparisons": "output/comparisons",
 }
+_LEGACY_PATH_PREFIXES = (
+    ("resultats_test/", "output_test/"),
+    ("resultats/", "output/"),
+)
 
 
 def find_text_root(start: Optional[Path] = None) -> Path:
-    """Racine ``text/`` (contient ``topic_eval/`` ou ``safer_core/``)."""
+    """Racine ``text/`` (contient ``safer_core/`` ou ``scripts/``)."""
     here = (start or Path.cwd()).resolve()
     for candidate in [here, *here.parents]:
-        if (candidate / "topic_eval" / "__init__.py").is_file():
-            return candidate
-        if (candidate / "text" / "topic_eval" / "__init__.py").is_file():
-            return candidate / "text"
         if (candidate / "safer_core" / "paths.py").is_file():
             return candidate
+        if (candidate / "text" / "safer_core" / "paths.py").is_file():
+            return candidate / "text"
     return here
+
+
+def find_repo_root(start: Optional[Path] = None) -> Path:
+    """Alias : racine du dépôt pipeline texte."""
+    return find_text_root(start)
+
+
+def resolve_repo_path(path: str | Path, repo_root: Path | None = None) -> Path:
+    """Chemin absolu : si relatif, depuis ``repo_root`` ou racine du dépôt détectée."""
+    p = Path(path)
+    if p.is_absolute():
+        return p.resolve()
+    root = repo_root if repo_root is not None else find_repo_root()
+    return (root / p).resolve()
 
 
 TEXT_ROOT = find_text_root()
@@ -59,7 +75,8 @@ PROJECT_ROOT = TEXT_ROOT.parent if TEXT_ROOT.name == "text" else TEXT_ROOT
 DATASET_DIR = TEXT_ROOT / "dataset"
 CONFIG_DIR = TEXT_ROOT / "configs"
 METHODS_CONFIG_DIR = CONFIG_DIR / "methods"
-RESULTS_ROOT = TEXT_ROOT / "resultats"
+OUTPUT_ROOT = TEXT_ROOT / "output"
+RESULTS_ROOT = OUTPUT_ROOT  # alias rétrocompat
 JOBS_DIR = TEXT_ROOT / "jobs"
 NOTEBOOKS_DIR = TEXT_ROOT / "notebooks"
 LEGACY_DIR = TEXT_ROOT / "legacy"
@@ -101,11 +118,16 @@ def ensure_comparisons_dirs() -> Path:
 
 def _normalize_legacy_path(path: str | Path) -> Optional[Path]:
     p = str(path).replace("\\", "/").strip().rstrip("/")
-    for legacy, target in _LEGACY_TO_RESULTATS.items():
+    for legacy, target in _LEGACY_TO_OUTPUT.items():
         if p == legacy or p.startswith(legacy + "/"):
             suffix = p[len(legacy) :].lstrip("/")
             new = target + ("/" + suffix if suffix else "")
             return (TEXT_ROOT / new).resolve()
+    for old_prefix, new_prefix in _LEGACY_PATH_PREFIXES:
+        if p == old_prefix.rstrip("/") or p.startswith(old_prefix):
+            suffix = p[len(old_prefix.rstrip("/")) :].lstrip("/")
+            mapped = new_prefix.rstrip("/") + ("/" + suffix if suffix else "")
+            return (TEXT_ROOT / mapped).resolve()
     if p.startswith(_LEGACY_RUNS_PREFIX) or p.startswith(_LEGACY_OUTPUTS_PREFIX):
         return None
     return None
@@ -120,7 +142,7 @@ def resolve_output_dir(
     """
     Résout le dossier de sortie d'une méthode.
 
-    - défaut : ``text/resultats/<method>``
+    - défaut : ``text/output/<method>``
     - si ``runs/`` ou ``outputs/`` et ``SAFER_LEGACY_PATHS=1`` : warning + mapping connu
     """
     default = get_method_dir(method_name)
@@ -144,7 +166,7 @@ def resolve_output_dir(
         if mapped is not None:
             warnings.warn(
                 f"Chemin legacy {output_dir!r} redirigé vers {mapped}. "
-                "Préférez text/resultats/<method>/.",
+                "Préférez text/output/<method>/.",
                 UserWarning,
                 stacklevel=2,
             )

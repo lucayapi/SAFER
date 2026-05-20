@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from scgm_text.scgm_head import glorot  # noqa: F401 — utilisé par malt_model
+from scgm_text.scgm_head import glorot  # noqa: F401 — réexport pour compatibilité
 from scgm_text.scgm_text_model import SCGMTextModel
 
 __all__ = ["SCGMEmbeddingNet", "glorot"]

@@ -1,0 +1,4 @@
+# DEPRECATED — utiliser configs/macro_transfer.yaml avec corpus: metallurgie
+# Conservé pour rétrocompatibilité des commandes / jobs existants.
+
+corpus: metallurgie

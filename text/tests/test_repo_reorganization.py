@@ -16,7 +16,7 @@ JOBS_DIR = TEXT_ROOT / "jobs"
 def test_paths_use_resultats_default():
     cfg = yaml.safe_load((METHODS_CONFIG / "scgm_text.yaml").read_text(encoding="utf-8"))
     flat = {**cfg.get("model", {}), **cfg}
-    assert "resultats/" in str(flat.get("output_dir", ""))
+    assert "output/" in str(flat.get("output_dir", ""))
     assert not str(flat.get("output_dir", "")).startswith("runs/")
 
 
@@ -50,7 +50,7 @@ def test_method_result_dirs():
         import safer_core.paths as p
 
         old = p.RESULTS_ROOT
-        p.RESULTS_ROOT = Path(tmp) / "resultats"
+        p.RESULTS_ROOT = Path(tmp) / "output"
         p.METHOD_RESULTS_DIRS["scgm_text"] = p.RESULTS_ROOT / "scgm_text"
         try:
             root = ensure_method_dirs("scgm_text")
@@ -91,12 +91,12 @@ def test_native_contrastive_modules_present():
 def test_jobs_exist():
     for name in (
         "train_scgm_text.sh",
-        "postprocess_scgm_text.sh",
+        "export_raw_geometry.sh",
+        "export_test_embeddings.sh",
         "train_batch_triplet.sh",
         "train_softtriple.sh",
         "train_supcon.sh",
-        "export_raw_embeddings.sh",
-        "enrich_scgm_themes_openai.sh",
+        "run_macro_transfer.sh",
         "compare_methods.sh",
     ):
         assert (JOBS_DIR / name).is_file(), name
@@ -105,16 +105,15 @@ def test_jobs_exist():
 def test_notebooks_no_training():
     forbidden = (
         "run_training(",
-        "run_malt_training(",
         "trainer.fit",
-        'spec_from_file_location("malt_train"',
         "spec_from_file_location(train_module_name",
         "scgm_train_text.run_training",
     )
     for name in (
         "01_compare_embedding_methods.ipynb",
-        "01_scgm_text_experiment.ipynb",
-        "02_malt_btp_to_mettalurgie_transfer.ipynb",
+        "02_scgm_text_results.ipynb",
+        "04_bayesian_network_macro_transfer.ipynb",
+        "06_macro_transfer_topics.ipynb",
     ):
         nb = TEXT_ROOT / "notebooks" / name
         if not nb.is_file():

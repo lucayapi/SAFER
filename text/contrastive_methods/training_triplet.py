@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from contrastive_methods.config import ContrastiveConfig
@@ -34,6 +35,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     model = load_sentence_transformer(cfg)
     train_loss = build_batch_hard_soft_margin_loss(cfg, model)
 
+    t_train = time.perf_counter()
     model, val_geometry, best_score = train_st_model(
         cfg,
         model,
@@ -44,6 +46,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
         checkpoints,
         train_log_path=metrics_dir / "train_log.csv",
     )
+    train_wall_time_sec = time.perf_counter() - t_train
 
     emb_path = embeddings_dir / "final_embeddings.csv"
     export_st_embeddings(model, dataset, emb_path, batch_size=cfg.encode_batch_size)
@@ -64,5 +67,6 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
         output_root=root,
         val_geometry=val_geometry,
         best_eta2_macro_balanced_perc=best_score,
+        train_wall_time_sec=train_wall_time_sec,
         train_log_path=metrics_dir / "train_log.csv",
     )

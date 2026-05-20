@@ -53,7 +53,7 @@ if str(ROOT) not in sys.path:
 
 from metrics.compare_display import EMBEDDING_COMPARE_METHODS, METHOD_DISPLAY, slim_geometry_table
 
-TABLES = ROOT / "resultats/comparisons/tables"
+TABLES = ROOT / "output/comparisons/tables"
 PATH_BTP = TABLES / "embedding_geometry_comparison_btp.csv"
 PATH_TEST = TABLES / "embedding_geometry_comparison_test.csv"
 EXPECTED = [METHOD_DISPLAY[k] for k in EMBEDDING_COMPARE_METHODS]

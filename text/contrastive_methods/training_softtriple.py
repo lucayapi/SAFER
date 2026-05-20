@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -190,6 +191,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     best_geometry: dict = {}
     best_dir = checkpoints / "best_model"
 
+    t_train = time.perf_counter()
     for epoch in range(cfg.epochs):
         train_loss = _run_epoch(
             encoder, loss_module, train_loader, optimizer, dev, train=True
@@ -216,6 +218,8 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         else:
             log_rows.append(build_train_log_row(epoch + 1, train_loss))
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
+
+    train_wall_time_sec = time.perf_counter() - t_train
 
     metrics_dir.mkdir(parents=True, exist_ok=True)
     log_df = pd.DataFrame(log_rows)
@@ -273,5 +277,6 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         output_root=root,
         val_geometry=best_geometry,
         best_eta2_macro_balanced_perc=best_score,
+        train_wall_time_sec=train_wall_time_sec,
         train_log_path=metrics_dir / "train_log.csv",
     )

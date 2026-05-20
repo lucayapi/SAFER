@@ -39,7 +39,7 @@ def test_postprocess_writes_metrics_geometry(tmp_path, monkeypatch):
 
     cfg = {
         "method_name": "batch_triplet",
-        "output_dir": "resultats/batch_triplet",
+        "output_dir": "output/batch_triplet",
         "data": {
             "dataset_path": "dataset/data.csv",
             "label_col": "pred_label",
@@ -49,13 +49,13 @@ def test_postprocess_writes_metrics_geometry(tmp_path, monkeypatch):
         yaml.safe_dump(cfg), encoding="utf-8"
     )
 
-    results = text_root / "resultats" / "batch_triplet"
+    results = text_root / "output" / "batch_triplet"
     emb_dir = results / "embeddings"
     emb_dir.mkdir(parents=True)
     emb.to_csv(emb_dir / "final_embeddings.csv", index=False)
 
     monkeypatch.setattr(paths_mod, "TEXT_ROOT", text_root)
-    monkeypatch.setattr(paths_mod, "RESULTS_ROOT", text_root / "resultats")
+    monkeypatch.setattr(paths_mod, "RESULTS_ROOT", text_root / "output")
     paths_mod.METHOD_RESULTS_DIRS["batch_triplet"] = results
 
     dest = postprocess_contrastive_method("batch_triplet")

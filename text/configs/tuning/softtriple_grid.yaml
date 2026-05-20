@@ -1,10 +1,10 @@
 method_name: softtriple
 base_config: configs/methods/softtriple.yaml
-output_dir: resultats/softtriple/tuning
-final_output_dir: resultats/softtriple
+output_dir: output/softtriple/tuning
+final_output_dir: output/softtriple
 selection_metric: eta2_macro_balanced_perc
 n_folds: 5
-test_dataset_path: dataset/test/data_metallurgie.csv
+test_corpus: metallurgie
 final_fit_full_data: true
 
 grid:

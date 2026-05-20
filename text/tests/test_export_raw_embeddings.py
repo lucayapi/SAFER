@@ -59,9 +59,8 @@ def test_export_raw_embeddings_method_name(tmp_path, monkeypatch):
     assert "eta2_macro_balanced" in df.columns
 
 
-def test_postprocess_script_mentions_raw_exports():
-    sh = (TEXT_ROOT / "jobs" / "postprocess_scgm_text.sh").read_text(encoding="utf-8")
+def test_export_raw_geometry_job_mentions_btp_and_test():
+    sh = (TEXT_ROOT / "jobs" / "export_raw_geometry.sh").read_text(encoding="utf-8")
     assert "export_raw_embeddings.py" in sh
-    assert "raw_embedding_test" in sh
-    assert "eval_scgm_test_metrics.py" in sh
-    assert "embeddings/test/" in sh
+    assert "raw_embedding.yaml" in sh
+    assert "raw_embedding_test.yaml" in sh

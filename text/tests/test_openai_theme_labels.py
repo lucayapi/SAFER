@@ -27,15 +27,78 @@ def test_split_example_sentences():
 
 def test_build_user_prompt_documents_only():
     prompt = build_user_prompt("doc A || doc B", n_example_texts=2)
-    assert "I have a topic that contains the following documents" in prompt
+    assert "Voici un topic qui contient les extraits suivants" in prompt
+    assert "libelle" in prompt
     assert "doc A" in prompt
     assert "doc B" in prompt
+    assert "Macro :" not in prompt
     assert "dominant_macro" not in prompt
     assert "z_id" not in prompt
     assert "TF-IDF" not in prompt
 
 
-def test_labels_from_api_response_label_key():
+def test_build_user_prompt_oriented_a1():
+    prompt = build_user_prompt("doc A", n_example_texts=1, macro="A1")
+    assert "Macro : A1" in prompt
+    assert "Facteurs contributifs" in prompt
+    assert "refléter uniquement le thème de la macro" in prompt
+    assert "événement dynamique (B)" in prompt or "événement (B)" in prompt
+    assert "Contexte de travail" not in prompt
+
+
+def test_one_row_passes_macro_to_prompt():
+    from unittest.mock import MagicMock
+
+    from scgm_text.openai_theme_labels import _one_row
+
+    captured = {}
+
+    def fake_create(**kwargs):
+        captured["messages"] = kwargs.get("messages")
+        msg = MagicMock()
+        msg.content = '{"libelle": "test libellé court"}'
+        choice = MagicMock()
+        choice.message = msg
+        resp = MagicMock()
+        resp.choices = [choice]
+        return resp
+
+    client = MagicMock()
+    client.chat.completions.create = fake_create
+    row = pd.Series(
+        {
+            "z_id": 0,
+            "dominant_macro": "B",
+            "top_words": "chute",
+            "top_sentences": "La victime est tombée || perte d'équilibre",
+        }
+    )
+    _one_row(
+        client,
+        "gpt-4o-mini",
+        0.3,
+        row,
+        n_example_texts=2,
+        summary_words_min=3,
+        summary_words_max=12,
+    )
+    user_msg = captured["messages"][1]["content"]
+    assert "Macro : B" in user_msg
+    assert "Déviation" in user_msg or "événement accidentel" in user_msg
+
+
+def test_labels_from_api_response_libelle_key():
+    row = pd.Series({"z_id": 0, "top_words": "chute;échafaudage;sécurité"})
+    out = _labels_from_api_response(
+        {"libelle": "chute échafaudage sécurité chantier"},
+        row,
+        summary_words_min=3,
+        summary_words_max=12,
+    )
+    assert out["theme_summary"] == "chute échafaudage sécurité chantier"
+
+
+def test_labels_from_api_response_label_key_legacy():
     row = pd.Series({"z_id": 0, "top_words": "chute;échafaudage;sécurité"})
     out = _labels_from_api_response(
         {"label": "chute échafaudage sécurité chantier"},

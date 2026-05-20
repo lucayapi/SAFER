@@ -19,7 +19,7 @@ from safer_core.paths import ensure_comparisons_dirs
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--results_root", type=str, default="resultats")
+    p.add_argument("--results_root", type=str, default="output")
     p.add_argument("--output_dir", type=str, default=None)
     p.add_argument("--table", type=str, default=None)
     p.add_argument(

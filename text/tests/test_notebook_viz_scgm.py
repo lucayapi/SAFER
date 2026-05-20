@@ -18,6 +18,7 @@ if str(TEXT_ROOT) not in sys.path:
     sys.path.insert(0, str(TEXT_ROOT))
 
 from scgm_text.notebook_viz import (
+    macro_counts_per_z,
     macro_centroids_2d,
     plot_embeddings_csv_pca_tsne,
     plot_kfold_metrics_bars,
@@ -160,6 +161,10 @@ def test_plot_topics_bars(tmp_path):
             "z_id": [0, 1, 2],
             "dominant_macro": ["A0", "A0", "B"],
             "n_units": [100, 50, 80],
+            "n_A0": [60, 50, 0],
+            "n_A1": [20, 0, 0],
+            "n_B": [10, 0, 80],
+            "n_C": [10, 0, 0],
         }
     )
     fig_dir = tmp_path / "figures"
@@ -176,6 +181,52 @@ def test_plot_topics_bars(tmp_path):
     plot_topics_distribution_by_macro(themes, save_fig=_save)
     plot_topics_n_units_by_z(themes, save_fig=_save)
     assert (fig_dir / "topics_by_macro.png").is_file()
+    assert (fig_dir / "topics_n_units_by_z.png").is_file()
+
+
+def test_macro_counts_per_z():
+    meta = pd.DataFrame(
+        {
+            "z_hat": [0, 0, 0, 1, 1, 2],
+            "pred_label": ["A0", "A0", "B", "A1", "A1", "C"],
+        }
+    )
+    out = macro_counts_per_z(meta, z_col="z_hat", label_col="pred_label")
+    row0 = out[out["z_id"] == 0].iloc[0]
+    assert int(row0["A0"]) == 2 and int(row0["B"]) == 1
+    assert int(row0["n_total"]) == 3
+    row1 = out[out["z_id"] == 1].iloc[0]
+    assert int(row1["A1"]) == 2 and int(row1["n_total"]) == 2
+    row2 = out[out["z_id"] == 2].iloc[0]
+    assert int(row2["C"]) == 1 and int(row2["n_total"]) == 1
+
+
+def test_plot_topics_n_units_by_z_with_metadata_merge(tmp_path):
+    themes = pd.DataFrame(
+        {
+            "z_id": [0, 1],
+            "dominant_macro": ["A0", "B"],
+            "n_units": [4, 2],
+        }
+    )
+    meta = pd.DataFrame(
+        {
+            "z_hat": [0, 0, 0, 0, 1, 1],
+            "pred_label": ["A0", "A1", "A0", "B", "B", "C"],
+        }
+    )
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    plot_topics_n_units_by_z(themes, metadata_df=meta, save_fig=_save)
     assert (fig_dir / "topics_n_units_by_z.png").is_file()
 
 

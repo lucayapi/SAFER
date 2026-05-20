@@ -5,7 +5,7 @@ emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
 text_col: sentence
 label_col: pred_label
 group_col: accident_id
-output_dir: resultats/scgm_text
+output_dir: output/scgm_text
 use_prompt: false
 seed: 42
 input_mode: precomputed_embeddings

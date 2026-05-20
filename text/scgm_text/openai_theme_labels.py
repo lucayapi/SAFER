@@ -14,36 +14,77 @@ import pandas as pd
 from tqdm.auto import tqdm
 
 _SYSTEM_PROMPT = (
-    "You assign short topic labels to groups of text excerpts about workplace safety and accidents. "
-    "Reply only with valid JSON, no markdown. "
-    "The label must be in French."
+    "Tu attribues des libellés courts à des topics intra-macro sur la sécurité au travail "
+    "et les accidents. Chaque topic appartient à une macro (A0, A1, B ou C) dont la sémantique "
+    "est précisée dans le message utilisateur. Le libellé doit respecter strictement cette macro. "
+    "Réponds uniquement en JSON valide, sans markdown. Le libellé doit être en français."
 )
 
-_USER_TEMPLATE = """I have a topic that contains the following documents:
+_USER_TEMPLATE_WITH_MACRO = """{macro_block}
+
+Voici un topic qui contient les extraits suivants :
 
 {documents}
 
-Based on the above information, can you give a short label of the topic?
+À partir de ces informations, propose un libellé court pour ce topic.
+Le libellé doit être en français et refléter uniquement le thème de la macro indiquée ci-dessus.
 
-Respond with JSON: {{"label": "your short French topic label"}}"""
+Réponds en JSON : {{"libelle": "ton libellé court en français"}}"""
+
+_USER_TEMPLATE_NO_MACRO = """Voici un topic qui contient les extraits suivants :
+
+{documents}
+
+À partir de ces informations, propose un libellé court pour ce topic.
+
+Réponds en JSON : {{"libelle": "ton libellé court en français"}}"""
 
 
 def build_documents_block(top_sentences: str, n_example_texts: int) -> str:
     """Formate les extraits (``top_sentences``, séparateur `` || ``) pour le prompt utilisateur."""
     examples = _split_example_sentences(top_sentences, n_example_texts)
     if not examples:
-        return "(no documents available for this topic)"
+        return "(aucun extrait disponible pour ce topic)"
     lines = []
     for i, ex in enumerate(examples, start=1):
         short = ex[:800] + ("…" if len(ex) > 800 else "")
-        lines.append(f"Document {i}:\n{short}")
+        lines.append(f"Extrait {i} :\n{short}")
     return "\n\n".join(lines)
 
 
-def build_user_prompt(top_sentences: str, n_example_texts: int = 5) -> str:
-    """Construit le message user (documents seuls, sans métadonnées SCGM)."""
+def _macro_block_for_prompt(macro: Optional[str]) -> Optional[str]:
+    """Bloc contexte macro ; ``None`` si macro absente ou inconnue (avec avertissement)."""
+    if macro is None:
+        return None
+    mid = str(macro).strip()
+    if not mid:
+        return None
+    from safer_core.macro_definitions import format_macro_context_for_prompt
+
+    block = format_macro_context_for_prompt(mid)
+    if block is None:
+        warnings.warn(
+            f"Macro inconnue pour le prompt OpenAI : {mid!r} — bloc macro omis.",
+            stacklevel=3,
+        )
+    return block
+
+
+def build_user_prompt(
+    top_sentences: str,
+    n_example_texts: int = 5,
+    *,
+    macro: Optional[str] = None,
+) -> str:
+    """Construit le message user (extraits + contexte macro optionnel)."""
     documents = build_documents_block(top_sentences, n_example_texts)
-    return _USER_TEMPLATE.format(documents=documents)
+    macro_block = _macro_block_for_prompt(macro)
+    if macro_block:
+        return _USER_TEMPLATE_WITH_MACRO.format(
+            macro_block=macro_block,
+            documents=documents,
+        )
+    return _USER_TEMPLATE_NO_MACRO.format(documents=documents)
 
 
 def load_openai_dotenv() -> bool:
@@ -135,7 +176,9 @@ def _labels_from_api_response(
     summary_words_max: int,
 ) -> Dict[str, str]:
     """Mappe ``label`` (ou legacy ``theme_summary``) vers colonnes CSV."""
-    raw_label = str(data.get("label") or data.get("theme_summary") or "").strip()
+    raw_label = str(
+        data.get("libelle") or data.get("label") or data.get("theme_summary") or ""
+    ).strip()
     if not raw_label and data.get("theme_title"):
         raw_label = str(data.get("theme_title", "")).strip()
     summary = _clamp_theme_summary_words(raw_label, summary_words_min, summary_words_max)
@@ -245,7 +288,13 @@ def _one_row(
     summary_words_max: int,
     request_timeout: Optional[float] = None,
 ) -> Dict[str, str]:
-    user = build_user_prompt(str(row.get("top_sentences", "")), n_example_texts)
+    macro_raw = row.get("dominant_macro") if row.get("dominant_macro") is not None else row.get("macro")
+    macro_str = str(macro_raw).strip() if macro_raw is not None and str(macro_raw).strip() else None
+    user = build_user_prompt(
+        str(row.get("top_sentences", "")),
+        n_example_texts,
+        macro=macro_str,
+    )
     create_kwargs: Dict[str, Any] = {}
     if request_timeout is not None:
         create_kwargs["timeout"] = float(request_timeout)

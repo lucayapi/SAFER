@@ -17,8 +17,8 @@ EMBEDDING_COMPARE_METHODS: tuple[str, ...] = (
     "scgm_text",
 )
 
-# Dossier resultats/ pour les métriques raw sur le corpus test (métallurgie)
-RAW_TEST_RESULTS_KEY = "raw_embedding_test"
+# Sous-dossier de output_test/<corpus_id>/ pour l'embedding brut test
+RAW_TEST_RESULTS_KEY = "raw_embedding"
 
 METHOD_DISPLAY: dict[str, str] = {
     "raw_embedding": "Embedding brut",
@@ -26,7 +26,6 @@ METHOD_DISPLAY: dict[str, str] = {
     "batch_triplet": "Batch Triplet",
     "softtriple": "SoftTriple",
     "supcon": "SupCon",
-    "malt": "MALT",
 }
 
 METHOD_DISPLAY_TO_KEY: dict[str, str] = {v: k for k, v in METHOD_DISPLAY.items()}
@@ -79,22 +78,31 @@ def fill_eta2_macro_balanced_perc(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def default_embedding_dims_series(df: pd.DataFrame) -> pd.Series:
+    """d par libellé méthode (1024 Qwen / contrastifs, 128 SCGM)."""
+    if df.empty or "method" not in df.columns:
+        return pd.Series(dtype=float)
+    return pd.Series(
+        [float(embedding_dim_for_display_label(m)) for m in df["method"].astype(str)],
+        index=df.index,
+        dtype=float,
+    )
+
+
 def fill_rankme_over_d(df: pd.DataFrame) -> pd.DataFrame:
     """rankme_over_d = rankme_global / d (1024 Qwen, 128 SCGM) si absent des CSV."""
     if df.empty or "rankme_global" not in df.columns:
         return df
     out = df.copy()
     rankme = pd.to_numeric(out["rankme_global"], errors="coerce")
+    defaults = default_embedding_dims_series(out)
     if "embedding_dim" in out.columns:
         d = pd.to_numeric(out["embedding_dim"], errors="coerce")
+        d = d.where(d.notna() & (d > 0), defaults)
     else:
-        d = pd.Series(
-            [embedding_dim_for_display_label(m) for m in out["method"].astype(str)],
-            index=out.index,
-            dtype=float,
-        )
-        out["embedding_dim"] = d
-    d = pd.to_numeric(out["embedding_dim"], errors="coerce").replace(0, np.nan)
+        d = defaults
+    out["embedding_dim"] = d
+    d = d.replace(0, np.nan)
     computed = rankme / d
     if "rankme_over_d" not in out.columns:
         out["rankme_over_d"] = computed

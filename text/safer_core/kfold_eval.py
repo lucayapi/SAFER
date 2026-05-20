@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
+
+TRAINING_TIMING_KEYS: Tuple[str, ...] = ("train_wall_time_sec",)
+KFOLD_AGGREGATE_METRIC_KEYS: Tuple[str, ...] = GEOMETRY_METRIC_KEYS + TRAINING_TIMING_KEYS
 
 
 def group_kfold_splits(
@@ -87,12 +90,36 @@ def save_kfold_tables(
     *,
     prefix: str = "kfold",
     selection_metric: str = PRIMARY_SELECTION_METRIC,
+    final_fit_wall_time_sec: Optional[float] = None,
 ) -> None:
-    """Écrit kfold_per_fold.csv et kfold_summary.csv."""
+    """Écrit kfold_per_fold.csv et kfold_summary.csv (géométrie + temps par fold, fit final optionnel)."""
     from pathlib import Path
 
     metrics_dir = Path(metrics_dir)
     metrics_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(fold_rows).to_csv(metrics_dir / f"{prefix}_per_fold.csv", index=False)
-    summary = aggregate_fold_rows(fold_rows, selection_metric=selection_metric)
+    summary = aggregate_fold_rows(
+        fold_rows,
+        metric_keys=KFOLD_AGGREGATE_METRIC_KEYS,
+        selection_metric=selection_metric,
+    )
+    if final_fit_wall_time_sec is not None:
+        summary["final_fit_wall_time_sec"] = float(final_fit_wall_time_sec)
     pd.DataFrame([summary]).to_csv(metrics_dir / f"{prefix}_summary.csv", index=False)
+
+
+def record_final_fit_wall_time(metrics_dir, seconds: float, *, prefix: str = "kfold") -> None:
+    """Ajoute ``final_fit_wall_time_sec`` à ``kfold_summary.csv`` (après fit 100 % BTP)."""
+    from pathlib import Path
+
+    path = Path(metrics_dir) / f"{prefix}_summary.csv"
+    row = {"final_fit_wall_time_sec": float(seconds)}
+    if path.is_file():
+        df = pd.read_csv(path)
+        if len(df) == 0:
+            df = pd.DataFrame([row])
+        else:
+            df.loc[df.index[0], "final_fit_wall_time_sec"] = float(seconds)
+        df.to_csv(path, index=False)
+    else:
+        pd.DataFrame([row]).to_csv(path, index=False)

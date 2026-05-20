@@ -18,5 +18,5 @@ else
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
 
-python scripts/collect_results.py --results_root resultats
-python scripts/compare_methods.py --results_root resultats --output_dir resultats/comparisons
+python scripts/collect_results.py --results-root output
+python scripts/compare_methods.py --results-root output --output-dir output/comparisons

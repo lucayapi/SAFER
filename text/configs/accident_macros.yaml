@@ -1,0 +1,48 @@
+# Définitions sémantiques des macros accidentologiques (A0–C).
+# Utilisées pour orienter les libellés OpenAI des topics intra-macro.
+
+macros:
+  A0:
+    title: "Contexte de travail / situation initiale"
+    question: "Dans quelle situation de travail l'accident s'inscrit-il ?"
+    description: |
+      La macro A0 décrit le cadre dans lequel l'activité se déroule avant l'accident.
+      Elle ne désigne pas encore une défaillance, ni un événement accidentel.
+      Elle décrit plutôt le contexte : activité en cours, tâche réalisée, environnement,
+      matériel manipulé, zone de travail, organisation générale.
+    label_guidance: |
+      Décris le contexte de travail (activité, tâche, environnement, matériel, zone, organisation).
+      N'évoque pas de défaillance, de condition dangereuse, d'événement accidentel ni de conséquence.
+
+  A1:
+    title: "Facteurs contributifs / déficiences / conditions dangereuses"
+    question: "Qu'est-ce qui n'allait pas dans la situation ?"
+    description: |
+      La macro A1 décrit les éléments qui ont favorisé ou rendu possible l'accident.
+      Contrairement à A0, A1 introduit une notion de défaillance, de manque, de condition
+      dangereuse, de problème organisationnel, technique ou humain.
+    label_guidance: |
+      Décris la défaillance, le manque, la condition dangereuse ou le facteur contributif.
+      Ne décris pas le contexte neutre (A0), l'événement dynamique (B) ni les dommages (C).
+
+  B:
+    title: "Déviation / événement accidentel"
+    question: "Que s'est-il passé concrètement ?"
+    description: |
+      La macro B décrit le basculement accidentel, c'est-à-dire l'événement dynamique qui
+      rompt le cours normal de l'activité : chute, collision, coincement, projection,
+      perte de contrôle, contact dangereux, renversement, etc.
+    label_guidance: |
+      Décris l'événement accidentel dynamique (ce qui s'est produit au moment du basculement).
+      Ne décris pas le contexte initial (A0), les causes contributives (A1) ni les conséquences (C).
+
+  C:
+    title: "Conséquences / dommages"
+    question: "Quel dommage a été produit ?"
+    description: |
+      La macro C décrit les effets de l'événement accidentel sur la victime ou les biens.
+      Elle ne décrit pas l'événement lui-même, mais son résultat : blessure, lésion,
+      atteinte corporelle, dommage matériel, incapacité, etc.
+    label_guidance: |
+      Décris le dommage ou la conséquence (blessure, lésion, atteinte, dommage matériel).
+      Ne redécris pas le contexte (A0), les facteurs contributifs (A1) ni l'événement (B).

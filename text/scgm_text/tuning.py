@@ -106,8 +106,8 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     grid = spec.get("grid") or {}
     n_folds = int(spec.get("n_folds", 5))
     selection_metric = str(spec.get("selection_metric", "eta2_macro_balanced_perc"))
-    tuning_output = str(spec.get("output_dir", "resultats/scgm_text/tuning"))
-    final_output = str(spec.get("final_output_dir", "resultats/scgm_text"))
+    tuning_output = str(spec.get("output_dir", "output/scgm_text/tuning"))
+    final_output = str(spec.get("final_output_dir", "output/scgm_text"))
 
     base_args = parse_args()
     apply_config(base_args, str(base_config))

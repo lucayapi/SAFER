@@ -24,6 +24,7 @@ from safer_core.paths import layout_method_output
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Export raw encoder embeddings + geometry metrics.")
     p.add_argument("--config", type=str, default="configs/methods/raw_embedding.yaml")
+    p.add_argument("--corpus", type=str, default=None, help="test_corpora.yaml (configs raw_embedding_test)")
     p.add_argument("--data_csv", type=str, default=None)
     p.add_argument("--emb_csv", type=str, default=None)
     p.add_argument("--label_col", type=str, default="pred_label")
@@ -40,12 +41,23 @@ def _apply_yaml_config(args: argparse.Namespace) -> None:
         return
     with cfg_path.open(encoding="utf-8") as handle:
         cfg = yaml.safe_load(handle) or {}
-    if args.data_csv is None:
-        args.data_csv = cfg.get("dataset_path") or cfg.get("data_csv") or "dataset/data_btp.csv"
-    if args.emb_csv is None:
-        args.emb_csv = cfg.get("emb_csv") or "embeddings/Qwen3-Embedding-0.6B_btp.csv"
+    from safer_core.test_corpus import raw_embedding_test_dir, resolve_test_corpus
+
+    if cfg.get("test_corpus") or args.corpus:
+        spec = resolve_test_corpus(args.corpus or cfg.get("test_corpus"))
+        if args.data_csv is None:
+            args.data_csv = str(spec.data_csv)
+        if args.emb_csv is None:
+            args.emb_csv = str(spec.emb_csv)
+        if args.output_dir is None:
+            args.output_dir = str(raw_embedding_test_dir(spec.id))
+    else:
+        if args.data_csv is None:
+            args.data_csv = cfg.get("dataset_path") or cfg.get("data_csv") or "dataset/data_btp.csv"
+        if args.emb_csv is None:
+            args.emb_csv = cfg.get("emb_csv") or "embeddings/Qwen3-Embedding-0.6B_btp.csv"
     if args.output_dir is None:
-        args.output_dir = cfg.get("output_dir") or "resultats/raw_embedding"
+        args.output_dir = cfg.get("output_dir") or "output/raw_embedding"
     if args.label_col == "pred_label" and cfg.get("label_col"):
         args.label_col = cfg["label_col"]
     if args.method_name is None:
@@ -62,7 +74,7 @@ def main() -> None:
     if args.emb_csv is None:
         args.emb_csv = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
     if args.output_dir is None:
-        args.output_dir = "resultats/raw_embedding"
+        args.output_dir = "output/raw_embedding"
     if args.method_name is None:
         args.method_name = "Embedding brut"
 

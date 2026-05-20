@@ -1,11 +1,11 @@
 method_name: softtriple
 method: softtriple
-output_dir: resultats/softtriple_diversity
+output_dir: output/softtriple_diversity
 use_prompt: false
 seed: 42
 n_folds: 5
 selection_metric: eta2_macro_balanced_perc
-test_dataset_path: dataset/test/data_metallurgie.csv
+test_corpus: metallurgie
 
 data:
   dataset_path: dataset/data_btp.csv

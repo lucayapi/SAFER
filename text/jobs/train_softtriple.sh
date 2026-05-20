@@ -26,5 +26,8 @@ export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
+# Corpus test pour l'éval finale : TEST_CORPUS=<id> (configs/test_corpora.yaml, défaut metallurgie)
+export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
+echo "TEST_CORPUS=${TEST_CORPUS}"
 echo "Mode entraînement : K-fold (n_folds=5 dans configs/methods/softtriple.yaml)"
 python scripts/train_softtriple.py --config configs/methods/softtriple.yaml

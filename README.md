@@ -1,6 +1,6 @@
 # SAFER
 
-Analyse de récits d'accidents du travail par modèles hiérarchiques (SCGM), transfert macro-ancré (MALT) et réseaux bayésiens exploratoires.
+Analyse de récits d'accidents du travail par modèles hiérarchiques (SCGM), méthodes contrastives et réseaux bayésiens exploratoires (exports SCGM).
 
 Le pipeline se trouve dans [`text/`](text/). **Documentation complète : [`text/README.md`](text/README.md).**
 

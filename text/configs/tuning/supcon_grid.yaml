@@ -1,10 +1,10 @@
 method_name: supcon
 base_config: configs/methods/supcon.yaml
-output_dir: resultats/supcon/tuning
-final_output_dir: resultats/supcon
+output_dir: output/supcon/tuning
+final_output_dir: output/supcon
 selection_metric: eta2_macro_balanced_perc
 n_folds: 5
-test_dataset_path: dataset/test/data_metallurgie.csv
+test_corpus: metallurgie
 final_fit_full_data: true
 
 grid:

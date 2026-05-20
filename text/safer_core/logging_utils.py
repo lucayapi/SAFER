@@ -1,4 +1,4 @@
-"""Logging fichier sous resultats/<method>/logs/."""
+"""Logging fichier sous output/<method>/logs/."""
 
 from __future__ import annotations
 

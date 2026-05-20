@@ -1,4 +1,4 @@
-"""Entraînement SoftTriple → resultats/softtriple/."""
+"""Entraînement SoftTriple → output/softtriple/."""
 
 import sys
 from pathlib import Path

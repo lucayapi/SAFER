@@ -1,4 +1,4 @@
-"""Agrège metrics_geometry par méthode (BTP et test métallurgie)."""
+"""Agrège metrics_geometry par méthode (BTP et corpus de test)."""
 
 from __future__ import annotations
 
@@ -25,12 +25,28 @@ from metrics.compare_display import (
 )
 from metrics.geometry import METRICS_TABLE_COLUMNS
 from safer_core.paths import ensure_comparisons_dirs
+from safer_core.test_corpus import (
+    default_test_corpus_id,
+    list_test_corpus_ids,
+    output_test_root,
+)
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--results_root", type=str, default="resultats")
+    p.add_argument("--results_root", type=str, default="output")
     p.add_argument("--output", type=str, default=None, help="Alias BTP (legacy)")
+    p.add_argument(
+        "--test-corpus",
+        type=str,
+        default=None,
+        help="Corpus test pour raw_embedding_test/<id>/ (défaut : registre)",
+    )
+    p.add_argument(
+        "--all-test-corpora",
+        action="store_true",
+        help="Écrit aussi embedding_geometry_comparison_test_<corpus>.csv par id registre",
+    )
     return p.parse_args()
 
 
@@ -50,11 +66,18 @@ def _load_method_row(method_dir: Path) -> dict | None:
     return _load_method_row_for_corpus(method_dir, "btp")
 
 
-def _results_dir_for_method(root: Path, method_key: str, corpus: str) -> Path:
-    if method_key == "raw_embedding" and corpus == "test":
-        alt = root / RAW_TEST_RESULTS_KEY
-        if alt.is_dir():
-            return alt
+def _results_dir_for_method(
+    root: Path,
+    method_key: str,
+    corpus: str,
+    *,
+    test_corpus_id: str | None = None,
+) -> Path:
+    if corpus == "test":
+        cid = test_corpus_id or default_test_corpus_id()
+        if method_key == "raw_embedding":
+            return root / cid / "raw_embedding"
+        return root / cid / method_key
     return root / method_key
 
 
@@ -96,10 +119,11 @@ def collect_embedding_comparison(
     *,
     corpus: str,
     method_keys: tuple[str, ...] = EMBEDDING_COMPARE_METHODS,
+    test_corpus_id: str | None = None,
 ) -> pd.DataFrame:
     rows: list[dict] = []
     for key in method_keys:
-        method_dir = _results_dir_for_method(root, key, corpus)
+        method_dir = _results_dir_for_method(root, key, corpus, test_corpus_id=test_corpus_id)
         if not method_dir.is_dir():
             continue
         row = _load_method_row_for_corpus(method_dir, corpus)
@@ -117,7 +141,7 @@ def collect_embedding_comparison(
 
 
 def collect_all_methods_btp(root: Path) -> pd.DataFrame:
-    """Toutes les méthodes sous resultats/ (hors comparisons) — usage legacy."""
+    """Toutes les méthodes sous output/ (hors comparisons) — usage legacy."""
     rows: list[dict] = []
     if not root.is_dir():
         return pd.DataFrame(columns=METRICS_TABLE_COLUMNS)
@@ -145,11 +169,13 @@ def _write_table(df: pd.DataFrame, path: Path) -> None:
 def main() -> None:
     args = parse_args()
     root = (ROOT_DIR / args.results_root).resolve()
+    test_root = output_test_root()
     comp = ensure_comparisons_dirs()
     tables = comp / "tables"
 
+    test_corpus = args.test_corpus or default_test_corpus_id()
     df_btp = collect_embedding_comparison(root, corpus="btp")
-    df_test = collect_embedding_comparison(root, corpus="test")
+    df_test = collect_embedding_comparison(test_root, corpus="test", test_corpus_id=test_corpus)
 
     if df_btp.empty and df_test.empty:
         df_legacy = collect_all_methods_btp(root)
@@ -168,7 +194,17 @@ def main() -> None:
     if not df_test.empty:
         _write_table(df_test, test_path)
     elif not df_btp.empty:
-        print(f"(absent) {test_path} — relancer l'éval test (fit final + data_metallurgie.csv)")
+        print(
+            f"(absent) {test_path} — relancer l'éval test "
+            f"(TEST_CORPUS={test_corpus}, fit final + embeddings test)"
+        )
+
+    if args.all_test_corpora:
+        for cid in list_test_corpus_ids():
+            df_c = collect_embedding_comparison(root, corpus="test", test_corpus_id=cid)
+            if not df_c.empty:
+                per_corpus = tables / f"embedding_geometry_comparison_test_{cid}.csv"
+                _write_table(df_c, per_corpus)
 
 
 if __name__ == "__main__":

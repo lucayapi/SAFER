@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from bn_malt.bn_visualization import (
+from bn_pipeline.bn_visualization import (
     build_node_short_title,
     build_node_summary_label,
     cpd_binary_marginal,

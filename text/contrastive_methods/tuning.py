@@ -84,10 +84,22 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
     n_folds = int(spec.get("n_folds", 5))
     seed = int(spec.get("seed", base_raw.get("seed", 42)))
-    tuning_output = str(spec.get("output_dir", f"resultats/{method_name}/tuning"))
-    final_output = str(spec.get("final_output_dir", f"resultats/{method_name}"))
+    tuning_output = str(spec.get("output_dir", f"output/{method_name}/tuning"))
+    final_output = str(spec.get("final_output_dir", f"output/{method_name}"))
     final_fit = bool(spec.get("final_fit_full_data", True)) and not args.skip_final_fit
-    test_dataset = str(spec.get("test_dataset_path", "dataset/test/data_metallurgie.csv"))
+    from safer_core.test_corpus import resolve_test_corpus
+
+    def _rel(p: Path) -> str:
+        try:
+            return str(p.relative_to(TEXT_ROOT)).replace("\\", "/")
+        except ValueError:
+            return str(p).replace("\\", "/")
+
+    if spec.get("test_corpus"):
+        test_spec = resolve_test_corpus(str(spec["test_corpus"]))
+        test_dataset = _rel(test_spec.data_csv)
+    else:
+        test_dataset = str(spec.get("test_dataset_path") or _rel(resolve_test_corpus().data_csv))
 
     combos = expand_grid(grid)
     if method_name == "softtriple":
@@ -157,7 +169,10 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
         merged_final["final_fit_full_data"] = True
         merged_final["selection_metric"] = selection_metric
         merged_final["method_name"] = method_name
-        merged_final["test_dataset_path"] = test_dataset
+        if spec.get("test_corpus"):
+            merged_final["test_corpus"] = str(spec["test_corpus"])
+        else:
+            merged_final["test_dataset_path"] = test_dataset
         cfg_final = load_contrastive_config_from_dict(
             method_name, merged_final, config_path=str(args.grid_config)
         )

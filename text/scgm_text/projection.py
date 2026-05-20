@@ -1,4 +1,4 @@
-"""Projecteurs partagés SCGM texte / MALT (backbone → espace des ancres)."""
+"""Projecteurs partagés SCGM texte (backbone → espace des ancres)."""
 
 from __future__ import annotations
 

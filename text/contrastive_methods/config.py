@@ -60,6 +60,7 @@ class ContrastiveConfig:
     final_fit_full_data: bool = False
     selection_metric: str = "eta2_macro_balanced_perc"
     n_folds: int = 1
+    test_corpus: Optional[str] = None
     test_dataset_path: Optional[Path] = None
     extra: Dict[str, Any] = field(default_factory=dict)
 
@@ -67,13 +68,15 @@ class ContrastiveConfig:
     def test_data_csv(self) -> Path:
         if self.test_dataset_path is not None:
             return self.test_dataset_path
-        return TEXT_ROOT / "dataset/test/data_metallurgie.csv"
+        from safer_core.test_corpus import resolve_test_corpus
+
+        return resolve_test_corpus(self.test_corpus).data_csv
 
     @property
     def resolved_output_dir(self) -> str:
         if self.output_dir:
             return self.output_dir
-        return f"resultats/{self.method_name}"
+        return f"output/{self.method_name}"
 
 
 def _section(raw: Dict[str, Any], name: str) -> Dict[str, Any]:
@@ -153,7 +156,7 @@ def load_contrastive_config(
 
     _metric_default = "cosine" if method_name == "supcon" else "euclidean"
 
-    return ContrastiveConfig(
+    cfg = ContrastiveConfig(
         method_name=str(pick("method_name", default=method_name, sources=(raw,))),
         dataset_path=TEXT_ROOT / str(dataset_rel),
         text_col=str(pick("text_col", default="sentence", sources=(data, raw))),
@@ -256,6 +259,11 @@ def load_contrastive_config(
             pick("selection_metric", default="eta2_macro_balanced_perc", sources=(raw, training))
         ),
         n_folds=int(pick("n_folds", default=1, sources=(raw, training))),
+        test_corpus=(
+            str(tc)
+            if (tc := pick("test_corpus", default=None, sources=(data, raw, training)))
+            else None
+        ),
         test_dataset_path=(
             TEXT_ROOT / str(test_rel)
             if (test_rel := pick("test_dataset_path", default=None, sources=(data, raw, training)))
@@ -263,6 +271,13 @@ def load_contrastive_config(
         ),
         extra={"raw": raw, "config_path": str(path)},
     )
+    import os
+
+    env_corpus = os.environ.get("TEST_CORPUS")
+    if env_corpus:
+        cfg.test_corpus = str(env_corpus)
+        cfg.test_dataset_path = None
+    return cfg
 
 
 def load_contrastive_config_from_dict(

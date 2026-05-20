@@ -29,7 +29,7 @@ cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
 _data = cfg.get("data") or {{}}
 _model = cfg.get("model") or {{}}
 DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
-OUTPUT_DIR = cfg.get("output_dir", f"resultats/{{METHOD_KEY}}")
+OUTPUT_DIR = cfg.get("output_dir", f"output/{{METHOD_KEY}}")
 RESULTS = ROOT / OUTPUT_DIR
 LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
 BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
@@ -91,11 +91,18 @@ if resolved_cfg.is_file():
     print("\\n=== config_resolved.yaml ===")
     display(yaml.safe_load(resolved_cfg.read_text(encoding="utf-8")))
 
-DATA_TEST = ROOT / "dataset/test/data_metallurgie.csv"
-print("Corpus test (hors domaine) :", DATA_TEST)
+TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
+from safer_core.test_corpus import method_test_results_dir, resolve_test_corpus
+
+_test_spec = resolve_test_corpus(TEST_CORPUS, anchor=ROOT)
+_test_results = method_test_results_dir(METHOD_KEY, TEST_CORPUS, anchor=ROOT)
+DATA_TEST = _test_spec.data_csv
+print(f"Corpus test (hors domaine) : {{_test_spec.display_name}} ({{TEST_CORPUS}})")
+print("  →", DATA_TEST)
+print("  Métriques test :", _test_results)
 
 print(
-    "\\nNote : le test métallurgie utilise le modèle entraîné sur 100 % BTP "
+    "\\nNote : le corpus test utilise le modèle entraîné sur 100 % BTP "
     "(checkpoints/best_model), pas les checkpoints des folds."
 )
 
@@ -115,10 +122,13 @@ if kfold_summary.is_file():
         s = float(kval.get("std_eta2_macro_balanced_perc", pd.Series([0])).iloc[0])
         print(f"η² macro balanced (%) val : {{m:.2f}} ± {{s:.2f}}")
 
-for corpus, stem in (("BTP (in-domain, modèle final)", "btp"), ("Test métallurgie (modèle final)", "test")):
-    geom_csv = RESULTS / "metrics" / f"metrics_geometry_{{stem}}.csv"
+for corpus, stem, base in (
+    ("BTP (in-domain, modèle final)", "btp", RESULTS),
+    (f"Test {{_test_spec.display_name}} (modèle final)", "test", _test_results),
+):
+    geom_csv = base / "metrics" / f"metrics_geometry_{{stem}}.csv"
     if not geom_csv.is_file():
-        geom_csv = RESULTS / "metrics" / "metrics_geometry.csv" if stem == "btp" else None
+        geom_csv = base / "metrics" / "metrics_geometry.csv" if stem == "btp" else None
     if geom_csv is not None and geom_csv.is_file():
         geom = pd.read_csv(geom_csv)
         print(f"\\n=== Géométrie {{corpus}} ===")
@@ -257,7 +267,7 @@ def main() -> None:
         nb_name = f"05_view_{method_key}_results.ipynb"
         md = (
             f"# Résultats — {display_name}\n\n"
-            f"Lecture des sorties sous `resultats/{method_key}/` (chemins définis dans "
+            f"Lecture des sorties sous `output/{method_key}/` (chemins définis dans "
             f"`configs/methods/{method_key}.yaml`). **Pas d'entraînement** — le corpus "
             f"dépend du CSV configuré, pas du nom du notebook.\n"
         )

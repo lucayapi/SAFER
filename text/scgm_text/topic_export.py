@@ -61,6 +61,34 @@ def _top_sentences_by_distance(
     return " || ".join(str(sentences[idx]) for idx in order)
 
 
+def _macro_count_columns(subset: pd.DataFrame, label_col: str) -> dict:
+    """Effectifs par macro (A0–C) dans un sous-ensemble de segments."""
+    vc = subset[label_col].astype(str).value_counts()
+    n_a0 = int(vc.get("A0", 0))
+    n_a1 = int(vc.get("A1", 0))
+    n_b = int(vc.get("B", 0))
+    n_c = int(vc.get("C", 0))
+    n_total = n_a0 + n_a1 + n_b + n_c
+    out = {
+        "n_A0": n_a0,
+        "n_A1": n_a1,
+        "n_B": n_b,
+        "n_C": n_c,
+    }
+    if n_total > 0:
+        inv = 100.0 / float(n_total)
+        out["pct_A0"] = round(n_a0 * inv, 2)
+        out["pct_A1"] = round(n_a1 * inv, 2)
+        out["pct_B"] = round(n_b * inv, 2)
+        out["pct_C"] = round(n_c * inv, 2)
+    else:
+        out["pct_A0"] = 0.0
+        out["pct_A1"] = 0.0
+        out["pct_B"] = 0.0
+        out["pct_C"] = 0.0
+    return out
+
+
 def export_topic_tables(
     metadata_df: pd.DataFrame,
     projected_embeddings: np.ndarray,
@@ -80,6 +108,14 @@ def export_topic_tables(
                     "z_id": z_id,
                     "dominant_macro": "",
                     "n_units": 0,
+                    "n_A0": 0,
+                    "n_A1": 0,
+                    "n_B": 0,
+                    "n_C": 0,
+                    "pct_A0": 0.0,
+                    "pct_A1": 0.0,
+                    "pct_B": 0.0,
+                    "pct_C": 0.0,
                     "top_words": "",
                     "top_sentences": "",
                 }
@@ -94,6 +130,7 @@ def export_topic_tables(
             projected_embeddings[mask],
             mu_z[z_id],
         )
+        macro_cols = _macro_count_columns(subset, label_col)
         rows.append(
             {
                 "z_id": z_id,
@@ -101,6 +138,7 @@ def export_topic_tables(
                 "n_units": int(mask.sum()),
                 "top_words": top_words,
                 "top_sentences": top_sentences,
+                **macro_cols,
             }
         )
 

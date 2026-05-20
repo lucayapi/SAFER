@@ -51,7 +51,7 @@ def _make_loader(n: int = 80, dim: int = 8, seed: int = 0) -> DataLoader:
 def test_evaluate_split_returns_eta2_keys():
     model = SCGMTextModel.from_args(_args(), input_dim=8)
     loader = _make_loader()
-    metrics, _, _, _ = evaluate_split(
+    metrics, _, _, _, _ = evaluate_split(
         model, loader, torch.device("cpu"), tau=0.1, n_class=4, prefix="val"
     )
     assert "val_eta2_macro_balanced" in metrics
@@ -64,7 +64,7 @@ def test_evaluate_split_returns_eta2_keys():
 def test_evaluate_split_classifier_diagnostics_optional():
     model = SCGMTextModel.from_args(_args(), input_dim=8)
     loader = _make_loader()
-    metrics, _, _, _ = evaluate_split(
+    metrics, _, _, _, _ = evaluate_split(
         model,
         loader,
         torch.device("cpu"),

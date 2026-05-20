@@ -1,4 +1,4 @@
-"""Entraînement SupCon → resultats/supcon/."""
+"""Entraînement SupCon → output/supcon/."""
 
 import sys
 from pathlib import Path

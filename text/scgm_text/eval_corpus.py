@@ -199,10 +199,13 @@ def evaluate_scgm_btp_and_test(
     emb_btp: str,
     data_test: str,
     emb_test: str,
+    test_corpus_id: Optional[str] = None,
     label_col: str = "pred_label",
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
 ) -> Dict[str, Path]:
+    from safer_core.test_corpus import method_test_results_dir
+
     layout = layout_method_output("scgm_text", output_root)
     metrics_dir = Path(layout["metrics"])
     metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -223,17 +226,19 @@ def evaluate_scgm_btp_and_test(
     test_data = TEXT_ROOT / data_test if not Path(data_test).is_absolute() else Path(data_test)
     test_emb = TEXT_ROOT / emb_test if not Path(emb_test).is_absolute() else Path(emb_test)
     if test_data.is_file() and test_emb.is_file():
+        test_metrics_dir = method_test_results_dir("scgm_text", test_corpus_id) / "metrics"
+        test_metrics_dir.mkdir(parents=True, exist_ok=True)
         evaluate_scgm_on_corpus(
             checkpoint_path,
             str(test_data),
             str(test_emb),
             corpus="test",
-            metrics_dir=metrics_dir,
+            metrics_dir=test_metrics_dir,
             label_col=label_col,
             pred_ok_col=pred_ok_col,
             group_col=group_col,
         )
-        paths["test"] = metrics_dir / "metrics_geometry_test.csv"
+        paths["test"] = test_metrics_dir / "metrics_geometry_test.csv"
     return paths
 
 
@@ -245,12 +250,15 @@ def evaluate_and_save_btp_test(
     emb_btp: str,
     data_test: str,
     emb_test: str,
+    test_corpus_id: Optional[str] = None,
     label_col: str = "pred_label",
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
     save_projections: bool = True,
 ) -> Dict[str, Path]:
     """Métriques géométrie + sauvegarde des projections pour notebook."""
+    from safer_core.test_corpus import method_test_results_dir
+
     paths = evaluate_scgm_btp_and_test(
         checkpoint_path,
         output_root,
@@ -258,6 +266,7 @@ def evaluate_and_save_btp_test(
         emb_btp=emb_btp,
         data_test=data_test,
         emb_test=emb_test,
+        test_corpus_id=test_corpus_id,
         label_col=label_col,
         pred_ok_col=pred_ok_col,
         group_col=group_col,
@@ -290,11 +299,13 @@ def evaluate_and_save_btp_test(
             flush=True,
         )
     if test_data.is_file() and test_emb.is_file():
+        test_emb_dir = method_test_results_dir("scgm_text", test_corpus_id) / "embeddings"
+        test_emb_dir.mkdir(parents=True, exist_ok=True)
         saved_test = save_scgm_projected_corpus(
             checkpoint_path,
             str(test_data),
             str(test_emb),
-            emb_dir,
+            test_emb_dir,
             stem="test",
             label_col=label_col,
             pred_ok_col=pred_ok_col,

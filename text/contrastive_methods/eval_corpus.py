@@ -14,6 +14,7 @@ from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.metrics import METHOD_DISPLAY
 from safer_core.io import save_metrics_geometry
 from safer_core.paths import layout_method_output
+from safer_core.test_corpus import method_test_results_dir
 
 
 def evaluate_contrastive_on_csv(
@@ -87,13 +88,18 @@ def evaluate_btp_and_test(
     )
     paths["btp"] = metrics_dir / "metrics_geometry_btp.csv"
     if test_csv.is_file():
+        test_root = method_test_results_dir(cfg.method_name, cfg.test_corpus)
+        test_metrics = test_root / "metrics"
+        test_emb_out = test_root / "embeddings"
+        test_metrics.mkdir(parents=True, exist_ok=True)
+        test_emb_out.mkdir(parents=True, exist_ok=True)
         evaluate_contrastive_on_csv(
             cfg,
             checkpoint_dir,
             test_csv,
             corpus="test",
-            embeddings_out=emb_dir / "final_embeddings_test.csv",
-            metrics_dir=metrics_dir,
+            embeddings_out=test_emb_out / "final_embeddings_test.csv",
+            metrics_dir=test_metrics,
         )
-        paths["test"] = metrics_dir / "metrics_geometry_test.csv"
+        paths["test"] = test_metrics / "metrics_geometry_test.csv"
     return paths

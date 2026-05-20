@@ -21,7 +21,7 @@ scgm_text/.env
 *.ipynb.bak
 Untitled.ipynb
 
-# Notebooks (local uniquement — régénérer : scripts/build_*.py, rebuild_notebook_01.py)
+# Notebooks (local uniquement — régénérer : scripts/build_*.py, build_notebook_02_scgm_results.py, etc.)
 text/notebooks/**
 !text/notebooks/.gitkeep
 
@@ -29,8 +29,10 @@ text/notebooks/**
 text/embeddings/
 text/runs/
 text/outputs/
+text/output/
+text/output_test/
 text/resultats/
-!text/resultats/comparisons/topics_legacy/stopwords_domain.txt
+!text/output/comparisons/topics_legacy/stopwords_domain.txt
 text/**/*.pt
 text/**/*.pth
 

@@ -29,6 +29,8 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 mkdir -p "${HF_HOME}"
 
+export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
+echo "TEST_CORPUS=${TEST_CORPUS}"
 # Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — K-fold groupé K=5
 echo "Mode entraînement : K-fold (n_folds depuis configs/scgm_text_strict_fidelity.yaml)"
 python scripts/train_scgm_text.py \
@@ -39,8 +41,9 @@ python scripts/train_scgm_text.py \
   --emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv \
   --label_col pred_label \
   --group_col accident_id \
-  --output_dir resultats/scgm_text
+  --output_dir output/scgm_text
 
-# Post-traitement (export topics, projections test, OpenAI optionnel) :
-#   sbatch jobs/postprocess_scgm_text.sh
-#   SKIP_OPENAI=0 bash jobs/postprocess_scgm_text.sh   # thèmes OpenAI (login / Internet)
+# Après train (eval BTP + test → output_test/ inclus dans train_scgm_text.py) :
+#   sbatch jobs/export_raw_geometry.sh
+#   sbatch jobs/export_test_embeddings.sh   # si embeddings/test/*.csv absent
+#   CORPUS=metallurgie bash jobs/run_macro_transfer.sh

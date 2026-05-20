@@ -2,6 +2,7 @@ import argparse
 import csv
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -60,7 +61,11 @@ from scgm_text.training_diagnostics import (
     warn_identity_frozen_backbone,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
-from metrics.geometry import build_geometry_metrics_row
+from metrics.geometry import (
+    GEOMETRY_METRIC_KEYS,
+    PRIMARY_SELECTION_METRIC,
+    build_geometry_metrics_row,
+)
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output, resolve_output_dir
 from safer_core.seed import set_seed
@@ -153,7 +158,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--data_csv", type=str, default="dataset/data_btp.csv")
     parser.add_argument("--emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_btp.csv")
-    parser.add_argument("--output_dir", type=str, default="resultats/scgm_text")
+    parser.add_argument("--output_dir", type=str, default="output/scgm_text")
     parser.add_argument("--label_col", type=str, default="pred_label")
     parser.add_argument("--pred_ok_col", type=str, default="pred_ok")
     parser.add_argument("--group_col", type=str, default="accident_id")
@@ -220,14 +225,20 @@ def parse_args() -> argparse.Namespace:
         help="Entraînement sur 100 %% BTP (pas de split val).",
     )
     parser.add_argument(
+        "--test_corpus",
+        type=str,
+        default=None,
+        help="Identifiant configs/test_corpora.yaml (prioritaire sur test_data_csv / test_emb_csv)",
+    )
+    parser.add_argument(
         "--test_data_csv",
         type=str,
-        default="dataset/test/data_metallurgie.csv",
+        default=None,
     )
     parser.add_argument(
         "--test_emb_csv",
         type=str,
-        default="embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv",
+        default=None,
     )
     parser.add_argument(
         "--best_checkpoint_lambda",
@@ -259,6 +270,9 @@ def apply_config(args: argparse.Namespace, config_path: Optional[str]) -> None:
         key_norm = key.replace("-", "_")
         if key_norm == "n_folds":
             args.kfold = int(value)
+            continue
+        if key_norm == "test_corpus" and value:
+            args.test_corpus = str(value)
             continue
         if hasattr(args, key_norm):
             setattr(args, key_norm, value)
@@ -301,7 +315,7 @@ def finalize_args(args: argparse.Namespace) -> None:
         args.teacher_mode = "ema"
 
     if args.run_name:
-        args.output_dir = os.path.join("resultats", "scgm_text", args.run_name)
+        args.output_dir = os.path.join("output", "scgm_text", args.run_name)
     args.output_dir = str(resolve_output_dir("scgm_text", args.output_dir))
 
     if getattr(args, "with_mlp", None) is not None:
@@ -323,6 +337,27 @@ def finalize_args(args: argparse.Namespace) -> None:
         )
 
     warn_identity_frozen_backbone(args)
+    _resolve_test_corpus_args(args)
+
+
+def _resolve_test_corpus_args(args: argparse.Namespace) -> None:
+    """Remplit test_data_csv / test_emb_csv depuis test_corpus ou le registre."""
+    import os
+
+    from safer_core.test_corpus import resolve_test_corpus
+
+    corpus = getattr(args, "test_corpus", None) or os.environ.get("TEST_CORPUS")
+    if corpus:
+        spec = resolve_test_corpus(corpus)
+        args.test_data_csv = str(spec.data_csv)
+        args.test_emb_csv = str(spec.emb_csv)
+        return
+    if not getattr(args, "test_data_csv", None) or not getattr(args, "test_emb_csv", None):
+        spec = resolve_test_corpus(None)
+        if not getattr(args, "test_data_csv", None):
+            args.test_data_csv = str(spec.data_csv)
+        if not getattr(args, "test_emb_csv", None):
+            args.test_emb_csv = str(spec.emb_csv)
 
 
 def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
@@ -399,6 +434,18 @@ def run_estep(
     return q_new, sink_diag
 
 
+def _geometry_keys_from_row(geom: Dict[str, Any]) -> Dict[str, float]:
+    """Extrait les clés ``GEOMETRY_METRIC_KEYS`` pour agrégation K-fold / tuning."""
+    out: Dict[str, float] = {}
+    for key in GEOMETRY_METRIC_KEYS:
+        val = geom.get(key, float("nan"))
+        try:
+            out[key] = float(val)
+        except (TypeError, ValueError):
+            out[key] = float("nan")
+    return out
+
+
 def checkpoint_selection_score(
     val_metrics: Dict[str, float],
     metric_name: str,
@@ -431,7 +478,7 @@ def evaluate_split(
     prefix: str = "val",
     *,
     compute_classifier_diagnostics: bool = False,
-) -> Tuple[Dict[str, float], np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[Dict[str, float], np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     model.eval()
     y_true: List[int] = []
     y_pred: List[int] = []
@@ -484,7 +531,7 @@ def evaluate_split(
         metrics[f"{prefix}_acc"] = accuracy(y_true_arr, y_pred_arr)
         metrics[f"{prefix}_macro_f1"] = macro_f1(y_true_arr, y_pred_arr)
         metrics[f"{prefix}_balanced_acc"] = balanced_accuracy(y_true_arr, y_pred_arr)
-    return metrics, y_true_arr, y_pred_arr, embedding_arr
+    return metrics, y_true_arr, y_pred_arr, embedding_arr, geom
 
 
 def compute_train_subtype_metrics(
@@ -598,6 +645,7 @@ def run_training(
     train_idx_override: Optional[np.ndarray] = None,
     val_idx_override: Optional[np.ndarray] = None,
 ) -> Dict[str, float]:
+    t_run_start = time.perf_counter()
     set_seed(args.seed)
     print(describe_fidelity_mode(args), flush=True)
     print(
@@ -740,6 +788,8 @@ def run_training(
 
     best_score = float("-inf")
     best_epoch = 0
+    best_geometry: Dict[str, float] = {}
+    last_eval_geom: Dict[str, Any] = {}
     with open(dirs["legacy_logs_csv"], "w", newline="", encoding="utf-8") as legacy_file:
         legacy_writer = csv.DictWriter(legacy_file, fieldnames=legacy_fields)
         legacy_writer.writeheader()
@@ -811,7 +861,7 @@ def run_training(
                 num_batches += 1
 
             nb = max(num_batches, 1)
-            train_metrics, _, _, _ = evaluate_split(
+            train_metrics, _, _, _, train_geom = evaluate_split(
                 model,
                 train_loader,
                 device,
@@ -828,7 +878,7 @@ def run_training(
                 )
             has_val = len(val_idx) > 0
             if has_val:
-                val_metrics, _, _, _ = evaluate_split(
+                val_metrics, _, _, _, val_geom = evaluate_split(
                     model,
                     val_loader,
                     device,
@@ -837,6 +887,7 @@ def run_training(
                     prefix="val",
                     compute_classifier_diagnostics=args.compute_classifier_diagnostics,
                 )
+                eval_geom = val_geom
             else:
                 val_metrics = {
                     "val_eta2_macro_balanced": train_metrics.get("train_eta2_macro_balanced"),
@@ -846,6 +897,8 @@ def run_training(
                     "c1_global": train_metrics.get("c1_global"),
                     "c10_global": train_metrics.get("c10_global"),
                 }
+                eval_geom = train_geom
+            last_eval_geom = eval_geom
 
             row: Dict[str, Any] = {
                 "epoch": epoch,
@@ -922,6 +975,7 @@ def run_training(
             if score > best_score:
                 best_score = score
                 best_epoch = epoch
+                best_geometry = _geometry_keys_from_row(eval_geom)
                 save_checkpoint(
                     os.path.join(dirs["checkpoints_dir"], "best_model.pt"),
                     model,
@@ -932,19 +986,24 @@ def run_training(
                     ema_teacher,
                 )
 
+    if not best_geometry and last_eval_geom:
+        best_geometry = _geometry_keys_from_row(last_eval_geom)
+
     config_payload["best_checkpoint_metric"] = args.best_checkpoint_metric
     config_payload["best_checkpoint_lambda"] = args.best_checkpoint_lambda
     config_payload["best_checkpoint_score"] = best_score
     config_payload["best_checkpoint_epoch"] = best_epoch
     save_config_resolved(config_payload, layout["root"])
     save_json(config_payload, layout["configs"] / "config.json")
+    selection_score = best_geometry.get(PRIMARY_SELECTION_METRIC, float("nan"))
+    if not np.isfinite(selection_score):
+        selection_score = best_score if np.isfinite(best_score) else float("nan")
     return {
-        "eta2_macro_balanced_perc": best_score
-        if args.best_checkpoint_metric == "eta2_macro_balanced_perc"
-        else float("nan"),
-        "val_eta2_macro_balanced": float(config_payload.get("val_eta2_macro_balanced", float("nan"))),
+        **best_geometry,
         "best_checkpoint_score": best_score,
         "best_checkpoint_epoch": best_epoch,
+        "selection_score": float(selection_score),
+        "train_wall_time_sec": float(time.perf_counter() - t_run_start),
     }
 
 
@@ -996,8 +1055,9 @@ def run_post_train_eval(args: argparse.Namespace) -> None:
         output_root=str(layout["root"]),
         data_btp=args.data_csv,
         emb_btp=args.emb_csv,
-        data_test=getattr(args, "test_data_csv", "dataset/test/data_metallurgie.csv"),
-        emb_test=getattr(args, "test_emb_csv", "embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv"),
+        data_test=args.test_data_csv,
+        emb_test=args.test_emb_csv,
+        test_corpus_id=getattr(args, "test_corpus", None),
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,
         group_col=args.group_col,
@@ -1024,7 +1084,11 @@ def main() -> None:
         layout = layout_method_output("scgm_text", final_args.output_dir)
         final_args.output_dir = str(layout["root"])
         print("[scgm] Réentraînement final 100 % BTP…", flush=True)
+        from safer_core.kfold_eval import record_final_fit_wall_time
+
+        t_final = time.perf_counter()
         run_training(final_args)
+        record_final_fit_wall_time(layout["metrics"], time.perf_counter() - t_final)
         run_post_train_eval(final_args)
     else:
         run_training(args)

@@ -1,4 +1,4 @@
-"""Entraînement Batch Triplet → resultats/batch_triplet/."""
+"""Entraînement Batch Triplet → output/batch_triplet/."""
 
 import sys
 from pathlib import Path

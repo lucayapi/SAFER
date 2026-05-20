@@ -1,16 +1,16 @@
-"""Exporte les embeddings SCGM projetés sur le corpus test (sans réentraînement)."""
+"""Exporte les embeddings SCGM projetés sur le corpus test (output_test/<corpus>/scgm_text/)."""
 
 from __future__ import annotations
 
 import argparse
-import os
 import sys
+from pathlib import Path
 
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-from safer_core.paths import layout_method_output
+from safer_core.test_corpus import method_test_results_dir, resolve_test_corpus
 from scgm_text.eval_corpus import save_scgm_projected_corpus
 
 
@@ -19,15 +19,11 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--checkpoint",
         type=str,
-        default="resultats/scgm_text/checkpoints/best_model.pt",
+        default="output/scgm_text/checkpoints/best_model.pt",
     )
-    p.add_argument("--output_dir", type=str, default="resultats/scgm_text")
-    p.add_argument("--data_csv", type=str, default="dataset/test/data_metallurgie.csv")
-    p.add_argument(
-        "--emb_csv",
-        type=str,
-        default="embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv",
-    )
+    p.add_argument("--corpus", type=str, default=None)
+    p.add_argument("--data_csv", type=str, default=None)
+    p.add_argument("--emb_csv", type=str, default=None)
     p.add_argument("--label_col", type=str, default="pred_label")
     p.add_argument("--group_col", type=str, default="accident_id")
     p.add_argument("--pred_ok_col", type=str, default="pred_ok")
@@ -39,12 +35,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    layout = layout_method_output("scgm_text", args.output_dir)
+    spec = resolve_test_corpus(args.corpus)
+    data_csv = args.data_csv or str(spec.data_csv)
+    emb_csv = args.emb_csv or str(spec.emb_csv)
+    emb_dir = method_test_results_dir("scgm_text", spec.id) / "embeddings"
+    emb_dir.mkdir(parents=True, exist_ok=True)
     paths = save_scgm_projected_corpus(
         args.checkpoint,
-        args.data_csv,
-        args.emb_csv,
-        layout["embeddings"],
+        data_csv,
+        emb_csv,
+        emb_dir,
         stem="test",
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,

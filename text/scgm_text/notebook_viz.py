@@ -1114,13 +1114,43 @@ def plot_topics_distribution_by_macro(
         plt.show()
 
 
+def macro_counts_per_z(
+    meta_df: pd.DataFrame,
+    *,
+    z_col: str = "z_hat",
+    label_col: str = "pred_label",
+    macros: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> pd.DataFrame:
+    """Effectifs par composante z et macro (colonnes A0..C + n_total)."""
+    missing = [c for c in (z_col, label_col) if c not in meta_df.columns]
+    if missing:
+        raise ValueError(f"macro_counts_per_z : colonnes manquantes {missing}")
+    ct = pd.crosstab(meta_df[z_col].astype(int), meta_df[label_col].astype(str))
+    for m in macros:
+        if m not in ct.columns:
+            ct[m] = 0
+    ct = ct.reindex(columns=[m for m in macros], fill_value=0).fillna(0).astype(int)
+    ct["n_total"] = ct[list(macros)].sum(axis=1).astype(int)
+    ct = ct.reset_index()
+    first = str(ct.columns[0])
+    if first != "z_id":
+        ct = ct.rename(columns={first: "z_id"})
+    return ct
+
+
+_N_MACRO_COLS = {"A0": "n_A0", "A1": "n_A1", "B": "n_B", "C": "n_C"}
+
+
 def plot_topics_n_units_by_z(
     themes_z: pd.DataFrame,
     *,
+    metadata_df: Optional[pd.DataFrame] = None,
+    z_col: str = "z_hat",
+    label_col: str = "pred_label",
     save_fig: Optional[Callable[[str], Path]] = None,
     png_name: str = "topics_n_units_by_z.png",
 ) -> None:
-    """Barplot : ``n_units`` par ``z_id`` ; couleur = macro dominante du topic."""
+    """Barres empilées : ``n_units`` par ``z_id`` et répartition A0–C (macro ``pred_label``)."""
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
 
@@ -1129,27 +1159,84 @@ def plot_topics_n_units_by_z(
         return
 
     df = themes_z.sort_values("z_id").copy()
-    macros_order = ["A0", "A1", "B", "C"]
+    macros_order = ("A0", "A1", "B", "C")
+    n_cols = [_N_MACRO_COLS[m] for m in macros_order]
     macro_to_color = _macro_color_map(macros_order)
-    if "dominant_macro" in df.columns:
-        bar_colors = [
-            macro_to_color.get(str(m).strip(), "#888888")
-            for m in df["dominant_macro"].astype(str)
-        ]
-    else:
-        bar_colors = ["#888888"] * len(df)
+
+    use_stacked = all(c in df.columns for c in n_cols)
+    if not use_stacked and metadata_df is not None:
+        if z_col in metadata_df.columns and label_col in metadata_df.columns:
+            try:
+                counts = macro_counts_per_z(metadata_df, z_col=z_col, label_col=label_col)
+                rename = {m: _N_MACRO_COLS[m] for m in macros_order}
+                counts = counts.rename(columns=rename)
+                keep = ["z_id"] + n_cols
+                df = df.drop(columns=[c for c in n_cols if c in df.columns], errors="ignore")
+                df = df.merge(counts[keep], on="z_id", how="left")
+                df[n_cols] = df[n_cols].fillna(0).astype(int)
+                use_stacked = True
+            except ValueError as exc:
+                print(f"(avertissement) répartition macros par z : {exc}")
+        else:
+            print(
+                f"(info) metadata sans {z_col!r} / {label_col!r} — repli barres par macro dominante"
+            )
 
     fig_w = max(10.0, len(df) * 0.28)
-    fig, ax = plt.subplots(figsize=(fig_w, 4))
-    ax.bar(df["z_id"].astype(str), df["n_units"].astype(float), color=bar_colors)
+    fig, ax = plt.subplots(figsize=(fig_w, 5))
+
+    if use_stacked:
+        x = np.arange(len(df))
+        parts = df[n_cols].astype(float).to_numpy().T
+        totals_meta = parts.sum(axis=0)
+        n_units_arr = df["n_units"].astype(float).to_numpy()
+        scale = np.ones(len(df))
+        ok = totals_meta > 1e-9
+        scale[ok] = n_units_arr[ok] / totals_meta[ok]
+        parts = parts * scale
+        bottom = np.zeros(len(df))
+        for i, m in enumerate(macros_order):
+            heights = parts[i]
+            ax.bar(
+                x,
+                heights,
+                bottom=bottom,
+                label=m,
+                color=macro_to_color[m],
+                edgecolor="#111111",
+                linewidth=0.35,
+            )
+            bottom = bottom + heights
+        ax.set_xticks(x, df["z_id"].astype(str), rotation=90, fontsize=7)
+        ymax = float(bottom.max()) if len(bottom) else 0.0
+        pad = max(ymax * 0.02, 1.0)
+        for xi, total in enumerate(df["n_units"].astype(int).to_numpy()):
+            if total > 0:
+                ax.text(xi, float(bottom[xi]) + pad * 0.25, str(int(total)), ha="center", va="bottom", fontsize=6)
+        ax.set_title("Effectifs par composante z — répartition des macros")
+        legend_title = "Macro (pred_label)"
+    else:
+        print(
+            "(info) Barres par macro dominante : régénérer themes_by_z (export_scgm_text_outputs.py, legacy) "
+            "ou fournir metadata (z_hat, pred_label)."
+        )
+        if "dominant_macro" in df.columns:
+            bar_colors = [
+                macro_to_color.get(str(m).strip(), "#888888") for m in df["dominant_macro"].astype(str)
+            ]
+        else:
+            bar_colors = ["#888888"] * len(df)
+        ax.bar(df["z_id"].astype(str), df["n_units"].astype(float), color=bar_colors)
+        plt.xticks(rotation=90, fontsize=7)
+        ax.set_title("Effectif par composante z (couleur = macro dominante)")
+        legend_title = "Macro dominante"
+
     ax.set_xlabel("Composante z")
-    ax.set_ylabel("n_units")
-    ax.set_title("Effectif par composante z (couleur = macro dominante)")
-    plt.xticks(rotation=90, fontsize=7)
+    ax.set_ylabel("Segments (n_units)")
     legend_patches = [
         Patch(facecolor=macro_to_color[m], edgecolor="#111111", label=m) for m in macros_order
     ]
-    ax.legend(handles=legend_patches, title="Macro dominante", loc="upper right", fontsize=8)
+    ax.legend(handles=legend_patches, title=legend_title, loc="upper right", fontsize=8)
     plt.tight_layout()
     if save_fig is not None:
         save_fig(png_name)
