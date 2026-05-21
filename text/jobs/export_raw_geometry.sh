@@ -16,9 +16,13 @@
 #SBATCH --error=slurm-%x-%j.err
 
 set -euo pipefail
-if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
+if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/_bootstrap.sh" ]]; then
+  # shellcheck source=jobs/_bootstrap.sh
+  source "${SLURM_SUBMIT_DIR}/_bootstrap.sh"
+elif [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
   source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
 else
+  # shellcheck source=jobs/_bootstrap.sh
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
 
@@ -36,14 +40,18 @@ RAW_ARGS=()
 if [[ "${SKIP_NPY}" == "1" ]]; then
   RAW_ARGS+=(--skip_npy)
 fi
-
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
 if [[ "${SKIP_BTP}" != "1" ]]; then
   echo "[raw_geometry] BTP (embedding brut)…"
-  python scripts/export_raw_embeddings.py \
-    --config configs/methods/raw_embedding.yaml \
-    "${RAW_ARGS[@]}"
+  if ((${#RAW_ARGS[@]} > 0)); then
+    python scripts/export_raw_embeddings.py \
+      --config configs/methods/raw_embedding.yaml \
+      "${RAW_ARGS[@]}"
+  else
+    python scripts/export_raw_embeddings.py \
+      --config configs/methods/raw_embedding.yaml
+  fi
 fi
 
 if [[ "${SKIP_TEST}" != "1" ]]; then
@@ -58,10 +66,16 @@ for c in list_test_corpus_ids():
   fi
   for cid in "${_corpora[@]}"; do
     echo "[raw_geometry] test corpus=${cid}…"
-    python scripts/export_raw_embeddings.py \
-      --config configs/methods/raw_embedding_test.yaml \
-      --corpus "${cid}" \
-      "${RAW_ARGS[@]}"
+    if ((${#RAW_ARGS[@]} > 0)); then
+      python scripts/export_raw_embeddings.py \
+        --config configs/methods/raw_embedding_test.yaml \
+        --corpus "${cid}" \
+        "${RAW_ARGS[@]}"
+    else
+      python scripts/export_raw_embeddings.py \
+        --config configs/methods/raw_embedding_test.yaml \
+        --corpus "${cid}"
+    fi
   done
 fi
 
