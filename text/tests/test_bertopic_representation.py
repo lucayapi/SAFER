@@ -42,6 +42,7 @@ def test_build_representation_model_disabled():
 
 
 def test_build_tiktoken_tokenizer_roundtrip():
+    pytest.importorskip("tiktoken")
     tok = build_tiktoken_tokenizer("gpt-4o-mini")
     tokens = tok("hello world")
     assert isinstance(tokens, list)
