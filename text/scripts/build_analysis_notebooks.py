@@ -52,8 +52,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from metrics.compare_display import EMBEDDING_COMPARE_METHODS, METHOD_DISPLAY, slim_geometry_table
+from safer_core.paths import ensure_comparisons_dirs
 
-TABLES = ROOT / "output/comparisons/tables"
+TABLES = ensure_comparisons_dirs() / "tables"
+# Rétrocompat si anciens runs sous resultats/
+_legacy_tables = ROOT / "resultats/comparisons/tables"
+if not (TABLES / "embedding_geometry_comparison_btp.csv").is_file() and _legacy_tables.is_dir():
+    TABLES = _legacy_tables
+
 PATH_BTP = TABLES / "embedding_geometry_comparison_btp.csv"
 PATH_TEST = TABLES / "embedding_geometry_comparison_test.csv"
 EXPECTED = [METHOD_DISPLAY[k] for k in EMBEDDING_COMPARE_METHODS]
@@ -61,7 +67,7 @@ EXPECTED = [METHOD_DISPLAY[k] for k in EMBEDDING_COMPARE_METHODS]
 if not PATH_BTP.is_file():
     raise FileNotFoundError(
         "Lancez d'abord : python scripts/collect_results.py\\n"
-        f"  (attendu : {PATH_BTP})"
+        f"  (attendu : {TABLES / 'embedding_geometry_comparison_btp.csv'})"
     )
 
 df_btp = pd.read_csv(PATH_BTP)

@@ -1,0 +1,169 @@
+import os
+import sys
+from pathlib import Path
+
+
+def _notebook_find_text_root(start: Path) -> Path:
+    here = start.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / "safer_core" / "paths.py").is_file():
+            return candidate
+        nested = candidate / "text"
+        if (nested / "safer_core" / "paths.py").is_file():
+            return nested
+    raise FileNotFoundError(
+        "Racine text/ introuvable (safer_core/paths.py). "
+        "Ouvrez Jupyter depuis le dossier text/ ou SAFER/."
+    )
+
+
+TEXT_ROOT = _notebook_find_text_root(Path.cwd())
+if str(TEXT_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEXT_ROOT))
+os.chdir(TEXT_ROOT)
+
+from __future__ import annotations
+
+import shutil
+import sys
+import warnings
+from pathlib import Path
+
+import numpy as np
+
+if int(np.__version__.split(".", 1)[0]) >= 2:
+    _py = sys.executable
+    raise ImportError(
+        "NumPy 2.x est chargé alors que le matplotlib de cet environnement (Anaconda) "
+        "est souvent compilé pour NumPy 1.x → conflit à l’import de matplotlib.
+
+"
+        f"Interpréteur du noyau : {_py}
+
+"
+        "Corrigez puis Kernel → Restart, par exemple :
+
+"
+        f'  "{_py}" -m pip install "numpy<2" --force-reinstall
+
+'
+        "ou :
+
+"
+        '  conda install "numpy<2" "matplotlib" "scipy" -y
+
+'
+        "Réinstallez aussi les deps du dépôt : pip install -r requirements.txt"
+    )
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
+
+
+from safer_core.paths import resolve_repo_path
+from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
+
+REPO = TEXT_ROOT
+
+_out = str(OUTPUT_DIR).strip()
+OUT_ROOT = resolve_repo_path(_out, REPO) if _out else bn_staging_dir(TEST_CORPUS, anchor=REPO)
+TABLES = OUT_ROOT / "tables"
+FIGURES_STATIC = OUT_ROOT / "figures" / "static"
+FIGURES_INTERACTIVE = OUT_ROOT / "figures" / "interactive"
+FIGURES_NODES = OUT_ROOT / "figures" / "nodes"
+MODELS = OUT_ROOT / "models"
+REPORTS = OUT_ROOT / "reports"
+
+MACRO_TRANSFER_ROOT = macro_transfer_output_dir(MACRO_TRANSFER_METHOD, TEST_CORPUS, anchor=REPO)
+from bn_pipeline.staging_macro_transfer import stage_bn_exports_from_macro_transfer
+
+BN_EXPORTS = stage_bn_exports_from_macro_transfer(
+    MACRO_TRANSFER_METHOD,
+    TEST_CORPUS,
+    output_dir=OUT_ROOT,
+    repo_root=REPO,
+)
+EXPORTS = BN_EXPORTS
+SCGM_TOPICS = MACRO_TRANSFER_ROOT / "topics_bertopic"
+
+import importlib
+
+
+def _reload_bn_pipeline_submodules() -> None:
+    # Recharge bn_pipeline après édition du code sans redémarrer le noyau Jupyter.
+    names = [n for n in sys.modules if n == "bn_pipeline" or n.startswith("bn_pipeline.")]
+    for name in sorted(names, key=len, reverse=True):
+        importlib.reload(sys.modules[name])
+
+
+_reload_bn_pipeline_submodules()
+
+from bn_pipeline.utils import ensure_output_dirs, load_metadata_for_bn
+from bn_pipeline.aggregate_bn_variables import (
+    create_accident_matrix_from_macro_transfer,
+    export_aggregate_outputs,
+)
+from bn_pipeline.bn_structure import (
+    build_blacklist,
+    export_edge_tables,
+    learn_macro_constrained_structure,
+    learn_unconstrained_structure,
+    macro_chain_model,
+)
+from bn_pipeline.bn_learning import (
+    drop_constant_columns,
+    export_cpds_to_dir,
+    fit_bn_parameters,
+    save_bn_pickle,
+    try_write_bif,
+)
+from bn_pipeline.bn_inference import conditional_prob_table, run_bn_queries
+from bn_pipeline.bn_visualization import (
+    build_short_title_map,
+    build_topic_node_label_map,
+    display_node_card,
+    export_node_cards_png,
+    export_node_marginals_csv,
+    join_theme_summary_to_selected_variables,
+    plot_adjacency_heatmap,
+    plot_bn_graph,
+    try_plotly_interactive,
+    try_pyvis_bn_graph,
+)
+from bn_pipeline.scenario_mining import export_scenarios, extract_typical_scenarios
+from bn_pipeline.bn_diagnostics import compare_structure_rows, run_model_diagnostics
+from bn_pipeline.reporting import write_bn_report
+
+try:
+    import pgmpy  # noqa: F401
+except ImportError as _e:
+    raise ImportError(
+        "Le package « pgmpy » n’est pas installé pour l’interpréteur de ce noyau Jupyter.
+
+"
+        f"  Interpréteur : {sys.executable}
+
+"
+        "Installez-le (même environnement que le noyau), puis Kernel → Restart :
+
+"
+        f"  {sys.executable} -m pip install "pgmpy>=0.1.23,<1.0" "numpy<2"
+
+"
+        "ou, à la racine du dépôt :
+
+"
+        "  pip install -r requirements.txt
+"
+    ) from _e
+
+ensure_output_dirs(OUT_ROOT)
+np.random.seed(int(RANDOM_SEED))
+warnings.filterwarnings("ignore", category=UserWarning)
+print("REPO =", REPO)
+print("TEST_CORPUS =", TEST_CORPUS)
+print("MACRO_TRANSFER_ROOT =", MACRO_TRANSFER_ROOT)
+print("SCGM_TOPICS =", SCGM_TOPICS)
+print("EXPORTS (bn_exports) =", EXPORTS)
+print("OUT_ROOT =", OUT_ROOT)

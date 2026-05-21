@@ -8,6 +8,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 NB_PATH = REPO / "notebooks" / "06_macro_transfer_topics.ipynb"
 
+import sys
+
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+
 
 def md(text: str) -> dict:
     src = [line + "\n" for line in text.strip().split("\n")]
@@ -38,12 +45,14 @@ Comparaison **SCGM** vs **SoftTriple** sur le corpus test (`TEST_CORPUS`, regist
 - Phase 1 : \(p(m|u)\), métriques de classification (`transfer/`)
 - Phase 2 : topics **BERTopic** par macro (UMAP, HDBSCAN, c-TF-IDF + `stop_metier.txt`)
 - Phase 3 : libellés via `bertopic.representation.OpenAI` (colonne `theme_label` dans `themes_by_macro.csv`)
+- Cartes **UMAP + DataMapPlot** (globale par macro, puis par macro × topics) — SCGM et SoftTriple
 
-**Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` pour les deux méthodes.
+**Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` pour les deux méthodes. Les cartes 2D nécessitent `embeddings/projected.npy` dans chaque dossier `macro_transfer/<méthode>/`.
 """
         ),
         py(
-            r"""
+            NOTEBOOK_PATH_SETUP
+            + """
 from pathlib import Path
 import json
 import pandas as pd
@@ -54,10 +63,12 @@ from safer_core.test_corpus import resolve_test_corpus, target_discovery_dir
 
 # --- Parameters (modifier ici ou via papermill) ---
 TEST_CORPUS = "metallurgie"
-
-TEXT_ROOT = Path.cwd()
-if not (TEXT_ROOT / "macro_transfer").is_dir():
-    TEXT_ROOT = Path.cwd().parent
+CONFIDENCE_THRESHOLD = 0.5  # filtre q_conf pour cartes topics
+UMAP_MAX_POINTS = 8000
+TOPIC_UMAP_MAX_POINTS = 4000
+USE_DATAMAP = True
+PLOT_MACROS = None  # None → toutes (A0, A1, B, C) ; ou liste ex. ["A1", "B"]
+RUN_PCA_TSNE_PER_MACRO = True
 
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
 SCGM_DIR = target_discovery_dir("scgm_text", _spec.id, anchor=TEXT_ROOT)
@@ -167,6 +178,127 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
         "median_support": float(th["n_units"].median()),
     })
 display(pd.DataFrame(quality_rows))
+"""
+        ),
+        md(
+            r"""
+## § Cartes 2D — topics avec libellés (`theme_label`)
+
+Embeddings : `embeddings/projected.npy`. Assignations : `topics_bertopic/assignments.csv` + `themes_by_macro.csv`.
+
+**Important** : la carte « macro seule » (A0, A1, B, C) ne montre **pas** les libellés de topics. Les cellules ci-dessous utilisent **`theme_label`** (colonne OpenAI / BERTopic) sur **chaque topic** — format `A1·T5: Absence de protection…`.
+
+- **Globale topics** : tous les topics assignés (SCGM puis SoftTriple)
+- **Comparaison** : panneau 1×2 SCGM vs SoftTriple (scatter + centroïdes annotés)
+- **Par macro** : zoom intra-macro (optionnel, section suivante)
+- **Macro seule** (`m_hat`) : section optionnelle en fin de notebook
+"""
+        ),
+        py(
+            r"""
+from macro_transfer.constants import MACRO_NAMES
+from macro_transfer.notebook_viz import (
+    load_run_artifacts,
+    plot_global_embedding_map,
+    plot_global_topics_compare_methods,
+    plot_global_topics_datamap,
+    plot_topics_per_macro,
+)
+
+_macros = list(MACRO_NAMES) if PLOT_MACROS is None else list(PLOT_MACROS)
+
+
+def _load_artifacts_or_none(method_label: str, root: Path):
+    try:
+        art = load_run_artifacts(root)
+        print(f"[{method_label}] OK — {len(art.z)} vecteurs, {root}")
+        return art
+    except FileNotFoundError as exc:
+        print(f"[{method_label}] carte 2D ignorée : {exc}")
+        return None
+
+
+ARTIFACTS = {}
+for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+    ARTIFACTS[method_label] = _load_artifacts_or_none(method_label, root)
+"""
+        ),
+        py(
+            r"""
+# Libellés topics (theme_label) — une carte DataMapPlot par méthode
+for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+    art = ARTIFACTS.get(method_label)
+    if art is None:
+        continue
+    method_fig = FIG_DIR / method_label.lower()
+    method_fig.mkdir(parents=True, exist_ok=True)
+    print(f"\n=== Topics + theme_label — {method_label} ===")
+    plot_global_topics_datamap(
+        art,
+        algo_tag=method_label,
+        confidence_threshold=CONFIDENCE_THRESHOLD,
+        max_points=UMAP_MAX_POINTS,
+        fig_dir=method_fig,
+        use_datamap=USE_DATAMAP,
+        label_font_size=7,
+    )
+"""
+        ),
+        py(
+            r"""
+# SCGM vs SoftTriple côte à côte (même seuil q_conf)
+_compare = {k: v for k, v in ARTIFACTS.items() if v is not None}
+if _compare:
+    plot_global_topics_compare_methods(
+        _compare,
+        confidence_threshold=CONFIDENCE_THRESHOLD,
+        max_points=UMAP_MAX_POINTS,
+        seed=42,
+        fig_dir=FIG_DIR,
+        use_datamap=USE_DATAMAP,
+    )
+"""
+        ),
+        md("### Option — carte macro seule (`m_hat`, sans libellés topics)"),
+        py(
+            r"""
+for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+    art = ARTIFACTS.get(method_label)
+    if art is None:
+        continue
+    method_fig = FIG_DIR / method_label.lower()
+    print(f"\n=== Macro m_hat seule — {method_label} ===")
+    plot_global_embedding_map(
+        art,
+        max_points=UMAP_MAX_POINTS,
+        confidence_threshold=CONFIDENCE_THRESHOLD,
+        fig_dir=method_fig,
+        use_datamap=USE_DATAMAP,
+    )
+"""
+        ),
+        py(
+            r"""
+for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+    art = ARTIFACTS.get(method_label)
+    if art is None:
+        continue
+    method_fig = FIG_DIR / method_label.lower()
+    print(f"\n=== Topics intra-macro — {method_label} ===")
+    for macro in _macros:
+        print(f"--- {method_label} / {macro} ---")
+        plot_topics_per_macro(
+            art,
+            topic_subdir="topics_bertopic",
+            algo_tag=method_label,
+            macro=macro,
+            confidence_threshold=CONFIDENCE_THRESHOLD,
+            max_points=TOPIC_UMAP_MAX_POINTS,
+            fig_dir=method_fig,
+            use_datamap=USE_DATAMAP,
+            run_pca_tsne=RUN_PCA_TSNE_PER_MACRO,
+        )
+print("Figures :", FIG_DIR)
 """
         ),
     ]

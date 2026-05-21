@@ -8,15 +8,22 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 NB_PATH = REPO / "notebooks" / "04_bayesian_network_macro_transfer.ipynb"
 
+import sys
+
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+
 
 def md(text: str) -> dict:
-    src = [line + "\n" for line in text.strip().split("\n")]
-    return {"cell_type": "markdown", "metadata": {}, "source": src}
+    body = text.strip() + "\n"
+    return {"cell_type": "markdown", "metadata": {}, "source": [body]}
 
 
 def py(text: str, *, tags: list[str] | None = None) -> dict:
-    lines = text.strip().split("\n")
-    src = [ln + "\n" for ln in lines]
+    # Une seule entrée source : évite de couper les littéraux "...\n\n" du générateur.
+    src = [text.strip() + "\n"]
     meta: dict = {}
     if tags:
         meta["tags"] = tags
@@ -105,7 +112,8 @@ WARN_MAX_BINARY_NODES = 30
             tags=["parameters"],
         ),
         py(
-            r"""
+            NOTEBOOK_PATH_SETUP
+            + r"""
 from __future__ import annotations
 
 import shutil
@@ -119,7 +127,7 @@ if int(np.__version__.split(".", 1)[0]) >= 2:
     _py = sys.executable
     raise ImportError(
         "NumPy 2.x est chargé alors que le matplotlib de cet environnement (Anaconda) "
-        "est souvent compilé pour NumPy 1.x → conflit à l’import de matplotlib.\n\n"
+        "est souvent compilé pour NumPy 1.x — conflit à l'import de matplotlib.\n\n"
         f"Interpréteur du noyau : {_py}\n\n"
         "Corrigez puis Kernel → Restart, par exemple :\n\n"
         f'  "{_py}" -m pip install "numpy<2" --force-reinstall\n\n'
@@ -133,12 +141,10 @@ import pandas as pd
 import seaborn as sns
 
 
-from safer_core.paths import find_repo_root, resolve_repo_path
+from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
 
-REPO = find_repo_root()
-if str(REPO) not in sys.path:
-    sys.path.insert(0, str(REPO))
+REPO = TEXT_ROOT
 
 _out = str(OUTPUT_DIR).strip()
 OUT_ROOT = resolve_repo_path(_out, REPO) if _out else bn_staging_dir(TEST_CORPUS, anchor=REPO)
@@ -213,10 +219,10 @@ try:
     import pgmpy  # noqa: F401
 except ImportError as _e:
     raise ImportError(
-        "Le package « pgmpy » n’est pas installé pour l’interpréteur de ce noyau Jupyter.\n\n"
+        "Le package « pgmpy » n'est pas installé pour l'interpréteur de ce noyau Jupyter.\n\n"
         f"  Interpréteur : {sys.executable}\n\n"
         "Installez-le (même environnement que le noyau), puis Kernel → Restart :\n\n"
-        f"  {sys.executable} -m pip install \"pgmpy>=0.1.23,<1.0\" \"numpy<2\"\n\n"
+        f'  {sys.executable} -m pip install "pgmpy>=0.1.23,<1.0" "numpy<2"\n\n'
         "ou, à la racine du dépôt :\n\n"
         "  pip install -r requirements.txt\n"
     ) from _e
@@ -257,7 +263,7 @@ if _has_sev_panel:
     meta["pred_severity"].astype(str).value_counts().head(8).plot.bar(ax=axes[1])
     axes[1].set_title("Gravité prédite (unités)")
 plt.tight_layout()
-    p = FIGURES_STATIC / "eda_bn_metadata.png"
+p = FIGURES_STATIC / "eda_bn_metadata.png"
 plt.savefig(p, dpi=150, bbox_inches="tight")
 plt.close()
 print("Figure :", p)

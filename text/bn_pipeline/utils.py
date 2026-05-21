@@ -11,7 +11,6 @@ import pandas as pd
 from safer_core.paths import find_repo_root, resolve_repo_path
 
 METADATA_CSV_PRIMARY = "metadata_with_predictions.csv"
-METADATA_CSV_LEGACY = "metadata_with_malt_predictions.csv"
 
 REQUIRED_BN_FILES = (
     METADATA_CSV_PRIMARY,
@@ -50,12 +49,8 @@ def _resolve_metadata_csv(exports_dir: Path) -> Path:
     primary = exports_dir / METADATA_CSV_PRIMARY
     if primary.is_file():
         return primary
-    legacy = exports_dir / METADATA_CSV_LEGACY
-    if legacy.is_file():
-        return legacy
     raise FileNotFoundError(
-        f"Metadata BN introuvable dans {exports_dir} "
-        f"(attendu {METADATA_CSV_PRIMARY} ou {METADATA_CSV_LEGACY})."
+        f"Metadata BN introuvable dans {exports_dir} (attendu {METADATA_CSV_PRIMARY})."
     )
 
 
@@ -84,22 +79,53 @@ def _argmax_macro_row(row: np.ndarray, id2label: dict[int, str]) -> str:
     return id2label[int(np.argmax(row))]
 
 
+def _macro_prob_matrix_from_meta(meta: pd.DataFrame) -> np.ndarray | None:
+    cols = [f"p_{m}" for m in MACRO_NAMES if f"p_{m}" in meta.columns]
+    if len(cols) != len(MACRO_NAMES):
+        return None
+    return meta[cols].to_numpy(dtype=np.float64)
+
+
 def enrich_metadata_for_bn(meta: pd.DataFrame, exports_dir: Path) -> pd.DataFrame:
     """Complète z_hat, z_confidence, z_dominant_macro, p_y|z si absents (alignement lignes = CSV)."""
     out = meta.copy()
     n = len(out)
     id2 = {0: "A0", 1: "A1", 2: "B", 3: "C"}
+    label2z = {name: i for i, name in enumerate(MACRO_NAMES)}
 
-    pz = np.load(exports_dir / "pt_z_target.npy")
-    if pz.shape[0] != n:
-        raise ValueError(f"pt_z_target.npy ({pz.shape[0]} lignes) ≠ metadata ({n}).")
-    if "z_hat" not in out.columns:
+    p_macro_csv = _macro_prob_matrix_from_meta(out)
+
+    if p_macro_csv is not None and p_macro_csv.shape[0] == n:
+        pz = p_macro_csv
+        pt = p_macro_csv
+    else:
+        pz = np.load(exports_dir / "pt_z_target.npy")
+        if pz.shape[0] != n:
+            raise ValueError(
+                f"pt_z_target.npy ({pz.shape[0]} lignes) ≠ metadata ({n}). "
+                "Relancez stage_bn_exports_from_macro_transfer ou vérifiez les colonnes p_A0…p_C."
+            )
+        pt_path = exports_dir / "pt_y_target.npy"
+        pt = np.load(pt_path)
+        if pt.shape[0] != n:
+            raise ValueError(f"pt_y_target.npy ({pt.shape[0]} lignes) ≠ metadata ({n}).")
+
+    if "m_hat" in out.columns and "z_hat" not in out.columns:
+        out["z_hat"] = out["m_hat"].astype(str).map(label2z).fillna(0).astype(int)
+    elif "z_hat" not in out.columns:
         out["z_hat"] = np.argmax(pz, axis=1)
-    if "z_confidence" not in out.columns:
+
+    if "q_conf" in out.columns and "z_confidence" not in out.columns:
+        out["z_confidence"] = out["q_conf"].astype(float)
+    elif "z_confidence" not in out.columns:
         out["z_confidence"] = np.max(pz, axis=1)
 
     prob_y_z = np.load(exports_dir / "pt_y_given_z.npy")
     z_hat_arr = out["z_hat"].to_numpy(dtype=int)
+    n_z = prob_y_z.shape[0]
+    if z_hat_arr.max(initial=0) >= n_z:
+        z_hat_arr = np.clip(z_hat_arr, 0, n_z - 1)
+
     if "z_dominant_macro" not in out.columns:
         out["z_dominant_macro"] = [_argmax_macro_row(prob_y_z[int(z)], id2) for z in z_hat_arr]
 
@@ -108,15 +134,15 @@ def enrich_metadata_for_bn(meta: pd.DataFrame, exports_dir: Path) -> pd.DataFram
         if col not in out.columns:
             out[col] = prob_y_z[z_hat_arr, i]
 
-    pt = np.load(exports_dir / "pt_y_target.npy")
-    if pt.shape[0] != n:
-        raise ValueError(f"pt_y_target.npy ({pt.shape[0]} lignes) ≠ metadata ({n}).")
     for i, name in enumerate(MACRO_NAMES):
         c = f"pt_{name}"
         if c not in out.columns:
             out[c] = pt[:, i]
     if "pt_macro_name" not in out.columns:
-        out["pt_macro_name"] = [_argmax_macro_row(pt[j], id2) for j in range(n)]
+        if "m_hat" in out.columns:
+            out["pt_macro_name"] = out["m_hat"].astype(str)
+        else:
+            out["pt_macro_name"] = [_argmax_macro_row(pt[j], id2) for j in range(n)]
 
     return out
 
@@ -129,6 +155,9 @@ def load_metadata_for_bn(exports_dir: str | Path, *, repo_root: Path | None = No
     cols = [c for c in usecols if c in header]
     if "accident_summary" in header and "accident_summary" not in cols:
         cols.append("accident_summary")
+    for extra in ("m_hat", "q_conf", "ambiguous", *(f"p_{m}" for m in MACRO_NAMES)):
+        if extra in header and extra not in cols:
+            cols.append(extra)
     meta = pd.read_csv(path, usecols=cols, low_memory=False)
     if "accident_id" not in meta.columns:
         raise KeyError(

@@ -8,6 +8,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 NB_PATH = REPO / "notebooks" / "07_macro_transfer_interactive.ipynb"
 
+import sys
+
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
+from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+
 
 def md(text: str) -> dict:
     src = [line + "\n" for line in text.strip().split("\n")]
@@ -49,9 +56,9 @@ Exécute le pipeline **macro_transfer** sur un corpus de test (sans SLURM), puis
 """
         ),
         py(
-            r"""
+            NOTEBOOK_PATH_SETUP
+            + """
 from pathlib import Path
-import sys
 
 # --- Parameters (papermill-friendly) ---
 TEST_CORPUS = "metallurgie"
@@ -61,12 +68,6 @@ DEVICE = "cuda"  # cpu si pas de GPU
 CONFIDENCE_THRESHOLD = 0.5
 CONFIG_PATH = "configs/macro_transfer.yaml"
 FIG_DIR = None  # défaut : notebooks/figures/07_macro_transfer_<corpus>/
-
-TEXT_ROOT = Path.cwd()
-if not (TEXT_ROOT / "macro_transfer").is_dir():
-    TEXT_ROOT = Path.cwd().parent
-if str(TEXT_ROOT) not in sys.path:
-    sys.path.insert(0, str(TEXT_ROOT))
 
 import matplotlib.pyplot as plt
 import seaborn as sns

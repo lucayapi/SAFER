@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from safer_core.io import load_yaml
 from safer_core.paths import CONFIG_DIR, RESULTS_ROOT, TEXT_ROOT, resolve_repo_path
@@ -134,6 +134,39 @@ def method_test_results_dir(method: str, corpus_id: Optional[str] = None, *, anc
     """Métriques / embeddings test par méthode : ``output_test/<corpus>/<method>/``."""
     cid = corpus_id or os.environ.get("TEST_CORPUS") or default_test_corpus_id()
     return (output_test_root(anchor=anchor) / cid / method).resolve()
+
+
+def method_btp_results_dir(method: str, *, anchor: Optional[Path] = None) -> Path:
+    """Sorties BTP (fit final) par méthode contrastive : ``output/<method>/``."""
+    root = anchor or TEXT_ROOT
+    return (root / "output" / method).resolve()
+
+
+def resolve_contrastive_embeddings_csv(
+    method: str,
+    corpus: Literal["btp", "test"],
+    *,
+    corpus_id: Optional[str] = None,
+    anchor: Optional[Path] = None,
+) -> Path:
+    """
+    Chemin attendu de ``final_embeddings_*.csv`` pour les notebooks de lecture.
+
+    - ``btp`` : ``output/<method>/embeddings/final_embeddings_btp.csv`` (repli ``final_embeddings.csv``)
+    - ``test`` : ``output_test/<corpus>/<method>/embeddings/final_embeddings_test.csv``
+    """
+    if corpus == "test":
+        return (
+            method_test_results_dir(method, corpus_id, anchor=anchor)
+            / "embeddings"
+            / "final_embeddings_test.csv"
+        ).resolve()
+    method_dir = method_btp_results_dir(method, anchor=anchor)
+    for name in ("final_embeddings_btp.csv", "final_embeddings.csv"):
+        candidate = method_dir / "embeddings" / name
+        if candidate.is_file():
+            return candidate.resolve()
+    return (method_dir / "embeddings" / "final_embeddings_btp.csv").resolve()
 
 
 def macro_transfer_output_dir(method: str, corpus_id: Optional[str] = None, *, anchor: Optional[Path] = None) -> Path:

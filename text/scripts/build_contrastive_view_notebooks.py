@@ -155,13 +155,14 @@ for corpus, stem, base in (
 
 PCA_BTP_MD = """### PCA / t-SNE — BTP (embeddings fine-tunés)
 
-Carte 2D sur `embeddings/final_embeddings_btp.csv` (ou repli `final_embeddings.csv`), couleur = macro, centroïdes macro.
+Carte 2D sur `output/<method>/embeddings/final_embeddings_btp.csv` (repli `final_embeddings.csv`), couleur = macro.
 """
 
 PCA_BTP_CODE = '''
 from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne
+from safer_core.test_corpus import method_btp_results_dir, resolve_contrastive_embeddings_csv
 
-FIGURES_DIR = RESULTS / "figures"
+FIGURES_DIR = method_btp_results_dir(METHOD_KEY, anchor=ROOT) / "figures"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
 def save_fig(name: str) -> Path:
@@ -171,9 +172,7 @@ def save_fig(name: str) -> Path:
     plt.show()
     return path
 
-emb_btp = RESULTS / "embeddings" / "final_embeddings_btp.csv"
-if not emb_btp.is_file():
-    emb_btp = RESULTS / "embeddings" / "final_embeddings.csv"
+emb_btp = resolve_contrastive_embeddings_csv(METHOD_KEY, "btp", anchor=ROOT)
 
 p_btp = plot_embeddings_csv_pca_tsne(
     emb_btp,
@@ -193,25 +192,40 @@ else:
 
 PCA_TEST_MD = """### PCA / t-SNE — Test métallurgie
 
-Carte 2D sur `embeddings/final_embeddings_test.csv`, couleur = macro, centroïdes macro.
+Carte 2D sur `output_test/<corpus>/<method>/embeddings/final_embeddings_test.csv` (pas sous `output/<method>/`).
 """
 
 PCA_TEST_CODE = '''
 from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne
+from safer_core.test_corpus import resolve_contrastive_embeddings_csv
 
-emb_test = RESULTS / "embeddings" / "final_embeddings_test.csv"
+FIGURES_TEST = _test_results / "figures"
+FIGURES_TEST.mkdir(parents=True, exist_ok=True)
+
+def save_fig_test(name: str) -> Path:
+    path = FIGURES_TEST / name
+    plt.tight_layout()
+    plt.savefig(path, dpi=160, bbox_inches="tight")
+    plt.show()
+    return path
+
+emb_test = resolve_contrastive_embeddings_csv(
+    METHOD_KEY, "test", corpus_id=TEST_CORPUS, anchor=ROOT
+)
 p_test = plot_embeddings_csv_pca_tsne(
     emb_test,
     DATA_TEST,
     LABEL_COL,
     corpus_name=f"{DISPLAY_NAME} — test métallurgie",
-    save_fig=save_fig,
+    save_fig=save_fig_test,
     png_name=f"{METHOD_KEY}_test_pca_tsne.png",
     max_points=8000,
     seed=42,
 )
 if p_test is None:
-    print(f"(absent) embeddings test — relancer train après fit final + eval test")
+    print(f"(absent) {emb_test}")
+    print("Relancer l'éval test : fit final 100 % BTP puis evaluate_btp_and_test")
+    print(f"  Dossier test : {_test_results}")
 else:
     print(p_test)
 '''

@@ -46,6 +46,30 @@ def replace_cell_by_prefix(cells: list, prefix: str, new_source: str, cell_type:
 
 
 PARAMS_SOURCE = """# Parameters — lecture seule (entraînement via scripts/ ou jobs/)
+import os
+import sys
+from pathlib import Path
+
+
+def _find_text_root(start: Path) -> Path:
+    here = start.resolve()
+    for candidate in [here, *here.parents]:
+        if (candidate / "safer_core" / "paths.py").is_file():
+            return candidate
+        nested = candidate / "text"
+        if (nested / "safer_core" / "paths.py").is_file():
+            return nested
+    raise FileNotFoundError(
+        "Racine text/ introuvable (safer_core/paths.py). "
+        "Lancez Jupyter depuis text/ ou SAFER/."
+    )
+
+
+REPO_ROOT = _find_text_root(Path.cwd())
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+os.chdir(REPO_ROOT)
+
 OUTPUT_DIR = "output/scgm_text"
 CHECKPOINT_PATH = None  # None → OUTPUT_DIR/checkpoints/best_model.pt
 
@@ -80,24 +104,11 @@ VAL_RATIO = 0.1
 BATCH_SIZE = 512  # export / évaluation
 
 TSNE_SAMPLE_SIZE = 8000
-DATAMAP_MAX_POINTS = 12000
 RAW_EMBEDDING_UMAP_MAX_POINTS = 12000
-DATAMAP_SEED = 42
-DATAMAP_LABEL_MODE = "macro_z"  # libellés topics : pipeline macro_transfer (notebook 06)
-DATAMAP_SHOW_MACRO_CENTROIDS = True
 """
 
-SETUP_SOURCE = """def find_repo_root(start: Path) -> Path:
-    current = start.resolve()
-    for candidate in [current, *current.parents]:
-        if (candidate / "scgm_text").is_dir() and (candidate / "scripts").is_dir():
-            return candidate
-        if (candidate / "text" / "scgm_text").is_dir() and (candidate / "text" / "scripts").is_dir():
-            return candidate / "text"
-    raise FileNotFoundError("Impossible de localiser la racine text/ (scgm_text/ + scripts/).")
-
-
-REPO_ROOT = find_repo_root(Path.cwd())
+SETUP_SOURCE = """# REPO_ROOT / sys.path déjà configurés dans la cellule Parameters
+REPO_ROOT = Path(REPO_ROOT).resolve()
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 os.chdir(REPO_ROOT)
@@ -332,7 +343,7 @@ PATHS = {
     "kfold_summary": (OUTPUT_PATH / KFOLD_SUMMARY).resolve(),
     "kfold_per_fold": (OUTPUT_PATH / KFOLD_PER_FOLD).resolve(),
     "metrics_btp": (OUTPUT_PATH / METRICS_BTP).resolve(),
-    "metrics_test": (OUTPUT_PATH / METRICS_TEST).resolve(),
+    "metrics_test": (REPO_ROOT / METRICS_TEST).resolve(),
     "metrics_raw": (REPO_ROOT / METRICS_RAW).resolve(),
     "metrics_raw_test": (REPO_ROOT / METRICS_RAW_TEST).resolve(),
     "projected_btp": (EXPORTS_DIR / "projected_embeddings.npy").resolve(),
@@ -538,8 +549,7 @@ else:
         seed=SEED,
         png_name="10_test_scgm_pca_tsne.png",
         show_macro_centroids=True,
-        show_z_centroids=True,
-        themes_z=themes_z,
+        show_z_centroids=False,
     )
     plot_corpus_umap(
         projected_test,
@@ -605,125 +615,14 @@ from scgm_text.notebook_viz import plot_training_geometry_curves
 plot_training_geometry_curves(logs, save_fig=save_fig)
 """
 
-THEMES_SOURCE = """from scgm_text.notebook_viz import (
-    plot_topics_distribution_by_macro,
-    plot_topics_n_units_by_z,
-)
-
-if themes_z is None:
-    print("(absent) themes_by_z — sbatch jobs/postprocess_scgm_text.sh")
-else:
-    topics_tbl = themes_z.copy()
-    if themes_openai is not None and "theme_summary" in themes_openai.columns:
-        topics_tbl = topics_tbl.merge(
-            themes_openai[["z_id", "theme_summary"]],
-            on="z_id",
-            how="left",
-        )
-    else:
-        topics_tbl["theme_summary"] = pd.NA
-        print("→ bash jobs/enrich_scgm_themes_openai.sh (libellés topics SCGM BTP)")
-
-    topics_tbl = topics_tbl.sort_values("n_units", ascending=False)
-    print("=== Topics par composante z ===")
-    display(topics_tbl)
-    display_df_for_paper(topics_tbl, "topics_by_z_with_openai.csv")
-
-    plot_topics_distribution_by_macro(topics_tbl, save_fig=save_fig)
-    plot_topics_n_units_by_z(
-        topics_tbl,
-        metadata_df=meta_btp,
-        z_col="z_hat",
-        label_col=LABEL_COL,
-        save_fig=save_fig,
-    )
-"""
-
 BTP_PROJECTION_MD = """### 5e. PCA / t-SNE — embeddings projetés BTP
-"""
-
-SECTION12_MD = """### 5e. PCA / t-SNE — embeddings projetés BTP
 
 PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pred_label`).
 
 - Statique : `FIGURES_DIR/05_projection_macro.png`
 - Interactif Plotly : `05_projection_pca_interactive.html`, `05_projection_tsne_interactive.html`
-"""
 
-DATAMAP_MD = """### 5f. Carte 2D BTP (UMAP + DataMapPlot)
-
-Sous-échantillon (`DATAMAP_MAX_POINTS`). Couleur = macro (`DATAMAP_LABEL_MODE = macro_z`).
-`DATAMAP_SHOW_MACRO_CENTROIDS` : marqueurs centroïdes macro (A0–C).
-
-- Statique : `datamap_segments.png`
-- Interactif Plotly : `datamap_segments_interactive.html`
-"""
-
-DATAMAP_CODE = """from umap import UMAP
-
-from scgm_text.notebook_viz import (
-    display_plotly_html,
-    macro_umap_centroids,
-    plot_umap_datamap_static,
-    plot_umap_plotly,
-    resolve_datamap_labels,
-)
-
-if projected_btp is None or meta_btp is None:
-    print("(absent) projected_btp / meta_btp — sbatch jobs/train_scgm_text.sh")
-else:
-    projected_all = projected_btp
-    meta_all = meta_btp
-    if len(meta_all) != len(projected_all):
-        raise ValueError(f"Alignement meta/embeddings : {len(meta_all)} vs {len(projected_all)}")
-    n = min(DATAMAP_MAX_POINTS, len(projected_all))
-    rng = np.random.default_rng(DATAMAP_SEED)
-    idx = rng.choice(len(projected_all), size=n, replace=False)
-    X = projected_all[idx]
-    lab = meta_all.iloc[idx].copy()
-
-    labels, label_kind = resolve_datamap_labels(
-        lab,
-        label_col=LABEL_COL,
-        label_mode=DATAMAP_LABEL_MODE,
-        themes_openai_path=None,
-    )
-    lab["hover_theme"] = lab[LABEL_COL].astype(str) + "|z=" + lab["z_hat"].astype(str)
-
-    reducer = UMAP(
-        n_components=2,
-        random_state=DATAMAP_SEED,
-        n_neighbors=15,
-        min_dist=0.1,
-        metric="cosine",
-    )
-    coords = reducer.fit_transform(X)
-
-    centroids = None
-    if DATAMAP_SHOW_MACRO_CENTROIDS:
-        centroids = macro_umap_centroids(coords, lab[LABEL_COL].astype(str).to_numpy())
-
-    fig, _ax = plot_umap_datamap_static(
-        coords,
-        labels,
-        title="Segments BTP — embedding SCGM (normalisé)",
-        label_font_size=8,
-        macro_centroids=centroids,
-    )
-    out_png = FIGURES_DIR / "datamap_segments.png"
-    fig.savefig(out_png, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    print(out_png)
-
-    fig_pl = plot_umap_plotly(
-        coords,
-        lab,
-        label_col=LABEL_COL,
-        hover_label="hover_theme",
-        title="UMAP segments BTP (interactif)",
-        out_html=FIGURES_DIR / "datamap_segments_interactive.html",
-    )
-    display_plotly_html(FIGURES_DIR / "datamap_segments_interactive.html")
+Cartes UMAP / topics BERTopic : notebook **06_macro_transfer_topics**.
 """
 
 PROJECTION_CODE = """from sklearn.decomposition import PCA
@@ -872,15 +771,17 @@ def main() -> None:
         cell_from_source(BTP_METRICS_SOURCE, cell_id="btp_metrics"),
         cell_from_source(BTP_PROJECTION_MD, "markdown"),
         cell_from_source(PROJECTION_CODE, cell_id="proj01"),
-        cell_from_source(DATAMAP_MD, "markdown", cell_id="datamap_md"),
-        cell_from_source(DATAMAP_CODE, cell_id="datamap01"),
         cell_from_source(EVAL_RAW_PROJ_MD, "markdown"),
         cell_from_source(EVAL_GEOMETRY_CODE, cell_id="eval_geom"),
         cell_from_source(TEST_MD, "markdown", "test_md"),
         cell_from_source(TEST_METRICS_SOURCE, cell_id="test_metrics"),
         cell_from_source(TEST_RAW_VIZ_MD, "markdown", "test_raw_viz_md"),
         cell_from_source(TEST_RAW_VIZ_CODE, cell_id="test_raw_viz"),
-        cell_from_source("### 6c. Projections 2D test (SCGM projeté)\n", "markdown"),
+        cell_from_source(
+            "### 6c. Projections 2D test (SCGM projeté)\n\n"
+            "PCA / t-SNE + UMAP macro. Topics BERTopic : notebook **06**.\n",
+            "markdown",
+        ),
         cell_from_source(TEST_VIZ_SOURCE, cell_id="test_viz"),
         cell_from_source("## Synthèse — comparaison géométrie train / test\n", "markdown"),
         cell_from_source(SUMMARY_TABLES_CODE, cell_id="summary_tables"),

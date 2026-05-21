@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+import pandas as pd
+
+from macro_transfer.constants import MACRO_NAMES
 from safer_core.paths import find_repo_root, resolve_repo_path
 from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
 
 TOPICS_SUBDIR = "topics_bertopic"
 
-_COPY_EMBEDDINGS = (
-    ("embeddings/prob_z_x.npy", "pt_z_target.npy"),
-    ("embeddings/prob_y_z.npy", "pt_y_given_z.npy"),
-)
+# Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
+_COPY_EMBEDDINGS = (("embeddings/prob_y_z.npy", "pt_y_given_z.npy"),)
 
 
 def macro_transfer_root(
@@ -30,6 +33,53 @@ def macro_transfer_root(
 def topics_subdir() -> str:
     """Sous-dossier topics intra-macro (BERTopic)."""
     return TOPICS_SUBDIR
+
+
+def _macro_prob_columns(meta: pd.DataFrame) -> list[str]:
+    cols = [f"p_{m}" for m in MACRO_NAMES]
+    return [c for c in cols if c in meta.columns]
+
+
+def write_bn_compat_arrays(exports: Path, meta: pd.DataFrame) -> None:
+    """
+    Fichiers attendus par ``load_metadata_for_bn`` (legacy noms) dérivés du transfert macro.
+
+    - ``pt_y_target.npy`` : colonnes ``p_A0`` … ``p_C``
+    - ``pt_z_target.npy`` : même matrice (pseudo-composantes = macros)
+    - ``pt_y_given_z.npy`` : identité 4×4 si absent du run SCGM
+    - ``z_assignments_target.csv`` : stub aligné unité (``z_hat`` dérivé de ``m_hat``)
+    """
+    prob_cols = _macro_prob_columns(meta)
+    if len(prob_cols) != len(MACRO_NAMES):
+        raise ValueError(
+            f"Colonnes p_macro manquantes dans metadata_with_macro_probs "
+            f"(attendu {list(MACRO_NAMES)}, trouvé {prob_cols})."
+        )
+    p_macro = meta[prob_cols].to_numpy(dtype=np.float64)
+    n = len(meta)
+    np.save(exports / "pt_y_target.npy", p_macro)
+    np.save(exports / "pt_z_target.npy", p_macro)
+
+    pyz_path = exports / "pt_y_given_z.npy"
+    if not pyz_path.is_file():
+        np.save(pyz_path, np.eye(len(MACRO_NAMES), dtype=np.float64))
+
+    label2z = {name: i for i, name in enumerate(MACRO_NAMES)}
+    z_rows: dict = {}
+    for col in ("accident_id", "fact_id", "doc_id", "pred_label", "m_hat", "q_conf"):
+        if col in meta.columns:
+            z_rows[col] = meta[col]
+    zdf = pd.DataFrame(z_rows)
+    if "doc_id" not in zdf.columns:
+        zdf["doc_id"] = np.arange(len(meta), dtype=np.int64)
+    if "m_hat" in zdf.columns:
+        zdf["z_hat"] = zdf["m_hat"].astype(str).map(label2z).fillna(0).astype(int)
+    else:
+        zdf["z_hat"] = np.argmax(p_macro, axis=1)
+    zdf["max_prob_z"] = (
+        zdf["q_conf"].astype(float) if "q_conf" in zdf.columns else np.max(p_macro, axis=1)
+    )
+    zdf.to_csv(exports / "z_assignments_target.csv", index=False)
 
 
 def stage_bn_exports_from_macro_transfer(
@@ -60,7 +110,6 @@ def stage_bn_exports_from_macro_transfer(
     if not transfer_meta.is_file():
         raise FileNotFoundError(f"metadata_with_macro_probs.csv manquant : {transfer_meta}")
     shutil.copy2(transfer_meta, exports / "metadata_with_predictions.csv")
-
     topics_dir = mt / topics_subdir()
     assign_src = topics_dir / "assignments.csv"
     themes_src = topics_dir / "themes_by_macro.csv"
@@ -76,6 +125,9 @@ def stage_bn_exports_from_macro_transfer(
         if src.is_file():
             shutil.copy2(src, exports / dst_name)
 
+    meta = pd.read_csv(exports / "metadata_with_predictions.csv", low_memory=False)
+    write_bn_compat_arrays(exports, meta)
+
     manifest = {
         "method": method,
         "corpus_id": corpus_id,
@@ -84,7 +136,7 @@ def stage_bn_exports_from_macro_transfer(
         "bn_exports": str(exports),
     }
     (exports / "staging_manifest.json").write_text(
-        __import__("json").dumps(manifest, indent=2, ensure_ascii=False),
+        json.dumps(manifest, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     return exports

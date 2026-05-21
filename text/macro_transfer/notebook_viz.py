@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -56,21 +56,85 @@ def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
     )
 
 
-def _theme_label_map(themes: pd.DataFrame) -> Dict[Tuple[str, int], str]:
+def _theme_label_map(themes: pd.DataFrame, *, max_chars: int = 52) -> Dict[Tuple[str, int], str]:
+    """Libellés courts pour DataMapPlot (theme_label / theme_title / top_words)."""
     if themes.empty or "macro" not in themes.columns or "topic_id" not in themes.columns:
         return {}
     out: Dict[Tuple[str, int], str] = {}
     for _, row in themes.iterrows():
         macro = str(row["macro"])
         tid = int(row["topic_id"])
-        label = str(
+        raw = str(
             row.get("theme_label")
             or row.get("theme_title")
             or row.get("theme_summary")
             or row.get("top_words", "")
-        )[:80]
-        out[(macro, tid)] = f"{macro}|T{tid}: {label}" if label else f"{macro}|T{tid}"
+        ).strip()
+        if len(raw) > max_chars:
+            raw = raw[: max_chars - 1] + "…"
+        out[(macro, tid)] = f"{macro}·T{tid}: {raw}" if raw else f"{macro}·T{tid}"
     return out
+
+
+def prepare_topic_labeled_points(
+    artifacts: RunArtifacts,
+    *,
+    topic_subdir: str = "topics_bertopic",
+    confidence_threshold: float = 0.5,
+    max_points: int = 8000,
+    seed: int = 42,
+    label_max_chars: int = 52,
+) -> Optional[Tuple[np.ndarray, np.ndarray, pd.DataFrame]]:
+    """
+    Sous-ensemble (z, libellés topic) pour cartes globales.
+
+    Ne garde que les unités avec topic_id ≥ 0 et q_conf ≥ seuil.
+    """
+    root = artifacts.out_dir / topic_subdir
+    themes_path = root / "themes_by_macro.csv"
+    assign_path = root / "assignments.csv"
+    if not themes_path.is_file() or not assign_path.is_file():
+        print(f"[topics] absent : {themes_path} ou {assign_path}")
+        return None
+
+    themes = pd.read_csv(themes_path)
+    assignments = pd.read_csv(assign_path)
+    merged = merge_assignments(
+        artifacts.meta,
+        assignments,
+        confidence_threshold=confidence_threshold,
+    )
+    merged = merged.loc[merged["topic_id"] >= 0].copy()
+    if len(merged) < 5:
+        print("[topics] trop peu de points assignés (topic_id ≥ 0)")
+        return None
+
+    if "macro" in merged.columns:
+        macro_col = "macro"
+    elif "macro_y" in merged.columns:
+        macro_col = "macro_y"
+    else:
+        macro_col = "m_hat"
+    tmap = _theme_label_map(themes, max_chars=label_max_chars)
+    idx_rows = merged["doc_idx"].astype(int).to_numpy()
+    z_sub = artifacts.z[idx_rows]
+    dm_labels = np.array(
+        [
+            tmap.get((str(row[macro_col]), int(row["topic_id"])), f"{row[macro_col]}·T{int(row['topic_id'])}")
+            for _, row in merged.iterrows()
+        ],
+        dtype=object,
+    )
+
+    n = min(max_points, len(z_sub))
+    rng = np.random.default_rng(seed)
+    if len(z_sub) > n:
+        pick = rng.choice(len(z_sub), size=n, replace=False)
+        z_sub = z_sub[pick]
+        dm_labels = dm_labels[pick]
+        merged = merged.iloc[pick].reset_index(drop=True)
+
+    return z_sub, dm_labels, merged
 
 
 def merge_assignments(
@@ -147,6 +211,166 @@ def plot_transfer_macro_overview(
             fig.savefig(fig_dir / "confusion_pred_vs_mhat.png", dpi=140, bbox_inches="tight")
         plt.show()
         plt.close(fig)
+
+
+def _topic_centroids_2d(
+    coords: np.ndarray,
+    labels: np.ndarray,
+) -> Tuple[List[float], List[float], List[str]]:
+    """Centroïde 2D par libellé topic (pour annotations matplotlib)."""
+    labels = np.asarray(labels).astype(str)
+    cx, cy, names = [], [], []
+    for name in sorted(set(labels)):
+        mask = labels == name
+        if not mask.any():
+            continue
+        mu = coords[mask].mean(axis=0)
+        cx.append(float(mu[0]))
+        cy.append(float(mu[1]))
+        names.append(name)
+    return cx, cy, names
+
+
+def plot_global_topics_datamap(
+    artifacts: RunArtifacts,
+    *,
+    algo_tag: str,
+    confidence_threshold: float = 0.5,
+    max_points: int = 8000,
+    seed: int = 42,
+    fig_dir: Optional[Path] = None,
+    use_datamap: bool = True,
+    label_font_size: int = 7,
+    label_max_chars: int = 52,
+) -> None:
+    """UMAP + DataMapPlot global : une étiquette par topic (theme_label), pas seulement la macro."""
+    from scgm_text.notebook_viz import plot_umap_datamap_static
+
+    prep = prepare_topic_labeled_points(
+        artifacts,
+        confidence_threshold=confidence_threshold,
+        max_points=max_points,
+        seed=seed,
+        label_max_chars=label_max_chars,
+    )
+    if prep is None:
+        return
+    z_sub, dm_labels, _merged = prep
+    coords = _run_umap(z_sub, random_state=seed)
+    fig_dir = Path(fig_dir) if fig_dir else None
+    safe = str(algo_tag).replace(" ", "_").lower()
+
+    if use_datamap:
+        try:
+            fig, _ = plot_umap_datamap_static(
+                coords,
+                dm_labels,
+                title=f"{algo_tag} — topics BERTopic (libellés theme_label)",
+                label_font_size=label_font_size,
+                macro_centroids=None,
+            )
+            if fig_dir:
+                out = fig_dir / f"global_topics_datamap_{safe}.png"
+                fig.savefig(out, dpi=150, bbox_inches="tight")
+                print("Figure :", out)
+            plt.show()
+            plt.close(fig)
+        except Exception as exc:
+            print("DataMapPlot ignoré :", exc)
+
+    import seaborn as sns
+
+    fig, ax = plt.subplots(figsize=(12, 8))
+    uniq = sorted(set(dm_labels), key=str)
+    pal = sns.color_palette("husl", n_colors=max(len(uniq), 1))
+    for i, lab in enumerate(uniq):
+        mask = dm_labels == lab
+        ax.scatter(coords[mask, 0], coords[mask, 1], s=10, alpha=0.45, c=[pal[i]])
+    tcx, tcy, tnames = _topic_centroids_2d(coords, dm_labels)
+    for xi, yi, name in zip(tcx, tcy, tnames):
+        ax.annotate(
+            name,
+            (xi, yi),
+            xytext=(4, 4),
+            textcoords="offset points",
+            fontsize=6,
+            color="#222222",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.75, edgecolor="none"),
+        )
+    ax.set_title(f"UMAP — {algo_tag} (topics, annotations centroïdes)")
+    plt.tight_layout()
+    if fig_dir:
+        fig.savefig(fig_dir / f"global_topics_scatter_{safe}.png", dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_global_topics_compare_methods(
+    artifacts_by_method: Dict[str, RunArtifacts],
+    *,
+    confidence_threshold: float = 0.5,
+    max_points: int = 6000,
+    seed: int = 42,
+    fig_dir: Optional[Path] = None,
+    use_datamap: bool = True,
+    label_font_size: int = 7,
+) -> None:
+    """SCGM vs SoftTriple côte à côte (DataMapPlot + scatter annoté par topic)."""
+    from scgm_text.notebook_viz import plot_umap_datamap_static
+
+    methods = list(artifacts_by_method.items())
+    if not methods:
+        return
+    fig_dir = Path(fig_dir) if fig_dir else None
+
+    if use_datamap:
+        for tag, art in methods:
+            print(f"=== DataMapPlot topics — {tag} ===")
+            plot_global_topics_datamap(
+                art,
+                algo_tag=tag,
+                confidence_threshold=confidence_threshold,
+                max_points=max_points,
+                seed=seed,
+                fig_dir=fig_dir / tag.lower().replace(" ", "_") if fig_dir else None,
+                use_datamap=True,
+                label_font_size=label_font_size,
+            )
+
+    n = len(methods)
+    fig, axes = plt.subplots(1, n, figsize=(9 * n, 8), squeeze=False)
+    import seaborn as sns
+
+    for ax, (tag, art) in zip(axes[0], methods):
+        prep = prepare_topic_labeled_points(
+            art,
+            confidence_threshold=confidence_threshold,
+            max_points=max_points,
+            seed=seed,
+        )
+        if prep is None:
+            ax.set_title(f"{tag} — (données absentes)")
+            ax.axis("off")
+            continue
+        z_sub, dm_labels, _ = prep
+        coords = _run_umap(z_sub, random_state=seed)
+        uniq = sorted(set(dm_labels), key=str)
+        pal = sns.color_palette("husl", n_colors=max(len(uniq), 1))
+        for i, lab in enumerate(uniq):
+            mask = dm_labels == lab
+            ax.scatter(coords[mask, 0], coords[mask, 1], s=8, alpha=0.4, c=[pal[i]])
+        tcx, tcy, tnames = _topic_centroids_2d(coords, dm_labels)
+        for xi, yi, name in zip(tcx, tcy, tnames):
+            short = name if len(name) <= 40 else name[:39] + "…"
+            ax.annotate(short, (xi, yi), fontsize=5, alpha=0.9)
+        ax.set_title(f"{tag} — topics (centroïdes)")
+    plt.tight_layout()
+    if fig_dir:
+        out = fig_dir / "compare_scgm_softtriple_topics.png"
+        fig.savefig(out, dpi=150, bbox_inches="tight")
+        print("Figure comparative :", out)
+    plt.show()
+    plt.close(fig)
 
 
 def _run_umap(X: np.ndarray, *, random_state: int = 42) -> np.ndarray:
@@ -287,7 +511,7 @@ def plot_topics_per_macro(
     idx_rows = merged["doc_idx"].astype(int).to_numpy()
     z_sub = artifacts.z[idx_rows]
     label_topics = merged["topic_id"].astype(str).to_numpy()
-    tmap = _theme_label_map(themes.loc[themes["macro"].astype(str) == macro])
+    tmap = _theme_label_map(themes.loc[themes["macro"].astype(str) == macro], max_chars=52)
 
     n = min(max_points, len(z_sub))
     rng = np.random.default_rng(seed)
@@ -332,7 +556,8 @@ def plot_topics_per_macro(
     pal = sns.color_palette("husl", n_colors=max(len(topics_unique), 1))
     for i, tid in enumerate(topics_unique):
         mask = label_topics == tid
-        ax.scatter(coords[mask, 0], coords[mask, 1], s=12, alpha=0.6, c=[pal[i]], label=f"T{tid}")
+        leg = tmap.get((macro, int(tid)), f"T{tid}")
+        ax.scatter(coords[mask, 0], coords[mask, 1], s=12, alpha=0.6, c=[pal[i]], label=leg)
     ax.set_title(f"UMAP — {algo_tag} / {macro}")
     ax.legend(markerscale=2, fontsize=8)
     plt.tight_layout()
@@ -356,7 +581,8 @@ def plot_topics_per_macro(
         ):
             for i, tid in enumerate(topics_unique):
                 mask = label_topics == tid
-                ax.scatter(xy[mask, 0], xy[mask, 1], s=10, alpha=0.6, c=[pal[i]], label=f"T{tid}")
+                leg = tmap.get((macro, int(tid)), f"T{tid}")
+                ax.scatter(xy[mask, 0], xy[mask, 1], s=10, alpha=0.6, c=[pal[i]], label=leg)
             ax.set_title(title)
             ax.legend(markerscale=2, fontsize=7)
         plt.tight_layout()
