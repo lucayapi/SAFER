@@ -142,7 +142,6 @@ def build_bertopic_model(
         n_gram_range=n_gram_range,
         calculate_probabilities=bool(bertopic_cfg.get("calculate_probabilities", True)),
         verbose=bool(bertopic_cfg.get("verbose", False)),
-        seed=int(bertopic_cfg.get("random_state", random_state)),
     )
 
 
