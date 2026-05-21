@@ -17,13 +17,44 @@ ID2LABEL = {value: key for key, value in LABEL2ID.items()}
 VALID_LABELS = set(LABEL2ID.keys())
 
 
+def _metadata_usecols(
+    header: Sequence[str],
+    *,
+    label_col: str,
+    pred_ok_col: str,
+    group_col: str,
+    text_col: Optional[str],
+) -> List[str]:
+    """Colonnes minimales pour l'entraînement (évite pred_raw, accident_summary, etc.)."""
+    wanted = {label_col, pred_ok_col, group_col, "doc_id", "fact_id"}
+    if text_col:
+        wanted.add(text_col)
+    else:
+        wanted.update(("sentence", "accident_summary", "text"))
+    return [c for c in header if c in wanted]
+
+
 def load_filtered_metadata(
     data_csv: str,
     label_col: str = "pred_label",
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
+    text_col: Optional[str] = None,
 ) -> pd.DataFrame:
-    data_df = pd.read_csv(data_csv)
+    header = pd.read_csv(data_csv, nrows=0).columns.tolist()
+    usecols = _metadata_usecols(
+        header,
+        label_col=label_col,
+        pred_ok_col=pred_ok_col,
+        group_col=group_col,
+        text_col=text_col,
+    )
+    if not usecols:
+        raise ValueError(
+            f"Aucune colonne utile dans {data_csv} "
+            f"(attendu au moins {label_col}, {pred_ok_col}, {group_col} et une colonne texte)."
+        )
+    data_df = pd.read_csv(data_csv, usecols=usecols)
     data_df = create_doc_id_if_missing(data_df)
 
     ok_mask = parse_bool_column(data_df[pred_ok_col])

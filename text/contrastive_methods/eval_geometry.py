@@ -117,6 +117,8 @@ def evaluate_st_val_geometry(
     cfg: ContrastiveConfig,
     text_col: str,
 ) -> Dict[str, Any]:
+    if hasattr(model, "eval"):
+        model.eval()
     texts = val_df[text_col].astype(str).tolist()
     labels = val_df[cfg.label_col].to_numpy()
     emb = encode_contrastive_texts(cfg, texts, st_model=model, batch_size=cfg.eval_batch_size)

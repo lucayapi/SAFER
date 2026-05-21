@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import gc
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -84,6 +85,15 @@ def run_kfold_loop(
         row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
         row["train_wall_time_sec"] = float(result.train_wall_time_sec)
         fold_rows.append(row)
+        del result
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
 
     agg = aggregate_fold_rows(fold_rows, metric_keys=KFOLD_AGGREGATE_METRIC_KEYS)
     if save_tables:

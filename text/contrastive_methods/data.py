@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Tuple
 
 import numpy as np
@@ -12,6 +13,9 @@ from scgm_text.dataset_text_raw import TextRawDataset, split_raw_by_group
 
 
 def prepare_text_dataset(cfg: ContrastiveConfig) -> TextRawDataset:
+    shared = cfg.extra.get("shared_dataset")
+    if shared is not None:
+        return shared
     return TextRawDataset(
         data_csv=str(cfg.dataset_path),
         label_col=cfg.label_col,
@@ -19,6 +23,16 @@ def prepare_text_dataset(cfg: ContrastiveConfig) -> TextRawDataset:
         group_col=cfg.group_col,
         text_col=cfg.text_col,
     )
+
+
+def attach_shared_dataset(cfg: ContrastiveConfig) -> ContrastiveConfig:
+    """Charge le CSV une fois et le réutilise entre folds / fit final."""
+    if cfg.extra.get("shared_dataset") is not None:
+        return cfg
+    dataset = prepare_text_dataset(cfg)
+    extra = dict(cfg.extra)
+    extra["shared_dataset"] = dataset
+    return dataclasses.replace(cfg, extra=extra)
 
 
 def split_train_val(

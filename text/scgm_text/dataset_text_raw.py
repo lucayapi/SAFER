@@ -42,6 +42,7 @@ class TextRawDataset(Dataset):
                 label_col=label_col,
                 pred_ok_col=pred_ok_col,
                 group_col=group_col,
+                text_col=text_col,
             )
         else:
             metadata_df = metadata_df.copy()

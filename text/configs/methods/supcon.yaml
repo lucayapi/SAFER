@@ -20,14 +20,14 @@ model:
   max_seq_length: 256
 
 training:
-  batch_size: 16
-  eval_batch_size: 16
-  encode_batch_size: 16
+  batch_size: 8
+  eval_batch_size: 8
+  encode_batch_size: 8
   epochs: 30
   learning_rate: 2.0e-5
   warmup_ratio: 0.1
   gradient_accumulation_steps: 1
-  gradient_checkpointing: false
+  gradient_checkpointing: true
   distance_metric: cosine
 
 supcon:

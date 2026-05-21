@@ -7,6 +7,7 @@ import sys
 from typing import List, Optional
 
 from contrastive_methods.config import load_contrastive_config
+from contrastive_methods.data import attach_shared_dataset
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
 from contrastive_methods.kfold_train import run_contrastive_final_fit_and_eval, run_contrastive_kfold
 from contrastive_methods.training_softtriple import run_softtriple
@@ -36,6 +37,7 @@ def run_contrastive_method(method_name: str, argv: Optional[List[str]] = None) -
         raise ValueError(f"Méthode inconnue : {method_name}")
 
     if cfg.n_folds > 1:
+        cfg = attach_shared_dataset(cfg)
         run_contrastive_kfold(cfg)
         run_contrastive_final_fit_and_eval(cfg)
         return 0
