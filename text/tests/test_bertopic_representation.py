@@ -44,9 +44,23 @@ def test_build_representation_model_disabled():
 def test_build_tiktoken_tokenizer_roundtrip():
     pytest.importorskip("tiktoken")
     tok = build_tiktoken_tokenizer("gpt-4o-mini")
-    tokens = tok("hello world")
+    assert hasattr(tok, "encode") and hasattr(tok, "decode")
+    tokens = tok.encode("hello world")
     assert isinstance(tokens, list)
     assert len(tokens) >= 1
+    assert "hello" in tok.decode(tokens)
+
+
+def test_tiktoken_tokenizer_bertopic_truncate():
+    """Aligné sur bertopic.representation._utils.truncate_document (0.16)."""
+    pytest.importorskip("tiktoken")
+    pytest.importorskip("bertopic")
+    from bertopic.representation._utils import truncate_document
+
+    tok = build_tiktoken_tokenizer("gpt-4o-mini")
+    doc = "mot " * 500
+    truncated = truncate_document(None, 20, tok, doc)
+    assert len(tok.encode(truncated)) <= 20
 
 
 @patch("macro_transfer.representation._get_client")
@@ -68,6 +82,7 @@ def test_build_representation_model_mock(_mock_env, mock_client):
     assert rep is not None
     assert rep.model == "gpt-4o-mini"
     assert "[DOCUMENTS]" in rep.prompt
+    assert hasattr(rep.tokenizer, "encode") and hasattr(rep.tokenizer, "decode")
 
 
 def test_topic_label_from_model_topic_labels_dict():

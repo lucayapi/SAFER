@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from safer_core.macro_definitions import format_macro_context_for_prompt
 from scgm_text.openai_theme_labels import _get_client, load_openai_dotenv
@@ -20,19 +20,20 @@ Réponds au format :
 topic: <libellé en français>"""
 
 
-def build_tiktoken_tokenizer(model_name: str) -> Callable[[str], list]:
-    """Tokenizer tiktoken pour ``doc_length`` (troncature par tokens)."""
+def build_tiktoken_tokenizer(model_name: str):
+    """
+    Retourne ``tiktoken.encoding_for_model(...)`` tel que dans la doc BERTopic.
+
+    L'objet ``Encoding`` expose déjà ``encode`` / ``decode`` attendus par
+    ``truncate_document``. Le bug initial venait d'un *callable* maison
+    (``lambda text: enc.encode(text)``) qui ne correspondait à aucune branche.
+    """
     import tiktoken
 
     try:
-        enc = tiktoken.encoding_for_model(model_name)
+        return tiktoken.encoding_for_model(model_name)
     except KeyError:
-        enc = tiktoken.get_encoding("cl100k_base")
-
-    def _tokenize(text: str) -> list:
-        return enc.encode(text or "")
-
-    return _tokenize
+        return tiktoken.get_encoding("cl100k_base")
 
 
 def _resolve_prompt(rep_cfg: Dict[str, Any], *, macro: Optional[str], anchor: Optional[Any]) -> str:
