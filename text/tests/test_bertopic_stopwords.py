@@ -10,6 +10,7 @@ from macro_transfer.bertopic_utils import (
     DEFAULT_STOP_WORDS_FILE,
     load_stop_metier,
     resolve_stop_words_file,
+    umap_enabled,
 )
 from macro_transfer.topics_export import summarize_topics_by_macro
 
@@ -27,6 +28,21 @@ def test_resolve_stop_words_default():
     path = resolve_stop_words_file({})
     assert path == DEFAULT_STOP_WORDS_FILE
     assert path.is_file()
+
+
+def test_umap_enabled_default_block():
+    assert umap_enabled({"umap": {"enabled": True, "n_components": 5}}) is True
+    assert umap_enabled({"umap": {"n_components": 5}}) is True
+
+
+def test_umap_enabled_disabled():
+    assert umap_enabled({"umap": None}) is False
+    assert umap_enabled({"umap": False}) is False
+    assert umap_enabled({"umap": {"enabled": False}}) is False
+
+
+def test_umap_enabled_missing_key():
+    assert umap_enabled({}) is True
 
 
 def test_summarize_topics_by_macro():

@@ -49,6 +49,12 @@ def run_macro_transfer_discovery(
     label_col = cfg.get("label_col", "pred_label")
     pred_ok_col = cfg.get("pred_ok_col", "pred_ok")
 
+    encode_kwargs: Dict[str, Any] = {}
+    if method == "softtriple":
+        st_bs = cfg.get("softtriple_encode_batch_size", cfg.get("encode_batch_size"))
+        if st_bs is not None:
+            encode_kwargs["encode_batch_size"] = int(st_bs)
+
     z, meta = encode_target_corpus(
         method,
         checkpoint,
@@ -60,6 +66,7 @@ def run_macro_transfer_discovery(
         batch_size=int(cfg.get("batch_size", batch_size)),
         device=device,
         contrastive_config=Path(cfg["contrastive_config"]) if cfg.get("contrastive_config") else None,
+        **encode_kwargs,
     )
     emb_dir = out / "embeddings"
     emb_dir.mkdir(parents=True, exist_ok=True)

@@ -42,7 +42,13 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--scgm-tau", type=float, default=None)
     p.add_argument("--skip-bertopic", action="store_true", help="Désactive BERTopic intra-macro (debug)")
     p.add_argument("--device", type=str, default=None)
-    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None, help="SCGM projection ; ignoré pour l'encode HF SoftTriple")
+    p.add_argument(
+        "--encode-batch-size",
+        type=int,
+        default=None,
+        help="Batch encode Qwen (softtriple) ; défaut : softtriple_encode_batch_size du YAML",
+    )
     return p.parse_args()
 
 
@@ -79,6 +85,8 @@ def main() -> None:
         output_dir = str(resolve_repo_path(output_dir, repo_root=TEXT_ROOT))
 
     raw = {**raw, "corpus": corpus_id, "repo_anchor": str(TEXT_ROOT)}
+    if args.encode_batch_size is not None:
+        raw["softtriple_encode_batch_size"] = int(args.encode_batch_size)
 
     manifest = run_macro_transfer_discovery(
         method=method,

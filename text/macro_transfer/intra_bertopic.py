@@ -1,4 +1,4 @@
-"""BERTopic intra-macro avec embeddings pré-calculés (UMAP, HDBSCAN, c-TF-IDF)."""
+"""BERTopic intra-macro avec embeddings pré-calculés (UMAP optionnel, HDBSCAN, c-TF-IDF)."""
 
 from __future__ import annotations
 

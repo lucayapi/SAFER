@@ -21,7 +21,10 @@ macro_temperature: 1.0
 softtriple_gamma: 0.1
 scgm_tau: null
 
+# batch_size : projection SCGM (embeddings pré-calculés). Ne pas l'utiliser pour SoftTriple.
 batch_size: 512
+# Encode HF Qwen (softtriple) — ~8–16 sur GPU 16 Go ; 512 provoque CUDA OOM.
+softtriple_encode_batch_size: 8
 infer_batch_size: 4096
 device: cuda
 
@@ -36,7 +39,9 @@ bertopic:
   verbose: false
   random_state: 42
   stop_words_file: null
+  # UMAP avant HDBSCAN : enabled: false ou umap: null → embeddings projetés directement
   umap:
+    enabled: true
     n_components: 5
     n_neighbors: 15
     min_dist: 0.1

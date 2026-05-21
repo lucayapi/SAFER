@@ -60,6 +60,35 @@ def _parse_ngram_range(raw: Any) -> tuple[int, int]:
     return (1, 1)
 
 
+def umap_enabled(bertopic_cfg: Dict[str, Any]) -> bool:
+    """
+    True si une étape UMAP doit précéder HDBSCAN.
+
+    Désactivé si ``umap: null``, ``umap: false``, ou ``umap.enabled: false``.
+    Sinon (bloc de paramètres ou clé absente) : activé.
+    """
+    umap_raw = bertopic_cfg.get("umap", "__missing__")
+    if umap_raw is None or umap_raw is False:
+        return False
+    if umap_raw == "__missing__":
+        return True
+    if isinstance(umap_raw, dict):
+        return bool(umap_raw.get("enabled", True))
+    return True
+
+
+def _build_umap_model(umap_cfg: Dict[str, Any], *, random_state: int) -> Any:
+    from umap import UMAP
+
+    return UMAP(
+        n_components=int(umap_cfg.get("n_components", 5)),
+        n_neighbors=int(umap_cfg.get("n_neighbors", 15)),
+        min_dist=float(umap_cfg.get("min_dist", 0.1)),
+        metric=str(umap_cfg.get("metric", "cosine")),
+        random_state=int(umap_cfg.get("random_state", random_state)),
+    )
+
+
 def build_bertopic_model(
     bertopic_cfg: Dict[str, Any],
     *,
@@ -68,27 +97,25 @@ def build_bertopic_model(
     representation_model: Any = None,
     macro: Optional[str] = None,
 ):
-    """Instancie BERTopic avec UMAP, HDBSCAN, CountVectorizer et representation optionnelle."""
+    """Instancie BERTopic (UMAP optionnel), HDBSCAN, CountVectorizer et representation."""
     from bertopic import BERTopic
     from hdbscan import HDBSCAN
     from sklearn.feature_extraction.text import CountVectorizer
-    from umap import UMAP
 
     min_topic_size = int(bertopic_cfg.get("min_topic_size", 10))
     nr_topics = bertopic_cfg.get("nr_topics")
-    umap_cfg = dict(bertopic_cfg.get("umap") or {})
     hdbscan_cfg = dict(bertopic_cfg.get("hdbscan") or {})
     vec_cfg = dict(bertopic_cfg.get("vectorizer") or {})
 
     stop_words = load_stop_metier(resolve_stop_words_file(bertopic_cfg, anchor=anchor))
 
-    umap_model = UMAP(
-        n_components=int(umap_cfg.get("n_components", 5)),
-        n_neighbors=int(umap_cfg.get("n_neighbors", 15)),
-        min_dist=float(umap_cfg.get("min_dist", 0.1)),
-        metric=str(umap_cfg.get("metric", "cosine")),
-        random_state=int(umap_cfg.get("random_state", random_state)),
-    )
+    umap_model = None
+    if umap_enabled(bertopic_cfg):
+        raw_umap = bertopic_cfg.get("umap") or {}
+        umap_cfg = {
+            k: v for k, v in dict(raw_umap).items() if k != "enabled"
+        }
+        umap_model = _build_umap_model(umap_cfg, random_state=random_state)
 
     min_cluster_size = hdbscan_cfg.get("min_cluster_size")
     if min_cluster_size is None:

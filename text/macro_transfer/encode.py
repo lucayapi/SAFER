@@ -38,6 +38,7 @@ def encode_target_corpus(
     pred_ok_col: str = "pred_ok",
     group_col: str = "accident_id",
     batch_size: int = 512,
+    encode_batch_size: Optional[int] = None,
     max_seq_length: int = 256,
     device: str = "cuda",
     contrastive_config: Optional[Path] = None,
@@ -116,11 +117,16 @@ def encode_target_corpus(
         else:
             cfg = load_contrastive_config(cfg_path)
         texts = meta[text_col].astype(str).tolist()
+        hf_bs = encode_batch_size if encode_batch_size is not None else cfg.encode_batch_size
+        if str(device).startswith("cuda"):
+            import torch
+
+            torch.cuda.empty_cache()
         z = encode_contrastive_texts(
             cfg,
             texts,
             checkpoint_dir=ckpt_dir,
-            batch_size=batch_size,
+            batch_size=int(hf_bs),
             device=device,
         )
         return np.asarray(z, dtype=np.float64), meta
