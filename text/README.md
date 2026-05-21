@@ -164,20 +164,20 @@ Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 01 
 | `output/<method>/` | **BTP uniquement** : checkpoints, métriques BTP, exports BTP (sans topics test) |
 | `output_test/<corpus>/<method>/` | Métriques / projections **test** (`metrics_geometry_test.csv`, …) |
 | `output_test/<corpus>/raw_embedding/` | Embedding brut test |
-| `output_test/<corpus>/macro_transfer/<method>/` | Transfert macro + topics GMM/BERTopic (+ OpenAI optionnel) |
+| `output_test/<corpus>/macro_transfer/<method>/` | Transfert macro + topics BERTopic (`theme_label` via `bertopic.representation` par défaut) |
 | `output_test/<corpus>/bn_staging/` | Sorties notebook 04 (BN) |
 
 Les anciens dossiers `resultats/` et `resultats_test/` peuvent être renommés en `output/` et `output_test/` (ou relancer les jobs). Les chemins legacy `resultats/...` sont redirigés vers `output/...` si `SAFER_LEGACY_PATHS=1`.
 
 ## Transfert macro + topics cible (corpus test)
 
-Pipeline **`macro_transfer/`** : encodeur source (SCGM ou SoftTriple) → \(p(m|u)\) sur le corpus test → groupes macro durs → topics **BERTopic** et **GMM** par macro.
+Pipeline **`macro_transfer/`** : encodeur source (SCGM ou SoftTriple) → \(p(m|u)\) sur le corpus test → groupes macro durs → topics **BERTopic** (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`) par macro, libellés via **`bertopic.representation.OpenAI`** par défaut (`theme_label` dans `topics_bertopic/themes_by_macro.csv`).
 
 **Checkpoints source** (BTP) : `output/scgm_text/checkpoints/best_model.pt`, `output/softtriple/checkpoints/best_model/`
 
-Paramètres BERTopic / GMM : [`configs/macro_transfer.yaml`](configs/macro_transfer.yaml)
+Paramètres : [`configs/macro_transfer.yaml`](configs/macro_transfer.yaml) (`bertopic.representation.enabled`, modèle, `nr_docs`, …). Les appels OpenAI sont toujours actifs si `representation.enabled: true` (défaut).
 
-**OpenAI (libellés topics)** : sémantique des macros A0–C dans [`configs/accident_macros.yaml`](configs/accident_macros.yaml) ; les prompts (`scgm_text/openai_theme_labels.py`) injectent le contexte de la macro (`dominant_macro` ou `macro` dans le CSV) pour orienter chaque libellé court.
+**Libellés topics** : sémantique des macros A0–C dans [`configs/accident_macros.yaml`](configs/accident_macros.yaml) ; le prompt de representation injecte le contexte macro. Pas de dossier `openai/` ni de second passage post-hoc dans ce pipeline (l’enrichissement SCGM BTP reste dans `scgm_text/openai_theme_labels.py`).
 
 **Encodeur source** (variable d’environnement `METHOD` dans `jobs/run_macro_transfer.sh`) :
 
@@ -216,7 +216,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
-| `06_macro_transfer_topics.ipynb` | **Lecture seule** — comparaison SCGM vs SoftTriple + BERTopic vs GMM après `run_macro_transfer.sh` (`METHOD=both`) |
+| `06_macro_transfer_topics.ipynb` | **Lecture seule** — comparaison SCGM vs SoftTriple + topics BERTopic après `run_macro_transfer.sh` (`METHOD=both`) |
 | `07_macro_transfer_interactive.ipynb` | **Run local** d’un encodeur (`SOURCE_METHOD`) via `run_macro_transfer_discovery` + viz 2D (UMAP, DataMapPlot, PCA/t-SNE) ; `RUN_PIPELINE=False` pour reviz sans refit |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.

@@ -10,7 +10,6 @@
 # Exemples :
 #   METHOD=scgm_text bash jobs/run_macro_transfer.sh
 #   METHOD=softtriple CORPUS=metallurgie sbatch jobs/run_macro_transfer.sh
-#   SKIP_OPENAI=0               # enrichissement OpenAI (login + Internet)
 #
 # Prérequis : train_scgm_text.sh + train_softtriple.sh
 
@@ -33,18 +32,12 @@ fi
 CONFIG="${CONFIG:-configs/macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
 METHOD="${METHOD:-both}"
-SKIP_OPENAI="${SKIP_OPENAI:-1}"
 
 export TEST_CORPUS="${CORPUS}"
 
 run_one() {
   local m="$1"
   local extra=(--corpus "${CORPUS}")
-  if [[ "${SKIP_OPENAI}" == "0" ]]; then
-    extra+=(--run-openai)
-  else
-    extra+=(--skip-openai)
-  fi
   if [[ -n "${CHECKPOINT:-}" ]]; then
     extra+=(--checkpoint "${CHECKPOINT}")
   fi

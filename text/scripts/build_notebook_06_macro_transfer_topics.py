@@ -36,8 +36,8 @@ Encodeur source : checkpoints BTP sous `output/scgm_text/` ou `output/softtriple
 
 Comparaison **SCGM** vs **SoftTriple** sur le corpus test (`TEST_CORPUS`, registre `configs/test_corpora.yaml`) :
 - Phase 1 : \(p(m|u)\), métriques de classification (`transfer/`)
-- Phase 2 : topics **BERTopic** vs **GMM** par macro
-- Phase 3 : libellés OpenAI optionnels (`openai/`)
+- Phase 2 : topics **BERTopic** par macro (UMAP, HDBSCAN, c-TF-IDF + `stop_metier.txt`)
+- Phase 3 : libellés via `bertopic.representation.OpenAI` (colonne `theme_label` dans `themes_by_macro.csv`)
 
 **Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` pour les deux méthodes.
 """
@@ -119,41 +119,36 @@ for label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
     plt.show()
 """
         ),
-        md("## § Topics BERTopic vs GMM"),
+        md("## § Topics BERTopic"),
         py(
             r"""
-def load_topics(root: Path, sub: str):
-    p = root / sub / "themes_by_macro.csv"
-    return pd.read_csv(p) if p.is_file() else pd.DataFrame()
-
-def load_openai(root: Path, name: str):
-    p = root / "openai" / name
+def load_topics(root: Path):
+    p = root / "topics_bertopic" / "themes_by_macro.csv"
     return pd.read_csv(p) if p.is_file() else pd.DataFrame()
 
 for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
-    comp_path = root / "summary/comparison_bertopic_vs_gmm.csv"
-    if comp_path.is_file():
-        print("===", method_label, "===")
-        display(pd.read_csv(comp_path))
-    for sub, tag in (("topics_bertopic", "BERTopic"), ("topics_gmm", "GMM")):
-        th = load_topics(root, sub)
-        if len(th):
-            print(method_label, tag, "— effectifs par macro")
-            display(th.groupby("macro")["n_units"].sum().reset_index())
+    summary_path = root / "summary" / "topics_summary.csv"
+    if summary_path.is_file():
+        print("===", method_label, "— résumé topics ===")
+        display(pd.read_csv(summary_path))
+    th = load_topics(root)
+    if len(th):
+        print(method_label, "BERTopic — effectifs par macro")
+        display(th.groupby("macro")["n_units"].sum().reset_index())
 """
         ),
         py(
             r"""
 for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
-    for fname, tag in (
-        ("themes_bertopic_openai.csv", "BERTopic"),
-        ("themes_gmm_openai.csv", "GMM"),
-    ):
-        oai = load_openai(root, fname)
-        if len(oai) and "theme_summary" in oai.columns:
-            print(f"\n{method_label} — {tag} (OpenAI)")
-            cols = ["macro", "topic_id", "n_units", "theme_summary"]
-            display(oai[cols].head(12))
+    th = load_topics(root)
+    if len(th) and "theme_label" in th.columns:
+        print(f"\n{method_label} — libellés (bertopic.representation.OpenAI)")
+        cols = ["macro", "topic_id", "n_units", "theme_label", "top_words"]
+        display(th[[c for c in cols if c in th.columns]].head(12))
+    elif len(th) and "top_words" in th.columns:
+        print(f"\n{method_label} — top_words (sans theme_label)")
+        cols = ["macro", "topic_id", "n_units", "top_words"]
+        display(th[[c for c in cols if c in th.columns]].head(12))
 """
         ),
         md("## § Qualité (support, topics vides)"),
@@ -161,18 +156,16 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
             r"""
 quality_rows = []
 for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
-    for sub, tag in (("topics_bertopic", "BERTopic"), ("topics_gmm", "GMM")):
-        th = load_topics(root, sub)
-        if not len(th):
-            continue
-        quality_rows.append({
-            "method": method_label,
-            "topic_algo": tag,
-            "n_topics": th["topic_id"].nunique(),
-            "n_empty": int((th["n_units"] == 0).sum()),
-            "min_support": int(th["n_units"].min()),
-            "median_support": float(th["n_units"].median()),
-        })
+    th = load_topics(root)
+    if not len(th):
+        continue
+    quality_rows.append({
+        "method": method_label,
+        "n_topics": th["topic_id"].nunique(),
+        "n_empty": int((th["n_units"] == 0).sum()),
+        "min_support": int(th["n_units"].min()),
+        "median_support": float(th["n_units"].median()),
+    })
 display(pd.DataFrame(quality_rows))
 """
         ),

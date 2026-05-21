@@ -37,7 +37,7 @@ def main() -> None:
 
 ## 1 — Objectif
 
-Ce notebook construit un **réseau bayésien** à partir des exports **`macro_transfer`** sur le corpus test (`output_test/<TEST_CORPUS>/macro_transfer/<MACRO_TRANSFER_METHOD>/`). Le staging copie métadonnées transférées, assignations intra-macro (GMM ou BERTopic) et thèmes vers `output_test/<TEST_CORPUS>/bn_staging/`.
+Ce notebook construit un **réseau bayésien** à partir des exports **`macro_transfer`** sur le corpus test (`output_test/<TEST_CORPUS>/macro_transfer/<MACRO_TRANSFER_METHOD>/`). Le staging copie métadonnées transférées, assignations intra-macro **BERTopic** et thèmes vers `output_test/<TEST_CORPUS>/bn_staging/`.
 
 Les variables binaires au niveau accident décrivent la **co-présence de topics intra-macro** (`macro_topic_*`) ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
 
@@ -89,7 +89,6 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
 MACRO_TRANSFER_METHOD = "scgm_text"  # scgm_text | softtriple
-TOPIC_SOURCE = "gmm"  # gmm | bertopic
 OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_staging/
 MACRO_CONF_THRESHOLD = 0.50
 TOPIC_GAMMA_THRESHOLD = 0.50
@@ -97,7 +96,6 @@ MIN_TOPIC_ACCIDENT_SUPPORT = 20
 MAX_TOPICS_PER_MACRO = 6
 INCLUDE_MACRO_NODES = True
 INCLUDE_SEVERITY = False
-THEMES_OPENAI_CSV = ""  # optionnel : themes_by_macro_openai.csv dans staging
 LEARN_UNCONSTRAINED_TOPIC = True
 MAX_INDEGREE = 3
 EQUIVALENT_SAMPLE_SIZE = 5
@@ -157,12 +155,11 @@ from bn_pipeline.staging_macro_transfer import stage_bn_exports_from_macro_trans
 BN_EXPORTS = stage_bn_exports_from_macro_transfer(
     MACRO_TRANSFER_METHOD,
     TEST_CORPUS,
-    topic_source=TOPIC_SOURCE,
     output_dir=OUT_ROOT,
     repo_root=REPO,
 )
 EXPORTS = BN_EXPORTS
-SCGM_TOPICS = MACRO_TRANSFER_ROOT / ("topics_gmm" if TOPIC_SOURCE == "gmm" else "topics_bertopic")
+SCGM_TOPICS = MACRO_TRANSFER_ROOT / "topics_bertopic"
 
 import importlib
 
@@ -203,8 +200,6 @@ from bn_pipeline.bn_visualization import (
     export_node_cards_png,
     export_node_marginals_csv,
     join_theme_summary_to_selected_variables,
-    load_openai_themes_for_bn,
-    resolve_openai_themes_path,
     plot_adjacency_heatmap,
     plot_bn_graph,
     try_plotly_interactive,
@@ -232,7 +227,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 print("REPO =", REPO)
 print("TEST_CORPUS =", TEST_CORPUS)
 print("MACRO_TRANSFER_ROOT =", MACRO_TRANSFER_ROOT)
-print("TOPIC_SOURCE =", TOPIC_SOURCE)
+print("SCGM_TOPICS =", SCGM_TOPICS)
 print("EXPORTS (bn_exports) =", EXPORTS)
 print("OUT_ROOT =", OUT_ROOT)
 """
@@ -405,35 +400,22 @@ display(diag_df)
         md(
             """## 10 — Visualisation du graphe et heatmap d’adjacence
 
-Cercles colorés (macro) **séparés** des cartes CPD (`theme_summary` OpenAI + barres `P(0)` / `P(1)`).
+Cercles colorés (macro) **séparés** des cartes CPD (`theme_label` / `top_words` depuis `themes_by_macro.csv` + barres `P(0)` / `P(1)`).
 Sorties : `figures/static/`, `figures/interactive/`, `figures/nodes/`, `tables/node_marginals.csv`.
 """
         ),
         py(
             r"""
-from pathlib import Path
 from IPython.display import HTML, display as ipy_display
 
-_explicit_themes = None
-if str(THEMES_OPENAI_CSV).strip():
-    _tp = Path(str(THEMES_OPENAI_CSV).strip()).expanduser()
-    if not _tp.is_absolute():
-        _tp = resolve_repo_path(str(_tp), REPO)
-    if _tp.is_file():
-        _explicit_themes = _tp
-
 _themes_macro = exports_path / "themes_by_macro.csv"
-_themes_openai = exports_path / "themes_by_macro_openai.csv"
-if _explicit_themes is not None and _explicit_themes.is_file():
-    themes_df = pd.read_csv(_explicit_themes)
-elif _themes_openai.is_file():
-    themes_df = pd.read_csv(_themes_openai)
-    if "theme_summary" not in themes_df.columns and "label" in themes_df.columns:
-        themes_df["theme_summary"] = themes_df["label"]
-elif _themes_macro.is_file():
+if _themes_macro.is_file():
     themes_df = pd.read_csv(_themes_macro)
     if "theme_summary" not in themes_df.columns:
-        themes_df["theme_summary"] = themes_df.get("top_words", "")
+        if "theme_label" in themes_df.columns:
+            themes_df["theme_summary"] = themes_df["theme_label"]
+        else:
+            themes_df["theme_summary"] = themes_df.get("top_words", "")
 else:
     themes_df = pd.DataFrame()
 print("Libellés BN :", _themes_macro if _themes_macro.is_file() else "(aucun themes_by_macro)")

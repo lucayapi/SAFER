@@ -44,7 +44,8 @@ Exécute le pipeline **macro_transfer** sur un corpus de test (sans SLURM), puis
 **Prérequis** :
 - Checkpoint BTP : `output/scgm_text/checkpoints/` ou `output/softtriple/checkpoints/`
 - Embeddings Qwen test : `embeddings/test/Qwen3-Embedding-0.6B_<corpus>.csv` (sinon `python scripts/export_test_embeddings.py --corpus <id>`)
-- GPU recommandé (`DEVICE=cuda`) ; BERTopic peut être lourd en RAM (`bertopic.min_topic_size` dans le YAML)
+- GPU recommandé (`DEVICE=cuda`) ; BERTopic (UMAP/HDBSCAN/c-TF-IDF, `stop_metier.txt`) peut être lourd en RAM
+- OpenAI : `bertopic.representation` activé dans le YAML (clé API + réseau requis)
 """
         ),
         py(
@@ -56,7 +57,6 @@ import sys
 TEST_CORPUS = "metallurgie"
 SOURCE_METHOD = "scgm_text"  # scgm_text | softtriple
 RUN_PIPELINE = True
-SKIP_OPENAI = True
 DEVICE = "cuda"  # cpu si pas de GPU
 CONFIDENCE_THRESHOLD = 0.5
 CONFIG_PATH = "configs/macro_transfer.yaml"
@@ -86,7 +86,12 @@ FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 cfg_path = resolve_repo_path(CONFIG_PATH, anchor=TEXT_ROOT)
 RAW_CFG = load_yaml(cfg_path)
-RAW_CFG = {**RAW_CFG, "corpus": _spec.id, "skip_openai": SKIP_OPENAI, "device": DEVICE}
+RAW_CFG = {
+    **RAW_CFG,
+    "corpus": _spec.id,
+    "device": DEVICE,
+    "repo_anchor": str(TEXT_ROOT),
+}
 
 _spec2, DATA_CSV, EMB_CSV = resolve_test_paths_from_config(RAW_CFG, corpus_id=_spec.id, anchor=TEXT_ROOT)
 CKPT_REL = (RAW_CFG.get("checkpoints") or {}).get(SOURCE_METHOD)
@@ -143,8 +148,6 @@ if RUN_PIPELINE:
         softtriple_gamma=float(RAW_CFG.get("softtriple_gamma", 0.1)),
         scgm_tau=RAW_CFG.get("scgm_tau"),
         skip_bertopic=bool(RAW_CFG.get("skip_bertopic", False)),
-        skip_gmm=bool(RAW_CFG.get("skip_gmm", False)),
-        skip_openai=SKIP_OPENAI,
         device=DEVICE,
         batch_size=int(RAW_CFG.get("batch_size", 512)),
     )
@@ -182,20 +185,26 @@ plot_global_embedding_map(
 )
 """
         ),
-        md("## Topics — tableaux BERTopic et GMM"),
+        md("## Topics — BERTopic (c-TF-IDF + representation OpenAI)"),
         py(
             r"""
 import pandas as pd
 from IPython.display import display
 from macro_transfer.notebook_viz import display_topics_tables
 
-for sub, tag in (("topics_bertopic", "BERTopic"), ("topics_gmm", "GMM")):
-    display_topics_tables(OUT_DIR, sub, tag)
+display_topics_tables(OUT_DIR, "topics_bertopic", "BERTopic")
 
-comp = OUT_DIR / "summary" / "comparison_bertopic_vs_gmm.csv"
-if comp.is_file():
-    print("=== Comparaison BERTopic vs GMM ===")
-    display(pd.read_csv(comp))
+themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
+if themes_path.is_file():
+    th = pd.read_csv(themes_path)
+    if "theme_label" in th.columns:
+        print("=== Libellés (bertopic.representation.OpenAI) ===")
+        display(th[["macro", "topic_id", "n_units", "theme_label", "top_words"]].head(20))
+
+summary = OUT_DIR / "summary" / "topics_summary.csv"
+if summary.is_file():
+    print("=== Résumé topics par macro ===")
+    display(pd.read_csv(summary))
 """
         ),
         md("## Visualisations par macro (BERTopic)"),
@@ -210,23 +219,6 @@ for macro in MACRO_NAMES:
         artifacts,
         topic_subdir="topics_bertopic",
         algo_tag="bertopic",
-        macro=macro,
-        confidence_threshold=CONFIDENCE_THRESHOLD,
-        fig_dir=FIG_DIR,
-        use_datamap=True,
-        run_pca_tsne=True,
-    )
-"""
-        ),
-        md("## Visualisations par macro (GMM)"),
-        py(
-            r"""
-for macro in MACRO_NAMES:
-    print(f"--- GMM / {macro} ---")
-    plot_topics_per_macro(
-        artifacts,
-        topic_subdir="topics_gmm",
-        algo_tag="gmm",
         macro=macro,
         confidence_threshold=CONFIDENCE_THRESHOLD,
         fig_dir=FIG_DIR,

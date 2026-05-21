@@ -454,7 +454,7 @@ else:
 TEST_MD = """## 6. Corpus test (`TEST_CORPUS`)
 
 Évaluation **hors distribution** : métriques et projections sous `output_test/<TEST_CORPUS>/scgm_text/`.  
-**Topics intra-macro (BERTopic, GMM, OpenAI)** : `output_test/<TEST_CORPUS>/macro_transfer/` — notebook **06**.
+**Topics intra-macro (BERTopic, OpenAI)** : `output_test/<TEST_CORPUS>/macro_transfer/` — notebook **06**.
 """
 
 TEST_METRICS_SOURCE = """if metrics_test is not None:
@@ -622,7 +622,7 @@ else:
         )
     else:
         topics_tbl["theme_summary"] = pd.NA
-        print("→ SKIP_OPENAI=0 bash jobs/enrich_scgm_themes_openai.sh (libellés topics)")
+        print("→ bash jobs/enrich_scgm_themes_openai.sh (libellés topics SCGM BTP)")
 
     topics_tbl = topics_tbl.sort_values("n_units", ascending=False)
     print("=== Topics par composante z ===")

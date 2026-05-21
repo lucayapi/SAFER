@@ -39,10 +39,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--macro-temperature", type=float, default=None)
     p.add_argument("--softtriple-gamma", type=float, default=None)
     p.add_argument("--scgm-tau", type=float, default=None)
-    p.add_argument("--skip-bertopic", action="store_true")
-    p.add_argument("--skip-gmm", action="store_true")
-    p.add_argument("--skip-openai", action="store_true")
-    p.add_argument("--run-openai", action="store_true", help="Active l'enrichissement OpenAI (équiv. skip-openai=False)")
+    p.add_argument("--skip-bertopic", action="store_true", help="Désactive BERTopic intra-macro (debug)")
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--batch-size", type=int, default=None)
     return p.parse_args()
@@ -76,13 +73,7 @@ def main() -> None:
     else:
         output_dir = str(resolve_repo_path(output_dir, anchor=TEXT_ROOT))
 
-    skip_openai = bool(raw.get("skip_openai", True))
-    if args.run_openai:
-        skip_openai = False
-    if args.skip_openai:
-        skip_openai = True
-
-    raw = {**raw, "corpus": corpus_id}
+    raw = {**raw, "corpus": corpus_id, "repo_anchor": str(TEXT_ROOT)}
 
     manifest = run_macro_transfer_discovery(
         method=method,
@@ -108,8 +99,6 @@ def main() -> None:
         ),
         scgm_tau=args.scgm_tau if args.scgm_tau is not None else raw.get("scgm_tau"),
         skip_bertopic=args.skip_bertopic or bool(raw.get("skip_bertopic", False)),
-        skip_gmm=args.skip_gmm or bool(raw.get("skip_gmm", False)),
-        skip_openai=skip_openai,
         device=args.device or raw.get("device", "cuda"),
         batch_size=int(args.batch_size or raw.get("batch_size", 512)),
     )

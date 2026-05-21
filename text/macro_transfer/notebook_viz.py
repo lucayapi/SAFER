@@ -24,7 +24,6 @@ class RunArtifacts:
     gating: pd.DataFrame
     transfer_metrics: Dict[str, Any]
     topics_bertopic_dir: Path
-    topics_gmm_dir: Path
 
 
 def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
@@ -54,7 +53,6 @@ def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
         gating=gating,
         transfer_metrics=metrics,
         topics_bertopic_dir=root / "topics_bertopic",
-        topics_gmm_dir=root / "topics_gmm",
     )
 
 
@@ -65,8 +63,13 @@ def _theme_label_map(themes: pd.DataFrame) -> Dict[Tuple[str, int], str]:
     for _, row in themes.iterrows():
         macro = str(row["macro"])
         tid = int(row["topic_id"])
-        words = str(row.get("top_words", row.get("theme_summary", "")))[:80]
-        out[(macro, tid)] = f"{macro}|T{tid}: {words}" if words else f"{macro}|T{tid}"
+        label = str(
+            row.get("theme_label")
+            or row.get("theme_title")
+            or row.get("theme_summary")
+            or row.get("top_words", "")
+        )[:80]
+        out[(macro, tid)] = f"{macro}|T{tid}: {label}" if label else f"{macro}|T{tid}"
     return out
 
 
@@ -254,7 +257,7 @@ def plot_topics_per_macro(
     use_datamap: bool = True,
     run_pca_tsne: bool = True,
 ) -> None:
-    """UMAP / DataMapPlot / PCA-t-SNE pour une macro et un algo (BERTopic ou GMM)."""
+    """UMAP / DataMapPlot / PCA-t-SNE pour une macro (topics BERTopic)."""
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
 

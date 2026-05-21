@@ -156,7 +156,12 @@ def _macro_topic_to_theme_summary(themes_df: Optional[pd.DataFrame]) -> Dict[tup
     df = themes_df if themes_df is not None else pd.DataFrame()
     if df.empty or "macro" not in df.columns or "topic_id" not in df.columns:
         return {}
-    summary_col = "theme_summary" if "theme_summary" in df.columns else "top_words"
+    if "theme_summary" in df.columns:
+        summary_col = "theme_summary"
+    elif "theme_label" in df.columns:
+        summary_col = "theme_label"
+    else:
+        summary_col = "top_words"
     if summary_col not in df.columns:
         return {}
     out: Dict[tuple[str, int], str] = {}

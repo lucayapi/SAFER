@@ -185,7 +185,7 @@ def create_accident_matrix_from_macro_transfer(
     """
     Matrice accident × topics **intra-macro** (colonnes ``macro_topic_<macro>_<id>``).
 
-    ``assignments_df`` : sortie ``topics_gmm/assignments.csv`` ou ``topics_bertopic/``.
+    ``assignments_df`` : sortie ``topics_bertopic/assignments.csv``.
     """
     meta = metadata_df.copy()
     if accident_id_col not in meta.columns:

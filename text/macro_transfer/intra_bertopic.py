@@ -1,4 +1,4 @@
-"""BERTopic intra-macro avec embeddings pré-calculés."""
+"""BERTopic intra-macro avec embeddings pré-calculés (UMAP, HDBSCAN, c-TF-IDF)."""
 
 from __future__ import annotations
 
@@ -8,33 +8,59 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+from macro_transfer.bertopic_utils import (
+    fit_bertopic_subset,
+    format_topic_words,
+    topic_label_from_model,
+)
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.topics_export import export_themes_by_macro
+from scgm_text.topic_export import _top_sentences_by_distance
 
 
-def _fit_bertopic_subset(
-    texts: list[str],
-    embeddings: np.ndarray,
+def _build_theme_rows(
+    model: Any,
+    macro: str,
+    sub_assign: pd.DataFrame,
+    meta: pd.DataFrame,
+    z: np.ndarray,
     *,
-    min_topic_size: int = 10,
-    nr_topics: Optional[int] = None,
-    random_state: int = 42,
-) -> tuple[np.ndarray, Any]:
-    from bertopic import BERTopic
-
-    model = BERTopic(
-        min_topic_size=min_topic_size,
-        nr_topics=nr_topics,
-        calculate_probabilities=True,
-        verbose=False,
-    )
-    topics, probs = model.fit_transform(texts, embeddings)
-    topic_arr = np.asarray(topics, dtype=np.int64)
-    if probs is not None and hasattr(probs, "shape") and len(probs.shape) == 2:
-        conf = np.asarray(probs).max(axis=1)
-    else:
-        conf = np.ones(len(texts), dtype=np.float64)
-    return topic_arr, conf
+    method: str,
+    sentence_col: str,
+    top_k_words: int,
+    top_k_sentences: int,
+) -> list[dict]:
+    rows: list[dict] = []
+    for topic_id in sorted(sub_assign["topic_id"].dropna().unique()):
+        tid = int(topic_id)
+        if tid < 0:
+            continue
+        sub_t = sub_assign.loc[sub_assign["topic_id"] == tid]
+        idx = sub_t["doc_idx"].to_numpy(dtype=np.int64)
+        subset = meta.iloc[idx]
+        z_sub = z[idx]
+        centroid = z_sub.mean(axis=0) if len(z_sub) else None
+        sentences = subset[sentence_col].astype(str).tolist()
+        top_words = format_topic_words(model, tid, top_k=top_k_words)
+        theme_label = topic_label_from_model(model, tid)
+        if centroid is not None and len(sentences) > 0:
+            top_sentences = _top_sentences_by_distance(
+                sentences, z_sub, centroid, top_k=top_k_sentences
+            )
+        else:
+            top_sentences = " || ".join(sentences[:top_k_sentences])
+        rows.append(
+            {
+                "method": method,
+                "macro": macro,
+                "topic_id": tid,
+                "n_units": int(len(subset)),
+                "top_words": top_words,
+                "top_sentences": top_sentences,
+                "theme_label": theme_label,
+                "theme_title": theme_label,
+            }
+        )
+    return rows
 
 
 def fit_bertopic_per_macro(
@@ -43,7 +69,7 @@ def fit_bertopic_per_macro(
     gating: pd.DataFrame,
     *,
     method: str = "bertopic",
-    confidence_threshold: float = 0.5,
+    bertopic_cfg: Optional[Dict[str, Any]] = None,
     min_topic_size: int = 10,
     nr_topics: Optional[int] = None,
     random_state: int = 42,
@@ -51,15 +77,23 @@ def fit_bertopic_per_macro(
     sentence_col: str = "sentence",
     top_k_words: int = 12,
     top_k_sentences: int = 5,
+    repo_anchor: Optional[Path] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """BERTopic par macro sur sous-ensembles filtrés (non ambigus)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    cfg = dict(bertopic_cfg or {})
+    cfg.setdefault("min_topic_size", min_topic_size)
+    if nr_topics is not None:
+        cfg["nr_topics"] = nr_topics
+    cfg.setdefault("random_state", random_state)
+
     prob_cols = [f"p_{m}" for m in MACRO_NAMES]
     p_macro = gating[prob_cols].to_numpy(dtype=np.float64)
 
     assign_rows: list[dict] = []
     theme_parts: list[pd.DataFrame] = []
+    rs = int(cfg.get("random_state", random_state))
 
     for macro in MACRO_NAMES:
         mi = MACRO_NAMES.index(macro)
@@ -73,7 +107,7 @@ def fit_bertopic_per_macro(
         texts = meta.iloc[idx][sentence_col].astype(str).tolist()
         emb_sub = z[idx]
 
-        if len(texts) < max(3, min_topic_size):
+        if len(texts) < max(3, int(cfg.get("min_topic_size", min_topic_size))):
             for doc_idx in idx:
                 assign_rows.append(
                     {
@@ -86,13 +120,15 @@ def fit_bertopic_per_macro(
                 )
             continue
 
+        model = None
         try:
-            topic_ids, conf = _fit_bertopic_subset(
+            topic_ids, conf, model = fit_bertopic_subset(
                 texts,
                 emb_sub,
-                min_topic_size=min_topic_size,
-                nr_topics=nr_topics,
-                random_state=random_state,
+                cfg,
+                random_state=rs,
+                anchor=repo_anchor,
+                macro=macro,
             )
         except Exception:
             topic_ids = np.zeros(len(texts), dtype=np.int64)
@@ -125,20 +161,22 @@ def fit_bertopic_per_macro(
             ]
         )
         valid = sub_assign["topic_id"] >= 0
-        if valid.any():
-            themes = export_themes_by_macro(
+        if valid.any() and model is not None:
+            theme_rows = _build_theme_rows(
+                model,
+                macro,
                 sub_assign.loc[valid],
                 meta,
                 z,
                 method=method,
-                topic_col="topic_id",
-                macro_col="m_hat",
-                output_path=output_dir / f"themes_macro_{macro}.csv",
                 sentence_col=sentence_col,
                 top_k_words=top_k_words,
                 top_k_sentences=top_k_sentences,
             )
-            theme_parts.append(themes)
+            if theme_rows:
+                themes = pd.DataFrame(theme_rows)
+                themes.to_csv(output_dir / f"themes_macro_{macro}.csv", index=False)
+                theme_parts.append(themes)
 
     assignments = pd.DataFrame(assign_rows)
     assignments.to_csv(output_dir / "assignments.csv", index=False)

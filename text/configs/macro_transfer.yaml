@@ -3,6 +3,8 @@
 # Usage :
 #   python scripts/run_macro_transfer_discovery.py --method scgm_text --corpus metallurgie
 #   CORPUS=metallurgie CONFIG=configs/macro_transfer.yaml bash jobs/run_macro_transfer.sh
+#
+# Libellés topics : bertopic.representation.OpenAI (enabled: true par défaut).
 
 corpus: metallurgie
 
@@ -26,28 +28,40 @@ device: cuda
 bertopic:
   min_topic_size: 10
   nr_topics: null
+  top_n_words: 10
+  n_gram_range: [1, 1]
+  calculate_probabilities: true
+  verbose: false
   random_state: 42
-
-gmm:
-  k_min: 2
-  k_max: 8
-  n_components_per_macro: null
-  covariance_type: full
-  max_iter: 200
-  n_init: 1
-  reg_covar: 1.0e-6
-  random_state: 42
+  stop_words_file: null
+  umap:
+    n_components: 5
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: cosine
+  hdbscan:
+    min_cluster_size: null
+    min_samples: null
+    metric: euclidean
+    cluster_selection_method: eom
+  vectorizer:
+    min_df: 1
+    max_df: null
+    ngram_range: [1, 1]
+  representation:
+    enabled: true
+    model: gpt-4o-mini
+    chat: true
+    nr_docs: 4
+    doc_length: 100
+    tokenizer_model: gpt-4o-mini
+    delay_in_seconds: 2
+    diversity: null
+    exponential_backoff: false
+    prompt: null
 
 topics_export:
   top_k_words: 12
   top_k_sentences: 5
 
-openai:
-  model: gpt-4o-mini
-  n_example_texts: 5
-  skip_on_error: true
-  request_timeout: 120
-
 skip_bertopic: false
-skip_gmm: false
-skip_openai: true

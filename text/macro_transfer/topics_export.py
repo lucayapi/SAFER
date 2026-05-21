@@ -23,9 +23,10 @@ def build_topic_row(
     centroid: Optional[np.ndarray] = None,
     top_k_words: int = 12,
     top_k_sentences: int = 5,
+    top_words: Optional[str] = None,
 ) -> dict:
     sentences = subset[sentence_col].astype(str).tolist()
-    top_words = _top_words_for_texts(sentences, top_k=top_k_words)
+    words = top_words if top_words is not None else _top_words_for_texts(sentences, top_k=top_k_words)
     if centroid is not None and len(sentences) > 0:
         top_sentences = _top_sentences_by_distance(
             sentences, z_subset, centroid, top_k=top_k_sentences
@@ -37,7 +38,7 @@ def build_topic_row(
         "macro": macro,
         "topic_id": int(topic_id),
         "n_units": int(len(subset)),
-        "top_words": top_words,
+        "top_words": words,
         "top_sentences": top_sentences,
     }
 
@@ -91,24 +92,19 @@ def export_themes_by_macro(
     return themes
 
 
-def comparison_bertopic_vs_gmm(
-    bertopic_themes: pd.DataFrame,
-    gmm_themes: pd.DataFrame,
-) -> pd.DataFrame:
-    """Effectifs par macro / méthode pour summary."""
+def summarize_topics_by_macro(themes: pd.DataFrame) -> pd.DataFrame:
+    """Effectifs par macro pour summary/topics_summary.csv."""
     rows = []
-    for method, df in (("bertopic", bertopic_themes), ("gmm", gmm_themes)):
-        if df.empty:
-            continue
-        for macro in MACRO_NAMES:
-            sub = df[df["macro"].astype(str) == macro]
-            rows.append(
-                {
-                    "method": method,
-                    "macro": macro,
-                    "n_topics": int(sub["topic_id"].nunique()) if len(sub) else 0,
-                    "n_units": int(sub["n_units"].sum()) if "n_units" in sub.columns else 0,
-                    "empty_topics": int((sub["n_units"] == 0).sum()) if len(sub) else 0,
-                }
-            )
+    if themes.empty:
+        return pd.DataFrame(columns=["macro", "n_topics", "n_units", "empty_topics"])
+    for macro in MACRO_NAMES:
+        sub = themes[themes["macro"].astype(str) == macro]
+        rows.append(
+            {
+                "macro": macro,
+                "n_topics": int(sub["topic_id"].nunique()) if len(sub) else 0,
+                "n_units": int(sub["n_units"].sum()) if "n_units" in sub.columns else 0,
+                "empty_topics": int((sub["n_units"] == 0).sum()) if len(sub) else 0,
+            }
+        )
     return pd.DataFrame(rows)
