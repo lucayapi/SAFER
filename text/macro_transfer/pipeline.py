@@ -10,7 +10,11 @@ import numpy as np
 import pandas as pd
 
 from macro_transfer.encode import MethodName, encode_target_corpus
-from macro_transfer.gating import apply_macro_gating
+from macro_transfer.gating import (
+    apply_macro_gating,
+    format_gating_stats_message,
+    summarize_gating_stats,
+)
 from macro_transfer.intra_bertopic import fit_bertopic_per_macro
 from macro_transfer.scgm_macro import scgm_macro_probs
 from macro_transfer.softtriple_macro import macro_probs_from_checkpoint
@@ -101,6 +105,17 @@ def run_macro_transfer_discovery(
     themes_bertopic = pd.DataFrame()
 
     if not skip_bertopic:
+        include_ambiguous = bool(bertopic_cfg.get("include_ambiguous", False))
+        gating_stats = summarize_gating_stats(gating)
+        with open(transfer_dir / "gating_stats.json", "w", encoding="utf-8") as f:
+            json.dump(gating_stats, f, indent=2, ensure_ascii=False)
+        if gating_stats["n_non_ambiguous"] == 0 and not include_ambiguous:
+            raise RuntimeError(
+                "Aucune unité non ambiguë pour BERTopic (q_conf < seuil pour toutes les lignes).\n"
+                + format_gating_stats_message(gating_stats, confidence_threshold=confidence_threshold)
+                + "\n\nOptions : abaisser confidence_threshold dans macro_transfer.yaml, "
+                "ou bertopic.include_ambiguous: true (topics sur toutes les unités m_hat)."
+            )
         themes_bertopic, assignments_bertopic = fit_bertopic_per_macro(
             z,
             meta,
@@ -119,8 +134,9 @@ def run_macro_transfer_discovery(
         if themes_bertopic.empty or not themes_path.is_file():
             raise RuntimeError(
                 "BERTopic n'a produit aucun thème (themes_by_macro.csv absent ou vide). "
-                f"Assignations : {len(assignments_bertopic)} lignes. "
-                "Relancez avec traceback complète si une macro a échoué avant l'export."
+                f"Assignations : {len(assignments_bertopic)} lignes.\n"
+                + format_gating_stats_message(gating_stats, confidence_threshold=confidence_threshold)
+                + f"\n  bertopic.include_ambiguous={include_ambiguous}"
             )
 
     summary_dir = out / "summary"

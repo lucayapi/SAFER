@@ -26,6 +26,8 @@ infer_batch_size: 4096
 device: cuda
 
 bertopic:
+  # true = topics sur toutes les unités m_hat (y compris q_conf < confidence_threshold)
+  include_ambiguous: true
   min_topic_size: 10
   nr_topics: null
   top_n_words: 10

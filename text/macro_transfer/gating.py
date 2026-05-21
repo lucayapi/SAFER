@@ -34,3 +34,43 @@ def apply_macro_gating(
     out["q_conf"] = q_conf
     out["ambiguous"] = q_conf < float(confidence_threshold)
     return pd.DataFrame(out)
+
+
+def summarize_gating_stats(gating: pd.DataFrame) -> dict:
+    """Comptages pour diagnostic BERTopic (par macro, ambiguës vs confiantes)."""
+    n = len(gating)
+    if n == 0:
+        return {"n_total": 0, "n_non_ambiguous": 0, "n_ambiguous": 0, "per_macro": {}}
+    amb = gating["ambiguous"].astype(bool)
+    per_macro: dict = {}
+    for macro in MACRO_NAMES:
+        m_mask = gating["m_hat"].astype(str) == macro
+        per_macro[macro] = {
+            "n_m_hat": int(m_mask.sum()),
+            "n_non_ambiguous": int((m_mask & ~amb).sum()),
+            "n_ambiguous_only": int((m_mask & amb).sum()),
+        }
+    return {
+        "n_total": n,
+        "n_non_ambiguous": int((~amb).sum()),
+        "n_ambiguous": int(amb.sum()),
+        "mean_q_conf": float(gating["q_conf"].astype(float).mean()),
+        "per_macro": per_macro,
+    }
+
+
+def format_gating_stats_message(stats: dict, *, confidence_threshold: float) -> str:
+    """Message lisible pour logs / erreurs."""
+    lines = [
+        f"  unités totales : {stats['n_total']}",
+        f"  non ambiguës (q_conf >= {confidence_threshold}) : {stats['n_non_ambiguous']}",
+        f"  ambiguës : {stats['n_ambiguous']}",
+        f"  q_conf moyen : {stats.get('mean_q_conf', float('nan')):.4f}",
+        "  par macro (m_hat, non ambiguës) :",
+    ]
+    for macro, counts in (stats.get("per_macro") or {}).items():
+        lines.append(
+            f"    {macro}: m_hat={counts['n_m_hat']}, "
+            f"non_ambiguës={counts['n_non_ambiguous']}"
+        )
+    return "\n".join(lines)

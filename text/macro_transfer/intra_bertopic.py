@@ -90,6 +90,14 @@ def fit_bertopic_per_macro(
     if nr_topics is not None:
         cfg["nr_topics"] = nr_topics
     cfg.setdefault("random_state", random_state)
+    include_ambiguous = bool(cfg.get("include_ambiguous", False))
+
+    meta = meta.reset_index(drop=True)
+    gating = gating.reset_index(drop=True)
+    if len(meta) != len(gating):
+        raise ValueError(
+            f"meta ({len(meta)}) et gating ({len(gating)}) ont des longueurs différentes."
+        )
 
     prob_cols = [f"p_{m}" for m in MACRO_NAMES]
     p_macro = gating[prob_cols].to_numpy(dtype=np.float64)
@@ -100,10 +108,11 @@ def fit_bertopic_per_macro(
 
     for macro in MACRO_NAMES:
         mi = MACRO_NAMES.index(macro)
-        mask = (
-            (gating["m_hat"].astype(str) == macro)
-            & (~gating["ambiguous"].astype(bool))
-        )
+        m_hat_mask = gating["m_hat"].astype(str) == macro
+        if include_ambiguous:
+            mask = m_hat_mask
+        else:
+            mask = m_hat_mask & (~gating["ambiguous"].astype(bool))
         if not mask.any():
             continue
         idx = np.where(mask.to_numpy())[0]
