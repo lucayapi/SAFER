@@ -45,10 +45,15 @@ def encode_target_corpus(
     """
     Retourne ``z`` L2-normalisé (N, d) et métadonnées alignées ligne à ligne.
     """
-    meta = load_target_metadata(data_csv, text_col=text_col)
     if method == "scgm_text":
         if not emb_csv:
             raise ValueError("scgm_text requiert --emb-csv (embeddings Qwen figés)")
+        from scgm_text.checkpoint_io import load_scgm_checkpoint
+        from scgm_text.eval_corpus import project_embedding_corpus
+
+        _, checkpoint_args, _ = load_scgm_checkpoint(checkpoint, map_location="cpu")
+        input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
+
         z, _labels = project_embedding_corpus(
             checkpoint,
             data_csv,
@@ -61,7 +66,37 @@ def encode_target_corpus(
             max_seq_length=max_seq_length,
             device=device,
         )
-        return np.asarray(z, dtype=np.float64), meta
+        z = np.asarray(z, dtype=np.float64)
+
+        if input_mode == "text":
+            from scgm_text.dataset_text_raw import TextRawDataset
+
+            dataset = TextRawDataset(
+                data_csv=data_csv,
+                label_col=label_col,
+                pred_ok_col=pred_ok_col,
+                group_col=group_col,
+                text_col=text_col or "sentence",
+            )
+        else:
+            from scgm_text.dataset_text_embeddings import TextEmbeddingDataset
+
+            dataset = TextEmbeddingDataset(
+                data_csv=data_csv,
+                emb_csv=emb_csv,
+                label_col=label_col,
+                pred_ok_col=pred_ok_col,
+                group_col=group_col,
+            )
+        meta = dataset.get_metadata_df().reset_index(drop=True)
+        if len(z) != len(meta):
+            raise ValueError(
+                f"Alignement SCGM : {len(z)} projections vs {len(meta)} lignes métadonnées "
+                f"(filtre pred_ok/labels et fusion embeddings)."
+            )
+        return z, meta
+
+    meta = load_target_metadata(data_csv, text_col=text_col)
 
     if method == "softtriple":
         ckpt_dir = Path(checkpoint)
