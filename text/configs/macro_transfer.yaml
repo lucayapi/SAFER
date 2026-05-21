@@ -57,6 +57,7 @@ bertopic:
     ngram_range: [1, 2]
   representation:
     enabled: true
+    include_corpus_context: true
     model: gpt-4o-mini
     chat: true
     nr_docs: 50

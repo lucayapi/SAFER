@@ -23,6 +23,8 @@ class MacroDefinition:
     question: str
     description: str
     label_guidance: str
+    examples: str = ""
+    label_examples: str = ""
 
 
 def _normalize_entry(macro_id: str, raw: dict) -> MacroDefinition:
@@ -32,6 +34,8 @@ def _normalize_entry(macro_id: str, raw: dict) -> MacroDefinition:
     question = str(raw.get("question", "")).strip()
     description = str(raw.get("description", "")).strip()
     label_guidance = str(raw.get("label_guidance", "")).strip()
+    examples = str(raw.get("examples", "")).strip()
+    label_examples = str(raw.get("label_examples", "")).strip()
     if not title or not question or not label_guidance:
         raise ValueError(f"Macro {macro_id} : title, question et label_guidance requis")
     return MacroDefinition(
@@ -40,6 +44,8 @@ def _normalize_entry(macro_id: str, raw: dict) -> MacroDefinition:
         question=question,
         description=description,
         label_guidance=label_guidance,
+        examples=examples,
+        label_examples=label_examples,
     )
 
 
@@ -104,7 +110,17 @@ def format_macro_context_for_prompt(
     ]
     if include_description and spec.description:
         lines.append(f"Description : {spec.description}")
+    if spec.examples:
+        lines.append(
+            "Exemples illustratifs (non exhaustifs, ne pas recopier mot à mot) :\n"
+            + spec.examples
+        )
     lines.append(f"Consigne pour le libellé : {spec.label_guidance}")
+    if spec.label_examples:
+        lines.append(
+            "Exemples de libellés possibles (inspiration uniquement) :\n"
+            + spec.label_examples
+        )
     return "\n".join(lines)
 
 

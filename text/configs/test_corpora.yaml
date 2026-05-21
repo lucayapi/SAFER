@@ -8,6 +8,7 @@ corpora:
     display_name: Métallurgie
     data_csv: dataset/test/data_metallurgie.csv
     emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
+    prompt_context: metallurgie
 
   # Exemple pour un second corpus (décommenter après ajout des fichiers) :
   # chimie:

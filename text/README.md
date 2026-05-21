@@ -177,7 +177,7 @@ Pipeline **`macro_transfer/`** : encodeur source (SCGM ou SoftTriple) → \(p(m|
 
 Paramètres : [`configs/macro_transfer.yaml`](configs/macro_transfer.yaml) (`bertopic.representation.enabled`, modèle, `nr_docs`, …). Les appels OpenAI sont toujours actifs si `representation.enabled: true` (défaut).
 
-**Libellés topics** : sémantique des macros A0–C dans [`configs/accident_macros.yaml`](configs/accident_macros.yaml) ; le prompt de representation injecte le contexte macro. Pas de dossier `openai/` ni de second passage post-hoc dans ce pipeline (l’enrichissement SCGM BTP reste dans `scgm_text/openai_theme_labels.py`).
+**Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml) : `description`, `examples`, `label_examples`) + contexte sectoriel du corpus actif ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml), clé `prompt_context` dans [`configs/test_corpora.yaml`](configs/test_corpora.yaml)). Injectés dans `bertopic.representation` (`include_corpus_context: true` par défaut). Pas de second passage post-hoc (l’enrichissement SCGM BTP reste dans `scgm_text/openai_theme_labels.py`).
 
 **Encodeur source** (variable d’environnement `METHOD` dans `jobs/run_macro_transfer.sh`) :
 

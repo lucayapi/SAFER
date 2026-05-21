@@ -1,0 +1,23 @@
+# Contexte sectoriel injecté dans le prompt OpenAI (corpus actif du run macro_transfer).
+# Clé référencée via prompt_context dans configs/test_corpora.yaml.
+
+contexts:
+  btp:
+    title: "BTP (bâtiment et travaux publics)"
+    description: |
+      Corpus d'entraînement principal : récits d'accidents du travail dans le secteur
+      du bâtiment et des travaux publics (chantiers, gros œuvre, second œuvre, VRD, etc.).
+      Activités typiques : manutention, travail en hauteur, coffrage, démolition, pose,
+      maintenance sur chantier, circulation d'engins et de piétons, coordination multi-entreprises.
+      Vocabulaire fréquent : échafaudage, nacelle, grue, coffrage, tranchée, EPI, coactivité.
+
+  metallurgie:
+    title: "Métallurgie (corpus de test)"
+    description: |
+      Corpus de test hors domaine BTP : récits d'accidents dans la métallurgie et activités
+      associées (production, fonderie, laminoir, maintenance industrielle, manutention de
+      produits métalliques, zones à risques thermiques ou mécaniques).
+      Les libellés de topics doivent rester cohérents avec ce secteur (pas de vocabulaire
+      chantier BTP par défaut si les documents ne le justifient pas).
+      Vocabulaire fréquent : four, lingot, moule, ligne de production, convoyeur, presse,
+      maintenance machine, EPI thermique, brûlure, projection de métal en fusion.

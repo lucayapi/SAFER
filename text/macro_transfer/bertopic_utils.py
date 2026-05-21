@@ -96,6 +96,7 @@ def build_bertopic_model(
     anchor: Optional[Path] = None,
     representation_model: Any = None,
     macro: Optional[str] = None,
+    corpus_id: Optional[str] = None,
 ):
     """Instancie BERTopic (UMAP optionnel), HDBSCAN, CountVectorizer et representation."""
     from bertopic import BERTopic
@@ -152,7 +153,7 @@ def build_bertopic_model(
         rep_cfg = dict(bertopic_cfg.get("representation") or {})
         rep_cfg.setdefault("enabled", True)
         rep_model = build_representation_model(
-            rep_cfg, macro=macro, anchor=anchor
+            rep_cfg, macro=macro, corpus_id=corpus_id, anchor=anchor
         )
 
     n_gram_range = _parse_ngram_range(bertopic_cfg.get("n_gram_range"))
@@ -180,6 +181,7 @@ def fit_bertopic_subset(
     random_state: int = 42,
     anchor: Optional[Path] = None,
     macro: Optional[str] = None,
+    corpus_id: Optional[str] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Any]:
     """
     Fit BERTopic sur un sous-corpus (embeddings pré-calculés).
@@ -191,6 +193,7 @@ def fit_bertopic_subset(
         random_state=random_state,
         anchor=anchor,
         macro=macro,
+        corpus_id=corpus_id,
     )
     topics, probs = model.fit_transform(list(texts), embeddings)
     topic_arr = np.asarray(topics, dtype=np.int64)

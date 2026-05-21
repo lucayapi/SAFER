@@ -7,23 +7,83 @@ macros:
     question: "Dans quelle situation de travail l'accident s'inscrit-il ?"
     description: |
       La macro A0 décrit le cadre dans lequel l'activité se déroule avant l'accident.
-      Elle ne désigne pas encore une défaillance, ni un événement accidentel.
-      Elle décrit plutôt le contexte : activité en cours, tâche réalisée, environnement,
-      matériel manipulé, zone de travail, organisation générale.
+      Elle correspond à la situation initiale : ce que faisait la victime, où elle se trouvait,
+      avec quel matériel, dans quel environnement ou selon quelle organisation de travail.
+
+      A0 ne désigne pas encore une défaillance, ni une condition dangereuse, ni un événement
+      accidentel. Elle sert à comprendre le contexte neutre ou descriptif de l'activité.
+
+    examples: |
+      Exemples de contenus A0 :
+      - Travail sur un chantier de construction.
+      - Déplacement d'un salarié dans une zone de circulation.
+      - Utilisation d'une échelle pour accéder à une toiture.
+      - Intervention de maintenance sur une machine.
+      - Chargement ou déchargement d'un camion.
+      - Manipulation de plaques, de poutres, d'outils ou de matériaux.
+      - Travail en hauteur sur un échafaudage.
+      - Nettoyage d'une zone de production.
+      - Pose de coffrage, découpe, soudure, manutention ou assemblage.
+      - Présence dans un atelier, une tranchée, une plateforme, un entrepôt ou une voie de circulation.
+
     label_guidance: |
-      Décris le contexte de travail (activité, tâche, environnement, matériel, zone, organisation).
-      N'évoque pas de défaillance, de condition dangereuse, d'événement accidentel ni de conséquence.
+      Décris uniquement le contexte de travail : activité, tâche, environnement, matériel,
+      zone de travail ou organisation générale.
+      Le libellé doit répondre à la question : "Dans quel cadre l'accident se produit-il ?"
+
+      N'évoque pas de défaillance, de condition dangereuse, d'événement accidentel
+      ni de conséquence corporelle ou matérielle.
+
+    label_examples: |
+      Bons libellés possibles :
+      - Travail en hauteur sur échafaudage
+      - Manutention de matériaux lourds
+      - Intervention de maintenance sur machine
+      - Déplacement en zone de chantier
+      - Chargement et déchargement de véhicule
+      - Utilisation d'échelle ou d'accès provisoire
 
   A1:
     title: "Facteurs contributifs / déficiences / conditions dangereuses"
     question: "Qu'est-ce qui n'allait pas dans la situation ?"
     description: |
-      La macro A1 décrit les éléments qui ont favorisé ou rendu possible l'accident.
-      Contrairement à A0, A1 introduit une notion de défaillance, de manque, de condition
-      dangereuse, de problème organisationnel, technique ou humain.
+      La macro A1 décrit les éléments qui ont favorisé, préparé ou rendu possible l'accident.
+      Contrairement à A0, A1 introduit une notion de défaillance, de manque, de danger,
+      d'irrégularité ou de condition défavorable.
+
+      Ces facteurs peuvent être techniques, humains, organisationnels, matériels ou liés
+      à l'environnement de travail. A1 ne décrit pas encore le basculement accidentel lui-même,
+      mais ce qui rend la situation fragile ou dangereuse avant l'événement.
+
+    examples: |
+      Exemples de contenus A1 :
+      - Absence de protection collective.
+      - Échafaudage incomplet ou mal stabilisé.
+      - Sol glissant, encombré ou irrégulier.
+      - Défaut de signalisation d'une zone dangereuse.
+      - Machine non sécurisée ou protection retirée.
+      - Mauvaise coordination entre opérateurs.
+      - Consigne non respectée ou procédure absente.
+      - Charge mal arrimée ou instable.
+      - Matériel défectueux, inadapté ou mal entretenu.
+      - Manque de visibilité, éclairage insuffisant ou zone mal balisée.
+      - Absence d'équipement de protection individuelle adapté.
+      - Présence d'un obstacle ou d'une ouverture non protégée.
+
     label_guidance: |
       Décris la défaillance, le manque, la condition dangereuse ou le facteur contributif.
+      Le libellé doit répondre à la question : "Qu'est-ce qui n'allait pas ?"
+
       Ne décris pas le contexte neutre (A0), l'événement dynamique (B) ni les dommages (C).
+
+    label_examples: |
+      Bons libellés possibles :
+      - Absence de garde-corps ou protection collective
+      - Sol glissant ou encombré
+      - Machine non sécurisée
+      - Charge mal arrimée
+      - Défaut de signalisation de zone dangereuse
+      - Procédure ou consigne non respectée
 
   B:
     title: "Déviation / événement accidentel"
@@ -32,9 +92,36 @@ macros:
       La macro B décrit le basculement accidentel, c'est-à-dire l'événement dynamique qui
       rompt le cours normal de l'activité : chute, collision, coincement, projection,
       perte de contrôle, contact dangereux, renversement, etc.
+
+      B correspond au moment où l'accident se produit, pas au contexte initial ni aux causes
+      préalables ni aux conséquences ultérieures.
+
+    examples: |
+      Exemples de contenus B :
+      - Chute de hauteur ou de plain-pied.
+      - Glissade ou trébuchement.
+      - Chute ou projection d'un objet.
+      - Coincement, écrasement ou heurt par un engin ou une charge.
+      - Collision avec un véhicule, une structure ou un autre salarié.
+      - Contact avec une pièce en mouvement, une lame ou un outil coupant.
+      - Renversement d'engin, de chariot ou de matériau.
+      - Aspiration, projection de particules ou contact chimique/brûlure instantanée.
+      - Perte de contrôle d'un outil, d'une charge ou d'un équipement.
+
     label_guidance: |
       Décris l'événement accidentel dynamique (ce qui s'est produit au moment du basculement).
-      Ne décris pas le contexte initial (A0), les causes contributives (A1) ni les conséquences (C).
+      Le libellé doit répondre à la question : "Que s'est-il passé ?"
+
+      Ne décris pas le contexte initial (A0), les facteurs contributifs (A1) ni les conséquences (C).
+
+    label_examples: |
+      Bons libellés possibles :
+      - Chute de hauteur
+      - Glissade sur sol encombré
+      - Coincement sous charge
+      - Projection de matériau
+      - Collision avec engin de manutention
+      - Contact avec pièce en mouvement
 
   C:
     title: "Conséquences / dommages"
@@ -43,6 +130,29 @@ macros:
       La macro C décrit les effets de l'événement accidentel sur la victime ou les biens.
       Elle ne décrit pas l'événement lui-même, mais son résultat : blessure, lésion,
       atteinte corporelle, dommage matériel, incapacité, etc.
+
+    examples: |
+      Exemples de contenus C :
+      - Fracture, entorse ou traumatisme.
+      - Plaie, coupure, écrasement ou contusion.
+      - Brûlure ou brûlure chimique.
+      - Atteinte oculaire, auditive ou respiratoire.
+      - Traumatisme crânien ou lombalgie aiguë.
+      - Décès ou malaise grave.
+      - Dommage matériel à un équipement ou à une structure.
+      - Arrêt de travail ou incapacité temporaire mentionnée.
+
     label_guidance: |
       Décris le dommage ou la conséquence (blessure, lésion, atteinte, dommage matériel).
+      Le libellé doit répondre à la question : "Quel dommage a été produit ?"
+
       Ne redécris pas le contexte (A0), les facteurs contributifs (A1) ni l'événement (B).
+
+    label_examples: |
+      Bons libellés possibles :
+      - Fracture du poignet
+      - Entorse de la cheville
+      - Plaie profonde main
+      - Contusion thoracique
+      - Brûlure chimique
+      - Traumatisme crânien léger

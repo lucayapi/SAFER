@@ -30,10 +30,26 @@ def test_representation_enabled_explicit_false():
 
 
 def test_resolve_prompt_injects_macro():
-    prompt = _resolve_prompt({}, macro="A0", anchor=TEXT_ROOT)
+    prompt = _resolve_prompt({}, macro="A0", corpus_id=None, anchor=TEXT_ROOT)
     assert "[DOCUMENTS]" in prompt
     assert "[KEYWORDS]" in prompt
     assert "A0" in prompt
+    assert "[MACRO_CONTEXT]" not in prompt
+    assert "[CORPUS_CONTEXT]" not in prompt
+
+
+def test_resolve_prompt_injects_corpus_and_macro():
+    prompt = _resolve_prompt(
+        {"include_corpus_context": True},
+        macro="A0",
+        corpus_id="metallurgie",
+        anchor=TEXT_ROOT,
+    )
+    assert "Métallurgie" in prompt
+    assert "Macro : A0" in prompt
+    assert "non exhaustifs" in prompt
+    assert "illustratifs" in prompt
+    assert "[CORPUS_CONTEXT]" not in prompt
     assert "[MACRO_CONTEXT]" not in prompt
 
 
@@ -95,3 +111,5 @@ def test_topic_label_from_model_topic_labels_dict():
 def test_default_fr_prompt_has_tags():
     assert "[DOCUMENTS]" in DEFAULT_FR_CHAT_PROMPT
     assert "[KEYWORDS]" in DEFAULT_FR_CHAT_PROMPT
+    assert "[CORPUS_CONTEXT]" in DEFAULT_FR_CHAT_PROMPT
+    assert "[MACRO_CONTEXT]" in DEFAULT_FR_CHAT_PROMPT

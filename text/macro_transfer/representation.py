@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
+from safer_core.corpus_context import format_corpus_context_for_prompt
 from safer_core.macro_definitions import format_macro_context_for_prompt
 from scgm_text.openai_theme_labels import _get_client, load_openai_dotenv
 
-DEFAULT_FR_CHAT_PROMPT = """Contexte — accidents du travail (macro obligatoire) :
+DEFAULT_FR_CHAT_PROMPT = """Contexte — accidents du travail
+
+Corpus analysé (unités du run en cours) :
+[CORPUS_CONTEXT]
+
+Macro obligatoire pour ce topic :
 [MACRO_CONTEXT]
 
 Documents représentatifs du topic :
@@ -15,7 +21,9 @@ Documents représentatifs du topic :
 
 Mots-clés c-TF-IDF du topic : [KEYWORDS]
 
-Propose un libellé court en français pour ce topic. Le libellé doit respecter strictement la macro ci-dessus.
+Consignes :
+- Propose un libellé court en français, strictement conforme à la macro.
+- Les exemples fournis sont illustratifs : ne pas les recopier ni extrapoler hors du topic.
 Réponds au format :
 topic: <libellé en français>"""
 
@@ -36,12 +44,35 @@ def build_tiktoken_tokenizer(model_name: str):
         return tiktoken.get_encoding("cl100k_base")
 
 
-def _resolve_prompt(rep_cfg: Dict[str, Any], *, macro: Optional[str], anchor: Optional[Any]) -> str:
+def _resolve_prompt(
+    rep_cfg: Dict[str, Any],
+    *,
+    macro: Optional[str],
+    corpus_id: Optional[str],
+    anchor: Optional[Any],
+) -> str:
     custom = rep_cfg.get("prompt")
     if custom is not None and str(custom).strip():
         template = str(custom).strip()
     else:
         template = DEFAULT_FR_CHAT_PROMPT
+
+    include_corpus = rep_cfg.get("include_corpus_context", True)
+    corpus_block = ""
+    if include_corpus and corpus_id:
+        ctx_yaml = rep_cfg.get("corpus_context_file")
+        ctx_corpus = format_corpus_context_for_prompt(
+            corpus_id,
+            context_yaml_path=ctx_yaml,
+            anchor=anchor,
+        )
+        if ctx_corpus:
+            corpus_block = ctx_corpus
+        else:
+            corpus_block = f"Corpus : {corpus_id}"
+    elif include_corpus and corpus_id is None:
+        corpus_block = "(non spécifié)"
+
     macro_block = ""
     if macro:
         ctx = format_macro_context_for_prompt(macro, anchor=anchor)
@@ -49,7 +80,9 @@ def _resolve_prompt(rep_cfg: Dict[str, Any], *, macro: Optional[str], anchor: Op
             macro_block = ctx
         else:
             macro_block = f"Macro : {macro}"
-    return template.replace("[MACRO_CONTEXT]", macro_block)
+
+    out = template.replace("[CORPUS_CONTEXT]", corpus_block)
+    return out.replace("[MACRO_CONTEXT]", macro_block)
 
 
 def representation_enabled(bertopic_cfg: Dict[str, Any]) -> bool:
@@ -64,6 +97,7 @@ def build_representation_model(
     rep_cfg: Dict[str, Any],
     *,
     macro: Optional[str] = None,
+    corpus_id: Optional[str] = None,
     anchor: Optional[Any] = None,
 ):
     """
@@ -102,7 +136,9 @@ def build_representation_model(
     if diversity is not None:
         diversity = float(diversity)
 
-    prompt = _resolve_prompt(rep_cfg, macro=macro, anchor=anchor)
+    prompt = _resolve_prompt(
+        rep_cfg, macro=macro, corpus_id=corpus_id, anchor=anchor
+    )
 
     kwargs: Dict[str, Any] = {
         "client": client,

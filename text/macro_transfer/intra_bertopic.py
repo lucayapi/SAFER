@@ -81,6 +81,7 @@ def fit_bertopic_per_macro(
     top_k_words: int = 12,
     top_k_sentences: int = 5,
     repo_anchor: Optional[Path] = None,
+    corpus_id: Optional[str] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """BERTopic par macro sur sous-ensembles filtrés (non ambigus)."""
     output_dir = Path(output_dir)
@@ -140,6 +141,7 @@ def fit_bertopic_per_macro(
                 random_state=rs,
                 anchor=repo_anchor,
                 macro=macro,
+                corpus_id=corpus_id,
             )
         except Exception as exc:
             logger.exception(

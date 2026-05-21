@@ -35,6 +35,19 @@ def test_format_macro_context_a0():
     assert "Contexte de travail" in block
     assert "Dans quelle situation de travail" in block
     assert "Consigne pour le libellé" in block
+    assert "non exhaustifs" in block
+    assert "inspiration uniquement" in block
+    spec = get_macro_definition("A0", anchor=TEXT_ROOT)
+    assert spec is not None
+    assert spec.examples
+    assert spec.label_examples
+
+
+def test_all_macros_have_examples():
+    registry = load_macro_definitions(anchor=TEXT_ROOT)
+    for mid in MACRO_ORDER:
+        assert registry[mid].examples
+        assert registry[mid].label_examples
 
 
 def test_get_macro_unknown():

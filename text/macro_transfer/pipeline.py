@@ -136,6 +136,7 @@ def run_macro_transfer_discovery(
             top_k_words=top_k_words,
             top_k_sentences=top_k_sentences,
             repo_anchor=repo_anchor if repo_anchor and repo_anchor.is_dir() else None,
+            corpus_id=str(cfg.get("corpus") or "").strip() or None,
         )
         themes_path = out / "topics_bertopic" / "themes_by_macro.csv"
         if themes_bertopic.empty or not themes_path.is_file():
