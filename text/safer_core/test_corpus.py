@@ -34,7 +34,7 @@ def _registry_path(path: Optional[Path | str] = None) -> Path:
         return Path(path)
     env = os.environ.get("SAFER_TEST_CORPORA_YAML")
     if env:
-        return resolve_repo_path(env, anchor=TEXT_ROOT)
+        return resolve_repo_path(env, repo_root=TEXT_ROOT)
     return REGISTRY_PATH
 
 

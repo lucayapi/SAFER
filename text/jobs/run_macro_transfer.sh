@@ -13,7 +13,7 @@
 #
 # Prérequis : train_scgm_text.sh + train_softtriple.sh
 
-#SBATCH --job-name=macro_transfer
+#SBATCH --job-name=macro_transfer_scgm
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
@@ -21,6 +21,8 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
+#SBATCH --mail-user=lucayapi@gmail.com
+#SBATCH --mail-type=BEGIN,END,FAIL
 
 set -euo pipefail
 if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
@@ -31,7 +33,7 @@ fi
 
 CONFIG="${CONFIG:-configs/macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
-METHOD="${METHOD:-both}"
+METHOD="${METHOD:-scgm_text}"
 
 export TEST_CORPUS="${CORPUS}"
 

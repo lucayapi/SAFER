@@ -84,7 +84,7 @@ OUT_DIR = macro_transfer_output_dir(SOURCE_METHOD, _spec.id, anchor=TEXT_ROOT)
 FIG_DIR = Path(FIG_DIR) if FIG_DIR else TEXT_ROOT / "notebooks" / "figures" / f"07_macro_transfer_{_spec.id}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
-cfg_path = resolve_repo_path(CONFIG_PATH, anchor=TEXT_ROOT)
+cfg_path = resolve_repo_path(CONFIG_PATH, repo_root=TEXT_ROOT)
 RAW_CFG = load_yaml(cfg_path)
 RAW_CFG = {
     **RAW_CFG,
@@ -97,7 +97,7 @@ _spec2, DATA_CSV, EMB_CSV = resolve_test_paths_from_config(RAW_CFG, corpus_id=_s
 CKPT_REL = (RAW_CFG.get("checkpoints") or {}).get(SOURCE_METHOD)
 if not CKPT_REL:
     raise ValueError(f"checkpoints.{SOURCE_METHOD} manquant dans {CONFIG_PATH}")
-CHECKPOINT = resolve_repo_path(CKPT_REL, anchor=TEXT_ROOT)
+CHECKPOINT = resolve_repo_path(CKPT_REL, repo_root=TEXT_ROOT)
 
 print(f"Corpus : {_spec2.display_name} ({_spec2.id})")
 print("Méthode :", SOURCE_METHOD)

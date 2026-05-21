@@ -47,7 +47,7 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    cfg_path = resolve_repo_path(args.config, anchor=TEXT_ROOT)
+    cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     raw = load_yaml(cfg_path)
 
     corpus_id = args.corpus or raw.get("corpus") or default_test_corpus_id()
@@ -62,7 +62,7 @@ def main() -> None:
     ckpt = args.checkpoint or raw.get("checkpoints", {}).get(method)
     if not ckpt:
         raise SystemExit(f"--checkpoint ou checkpoints.{method} requis")
-    ckpt = str(resolve_repo_path(ckpt, anchor=TEXT_ROOT))
+    ckpt = str(resolve_repo_path(ckpt, repo_root=TEXT_ROOT))
 
     output_dir = args.output_dir
     if not output_dir:
@@ -71,7 +71,7 @@ def main() -> None:
     if not output_dir:
         output_dir = str(macro_transfer_output_dir(method, corpus_id, anchor=TEXT_ROOT))
     else:
-        output_dir = str(resolve_repo_path(output_dir, anchor=TEXT_ROOT))
+        output_dir = str(resolve_repo_path(output_dir, repo_root=TEXT_ROOT))
 
     raw = {**raw, "corpus": corpus_id, "repo_anchor": str(TEXT_ROOT)}
 

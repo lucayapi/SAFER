@@ -29,7 +29,7 @@ bertopic:
   min_topic_size: 10
   nr_topics: null
   top_n_words: 10
-  n_gram_range: [1, 1]
+  n_gram_range: [1, 2]
   calculate_probabilities: true
   verbose: false
   random_state: 42
@@ -47,12 +47,12 @@ bertopic:
   vectorizer:
     min_df: 1
     max_df: null
-    ngram_range: [1, 1]
+    ngram_range: [1, 2]
   representation:
     enabled: true
     model: gpt-4o-mini
     chat: true
-    nr_docs: 4
+    nr_docs: 50
     doc_length: 100
     tokenizer_model: gpt-4o-mini
     delay_in_seconds: 2
