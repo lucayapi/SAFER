@@ -101,7 +101,7 @@ def run_macro_transfer_discovery(
     themes_bertopic = pd.DataFrame()
 
     if not skip_bertopic:
-        themes_bertopic, _ = fit_bertopic_per_macro(
+        themes_bertopic, assignments_bertopic = fit_bertopic_per_macro(
             z,
             meta,
             gating,
@@ -115,6 +115,13 @@ def run_macro_transfer_discovery(
             top_k_sentences=top_k_sentences,
             repo_anchor=repo_anchor if repo_anchor and repo_anchor.is_dir() else None,
         )
+        themes_path = out / "topics_bertopic" / "themes_by_macro.csv"
+        if themes_bertopic.empty or not themes_path.is_file():
+            raise RuntimeError(
+                "BERTopic n'a produit aucun thème (themes_by_macro.csv absent ou vide). "
+                f"Assignations : {len(assignments_bertopic)} lignes. "
+                "Relancez avec traceback complète si une macro a échoué avant l'export."
+            )
 
     summary_dir = out / "summary"
     summary_dir.mkdir(parents=True, exist_ok=True)

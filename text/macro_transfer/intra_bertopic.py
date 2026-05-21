@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from macro_transfer.bertopic_utils import (
     fit_bertopic_subset,
@@ -120,7 +123,6 @@ def fit_bertopic_per_macro(
                 )
             continue
 
-        model = None
         try:
             topic_ids, conf, model = fit_bertopic_subset(
                 texts,
@@ -130,9 +132,17 @@ def fit_bertopic_per_macro(
                 anchor=repo_anchor,
                 macro=macro,
             )
-        except Exception:
-            topic_ids = np.zeros(len(texts), dtype=np.int64)
-            conf = np.ones(len(texts), dtype=np.float64)
+        except Exception as exc:
+            logger.exception(
+                "BERTopic intra-macro échoué (macro=%s, n_units=%d)",
+                macro,
+                len(texts),
+            )
+            raise RuntimeError(
+                f"BERTopic intra-macro échoué pour la macro {macro!r} "
+                f"({len(texts)} unités non ambiguës). "
+                "Voir la traceback ci-dessus (OpenAI, bertopic, mémoire, etc.)."
+            ) from exc
 
         for local_j, doc_idx in enumerate(idx):
             tid = int(topic_ids[local_j])

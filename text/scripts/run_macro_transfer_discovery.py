@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -46,6 +47,10 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     args = _parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     raw = load_yaml(cfg_path)
@@ -105,6 +110,11 @@ def main() -> None:
     print("OK:", output_dir, f"(corpus={corpus_id})")
     print("n_units:", manifest.get("n_units"))
     print("accuracy:", manifest.get("transfer_metrics", {}).get("accuracy"))
+    themes_csv = Path(output_dir) / "topics_bertopic" / "themes_by_macro.csv"
+    if themes_csv.is_file():
+        print("bertopic:", themes_csv)
+    elif not (args.skip_bertopic or bool(raw.get("skip_bertopic", False))):
+        print("bertopic: themes_by_macro.csv absent (échec ou skip_bertopic)")
 
 
 if __name__ == "__main__":
