@@ -7,8 +7,13 @@ seed: 42
 test_corpus: metallurgie
 final_fit_full_data: true
 
+# Grille : notation pointée model.* / training.* (fusionnée sur base_config).
+# Paramètres absents de la grille → valeur de configs/scgm_text_strict_fidelity.yaml.
 grid:
   training.lr: [0.01, 0.03]
-  model.lmd: [20.0, 25.0]
   training.epochs: [100, 200]
+  model.lmd: [20.0, 25.0]
   model.hiddim: [128]
+  model.tau: [0.05, 0.1]
+  model.alpha: [0.4, 0.5, 0.6]
+  model.n_subclass: [100]

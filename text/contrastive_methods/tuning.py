@@ -104,16 +104,16 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     method_name = str(spec.get("method_name", method_name))
     base_path = TEXT_ROOT / str(spec.get("base_config", f"configs/methods/{method_name}.yaml"))
     base_raw = load_yaml(base_path)
-    base_raw = merge_config_dict(base_raw, {"seed": seed})
-    grid = spec.get("grid") or {}
-    validate_contrastive_grid_keys(method_name, grid)
-    selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
-    n_folds = int(spec.get("n_folds", 5))
     seed = int(
         args.seed
         if args.seed is not None
         else spec.get("seed", base_raw.get("seed", 42))
     )
+    base_raw = merge_config_dict(base_raw, {"seed": seed})
+    grid = spec.get("grid") or {}
+    validate_contrastive_grid_keys(method_name, grid)
+    selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
+    n_folds = int(spec.get("n_folds", 5))
     if os.environ.get("TEST_CORPUS"):
         spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
     tuning_output = str(spec.get("output_dir", f"output/{method_name}/tuning"))
