@@ -1,4 +1,4 @@
-"""Génère notebooks/04_bayesian_network_macro_transfer.ipynb (BN sur corpus test, macro_transfer)."""
+"""Génère notebooks/09_bayesian_network_tpn_macro_transfer.ipynb (BN sur corpus test, TPN)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NB_PATH = REPO / "notebooks" / "04_bayesian_network_macro_transfer.ipynb"
+NB_PATH = REPO / "notebooks" / "09_bayesian_network_tpn_macro_transfer.ipynb"
 
 import sys
 
@@ -40,15 +40,17 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 04 — Réseaux bayésiens (corpus test, macro_transfer)
+# 09 — Réseaux bayésiens (corpus test, TPN)
 
 ## 1 — Objectif
 
-Ce notebook construit un **réseau bayésien** à partir des exports **`macro_transfer`** sur le corpus test (`output_test/<TEST_CORPUS>/macro_transfer/<MACRO_TRANSFER_METHOD>/`). Le staging copie métadonnées transférées, assignations intra-macro **BERTopic** et thèmes vers `output_test/<TEST_CORPUS>/bn_staging/`.
+Ce notebook construit un **réseau bayésien** à partir des exports **TPN** (`output_test/<TEST_CORPUS>/macro_transfer/tpn_<encodeur>/`). Le staging copie les métadonnées **adaptées** (`metadata_with_tpn_macro_probs.csv`), assignations **BERTopic** intra-macro et thèmes vers `output_test/<TEST_CORPUS>/bn_staging/tpn_<encodeur>/`.
 
-Les variables binaires au niveau accident décrivent la **co-présence de topics intra-macro** (`macro_topic_*`) ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
+**Encodeur** : `BASE_METHOD` (`softtriple`, `supcon`, `batch_triplet`, `scgm_text`) — défaut `softtriple`.
 
-**Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` (méthode SCGM ou SoftTriple).
+Les probabilités macro utilisées sont celles **après adaptateur TPN** (pas la phase « initial »). Les variables binaires au niveau accident décrivent la **co-présence de topics intra-macro** (`macro_topic_*`) ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
+
+**Prérequis** : `CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh` (avec BERTopic, pas `SKIP_BERTOPIC=1`).
 
 ### Nuances d’interprétation
 
@@ -95,8 +97,9 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
             r"""
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
-MACRO_TRANSFER_METHOD = "scgm_text"  # scgm_text | softtriple
-OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_staging/
+BASE_METHOD = "softtriple"  # softtriple | supcon | batch_triplet | scgm_text
+MACRO_TRANSFER_METHOD = ""  # vide → tpn_<BASE_METHOD>
+OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_staging/tpn_<encodeur>/
 MACRO_CONF_THRESHOLD = 0.50
 TOPIC_GAMMA_THRESHOLD = 0.50
 MIN_TOPIC_ACCIDENT_SUPPORT = 20
@@ -141,13 +144,20 @@ import pandas as pd
 import seaborn as sns
 
 
+from macro_transfer.tpn_encode import tpn_method_name
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
 
 REPO = TEXT_ROOT
 
+_tpn_method = str(MACRO_TRANSFER_METHOD).strip() or tpn_method_name(BASE_METHOD)
+_staging_subdir = _tpn_method
+
 _out = str(OUTPUT_DIR).strip()
-OUT_ROOT = resolve_repo_path(_out, REPO) if _out else bn_staging_dir(TEST_CORPUS, anchor=REPO)
+if _out:
+    OUT_ROOT = resolve_repo_path(_out, REPO)
+else:
+    OUT_ROOT = bn_staging_dir(TEST_CORPUS, anchor=REPO) / _staging_subdir
 TABLES = OUT_ROOT / "tables"
 FIGURES_STATIC = OUT_ROOT / "figures" / "static"
 FIGURES_INTERACTIVE = OUT_ROOT / "figures" / "interactive"
@@ -155,17 +165,18 @@ FIGURES_NODES = OUT_ROOT / "figures" / "nodes"
 MODELS = OUT_ROOT / "models"
 REPORTS = OUT_ROOT / "reports"
 
-MACRO_TRANSFER_ROOT = macro_transfer_output_dir(MACRO_TRANSFER_METHOD, TEST_CORPUS, anchor=REPO)
+MACRO_TRANSFER_ROOT = macro_transfer_output_dir(_tpn_method, TEST_CORPUS, anchor=REPO)
+print("TPN method:", _tpn_method, "| BASE_METHOD:", BASE_METHOD)
 from bn_pipeline.staging_macro_transfer import stage_bn_exports_from_macro_transfer
 
 BN_EXPORTS = stage_bn_exports_from_macro_transfer(
-    MACRO_TRANSFER_METHOD,
+    _tpn_method,
     TEST_CORPUS,
     output_dir=OUT_ROOT,
     repo_root=REPO,
 )
 EXPORTS = BN_EXPORTS
-SCGM_TOPICS = MACRO_TRANSFER_ROOT / "topics_bertopic"
+TPN_TOPICS = MACRO_TRANSFER_ROOT / "topics_bertopic"
 
 import importlib
 
@@ -199,6 +210,7 @@ from bn_pipeline.bn_learning import (
     try_write_bif,
 )
 from bn_pipeline.bn_inference import conditional_prob_table, run_bn_queries
+from bn_pipeline.bn_structure import standard_macro_edge_templates
 from bn_pipeline.bn_visualization import (
     build_short_title_map,
     build_topic_node_label_map,
@@ -235,7 +247,7 @@ warnings.filterwarnings("ignore", category=UserWarning)
 print("REPO =", REPO)
 print("TEST_CORPUS =", TEST_CORPUS)
 print("MACRO_TRANSFER_ROOT =", MACRO_TRANSFER_ROOT)
-print("SCGM_TOPICS =", SCGM_TOPICS)
+print("TPN_TOPICS =", TPN_TOPICS)
 print("EXPORTS (bn_exports) =", EXPORTS)
 print("OUT_ROOT =", OUT_ROOT)
 """
@@ -395,11 +407,7 @@ export_cpds_to_dir(topic_model, TABLES / "cpds_topic", prefix="topic")
 try_write_bif(topic_model, MODELS / "bn_topic_constrained.bif")
 
 bl_topic = build_blacklist(list(topic_used), topic_var_map_f)
-allowed_hint = sorted(
-    set(topic_edges)
-    | set(macro_edges_export)
-    | set(standard_macro_edge_templates(bool(INCLUDE_SEVERITY)))
-)
+allowed_hint = sorted(set(topic_edges) | set(macro_edges_export))
 export_edge_tables(macro_edges_export, topic_edges, bl_topic, allowed_hint, TABLES)
 print("Topic BN (contraint) —", topic_model.number_of_nodes(), "nœuds,", len(topic_edges), "arcs")
 """
@@ -463,7 +471,7 @@ plot_bn_graph_cpd_boxes(
     topic_model,
     topic_var_map_f,
     FIGURES_STATIC / "bn_topic_constrained_cpd.png",
-    title="Réseau bayésien — motifs (CPD, structure contrainte)",
+    title="Réseau bayésien — motifs TPN (CPD, structure contrainte)",
     short_title_map=short_title_map,
     themes_df=themes_df,
 )
@@ -473,7 +481,7 @@ plot_bn_graph(
     topic_model,
     topic_var_map_f,
     FIGURES_STATIC / "bn_topic_constrained.png",
-    title="Réseau bayésien — motifs (topologie)",
+    title="Réseau bayésien — motifs TPN (topologie)",
     short_title_map=short_title_map,
     themes_df=themes_df,
     show_cpd_cards=False,
@@ -653,7 +661,7 @@ display(comp_df)
         py(
             r"""
 params = {
-    "CONFIDENCE_THRESHOLD": CONFIDENCE_THRESHOLD,
+    "MACRO_CONF_THRESHOLD": MACRO_CONF_THRESHOLD,
     "MIN_TOPIC_ACCIDENT_SUPPORT": MIN_TOPIC_ACCIDENT_SUPPORT,
     "MAX_TOPICS_PER_MACRO": MAX_TOPICS_PER_MACRO,
 }

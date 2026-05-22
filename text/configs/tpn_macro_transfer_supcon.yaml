@@ -1,19 +1,8 @@
-# Transfert macro TPN (encodeur gelé modulable + adaptateur prototypique).
-# Sorties : output_test/<corpus>/macro_transfer/tpn_<encodeur>/
-#
-# Usage (SoftTriple, défaut) :
-#   CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
-# Autres encodeurs :
-#   CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh
-#   BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer.yaml python scripts/run_tpn_macro_transfer_discovery.py ...
-
+# TPN avec encodeur SupCon gelé (sortie : tpn_supcon/)
 corpus: metallurgie
 
 checkpoints:
-  softtriple: output/softtriple/checkpoints/best_model
   supcon: output/supcon/checkpoints/best_model
-  batch_triplet: output/batch_triplet/checkpoints/best_model
-  scgm_text: output/scgm_text/checkpoints/best_model.pt
 
 source:
   data_csv: dataset/data_btp.csv
@@ -21,8 +10,6 @@ source:
   label_col: pred_label
   pred_ok_col: pred_ok
   group_col: accident_id
-  # SCGM source : embeddings BTP Qwen (si absent → voir embeddings/ du registre BTP)
-  # emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 target:
   text_col: sentence
@@ -30,13 +17,9 @@ target:
   pred_ok_col: pred_ok
 
 method:
-  name: tpn_softtriple
-  base_method: softtriple
-  checkpoint: output/softtriple/checkpoints/best_model
-  contrastive_config: configs/methods/softtriple.yaml
-  # emb_csv: null  # cible SCGM : registre test_corpora.yaml si omis
-
-macros: [A0, A1, B, C]
+  base_method: supcon
+  checkpoint: output/supcon/checkpoints/best_model
+  contrastive_config: configs/methods/supcon.yaml
 
 encoding:
   device: cuda
@@ -86,37 +69,23 @@ bertopic:
   verbose: false
   random_state: 42
   stop_words_file: null
-
   umap:
     enabled: true
     n_components: 5
     n_neighbors: 15
     min_dist: 0.1
     metric: cosine
-
   hdbscan:
     min_cluster_size: null
     min_samples: null
     metric: euclidean
     cluster_selection_method: eom
-
   vectorizer:
     min_df: 1
     max_df: null
     ngram_range: [1, 2]
-
   representation:
-    enabled: true
-    include_corpus_context: true
-    model: gpt-4o-mini
-    chat: true
-    nr_docs: 50
-    doc_length: 100
-    tokenizer_model: gpt-4o-mini
-    delay_in_seconds: 2
-    diversity: null
-    exponential_backoff: false
-    prompt: null
+    enabled: false
 
 topics_export:
   top_k_words: 12

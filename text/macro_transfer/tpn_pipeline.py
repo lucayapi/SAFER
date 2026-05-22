@@ -1,4 +1,4 @@
-"""Pipeline TPN : SoftTriple gelé → adaptateur → probas macro → BERTopic."""
+"""Pipeline TPN : encodeur gelé (modulable) → adaptateur → probas macro → BERTopic."""
 
 from __future__ import annotations
 
@@ -12,11 +12,16 @@ import pandas as pd
 import torch
 import yaml
 
-from contrastive_methods.config import load_contrastive_config
-from contrastive_methods.eval_geometry import encode_contrastive_texts
 from macro_transfer.encode import load_target_metadata
 from macro_transfer.intra_bertopic import fit_bertopic_per_macro
 from macro_transfer.tpn_adapter import adapt_embeddings_tpn, train_tpn_adapter
+from macro_transfer.tpn_encode import (
+    default_contrastive_config_path,
+    encode_corpus_for_tpn,
+    resolve_tpn_checkpoint,
+    tpn_method_name,
+    validate_encoder_name,
+)
 from macro_transfer.tpn_eval import (
     compute_coverage_by_threshold,
     evaluate_tpn_transfer,
@@ -37,32 +42,9 @@ from scgm_text.dataset_text_embeddings import load_filtered_metadata
 
 logger = logging.getLogger(__name__)
 
+# Rétrocompat : défaut SoftTriple
 METHOD_NAME = "tpn_softtriple"
 EXPORT_COLS_BASE = ("sentence", "accident_id", "fact_id", "pred_label", "pred_ok", "doc_id")
-
-
-def _encode_softtriple_texts(
-    texts: list[str],
-    checkpoint: str,
-    *,
-    contrastive_config: Path,
-    device: str,
-    batch_size: int,
-    repo_anchor: Path,
-) -> np.ndarray:
-    ckpt_dir = Path(checkpoint)
-    if ckpt_dir.is_file():
-        ckpt_dir = ckpt_dir.parent
-    cfg_path = resolve_repo_path(contrastive_config, repo_root=repo_anchor)
-    cfg = load_contrastive_config("softtriple", config_path=cfg_path)
-    z = encode_contrastive_texts(
-        cfg,
-        texts,
-        checkpoint_dir=ckpt_dir,
-        batch_size=int(batch_size),
-        device=device,
-    )
-    return np.asarray(z, dtype=np.float64)
 
 
 def _select_export_columns(meta: pd.DataFrame) -> pd.DataFrame:
@@ -119,11 +101,22 @@ def run_tpn_macro_transfer_discovery(
     epochs: Optional[int] = None,
     learning_rate: Optional[float] = None,
     seed: Optional[int] = None,
+    emb_csv: Optional[str] = None,
 ) -> Dict[str, Any]:
     cfg = dict(config or {})
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
     repo_anchor = Path(cfg.get("repo_anchor", Path(__file__).resolve().parents[1]))
+
+    method_cfg = dict(cfg.get("method") or {})
+    base_method = validate_encoder_name(
+        method_cfg.get("base_method") or method_cfg.get("name") or "softtriple"
+    )
+    raw_method_name = method_cfg.get("name")
+    if raw_method_name and str(raw_method_name).startswith("tpn_"):
+        method_name = str(raw_method_name)
+    else:
+        method_name = tpn_method_name(base_method)
 
     source_cfg = cfg.get("source") or {}
     target_cfg = cfg.get("target") or {}
@@ -144,13 +137,29 @@ def run_tpn_macro_transfer_discovery(
     label_col_t = target_cfg.get("label_col", cfg.get("label_col", "pred_label"))
     pred_ok_col_t = target_cfg.get("pred_ok_col", cfg.get("pred_ok_col", "pred_ok"))
 
-    contrastive_config = cfg.get("method", {}).get("contrastive_config") or cfg.get("contrastive_config")
-    if not contrastive_config:
-        contrastive_config = "configs/methods/softtriple.yaml"
+    contrastive_config = (
+        method_cfg.get("contrastive_config")
+        or cfg.get("contrastive_config")
+        or str(default_contrastive_config_path(base_method, repo_anchor))
+    )
     contrastive_path = resolve_repo_path(contrastive_config, repo_root=repo_anchor)
+
+    scgm_emb_target = emb_csv or method_cfg.get("emb_csv") or cfg.get("emb_csv")
+    scgm_emb_source = (
+        source_cfg.get("emb_csv")
+        or method_cfg.get("source_emb_csv")
+        or cfg.get("source_emb_csv")
+        or scgm_emb_target
+    )
+    if scgm_emb_target:
+        scgm_emb_target = str(resolve_repo_path(scgm_emb_target, repo_root=repo_anchor))
+    if scgm_emb_source:
+        scgm_emb_source = str(resolve_repo_path(scgm_emb_source, repo_root=repo_anchor))
 
     enc_device = encoding_cfg.get("device", device)
     enc_bs = int(encoding_cfg.get("encode_batch_size", encode_batch_size))
+    scgm_bs = int(encoding_cfg.get("scgm_infer_batch_size", cfg.get("infer_batch_size", 512)))
+    max_seq_length = int(encoding_cfg.get("max_seq_length", 256))
 
     # --- Source BTP (labellé, filtré) ---
     meta_s = load_filtered_metadata(
@@ -163,27 +172,67 @@ def run_tpn_macro_transfer_discovery(
     texts_s = meta_s[text_col_s].astype(str).tolist()
     labels_s = meta_s[label_col_s].astype(str).to_numpy()
 
-    # --- Cible (toutes lignes, pas de filtre pour entraînement) ---
+    # --- Cible (toutes lignes) ---
     meta_t = load_target_metadata(target_data_csv, text_col=text_col_t)
     texts_t = meta_t[text_col_t].astype(str).tolist()
 
-    logger.info("Encodage SoftTriple source (%d) et cible (%d)", len(texts_s), len(texts_t))
-    h_s = _encode_softtriple_texts(
-        texts_s,
-        checkpoint,
+    encode_kw = dict(
         contrastive_config=contrastive_path,
         device=str(enc_device),
         batch_size=enc_bs,
         repo_anchor=repo_anchor,
+        text_col=text_col_s,
+        label_col=label_col_s,
+        pred_ok_col=pred_ok_col_s,
+        group_col=group_col_s,
+        max_seq_length=max_seq_length,
+        scgm_infer_batch_size=scgm_bs,
     )
-    h_t = _encode_softtriple_texts(
-        texts_t,
-        checkpoint,
-        contrastive_config=contrastive_path,
-        device=str(enc_device),
-        batch_size=enc_bs,
-        repo_anchor=repo_anchor,
+
+    logger.info(
+        "Encodage %s source (%d) et cible (%d)",
+        base_method,
+        len(texts_s),
+        len(texts_t),
     )
+
+    if base_method == "scgm_text":
+        if not scgm_emb_target:
+            raise ValueError("scgm_text requiert method.emb_csv ou emb_csv (registre test)")
+        if not scgm_emb_source:
+            raise ValueError("scgm_text source requiert source.emb_csv ou source_emb_csv")
+        h_s = encode_corpus_for_tpn(
+            base_method,
+            texts_s,
+            checkpoint,
+            data_csv=source_data_csv,
+            emb_csv=scgm_emb_source,
+            filter_pred_ok=True,
+            **encode_kw,
+        )
+        h_t = encode_corpus_for_tpn(
+            base_method,
+            texts_t,
+            checkpoint,
+            data_csv=target_data_csv,
+            emb_csv=scgm_emb_target,
+            filter_pred_ok=False,
+            text_col=text_col_t,
+            **encode_kw,
+        )
+    else:
+        h_s = encode_corpus_for_tpn(
+            base_method, texts_s, checkpoint, filter_pred_ok=True, **encode_kw
+        )
+        h_t = encode_corpus_for_tpn(
+            base_method,
+            texts_t,
+            checkpoint,
+            filter_pred_ok=False,
+            text_col=text_col_t,
+            **encode_kw,
+        )
+
     if bool(encoding_cfg.get("normalize_embeddings", True)):
         h_s = l2_normalize_np(h_s)
         h_t = l2_normalize_np(h_t)
@@ -237,6 +286,12 @@ def run_tpn_macro_transfer_discovery(
     train_seed = int(seed if seed is not None else tpn_cfg.get("seed", 42))
 
     resolved_cfg = {
+        "method_name": method_name,
+        "base_encoder": base_method,
+        "checkpoint": checkpoint,
+        "contrastive_config": str(contrastive_path),
+        "emb_csv_target": scgm_emb_target,
+        "emb_csv_source": scgm_emb_source,
         "tpn": tpn_cfg,
         "adapter": adapter_cfg,
         "loss_weights": loss_weights,
@@ -329,7 +384,7 @@ def run_tpn_macro_transfer_discovery(
             h_t_adapted,
             meta_t,
             gating_adapted,
-            method=METHOD_NAME,
+            method=method_name,
             bertopic_cfg=bertopic_cfg,
             output_dir=out / "topics_bertopic",
             sentence_col=text_col_t,
@@ -346,9 +401,15 @@ def run_tpn_macro_transfer_discovery(
             summary_dir / "topics_summary.csv", index=False
         )
 
+    embed_dim = int(h_s.shape[1]) if h_s.ndim == 2 else 0
     tpn_summary = {
-        "method": METHOD_NAME,
+        "method": method_name,
+        "base_encoder": base_method,
         "checkpoint": str(checkpoint),
+        "contrastive_config": str(contrastive_path),
+        "emb_csv_target": scgm_emb_target,
+        "emb_csv_source": scgm_emb_source,
+        "embedding_dim": embed_dim,
         "source_data_csv": str(source_data_csv),
         "target_data_csv": str(target_data_csv),
         "n_source": int(len(meta_s)),
@@ -360,7 +421,8 @@ def run_tpn_macro_transfer_discovery(
         json.dump(tpn_summary, f, indent=2, ensure_ascii=False)
 
     manifest = {
-        "method": METHOD_NAME,
+        "method": method_name,
+        "base_encoder": base_method,
         "checkpoint": str(checkpoint),
         "source_data_csv": str(source_data_csv),
         "target_data_csv": str(target_data_csv),

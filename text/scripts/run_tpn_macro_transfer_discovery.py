@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Transfert macro TPN (SoftTriple + adaptateur prototypique) sur corpus test."""
+"""Transfert macro TPN (encodeur modulable + adaptateur prototypique) sur corpus test."""
 
 from __future__ import annotations
 
@@ -19,16 +19,23 @@ from safer_core.test_corpus import (
     macro_transfer_output_dir,
     resolve_test_paths_from_config,
 )
-from macro_transfer.tpn_pipeline import METHOD_NAME, run_tpn_macro_transfer_discovery
+from macro_transfer.tpn_encode import (
+    resolve_tpn_checkpoint,
+    tpn_method_name,
+    validate_encoder_name,
+)
+from macro_transfer.tpn_pipeline import run_tpn_macro_transfer_discovery
 
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=str, default="configs/tpn_macro_transfer.yaml")
     p.add_argument("--corpus", type=str, default=None)
+    p.add_argument("--base-method", type=str, default=None, help="softtriple|supcon|batch_triplet|scgm_text")
     p.add_argument("--checkpoint", type=str, default=None)
     p.add_argument("--source-data-csv", type=str, default=None)
     p.add_argument("--output-dir", type=str, default=None)
+    p.add_argument("--emb-csv", type=str, default=None, help="Embeddings Qwen corpus test (SCGM)")
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--skip-bertopic", action="store_true")
     p.add_argument("--epochs", type=int, default=None)
@@ -48,7 +55,7 @@ def main() -> None:
     raw = load_yaml(cfg_path)
 
     corpus_id = args.corpus or raw.get("corpus") or default_test_corpus_id()
-    spec, target_data_csv, _emb_csv = resolve_test_paths_from_config(
+    spec, target_data_csv, emb_csv_resolved = resolve_test_paths_from_config(
         {**raw, "corpus": corpus_id}, corpus_id=corpus_id, anchor=TEXT_ROOT
     )
     corpus_id = spec.id
@@ -60,19 +67,37 @@ def main() -> None:
     source_data_csv = str(resolve_repo_path(source_data_csv, repo_root=TEXT_ROOT))
     target_data_csv = str(resolve_repo_path(target_data_csv, repo_root=TEXT_ROOT))
 
-    method_cfg = raw.get("method") or {}
-    ckpt = args.checkpoint or method_cfg.get("checkpoint")
-    if not ckpt:
-        raise SystemExit("--checkpoint ou method.checkpoint requis")
+    method_cfg = dict(raw.get("method") or {})
+    if args.base_method:
+        method_cfg["base_method"] = args.base_method
+    base_method = validate_encoder_name(method_cfg.get("base_method") or "softtriple")
+    method_name = tpn_method_name(base_method)
+
+    checkpoints_block = raw.get("checkpoints") or {}
+    ckpt = args.checkpoint or resolve_tpn_checkpoint(base_method, method_cfg, checkpoints_block)
     ckpt = str(resolve_repo_path(ckpt, repo_root=TEXT_ROOT))
+
+    emb_csv = args.emb_csv or method_cfg.get("emb_csv") or raw.get("emb_csv")
+    if emb_csv:
+        emb_csv = str(resolve_repo_path(emb_csv, repo_root=TEXT_ROOT))
+    elif base_method == "scgm_text":
+        emb_csv = str(emb_csv_resolved)
 
     output_dir = args.output_dir
     if not output_dir:
-        output_dir = str(macro_transfer_output_dir(METHOD_NAME, corpus_id, anchor=TEXT_ROOT))
+        output_dir = str(macro_transfer_output_dir(method_name, corpus_id, anchor=TEXT_ROOT))
     else:
         output_dir = str(resolve_repo_path(output_dir, repo_root=TEXT_ROOT))
 
-    raw = {**raw, "corpus": corpus_id, "repo_anchor": str(TEXT_ROOT)}
+    raw = {
+        **raw,
+        "corpus": corpus_id,
+        "repo_anchor": str(TEXT_ROOT),
+        "method": {**method_cfg, "base_method": base_method},
+    }
+    if emb_csv:
+        raw.setdefault("method", {})["emb_csv"] = emb_csv
+
     if args.encode_batch_size is not None:
         enc = dict(raw.get("encoding") or {})
         enc["encode_batch_size"] = int(args.encode_batch_size)
@@ -97,8 +122,9 @@ def main() -> None:
         epochs=args.epochs,
         learning_rate=args.lr,
         seed=args.seed,
+        emb_csv=emb_csv,
     )
-    print("OK:", output_dir, f"(corpus={corpus_id})")
+    print("OK:", output_dir, f"(corpus={corpus_id}, method={method_name}, encoder={base_method})")
     print("n_target:", manifest.get("n_target"))
     print("accuracy (adapted):", manifest.get("metrics_adapted", {}).get("accuracy"))
     themes_csv = Path(output_dir) / "topics_bertopic" / "themes_by_macro.csv"

@@ -16,6 +16,26 @@ from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
 
 TOPICS_SUBDIR = "topics_bertopic"
 
+# Fichier métadonnées transfert par méthode (sous transfer/).
+_TPN_METADATA = "metadata_with_tpn_macro_probs.csv"
+
+METADATA_BY_METHOD: dict[str, str] = {
+    "scgm_text": "metadata_with_macro_probs.csv",
+    "softtriple": "metadata_with_macro_probs.csv",
+    "tpn_softtriple": _TPN_METADATA,
+    "tpn_supcon": _TPN_METADATA,
+    "tpn_batch_triplet": _TPN_METADATA,
+    "tpn_scgm_text": _TPN_METADATA,
+}
+
+# Sous-dossier bn_staging par défaut (évite d'écraser scgm/softtriple).
+BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
+    "tpn_softtriple": "tpn_softtriple",
+    "tpn_supcon": "tpn_supcon",
+    "tpn_batch_triplet": "tpn_batch_triplet",
+    "tpn_scgm_text": "tpn_scgm_text",
+}
+
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
 _COPY_EMBEDDINGS = (("embeddings/prob_y_z.npy", "pt_y_given_z.npy"),)
 
@@ -82,11 +102,18 @@ def write_bn_compat_arrays(exports: Path, meta: pd.DataFrame) -> None:
     zdf.to_csv(exports / "z_assignments_target.csv", index=False)
 
 
+def resolve_transfer_metadata_path(mt: Path, method: str) -> Path:
+    """Chemin CSV métadonnées macro pour une méthode macro_transfer."""
+    name = METADATA_BY_METHOD.get(method, "metadata_with_macro_probs.csv")
+    return mt / "transfer" / name
+
+
 def stage_bn_exports_from_macro_transfer(
     method: str = "scgm_text",
     corpus_id: Optional[str] = None,
     *,
     output_dir: Optional[str | Path] = None,
+    metadata_filename: Optional[str] = None,
     repo_root: Optional[Path] = None,
 ) -> Path:
     """
@@ -103,12 +130,18 @@ def stage_bn_exports_from_macro_transfer(
         out_root = resolve_repo_path(output_dir, root)
     else:
         out_root = bn_staging_dir(corpus_id, anchor=root)
+        sub = BN_STAGING_SUBDIR_BY_METHOD.get(method)
+        if sub:
+            out_root = out_root / sub
     exports = out_root / "staging" / "bn_exports"
     exports.mkdir(parents=True, exist_ok=True)
 
-    transfer_meta = mt / "transfer" / "metadata_with_macro_probs.csv"
+    meta_name = metadata_filename or METADATA_BY_METHOD.get(
+        method, "metadata_with_macro_probs.csv"
+    )
+    transfer_meta = mt / "transfer" / meta_name
     if not transfer_meta.is_file():
-        raise FileNotFoundError(f"metadata_with_macro_probs.csv manquant : {transfer_meta}")
+        raise FileNotFoundError(f"{meta_name} manquant : {transfer_meta}")
     shutil.copy2(transfer_meta, exports / "metadata_with_predictions.csv")
     topics_dir = mt / topics_subdir()
     assign_src = topics_dir / "assignments.csv"

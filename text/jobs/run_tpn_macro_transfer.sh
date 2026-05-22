@@ -1,17 +1,22 @@
 #!/bin/bash
-# Transfert macro TPN (SoftTriple-BTP + adaptateur prototypique) sur corpus test.
+# Transfert macro TPN (encodeur gelé modulable + adaptateur) sur corpus test.
 #
 # Usage :
 #   cd ~/SAFER/text && bash jobs/run_tpn_macro_transfer.sh
 # Variables :
 #   CORPUS=metallurgie
 #   CONFIG=configs/tpn_macro_transfer.yaml
+#   BASE_METHOD=softtriple   # softtriple | supcon | batch_triplet | scgm_text
 #   CHECKPOINT=output/softtriple/checkpoints/best_model
 #   SKIP_BERTOPIC=0
 #   DEVICE=cuda
 #   EPOCHS=50
 #
-# Prérequis : train_softtriple.sh (checkpoint BTP)
+# Exemples :
+#   BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh
+#   BASE_METHOD=scgm_text CONFIG=configs/tpn_macro_transfer_scgm.yaml bash jobs/run_tpn_macro_transfer.sh
+#
+# Prérequis : checkpoint entraîné pour l'encodeur choisi (train_*.sh)
 
 #SBATCH --job-name=tpn_macro_transfer
 #SBATCH --partition=gpu
@@ -38,7 +43,13 @@ EPOCHS="${EPOCHS:-50}"
 
 export TEST_CORPUS="${CORPUS}"
 
-extra=(--config "${CONFIG}" --corpus "${CORPUS}" --checkpoint "${CHECKPOINT}" --device "${DEVICE}" --epochs "${EPOCHS}")
+extra=(--config "${CONFIG}" --corpus "${CORPUS}" --device "${DEVICE}" --epochs "${EPOCHS}")
+if [[ -n "${BASE_METHOD}" ]]; then
+  extra+=(--base-method "${BASE_METHOD}")
+fi
+if [[ -n "${CHECKPOINT}" ]]; then
+  extra+=(--checkpoint "${CHECKPOINT}")
+fi
 if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
   extra+=(--skip-bertopic)
 fi

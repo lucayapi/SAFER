@@ -11,13 +11,79 @@ import pandas as pd
 
 MACRO_ORDER_MAP = {"A0": 0, "A1": 1, "B": 2, "C": 3, "Severity": 4, "Severity_high": 4, "SEVERITY": 4}
 
+# Graphe causal accidentologique imposé (pas de saut A0/A1 → C).
+STANDARD_ALLOWED_MACRO_EDGES: Set[Tuple[str, str]] = {
+    ("A0", "A1"),
+    ("A0", "B"),
+    ("A1", "B"),
+    ("B", "C"),
+}
+SEVERITY_ALLOWED_MACRO_EDGES: Set[Tuple[str, str]] = {("C", "Severity")}
+
+MACRO_ONTOLOGY_FR: Dict[str, Tuple[str, str]] = {
+    "A0": ("A0 — Contexte", "Travail, activité, environnement, matériel"),
+    "A1": ("A1 — Facteurs contributifs", "Défaillances, conditions dangereuses"),
+    "B": ("B — Événement", "Accident ou déviation"),
+    "C": ("C — Conséquence", "Dommage, blessure, issue"),
+}
+
+
+def _normalize_macro_label(label: str) -> str:
+    lab = str(label).strip()
+    if lab.startswith("M_"):
+        lab = lab[2:]
+    if lab in MACRO_ORDER_MAP:
+        return lab
+    key = lab.upper()
+    if key in MACRO_ORDER_MAP:
+        return {"SEVERITY": "Severity"}.get(key, key)
+    if "Severity" in lab:
+        return "Severity"
+    return lab
+
+
+def macro_label_of_node(node: str, variable_macro_map: Dict[str, str]) -> str:
+    if node in variable_macro_map:
+        return _normalize_macro_label(variable_macro_map[node])
+    if str(node).startswith("M_"):
+        return _normalize_macro_label(str(node))
+    if str(node).startswith("macro_topic_"):
+        parts = str(node).split("_")
+        if len(parts) >= 3:
+            return _normalize_macro_label(parts[2])
+    return _normalize_macro_label(str(node))
+
 
 def macro_rank(node: str, variable_macro_map: Dict[str, str]) -> int:
-    lab = variable_macro_map.get(node, "A0")
-    if isinstance(lab, str):
-        key = lab if lab in MACRO_ORDER_MAP else lab.upper()
-        return int(MACRO_ORDER_MAP.get(lab, MACRO_ORDER_MAP.get(key, 0)))
-    return 0
+    lab = macro_label_of_node(node, variable_macro_map)
+    return int(MACRO_ORDER_MAP.get(lab, 0))
+
+
+def allowed_macro_edges_for_nodes(
+    nodes: Sequence[str],
+    variable_macro_map: Dict[str, str],
+) -> Set[Tuple[str, str]]:
+    """Arcs autorisés entre macros présentes dans le graphe."""
+    macros = {macro_label_of_node(n, variable_macro_map) for n in nodes}
+    allowed = {e for e in STANDARD_ALLOWED_MACRO_EDGES if e[0] in macros and e[1] in macros}
+    if "Severity" in macros or any(str(n).startswith("Severity") for n in nodes):
+        allowed |= {e for e in SEVERITY_ALLOWED_MACRO_EDGES if e[0] in macros and e[1] in macros}
+    return allowed
+
+
+def standard_macro_edge_templates(include_severity: bool = False) -> List[Tuple[str, str]]:
+    """Modèle d'arcs pour export CSV et schéma M_*."""
+    edges = list(STANDARD_ALLOWED_MACRO_EDGES)
+    if include_severity:
+        edges.extend(SEVERITY_ALLOWED_MACRO_EDGES)
+    templates: List[Tuple[str, str]] = []
+    for u, v in edges:
+        templates.append((u, v))
+        if u != "Severity" and v != "Severity":
+            templates.append((f"M_{u}", f"M_{v}"))
+        elif v == "Severity":
+            templates.append(("M_C", "Severity_high"))
+    return sorted(set(templates))
 
 
 def build_blacklist(
@@ -25,23 +91,25 @@ def build_blacklist(
     variable_macro_map: Dict[str, str],
 ) -> List[Tuple[str, str]]:
     """
-    Arcs (parent, enfant) interdits : ordre macro décroissant ;
-    aucun arc depuis Severity / Severity_high.
+    Blacklist = tous les arcs (parent, enfant) sauf ceux conformes au DAG :
+
+    A0→A1, A0→B, A1→B, B→C (et optionnellement C→Severity).
+
+    Interdit notamment : A0→C, A1→C (saut de B), retours C→B, B→A*, etc.
     """
     nodes = list(nodes)
+    allowed_macro = allowed_macro_edges_for_nodes(nodes, variable_macro_map)
     bl: Set[Tuple[str, str]] = set()
     for u in nodes:
         for v in nodes:
             if u == v:
                 continue
-            ru = macro_rank(u, variable_macro_map)
-            rv = macro_rank(v, variable_macro_map)
-            u_sev = variable_macro_map.get(u, "") in ("Severity", "Severity_high") or str(u).startswith("Severity")
-            if u_sev:
+            mu = macro_label_of_node(u, variable_macro_map)
+            mv = macro_label_of_node(v, variable_macro_map)
+            if mu in ("Severity", "Severity_high") or str(u).startswith("Severity"):
                 bl.add((u, v))
                 continue
-            v_sev = variable_macro_map.get(v, "") in ("Severity", "Severity_high") or str(v).startswith("Severity")
-            if not v_sev and ru > rv:
+            if (mu, mv) not in allowed_macro:
                 bl.add((u, v))
     return sorted(bl)
 
@@ -179,16 +247,26 @@ def learn_unconstrained_structure(
     return BayesianNetwork(edges), edges
 
 
-def macro_chain_model(severity_node: str = "Severity_high") -> Tuple[object, List[Tuple[str, str]]]:
-    """Chaîne M_A0 -> M_A1 -> M_B -> M_C -> noeud gravité (par défaut Severity_high)."""
-    from pgmpy.models import BayesianNetwork
-
+def macro_chain_edge_list(severity_node: Optional[str] = "Severity_high") -> List[Tuple[str, str]]:
+    """Liste d'arcs du DAG macro agrégé M_*."""
     edges = [
         ("M_A0", "M_A1"),
+        ("M_A0", "M_B"),
         ("M_A1", "M_B"),
         ("M_B", "M_C"),
-        ("M_C", severity_node),
     ]
+    if severity_node:
+        edges.append(("M_C", severity_node))
+    return edges
+
+
+def macro_chain_model(severity_node: Optional[str] = "Severity_high") -> Tuple[object, List[Tuple[str, str]]]:
+    """
+    DAG macro agrégé : M_A0→M_A1, M_A0→M_B, M_A1→M_B, M_B→M_C [, M_C→gravité].
+    """
+    from pgmpy.models import BayesianNetwork
+
+    edges = macro_chain_edge_list(severity_node)
     return BayesianNetwork(edges), edges
 
 

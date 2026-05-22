@@ -7,13 +7,20 @@ import re
 import textwrap
 import unicodedata
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+
+BBox = Tuple[float, float, float, float]  # x0, y0, width, height
 
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 import pandas as pd
-import seaborn as sns
+try:
+    import seaborn as sns
+except ImportError:  # tests / environnements minimaux
+    sns = None  # type: ignore[assignment]
+
+from bn_pipeline.bn_structure import MACRO_ONTOLOGY_FR
 
 MACRO_COLOR = {
     "A0": "#4C78A8",
@@ -23,6 +30,23 @@ MACRO_COLOR = {
     "Severity": "#B279A2",
     "Severity_high": "#B279A2",
     "SEVERITY": "#B279A2",
+}
+
+MACRO_LAYER_FILL = {
+    "A0": "#E8EEF7",
+    "A1": "#FDEBDD",
+    "B": "#E8F4E8",
+    "C": "#FCE8E8",
+    "Severity": "#F3E8F2",
+}
+
+# Ancres (x, y) pour le DAG accidentologique — article / lecture gauche→droite, haut→bas.
+_MACRO_LAYOUT_ANCHOR: Dict[str, Tuple[float, float]] = {
+    "A0": (-1.35, 1.05),
+    "A1": (1.35, 1.05),
+    "B": (0.0, 0.0),
+    "C": (0.0, -1.1),
+    "Severity": (0.0, -2.15),
 }
 
 
@@ -380,22 +404,478 @@ def _macro_of_node(node: str, variable_macro_map: Dict[str, str]) -> str:
     return _macro_from_node(node, variable_macro_map)
 
 
+def _layout_accident_causality(
+    nodes: list[str],
+    variable_macro_map: Dict[str, str],
+    seed: int = 42,
+) -> Dict[str, Tuple[float, float]]:
+    """Dispose les nœuds par couche A0/A1 (haut) → B → C (bas), comme le DAG imposé."""
+    from collections import defaultdict
+
+    rng = np.random.default_rng(seed)
+    by_macro: Dict[str, list[str]] = defaultdict(list)
+    for n in nodes:
+        by_macro[_macro_of_node(n, variable_macro_map)].append(n)
+
+    pos: Dict[str, Tuple[float, float]] = {}
+    for macro, group in by_macro.items():
+        anchor = _MACRO_LAYOUT_ANCHOR.get(macro, (0.0, 0.0))
+        group = sorted(group)
+        n = len(group)
+        for i, node in enumerate(group):
+            spread = 0.42 * (i - (n - 1) / 2.0) if n > 1 else 0.0
+            jitter = 0.04 * rng.standard_normal(2)
+            pos[node] = (anchor[0] + spread + float(jitter[0]), anchor[1] + float(jitter[1]))
+    return pos
+
+
 def _layout_by_macro(
     nodes: list[str],
     variable_macro_map: Dict[str, str],
     seed: int = 42,
 ) -> Dict[str, Tuple[float, float]]:
-    x_slot = {"A0": 0.0, "A1": 1.0, "B": 2.0, "C": 3.0}
-    rng = np.random.default_rng(seed)
+    return _layout_accident_causality(nodes, variable_macro_map, seed=seed)
+
+
+# Colonnes gauche → droite (style article pgmpy).
+_MACRO_COL_X: Dict[str, float] = {
+    "A0": 0.0,
+    "A1": 1.0,
+    "B": 2.5,
+    "C": 4.0,
+    "Severity": 5.0,
+}
+_MACRO_STACK_ORDER = ("A0", "A1", "B", "C", "Severity")
+
+
+def _layout_bn_columns_lr(
+    nodes: list[str],
+    variable_macro_map: Dict[str, str],
+    *,
+    col_gap: float = 2.4,
+    row_gap: float = 1.4,
+    box_width: float = 1.05,
+    box_height: float = 0.92,
+) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, BBox]]:
+    """
+    Disposition par colonnes macro (A0, A1 | B | C), empilement vertical par topic.
+    Retourne centres (x, y) et boîtes (x0, y0, w, h) pour flèches bord à bord.
+    """
+    from collections import defaultdict
+
+    by_macro: Dict[str, list[str]] = defaultdict(list)
+    for n in nodes:
+        by_macro[_macro_of_node(n, variable_macro_map)].append(n)
+
     pos: Dict[str, Tuple[float, float]] = {}
+    bboxes: Dict[str, BBox] = {}
+
+    for macro in _MACRO_STACK_ORDER:
+        group = sorted(by_macro.get(macro, []))
+        if not group:
+            continue
+        cx = _MACRO_COL_X.get(macro, 2.0) * col_gap
+        n = len(group)
+        for i, node in enumerate(group):
+            cy = (i - (n - 1) / 2.0) * row_gap
+            x0 = cx - box_width / 2.0
+            y0 = cy - box_height / 2.0
+            pos[node] = (cx, cy)
+            bboxes[node] = (x0, y0, box_width, box_height)
+
+    return pos, bboxes
+
+
+def _bbox_anchor_lr(bbox: BBox, side: str) -> Tuple[float, float]:
+    """Point d'ancrage sur le bord d'une boîte (left/right + centre vertical)."""
+    x0, y0, w, h = bbox
+    cy = y0 + h / 2.0
+    if side == "right":
+        return (x0 + w, cy)
+    if side == "left":
+        return (x0, cy)
+    return (x0 + w / 2.0, y0 + h / 2.0)
+
+
+def _draw_cpd_node_box(
+    ax: plt.Axes,
+    bbox: BBox,
+    title: str,
+    probs: List[Tuple[Union[int, str], float]],
+    *,
+    macro: str = "A0",
+    state_labels: Optional[List[str]] = None,
+) -> None:
+    """Boîte blanche + barres horizontales P(état) — style figure article."""
+    from matplotlib.patches import FancyBboxPatch
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
+    x0, y0, w, h = bbox
+    edge_color = MACRO_COLOR.get(macro, "#888888")
+    patch = FancyBboxPatch(
+        (x0, y0),
+        w,
+        h,
+        boxstyle="round,pad=0.02,rounding_size=0.06",
+        facecolor="white",
+        edgecolor=edge_color,
+        linewidth=1.2,
+        zorder=5,
+    )
+    ax.add_patch(patch)
+
+    title_short = title if len(title) <= 52 else title[:49] + "..."
+    ax.text(
+        x0 + w / 2.0,
+        y0 + h * 0.94,
+        title_short,
+        ha="center",
+        va="top",
+        fontsize=7.5,
+        fontweight="bold",
+        color="#222222",
+        zorder=6,
+        wrap=True,
+    )
+
+    labels = state_labels or ["0", "1"]
+    if len(labels) < len(probs):
+        labels = [str(s) for s, _ in probs]
+
+    iax = inset_axes(
+        ax,
+        width="88%",
+        height="58%",
+        loc="lower center",
+        bbox_to_anchor=(x0, y0, w, h * 0.78),
+        bbox_transform=ax.transData,
+        borderpad=0.4,
+    )
+    iax.set_facecolor("white")
+    y_pos = np.arange(len(probs))
+    vals = [float(p) for _, p in probs]
+    bar_color = edge_color
+    iax.barh(y_pos, vals, color=bar_color, alpha=0.85, height=0.55)
+    iax.set_xlim(0, 1.0)
+    iax.set_yticks(y_pos)
+    iax.set_yticklabels(labels[: len(probs)], fontsize=7)
+    iax.set_xlabel("P", fontsize=6)
+    iax.tick_params(axis="x", labelsize=6)
+    for spine in iax.spines.values():
+        spine.set_visible(False)
+    iax.grid(axis="x", alpha=0.25, linestyle="--", linewidth=0.5)
+
+
+def _draw_macro_column_bands_lr(
+    ax: plt.Axes,
+    variable_macro_map: Dict[str, str],
+    nodes: list[str],
+    *,
+    col_gap: float = 2.4,
+    row_gap: float = 1.4,
+    box_width: float = 1.05,
+) -> None:
+    """Bandes verticales par colonne macro."""
+    from matplotlib.patches import Rectangle
+
+    from collections import defaultdict
+
+    by_macro: Dict[str, list[str]] = defaultdict(list)
+    for n in nodes:
+        by_macro[_macro_of_node(n, variable_macro_map)].append(n)
+
+    for macro in _MACRO_STACK_ORDER:
+        group = by_macro.get(macro, [])
+        if not group:
+            continue
+        cx = _MACRO_COL_X.get(macro, 2.0) * col_gap
+        n = len(group)
+        y_top = (n - 1) / 2.0 * row_gap + box_width
+        y_bot = -(n - 1) / 2.0 * row_gap - box_width
+        half_w = box_width * 0.65 + 0.35
+        rect = Rectangle(
+            (cx - half_w, y_bot),
+            2 * half_w,
+            y_top - y_bot,
+            facecolor=MACRO_LAYER_FILL.get(macro, "#f5f5f5"),
+            edgecolor="none",
+            alpha=0.5,
+            zorder=0,
+        )
+        ax.add_patch(rect)
+
+
+def plot_bn_graph_cpd_boxes(
+    model: Any,
+    variable_macro_map: Dict[str, str],
+    output_path: Path,
+    title: str = "",
+    short_title_map: Optional[Dict[str, str]] = None,
+    themes_df: Optional[pd.DataFrame] = None,
+    *,
+    col_gap: float = 2.4,
+    row_gap: float = 1.4,
+    box_width: float = 1.05,
+    box_height: float = 0.92,
+    state_labels_fr: bool = True,
+) -> None:
+    """
+    Graphe BN style article : boîtes CPD séparées, colonnes A0/A1 → B → C, flèches bord à bord.
+    """
+    from matplotlib.patches import FancyArrowPatch
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    g = nx.DiGraph()
+    g.add_edges_from(model.edges())
+    nodes = list(g.nodes())
+    if not nodes:
+        return
+
+    pos, bboxes = _layout_bn_columns_lr(
+        nodes,
+        variable_macro_map,
+        col_gap=col_gap,
+        row_gap=row_gap,
+        box_width=box_width,
+        box_height=box_height,
+    )
+
+    if short_title_map is None:
+        short_title_map = build_short_title_map(nodes, themes_df, variable_macro_map)
+
+    labels = ["Absent", "Présent"] if state_labels_fr else ["0", "1"]
+
+    from collections import defaultdict
+
+    by_macro: Dict[str, int] = defaultdict(int)
+    for n in nodes:
+        by_macro[_macro_of_node(n, variable_macro_map)] += 1
+    max_stack = max(by_macro.values()) if by_macro else 1
+    n_cols = sum(1 for m in _MACRO_STACK_ORDER if by_macro.get(m, 0) > 0)
+    fig_w = max(14.0, 2.5 + n_cols * 3.2)
+    fig_h = max(6.0, 1.2 + max_stack * row_gap * 0.95)
+
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h), facecolor="white")
+    ax.set_facecolor("white")
+    _draw_macro_column_bands_lr(
+        ax, variable_macro_map, nodes, col_gap=col_gap, row_gap=row_gap, box_width=box_width
+    )
+
     for n in nodes:
         macro = _macro_of_node(n, variable_macro_map)
-        bx = 3.2 if macro == "Severity" else float(x_slot.get(macro, 2.0))
-        pos[n] = (
-            bx + 0.08 * rng.standard_normal(),
-            0.25 * rng.standard_normal(),
+        title_n = short_title_map.get(str(n), str(n))
+        probs = cpd_binary_marginal(model, str(n))
+        _draw_cpd_node_box(ax, bboxes[n], title_n, probs, macro=macro, state_labels=labels)
+
+    for u, v in g.edges():
+        if u not in bboxes or v not in bboxes:
+            continue
+        x0, y0 = _bbox_anchor_lr(bboxes[u], "right")
+        x1, y1 = _bbox_anchor_lr(bboxes[v], "left")
+        mu = _macro_of_node(u, variable_macro_map)
+        mv = _macro_of_node(v, variable_macro_map)
+        rad = 0.0
+        if mu in ("A0", "A1") and mv == "B":
+            rad = 0.15 if mu == "A0" else -0.12
+        elif mu == "A0" and mv == "A1":
+            rad = 0.08
+        ax.add_patch(
+            FancyArrowPatch(
+                (x0, y0),
+                (x1, y1),
+                arrowstyle="-|>",
+                mutation_scale=16,
+                linewidth=1.5,
+                color="#3b6ea8",
+                alpha=0.85,
+                connectionstyle=f"arc3,rad={rad}",
+                zorder=3,
+            )
         )
-    return pos
+
+    xs = [pos[n][0] for n in nodes]
+    ys = [pos[n][1] for n in nodes]
+    pad_x = box_width + col_gap * 0.35
+    pad_y = box_height + row_gap * 0.45
+    ax.set_xlim(min(xs) - pad_x, max(xs) + pad_x)
+    ax.set_ylim(min(ys) - pad_y, max(ys) + pad_y)
+    ax.axis("off")
+
+    if title:
+        ax.set_title(title, fontsize=14, fontweight="bold", pad=18)
+
+    from matplotlib.lines import Line2D
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="s",
+            color="w",
+            markerfacecolor=MACRO_COLOR[m],
+            markeredgecolor="#333333",
+            markersize=10,
+            label=f"{MACRO_ONTOLOGY_FR.get(m, (m, ''))[0]}",
+        )
+        for m in ("A0", "A1", "B", "C")
+        if any(_macro_of_node(n, variable_macro_map) == m for n in nodes)
+    ]
+    if legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.02),
+            ncol=4,
+            frameon=True,
+            fontsize=8,
+        )
+
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
+def _draw_macro_layer_bands(
+    ax: plt.Axes,
+    variable_macro_map: Dict[str, str],
+    nodes: list[str],
+) -> None:
+    """Bandes de fond par couche macro (lisibilité article)."""
+    from matplotlib.patches import FancyBboxPatch
+
+    present = {_macro_of_node(n, variable_macro_map) for n in nodes}
+    bands = [
+        ("A0", "A1", -2.0, 2.0, 0.55, 1.55),
+        ("B", "B", -1.05, 1.05, -0.55, 0.55),
+        ("C", "C", -1.05, 1.05, -1.55, -0.65),
+    ]
+    for m0, m1, x0, x1, y0, y1 in bands:
+        if m0 not in present and m1 not in present:
+            continue
+        color = MACRO_LAYER_FILL.get(m0, "#f5f5f5")
+        patch = FancyBboxPatch(
+            (x0, y0),
+            x1 - x0,
+            y1 - y0,
+            boxstyle="round,rounding_size=0.08,pad=0.02",
+            facecolor=color,
+            edgecolor="none",
+            alpha=0.55,
+            zorder=0,
+        )
+        ax.add_patch(patch)
+
+
+def plot_macro_causality_schematic(
+    output_path: Path,
+    *,
+    include_severity: bool = False,
+    title: str = "Structure causale des macros (réseau bayésien)",
+) -> None:
+    """
+    Schéma fixe A0→A1, A0→B, A1→B, B→C — flux gauche→droite (cohérent avec boîtes CPD topics).
+    """
+    from matplotlib.patches import FancyArrowPatch, Rectangle
+
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    node_r = 0.26
+    pos = {
+        "A0": (0.0, 0.0),
+        "A1": (2.5, 0.0),
+        "B": (5.2, 0.0),
+        "C": (7.8, 0.0),
+    }
+    edges = [("A0", "A1"), ("A0", "B"), ("A1", "B"), ("B", "C")]
+    if include_severity:
+        pos["S"] = (10.4, 0.0)
+        edges.append(("C", "S"))
+
+    fig_w = 11.5 if not include_severity else 13.5
+    fig, ax = plt.subplots(figsize=(fig_w, 4.2), facecolor="white")
+    ax.set_facecolor("white")
+    ax.set_xlim(-1.2, max(p[0] for p in pos.values()) + 1.4)
+    ax.set_ylim(-1.35, 1.35)
+    ax.axis("off")
+
+    for key, (x, _y) in pos.items():
+        macro = "Severity" if key == "S" else key
+        rect = Rectangle(
+            (x - 0.72, -1.05),
+            1.44,
+            2.1,
+            facecolor=MACRO_LAYER_FILL.get(macro, "#f5f5f5"),
+            edgecolor="none",
+            alpha=0.55,
+            zorder=0,
+        )
+        ax.add_patch(rect)
+
+    for u, v in edges:
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        start = (x0 + node_r, y0)
+        end = (x1 - node_r, y1)
+        rad = 0.0
+        if u == "A0" and v == "B":
+            rad = 0.12
+        elif u == "A1" and v == "B":
+            rad = -0.1
+        elif u == "A0" and v == "A1":
+            rad = 0.05
+        ax.add_patch(
+            FancyArrowPatch(
+                start,
+                end,
+                arrowstyle="-|>",
+                mutation_scale=18,
+                linewidth=2.0,
+                color="#444444",
+                connectionstyle=f"arc3,rad={rad}",
+                zorder=2,
+            )
+        )
+
+    for key, (x, y) in pos.items():
+        macro = "Severity" if key == "S" else key
+        color = MACRO_COLOR.get(macro, "#888888")
+        title_n, subtitle = MACRO_ONTOLOGY_FR.get(macro, (macro, ""))
+        if key == "S":
+            title_n, subtitle = "Gravité", "Issue sévère"
+        circle = plt.Circle((x, y), node_r, facecolor=color, edgecolor="#1a1a1a", linewidth=1.2, zorder=3)
+        ax.add_patch(circle)
+        ax.text(x, y + 0.02, macro, ha="center", va="center", fontsize=13, fontweight="bold", color="white", zorder=4)
+        ax.text(x, y - 0.42, title_n.split("—", 1)[-1].strip(), ha="center", va="top", fontsize=9.5, color="#222222", zorder=4)
+        ax.text(
+            x,
+            y - 0.68,
+            subtitle,
+            ha="center",
+            va="top",
+            fontsize=8,
+            color="#555555",
+            style="italic",
+            wrap=True,
+            zorder=4,
+        )
+
+    ax.set_title(title, fontsize=14, fontweight="bold", pad=16)
+    fig.text(
+        0.5,
+        0.02,
+        "Arcs autorisés : A0→A1 · A0→B · A1→B · B→C"
+        + (" · C→gravité" if include_severity else "")
+        + "  —  pas de lien direct A0/A1→C",
+        ha="center",
+        fontsize=9,
+        color="#666666",
+    )
+    fig.tight_layout(rect=[0, 0.06, 1, 1])
+    fig.savefig(output_path, dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
 
 
 def plot_bn_graph(
@@ -415,29 +895,88 @@ def plot_bn_graph(
     Graphe BN : cercles colorés seuls ; cartes CPD (titre + barres) en annotation décalée.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sns.set_theme(style="white", context="notebook")
+    if sns is not None:
+        sns.set_theme(style="white", context="paper", font_scale=1.05)
     g = nx.DiGraph()
     g.add_edges_from(model.edges())
     nodes = list(g.nodes())
-    pos = _layout_by_macro(nodes, variable_macro_map)
+    pos = _layout_accident_causality(nodes, variable_macro_map)
 
     if short_title_map is None:
         short_title_map = build_short_title_map(nodes, themes_df, variable_macro_map)
     cards = build_node_cards_for_model(model, short_title_map) if show_cpd_cards else {}
 
     colors = [MACRO_COLOR.get(_macro_of_node(n, variable_macro_map), "#888888") for n in nodes]
-    sizes = [node_size_scale * (1.0 + 0.04 * g.degree(n)) for n in nodes]
+    sizes = [node_size_scale * (1.0 + 0.03 * min(g.degree(n), 4)) for n in nodes]
 
-    fig_h = 11 if show_cpd_cards else 9
-    fig = plt.figure(figsize=(16, fig_h), facecolor="white")
+    fig_h = 12 if show_cpd_cards else 10
+    fig = plt.figure(figsize=(18, fig_h), facecolor="white")
     ax = fig.add_subplot(111, facecolor="white")
+    _draw_macro_layer_bands(ax, variable_macro_map, nodes)
 
-    nx.draw_networkx_edges(
-        g, pos, arrows=True, arrowsize=14, width=1.0, alpha=0.5, edge_color="#666666", ax=ax
-    )
+    xs = [pos[n][0] for n in nodes]
+    ys = [pos[n][1] for n in nodes]
+    margin = 0.9
+    ax.set_xlim(min(xs) - margin, max(xs) + margin)
+    ax.set_ylim(min(ys) - margin - (1.2 if show_cpd_cards else 0.3), max(ys) + margin)
+    ax.axis("off")
+
+    from matplotlib.patches import FancyArrowPatch
+
+    for u, v in g.edges():
+        x0, y0 = pos[u]
+        x1, y1 = pos[v]
+        rad = 0.06
+        mu = _macro_of_node(u, variable_macro_map)
+        mv = _macro_of_node(v, variable_macro_map)
+        if mu == "A0" and mv == "B":
+            rad = 0.12
+        elif mu == "A1" and mv == "B":
+            rad = -0.1
+        ax.add_patch(
+            FancyArrowPatch(
+                (x0, y0),
+                (x1, y1),
+                arrowstyle="-|>",
+                mutation_scale=14,
+                linewidth=1.35,
+                color="#5a5a5a",
+                alpha=0.75,
+                connectionstyle=f"arc3,rad={rad}",
+                zorder=2,
+            )
+        )
+
     nx.draw_networkx_nodes(
-        g, pos, node_color=colors, node_size=sizes, alpha=0.95, edgecolors="#222222", linewidths=0.8, ax=ax
+        g, pos, node_color=colors, node_size=sizes, alpha=0.96, edgecolors="#1a1a1a", linewidths=1.0, ax=ax
     )
+
+    from matplotlib.lines import Line2D
+
+    legend_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markerfacecolor=MACRO_COLOR[m],
+            markersize=10,
+            label=f"{m} — {MACRO_ONTOLOGY_FR.get(m, (m, ''))[1][:40]}",
+        )
+        for m in ("A0", "A1", "B", "C")
+        if any(_macro_of_node(n, variable_macro_map) == m for n in nodes)
+    ]
+    if legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, -0.02 if show_cpd_cards else 0.02),
+            ncol=2,
+            frameon=True,
+            fontsize=8,
+            title="Couches macro",
+            title_fontsize=9,
+        )
 
     if show_cpd_cards:
         for i, n in enumerate(nodes):
@@ -575,7 +1114,12 @@ def plot_adjacency_heatmap(
 
     fig_w = max(10, min(24, 0.45 * n + 6))
     plt.figure(figsize=(fig_w, fig_w * 0.85))
-    sns.heatmap(adj, xticklabels=tick_labels, yticklabels=tick_labels, cmap="Blues", cbar=False)
+    if sns is not None:
+        sns.heatmap(adj, xticklabels=tick_labels, yticklabels=tick_labels, cmap="Blues", cbar=False)
+    else:
+        plt.imshow(adj.values, cmap="Blues", aspect="auto")
+        plt.xticks(range(n), tick_labels, rotation=45, ha="right", fontsize=8)
+        plt.yticks(range(n), tick_labels, fontsize=8)
     plt.xticks(rotation=45, ha="right", fontsize=8)
     plt.yticks(rotation=0, fontsize=8)
     plt.title(title or "Matrice d'adjacence")
@@ -675,11 +1219,11 @@ def try_pyvis_bn_graph(
         net = Network(height=height, width=width, directed=True, bgcolor="#ffffff", font_color="#222222")
         net.barnes_hut(gravity=-12000, central_gravity=0.2, spring_length=180)
 
-        x_slot = {"A0": -400, "A1": -130, "B": 140, "C": 400}
+        layout_px = {"A0": -400, "A1": 130, "B": 0, "C": 400, "Severity": 520}
         for i, n in enumerate(nodes):
             macro = _macro_from_node(n, variable_macro_map)
-            x = x_slot.get(macro, 0) + (i % 5) * 12
-            y = (i // 5) * 90 - 120
+            x = layout_px.get(macro, 0) + (i % 5) * 14
+            y = {"A0": -80, "A1": -80, "B": 40, "C": 160, "Severity": 260}.get(macro, 0) + (i % 3) * 8
             color = MACRO_COLOR.get(macro, "#888888")
             card_html = cards[str(n)].replace("\n", "<br>")
             label = short_title_map.get(str(n), str(n))

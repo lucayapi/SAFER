@@ -8,7 +8,14 @@ from .aggregate_bn_variables import (
 from .bn_diagnostics import compare_structure_rows, run_model_diagnostics
 from .bn_inference import run_bn_queries
 from .bn_learning import export_cpds_to_dir, fit_bn_parameters, save_bn_pickle, try_write_bif
-from .bn_structure import export_edge_tables, learn_macro_constrained_structure, learn_unconstrained_structure, macro_chain_model
+from .bn_structure import (
+    MACRO_ONTOLOGY_FR,
+    export_edge_tables,
+    learn_macro_constrained_structure,
+    learn_unconstrained_structure,
+    macro_chain_model,
+    standard_macro_edge_templates,
+)
 from .bn_visualization import (
     build_node_cards_for_model,
     build_node_short_title,
@@ -26,6 +33,8 @@ from .bn_visualization import (
     format_prob_bar,
     plot_adjacency_heatmap,
     plot_bn_graph,
+    plot_bn_graph_cpd_boxes,
+    plot_macro_causality_schematic,
     try_plotly_interactive,
     try_pyvis_bn_graph,
 )
@@ -57,6 +66,10 @@ __all__ = [
     "try_write_bif",
     "run_bn_queries",
     "plot_bn_graph",
+    "plot_bn_graph_cpd_boxes",
+    "plot_macro_causality_schematic",
+    "MACRO_ONTOLOGY_FR",
+    "standard_macro_edge_templates",
     "build_topic_node_label_map",
     "build_node_short_title",
     "build_node_summary_label",

@@ -37,11 +37,13 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 08 — Transfert macro TPN (SoftTriple + adaptateur prototypique)
+# 08 — Transfert macro TPN (encodeur modulable + adaptateur)
 
-Lecture des artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/tpn_softtriple/`.
+Lecture des artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/tpn_<encodeur>/`.
 
-**Prérequis** : `bash jobs/run_tpn_macro_transfer.sh` ou `python scripts/run_tpn_macro_transfer_discovery.py ...`
+**Encodeur** : paramètre `BASE_METHOD` (`softtriple`, `supcon`, `batch_triplet`, `scgm_text`) → dossier `tpn_<BASE_METHOD>`.
+
+**Prérequis** : `bash jobs/run_tpn_macro_transfer.sh` ou `BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh`
 """
         ),
         py(
@@ -77,7 +79,7 @@ if manifest_path.is_file():
     with open(manifest_path, encoding="utf-8") as f:
         manifest = json.load(f)
     print("run_manifest.json :")
-    for k in ("method", "checkpoint", "n_source", "n_target", "skip_bertopic"):
+    for k in ("method", "base_encoder", "checkpoint", "n_source", "n_target", "skip_bertopic"):
         print(f"  {k}: {manifest.get(k)}")
 if summary_path.is_file():
     with open(summary_path, encoding="utf-8") as f:
