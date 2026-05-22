@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -18,6 +19,18 @@ if str(ROOT) not in sys.path:
 
 from safer_core.io import ensure_dir, load_yaml
 from safer_core.paths import TEXT_ROOT
+
+SCGM_GRID_PREFIXES = ("training.", "model.")
+
+
+def validate_scgm_grid_keys(grid: Dict[str, Any]) -> None:
+    for key in grid:
+        if key == "seed" or any(key.startswith(prefix) for prefix in SCGM_GRID_PREFIXES):
+            continue
+        raise ValueError(
+            f"Clé grille SCGM invalide : {key!r}. "
+            f"Préfixes autorisés : {', '.join(SCGM_GRID_PREFIXES)}"
+        )
 
 
 def expand_grid(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -99,11 +112,15 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--grid-config", type=str, default="configs/tuning/scgm_text_grid.yaml")
     parser.add_argument("--max-combos", type=int, default=None)
     parser.add_argument("--skip-final-fit", action="store_true")
+    parser.add_argument("--seed", type=int, default=None, help="Override seed global")
     tune_args, _ = parser.parse_known_args(argv)
 
     spec = load_yaml(TEXT_ROOT / tune_args.grid_config)
+    if os.environ.get("TEST_CORPUS"):
+        spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
     base_config = TEXT_ROOT / str(spec.get("base_config", "configs/scgm_text_strict_fidelity.yaml"))
     grid = spec.get("grid") or {}
+    validate_scgm_grid_keys(grid)
     n_folds = int(spec.get("n_folds", 5))
     selection_metric = str(spec.get("selection_metric", "eta2_macro_balanced_perc"))
     tuning_output = str(spec.get("output_dir", "output/scgm_text/tuning"))
@@ -112,6 +129,10 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     base_args = parse_args()
     apply_config(base_args, str(base_config))
     finalize_args(base_args)
+    if tune_args.seed is not None:
+        base_args.seed = int(tune_args.seed)
+    elif spec.get("seed") is not None:
+        base_args.seed = int(spec["seed"])
     base_args.best_checkpoint_metric = selection_metric
 
     combos = expand_grid(grid)

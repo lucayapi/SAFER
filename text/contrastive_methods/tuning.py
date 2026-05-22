@@ -5,8 +5,9 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import yaml
@@ -42,6 +43,27 @@ def expand_grid(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [dict(zip(keys, vals)) for vals in itertools.product(*values_list)]
 
 
+CONTRASTIVE_GRID_PREFIXES: Dict[str, Tuple[str, ...]] = {
+    "softtriple": ("training.", "data.", "model.", "softtriple."),
+    "supcon": ("training.", "data.", "model.", "supcon."),
+    "batch_triplet": ("training.", "data.", "model.", "batch_triplet."),
+}
+
+
+def validate_contrastive_grid_keys(method_name: str, grid: Dict[str, Any]) -> None:
+    """Vérifie que chaque clé de grille est une notation pointée supportée."""
+    allowed = CONTRASTIVE_GRID_PREFIXES.get(method_name)
+    if not allowed:
+        raise ValueError(f"Méthode tuning inconnue : {method_name}")
+    for key in grid:
+        if key == "seed" or any(key.startswith(prefix) for prefix in allowed):
+            continue
+        raise ValueError(
+            f"Clé grille invalide pour {method_name}: {key!r}. "
+            f"Préfixes autorisés : {', '.join(allowed)}"
+        )
+
+
 def filter_softtriple_tuning_combos(combos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     Filtre les combinaisons invalides SoftTriple :
@@ -75,15 +97,25 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--max-combos", type=int, default=None)
     parser.add_argument("--skip-final-fit", action="store_true")
+    parser.add_argument("--seed", type=int, default=None, help="Override seed global")
     args, _ = parser.parse_known_args(argv)
 
     spec = load_yaml(TEXT_ROOT / args.grid_config)
+    method_name = str(spec.get("method_name", method_name))
     base_path = TEXT_ROOT / str(spec.get("base_config", f"configs/methods/{method_name}.yaml"))
     base_raw = load_yaml(base_path)
+    base_raw = merge_config_dict(base_raw, {"seed": seed})
     grid = spec.get("grid") or {}
+    validate_contrastive_grid_keys(method_name, grid)
     selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
     n_folds = int(spec.get("n_folds", 5))
-    seed = int(spec.get("seed", base_raw.get("seed", 42)))
+    seed = int(
+        args.seed
+        if args.seed is not None
+        else spec.get("seed", base_raw.get("seed", 42))
+    )
+    if os.environ.get("TEST_CORPUS"):
+        spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
     tuning_output = str(spec.get("output_dir", f"output/{method_name}/tuning"))
     final_output = str(spec.get("final_output_dir", f"output/{method_name}"))
     final_fit = bool(spec.get("final_fit_full_data", True)) and not args.skip_final_fit
@@ -140,7 +172,7 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
                 for key in GEOMETRY_METRIC_KEYS:
                     row[f"val_{key}"] = result.val_geometry.get(key)
         summary_rows.append(row)
-        score = float(row.get("selection_score", row.get("selection_score", float("-inf"))))
+        score = float(row.get("selection_score", float("-inf")))
         if not (score == score):  # NaN check
             score = selection_score(row, selection_metric)
         if score > best_score:

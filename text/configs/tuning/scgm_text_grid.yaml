@@ -3,6 +3,7 @@ output_dir: output/scgm_text/tuning
 final_output_dir: output/scgm_text
 selection_metric: eta2_macro_balanced_perc
 n_folds: 5
+seed: 42
 test_corpus: metallurgie
 final_fit_full_data: true
 

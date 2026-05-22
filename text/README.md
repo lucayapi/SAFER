@@ -90,8 +90,9 @@ sbatch jobs/export_test_embeddings.sh
 # python scripts/export_test_embeddings.py --corpus metallurgie
 
 # 5. Tuning K-fold (sélection sur mean eta2_macro_balanced_perc)
-sbatch jobs/tune_scgm_text.sh
-sbatch jobs/tune_batch_triplet.sh
+cd jobs && bash submit_tuning_all.sh
+# ou : sbatch tune_scgm_text.sh tune_softtriple.sh tune_supcon.sh tune_batch_triplet.sh
+# Variables : TEST_CORPUS, MAX_COMBOS, SKIP_FINAL_FIT, SEED, GRID_CONFIG
 # Sorties : output/<method>/tuning/grid_summary.csv, best_combo.json
 # Puis fit final 100 % BTP → metrics_geometry_btp.csv + metrics_geometry_test.csv
 
@@ -300,7 +301,8 @@ YAML dédiés sous `configs/tuning/` (ne modifient pas les configs `methods/`) :
 ```bash
 python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_grid.yaml
 # ou : sbatch jobs/tune_batch_triplet.sh
-# Limiter la grille : --max-combos 8
+# Limiter la grille : MAX_COMBOS=8 sbatch jobs/tune_softtriple.sh
+# K-fold seul : SKIP_FINAL_FIT=1 sbatch jobs/tune_supcon.sh
 ```
 
 Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`, `softtriple.gamma`, `training.distance_metric`, etc.). Hyperparamètres spécifiques sous `supcon:` / `softtriple:` / `batch_triplet:` uniquement (pas de `distance_metric` dupliqué).

@@ -1,4 +1,16 @@
 #!/bin/bash
+# Grille Batch Triplet (K-fold) + fit final 100 % BTP du meilleur combo.
+#
+# Usage : cd ~/SAFER/text && sbatch jobs/tune_batch_triplet.sh
+# Variables :
+#   GRID_CONFIG=configs/tuning/batch_triplet_grid.yaml
+#   TEST_CORPUS=metallurgie
+#   MAX_COMBOS=8
+#   SKIP_FINAL_FIT=1
+#   SEED=42
+#
+# Sorties : output/batch_triplet/tuning/ puis output/batch_triplet/checkpoints/best_model
+
 #SBATCH --job-name=tune_triplet
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -19,6 +31,8 @@ else
   # shellcheck source=jobs/_bootstrap.sh
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
+# shellcheck source=jobs/_tune_common.sh
+source "${TEXT_JOBS_DIR}/_tune_common.sh"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
@@ -26,4 +40,4 @@ export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
-python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_grid.yaml
+tune_job_run tune_batch_triplet.py configs/tuning/batch_triplet_grid.yaml

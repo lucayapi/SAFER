@@ -4,6 +4,7 @@ output_dir: output/supcon/tuning
 final_output_dir: output/supcon
 selection_metric: eta2_macro_balanced_perc
 n_folds: 5
+seed: 42
 test_corpus: metallurgie
 final_fit_full_data: true
 
@@ -12,4 +13,7 @@ grid:
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
   training.distance_metric: [cosine]
+  training.warmup_ratio: [0.1]
   supcon.temperature: [0.05, 0.07]
+  supcon.base_temperature: [0.05, 0.07]
+  supcon.normalize_embeddings: [true]

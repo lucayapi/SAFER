@@ -4,6 +4,7 @@ output_dir: output/batch_triplet/tuning
 final_output_dir: output/batch_triplet
 selection_metric: eta2_macro_balanced_perc
 n_folds: 5
+seed: 42
 test_corpus: metallurgie
 final_fit_full_data: true
 
@@ -12,3 +13,5 @@ grid:
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
   training.distance_metric: [euclidean]
+  training.warmup_ratio: [0.1]
+  # batch_triplet.triplet_margin: [5.0]  # décommenter si supporté par sentence-transformers

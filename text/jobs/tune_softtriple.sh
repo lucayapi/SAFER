@@ -1,4 +1,17 @@
 #!/bin/bash
+# Grille SoftTriple (K-fold) + fit final 100 % BTP du meilleur combo.
+#
+# Usage : cd ~/SAFER/text && sbatch jobs/tune_softtriple.sh
+# Variables :
+#   GRID_CONFIG=configs/tuning/softtriple_grid.yaml
+#   TEST_CORPUS=metallurgie
+#   MAX_COMBOS=16
+#   SKIP_FINAL_FIT=1
+#   SEED=42
+#
+# Hyperparamètres grilles : training.*, softtriple.* (voir YAML).
+# Sorties : output/softtriple/tuning/ puis output/softtriple/checkpoints/best_model
+
 #SBATCH --job-name=tune_softtriple
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
@@ -19,6 +32,8 @@ else
   # shellcheck source=jobs/_bootstrap.sh
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
+# shellcheck source=jobs/_tune_common.sh
+source "${TEXT_JOBS_DIR}/_tune_common.sh"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
@@ -26,4 +41,4 @@ export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
 export TRANSFORMERS_CACHE="${HF_HOME}"
 mkdir -p "${HF_HOME}"
 
-python scripts/tune_softtriple.py --grid-config configs/tuning/softtriple_grid.yaml
+tune_job_run tune_softtriple.py configs/tuning/softtriple_grid.yaml
