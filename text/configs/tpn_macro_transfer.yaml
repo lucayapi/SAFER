@@ -21,8 +21,8 @@ source:
   label_col: pred_label
   pred_ok_col: pred_ok
   group_col: accident_id
-  # SCGM source : embeddings BTP Qwen (si absent → voir embeddings/ du registre BTP)
-  # emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  # SCGM source — embeddings BTP Qwen (si absent, voir registre BTP)
+  # emb_csv optionnel : embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 target:
   text_col: sentence
@@ -32,15 +32,14 @@ target:
 method:
   name: tpn_softtriple
   base_method: softtriple
-  # checkpoint : utiliser checkpoints.<base_method> ou --checkpoint CLI
+  # checkpoint — checkpoints.<base_method> ou --checkpoint CLI
   contrastive_config: configs/methods/softtriple.yaml
-  # emb_csv cible SCGM : registre test_corpora.yaml si omis
-  # source.emb_csv requis pour scgm_text + precomputed_embeddings (BTP)
+  # emb_csv cible SCGM — registre test_corpora.yaml si omis
 
-macros: [A0, A1, B, C]
+macros: ["A0", "A1", "B", "C"]
 
 encoding:
-  device: cuda
+  device: "cuda"
   encode_batch_size: 8
   normalize_embeddings: true
 

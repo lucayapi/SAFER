@@ -35,11 +35,11 @@ Les corpus disponibles sont déclarés dans [`configs/test_corpora.yaml`](../../
 export TEST_CORPUS=metallurgie
 
 # CLI
-python scripts/run_macro_transfer_discovery.py --method scgm_text --corpus metallurgie
+python scripts/run_tpn_macro_transfer_discovery.py --base-method scgm_text --corpus metallurgie
 sbatch jobs/train_scgm_text.sh   # avec TEST_CORPUS dans l'environnement
 sbatch jobs/export_raw_geometry.sh
 sbatch jobs/export_test_embeddings.sh
-CORPUS=metallurgie bash jobs/run_macro_transfer.sh
+CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
 ```
 
 **Sorties** (sous `output_test/<corpus_id>/`) :

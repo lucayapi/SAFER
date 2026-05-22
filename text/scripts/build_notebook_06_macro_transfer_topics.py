@@ -37,17 +37,14 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 06 — Transfert macro-guidé + topics intra-macro (corpus test)
+# 06 — Transfert macro TPN + topics intra-macro (corpus test)
 
-Encodeur source : checkpoints BTP sous `output/scgm_text/` ou `output/softtriple/` (job `METHOD=scgm_text|softtriple|both`).
+Comparaison **TPN-SCGM** vs **TPN-SoftTriple** (`output_test/<corpus>/macro_transfer/tpn_<encodeur>/`) :
+- Gating macro adapté (`transfer/metadata_with_tpn_macro_probs.csv`, `transfer_metrics_adapted.json`)
+- Topics **BERTopic** par macro + libellés OpenAI (`theme_label`)
+- Cartes **UMAP + DataMapPlot** (embeddings `target_adapted.npy`)
 
-Comparaison **SCGM** vs **SoftTriple** sur le corpus test (`TEST_CORPUS`, registre `configs/test_corpora.yaml`) :
-- Phase 1 : \(p(m|u)\), métriques de classification (`transfer/`)
-- Phase 2 : topics **BERTopic** par macro (UMAP, HDBSCAN, c-TF-IDF + `stop_metier.txt`)
-- Phase 3 : libellés via `bertopic.representation.OpenAI` (colonne `theme_label` dans `themes_by_macro.csv`)
-- Cartes **UMAP + DataMapPlot** (globale par macro, puis par macro × topics) — SCGM et SoftTriple
-
-**Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` pour les deux méthodes. Les cartes 2D nécessitent `embeddings/projected.npy` dans chaque dossier `macro_transfer/<méthode>/`.
+**Prérequis** : lancer les deux encodeurs, ex. `BASE_METHOD=scgm_text` puis `BASE_METHOD=softtriple` via `jobs/run_tpn_macro_transfer.sh`.
 """
         ),
         py(
@@ -59,7 +56,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from safer_core.test_corpus import resolve_test_corpus, target_discovery_dir
+from safer_core.test_corpus import resolve_test_corpus, macro_transfer_output_dir
 
 # --- Parameters (modifier ici ou via papermill) ---
 TEST_CORPUS = "metallurgie"
@@ -71,14 +68,14 @@ PLOT_MACROS = None  # None → toutes (A0, A1, B, C) ; ou liste ex. ["A1", "B"]
 RUN_PCA_TSNE_PER_MACRO = True
 
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-SCGM_DIR = target_discovery_dir("scgm_text", _spec.id, anchor=TEXT_ROOT)
-SOFT_DIR = target_discovery_dir("softtriple", _spec.id, anchor=TEXT_ROOT)
-FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_macro_transfer_{_spec.id}"
+SCGM_DIR = macro_transfer_output_dir("tpn_scgm_text", _spec.id, anchor=TEXT_ROOT)
+SOFT_DIR = macro_transfer_output_dir("tpn_softtriple", _spec.id, anchor=TEXT_ROOT)
+FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_tpn_macro_{_spec.id}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 print(f"Corpus test : {_spec.display_name} ({_spec.id})")
-print("SCGM :", SCGM_DIR)
-print("SoftTriple :", SOFT_DIR)
+print("TPN-SCGM :", SCGM_DIR)
+print("TPN-SoftTriple :", SOFT_DIR)
 
 sns.set_theme(style="whitegrid")
 """
@@ -88,8 +85,8 @@ sns.set_theme(style="whitegrid")
             r"""
 def load_transfer(root: Path, label: str):
     tdir = root / "transfer"
-    metrics_path = tdir / "transfer_metrics.json"
-    meta_path = tdir / "metadata_with_macro_probs.csv"
+    metrics_path = tdir / "transfer_metrics_adapted.json"
+    meta_path = tdir / "metadata_with_tpn_macro_probs.csv"
     if not metrics_path.is_file():
         print(f"[{label}] absent:", metrics_path)
         return None, None
@@ -99,7 +96,7 @@ def load_transfer(root: Path, label: str):
     return metrics, meta
 
 rows = []
-for label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     m, _ = load_transfer(root, label)
     if m:
         rows.append({
@@ -116,7 +113,7 @@ display(transfer_df)
         ),
         py(
             r"""
-for label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     m, meta = load_transfer(root, label)
     if meta is None or "pred_label" not in meta.columns:
         continue
@@ -137,7 +134,7 @@ def load_topics(root: Path):
     p = root / "topics_bertopic" / "themes_by_macro.csv"
     return pd.read_csv(p) if p.is_file() else pd.DataFrame()
 
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     summary_path = root / "summary" / "topics_summary.csv"
     if summary_path.is_file():
         print("===", method_label, "— résumé topics ===")
@@ -150,7 +147,7 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
         ),
         py(
             r"""
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     th = load_topics(root)
     if len(th) and "theme_label" in th.columns:
         print(f"\n{method_label} — libellés (bertopic.representation.OpenAI)")
@@ -166,7 +163,7 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
         py(
             r"""
 quality_rows = []
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     th = load_topics(root)
     if not len(th):
         continue
@@ -184,12 +181,12 @@ display(pd.DataFrame(quality_rows))
             r"""
 ## § Cartes 2D — topics avec libellés (`theme_label`)
 
-Embeddings : `embeddings/projected.npy`. Assignations : `topics_bertopic/assignments.csv` + `themes_by_macro.csv`.
+Embeddings : `embeddings/target_adapted.npy`. Assignations : `topics_bertopic/assignments.csv` + `themes_by_macro.csv`.
 
 **Important** : la carte « macro seule » (A0, A1, B, C) ne montre **pas** les libellés de topics. Les cellules ci-dessous utilisent **`theme_label`** (colonne OpenAI / BERTopic) sur **chaque topic** — format `A1·T5: Absence de protection…`.
 
-- **Globale topics** : tous les topics assignés (SCGM puis SoftTriple)
-- **Comparaison** : panneau 1×2 SCGM vs SoftTriple (scatter + centroïdes annotés)
+- **Globale topics** : tous les topics assignés (TPN-SCGM puis TPN-SoftTriple)
+- **Comparaison** : panneau 1×2 TPN-SCGM vs TPN-SoftTriple (scatter + centroïdes annotés)
 - **Par macro** : zoom intra-macro (optionnel, section suivante)
 - **Macro seule** (`m_hat`) : section optionnelle en fin de notebook
 """
@@ -219,14 +216,14 @@ def _load_artifacts_or_none(method_label: str, root: Path):
 
 
 ARTIFACTS = {}
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     ARTIFACTS[method_label] = _load_artifacts_or_none(method_label, root)
 """
         ),
         py(
             r"""
 # Libellés topics (theme_label) — une carte DataMapPlot par méthode
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     art = ARTIFACTS.get(method_label)
     if art is None:
         continue
@@ -246,7 +243,7 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
         ),
         py(
             r"""
-# SCGM vs SoftTriple côte à côte (même seuil q_conf)
+# TPN-SCGM vs TPN-SoftTriple côte à côte (même seuil q_conf)
 _compare = {k: v for k, v in ARTIFACTS.items() if v is not None}
 if _compare:
     plot_global_topics_compare_methods(
@@ -262,7 +259,7 @@ if _compare:
         md("### Option — carte macro seule (`m_hat`, sans libellés topics)"),
         py(
             r"""
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     art = ARTIFACTS.get(method_label)
     if art is None:
         continue
@@ -279,7 +276,7 @@ for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
         ),
         py(
             r"""
-for method_label, root in (("SCGM", SCGM_DIR), ("SoftTriple", SOFT_DIR)):
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     art = ARTIFACTS.get(method_label)
     if art is None:
         continue

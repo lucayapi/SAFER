@@ -46,4 +46,4 @@ python scripts/train_scgm_text.py \
 # Après train (eval BTP + test → output_test/ inclus dans train_scgm_text.py) :
 #   sbatch jobs/export_raw_geometry.sh
 #   sbatch jobs/export_test_embeddings.sh   # si embeddings/test/*.csv absent
-#   CORPUS=metallurgie bash jobs/run_macro_transfer.sh
+#   CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh

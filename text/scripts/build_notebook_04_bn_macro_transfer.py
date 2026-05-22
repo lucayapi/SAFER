@@ -48,7 +48,7 @@ Ce notebook construit un **réseau bayésien** à partir des exports **`macro_tr
 
 Les variables binaires au niveau accident décrivent la **co-présence de topics intra-macro** (`macro_topic_*`) ; le graphe est appris avec **pgmpy** (BIC, HillClimbing sous contraintes macro).
 
-**Prérequis** : `CORPUS=<id> bash jobs/run_macro_transfer.sh` (méthode SCGM ou SoftTriple).
+**Prérequis** : `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (sortie `macro_transfer/tpn_<encodeur>/`).
 
 ### Nuances d’interprétation
 
@@ -95,7 +95,7 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
             r"""
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
-MACRO_TRANSFER_METHOD = "scgm_text"  # scgm_text | softtriple
+MACRO_TRANSFER_METHOD = "tpn_scgm_text"  # tpn_softtriple | tpn_scgm_text | tpn_supcon | …
 OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_staging/
 MACRO_CONF_THRESHOLD = 0.50
 TOPIC_GAMMA_THRESHOLD = 0.50

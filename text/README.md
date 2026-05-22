@@ -121,7 +121,7 @@ sbatch train_scgm_text.sh         # inclut eval BTP + test
 sbatch export_test_embeddings.sh  # CSV Qwen test si besoin
 sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
-CORPUS=metallurgie bash run_macro_transfer.sh
+CORPUS=metallurgie bash run_tpn_macro_transfer.sh
 sbatch compare_methods.sh
 ```
 
@@ -169,33 +169,27 @@ Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 01 
 
 Les anciens dossiers `resultats/` et `resultats_test/` peuvent être renommés en `output/` et `output_test/` (ou relancer les jobs). Les chemins legacy `resultats/...` sont redirigés vers `output/...` si `SAFER_LEGACY_PATHS=1`.
 
-## Transfert macro + topics cible (corpus test)
+## Transfert macro TPN + topics cible (corpus test)
 
-Pipeline **`macro_transfer/`** : encodeur source (SCGM ou SoftTriple) → \(p(m|u)\) sur le corpus test → groupes macro durs → topics **BERTopic** (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`) par macro, libellés via **`bertopic.representation.OpenAI`** par défaut (`theme_label` dans `topics_bertopic/themes_by_macro.csv`).
+Pipeline **`macro_transfer/`** (TPN) : encodeur contrastif BTP **gelé** → adaptateur prototypique sur la cible → gating macro \(p(m|u)\) → topics **BERTopic** intra-macro (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`), libellés via **`bertopic.representation.OpenAI`** par défaut.
 
-**Checkpoints source** (BTP) : `output/scgm_text/checkpoints/best_model.pt`, `output/softtriple/checkpoints/best_model/`
+**Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`).
 
-Paramètres : [`configs/macro_transfer.yaml`](configs/macro_transfer.yaml) (`bertopic.representation.enabled`, modèle, `nr_docs`, …). Les appels OpenAI sont toujours actifs si `representation.enabled: true` (défaut).
+Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yaml). Encodeur choisi via `BASE_METHOD` dans `jobs/run_tpn_macro_transfer.sh`.
 
-**Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml) : `description`, `examples`, `label_examples`) + contexte sectoriel du corpus actif ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml), clé `prompt_context` dans [`configs/test_corpora.yaml`](configs/test_corpora.yaml)). Injectés dans `bertopic.representation` (`include_corpus_context: true` par défaut). Pas de second passage post-hoc (l’enrichissement SCGM BTP reste dans `scgm_text/openai_theme_labels.py`).
-
-**Encodeur source** (variable d’environnement `METHOD` dans `jobs/run_macro_transfer.sh`) :
-
-| `METHOD` | Comportement |
-|----------|----------------|
-| `scgm_text` | Uniquement checkpoint SCGM BTP → `output_test/<corpus>/macro_transfer/scgm_text/` |
-| `softtriple` | Uniquement SoftTriple BTP → `.../macro_transfer/softtriple/` |
-| `both` (défaut) | Les deux passes (comparaison notebook 06) |
+**Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml)) + contexte sectoriel ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml)).
 
 | Étape | Commande |
 |-------|----------|
-| Transfert | `CORPUS=<id> bash jobs/run_macro_transfer.sh` |
-| SCGM seul | `METHOD=scgm_text CORPUS=<id> bash jobs/run_macro_transfer.sh` |
-| CLI | `python scripts/run_macro_transfer_discovery.py --method scgm_text --corpus <id>` |
-| Notebook 06 (lecture) | `python scripts/build_notebook_06_macro_transfer_topics.py` → comparaison SCGM vs SoftTriple après jobs |
-| Notebook 07 (local) | `python scripts/build_notebook_07_macro_transfer_interactive.py` → run + viz UMAP/DataMapPlot (`RUN_PIPELINE`, un `SOURCE_METHOD`) |
+| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
+| Encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
+| CLI | `python scripts/run_tpn_macro_transfer_discovery.py --corpus <id> --base-method softtriple` |
+| BERTopic seul | `--bertopic-only` (artefacts déjà encodés) |
+| Notebook 06 | comparaison `tpn_scgm_text` vs `tpn_softtriple` |
+| Notebook 07 | run local TPN + viz 2D |
+| Notebook 08 | diagnostics TPN (initial vs adapté) |
 
-**Sorties** : `output_test/<corpus_id>/macro_transfer/<method>/`
+**Sorties** : `output_test/<corpus_id>/macro_transfer/tpn_<encodeur>/`
 
 ## Réseaux bayésiens
 
@@ -211,13 +205,14 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — deux tableaux (BTP + test métallurgie), η² / RankMe |
-| `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_macro_transfer.sh`. |
+| `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_tpn_macro_transfer.sh`. |
 | `04_bayesian_network_macro_transfer.ipynb` | BN sur corpus test (staging **macro_transfer** → `output_test/<TEST_CORPUS>/bn_staging/`) |
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
-| `06_macro_transfer_topics.ipynb` | **Lecture seule** — comparaison SCGM vs SoftTriple + topics BERTopic après `run_macro_transfer.sh` (`METHOD=both`) |
-| `07_macro_transfer_interactive.ipynb` | **Run local** d’un encodeur (`SOURCE_METHOD`) via `run_macro_transfer_discovery` + viz 2D (UMAP, DataMapPlot, PCA/t-SNE) ; `RUN_PIPELINE=False` pour reviz sans refit |
+| `06_macro_transfer_topics.ipynb` | **Lecture seule** — comparaison TPN SCGM vs SoftTriple + topics BERTopic |
+| `07_macro_transfer_interactive.ipynb` | **Run local** TPN (`BASE_METHOD`) + viz 2D ; `RUN_PIPELINE=False` pour reviz sans refit |
+| `08_tpn_macro_transfer_results.ipynb` | **Lecture seule** — métriques initial/adapté, gating, PCA, courbe d’entraînement |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
 

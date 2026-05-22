@@ -16,5 +16,5 @@ sbatch train_softtriple.sh
 sbatch train_supcon.sh
 echo "Jobs soumis. Suivi : squeue -u \$USER"
 echo "Après train SCGM : sbatch export_test_embeddings.sh  # si CSV test absent"
-echo "Puis : CORPUS=metallurgie bash run_macro_transfer.sh"
+echo "Puis : CORPUS=metallurgie bash run_tpn_macro_transfer.sh"
 echo "Comparaisons : sbatch compare_methods.sh"

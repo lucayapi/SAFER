@@ -384,7 +384,7 @@ for hint, cond in (
     ("sbatch jobs/train_scgm_text.sh (projections BTP)", projected_btp is None),
     (f"train_scgm + TEST_CORPUS ou export_scgm_test_projections.py", projected_test is None),
     (f"sbatch jobs/export_raw_geometry.sh (métriques raw test)", metrics_raw_test is None),
-    (f"CORPUS={TEST_CORPUS} bash jobs/run_macro_transfer.sh (topics test)", False),
+    (f"CORPUS={TEST_CORPUS} bash jobs/run_tpn_macro_transfer.sh (topics test)", False),
 ):
     if cond:
         print("→", hint)
@@ -430,7 +430,7 @@ else:
 BTP_MD = """## 5. Corpus BTP (train / modèle final)
 
 Fit final **100 % BTP** après K-fold ; checkpoint `checkpoints/best_model.pt`.  
-Topics / OpenAI sur corpus test : voir `jobs/run_macro_transfer.sh` et notebook 06.
+Topics / OpenAI sur corpus test : voir `jobs/run_tpn_macro_transfer.sh` et notebook 06.
 """
 
 BTP_CONFIG_SOURCE = """if run_config:
@@ -746,7 +746,7 @@ def main() -> None:
             "# 02 — SCGM Text (lecture seule)\n\n"
             "Analyse des sorties sous `output/scgm_text/`. "
             "Entraînement BTP : `train_scgm_text.sh` ; raw BTP+test : `export_raw_geometry.sh`. "
-            "Test : `output_test/` ; topics : `run_macro_transfer.sh` + notebook 06.\n",
+            "Test : `output_test/` ; topics : `run_tpn_macro_transfer.sh` + notebook 06.\n",
             "markdown",
             "nb_title",
         ),

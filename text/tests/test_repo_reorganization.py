@@ -96,7 +96,7 @@ def test_jobs_exist():
         "train_batch_triplet.sh",
         "train_softtriple.sh",
         "train_supcon.sh",
-        "run_macro_transfer.sh",
+        "run_tpn_macro_transfer.sh",
         "compare_methods.sh",
     ):
         assert (JOBS_DIR / name).is_file(), name

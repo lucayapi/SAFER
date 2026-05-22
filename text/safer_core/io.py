@@ -17,10 +17,26 @@ def ensure_dir(path: str | Path) -> Path:
 
 
 def load_yaml(path: str | Path) -> Dict[str, Any]:
-    with open(path, "r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    try:
+        data = yaml.safe_load(text) or {}
+    except yaml.YAMLError as exc:
+        hint_lines: list[str] = []
+        if hasattr(exc, "problem_mark") and exc.problem_mark is not None:
+            mark = exc.problem_mark
+            lines = text.splitlines()
+            idx = mark.line
+            for j in range(max(0, idx - 2), min(len(lines), idx + 3)):
+                hint_lines.append(f"  L{j + 1}: {lines[j]!r}")
+        hint = "\n".join(hint_lines) if hint_lines else ""
+        raise ValueError(
+            f"YAML invalide : {p}\n{exc}"
+            + (f"\nContexte :\n{hint}" if hint else "")
+            + "\nVérifier les ':' manquants (ex. `encode_batch_size: 8`)."
+        ) from exc
     if not isinstance(data, dict):
-        raise ValueError(f"YAML racine doit être un mapping : {path}")
+        raise ValueError(f"YAML racine doit être un mapping : {p}")
     return data
 
 

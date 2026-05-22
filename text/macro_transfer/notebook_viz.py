@@ -27,22 +27,27 @@ class RunArtifacts:
 
 
 def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
-    """Charge projected.npy, metadata transfert et métriques."""
+    """Charge embeddings TPN adaptés, metadata gating et métriques adaptées."""
     root = Path(out_dir).resolve()
     emb = root / "embeddings"
-    z_path = emb / "projected.npy"
+    z_path = emb / "target_adapted.npy"
     if not z_path.is_file():
-        raise FileNotFoundError(f"Embeddings manquants : {z_path}")
+        z_path = emb / "target_projected.npy"
+    if not z_path.is_file():
+        raise FileNotFoundError(
+            f"Embeddings TPN manquants sous {emb} "
+            "(attendu target_adapted.npy ou target_projected.npy)."
+        )
     z = np.load(z_path)
     transfer_dir = root / "transfer"
-    meta_path = transfer_dir / "metadata_with_macro_probs.csv"
+    meta_path = transfer_dir / "metadata_with_tpn_macro_probs.csv"
     if not meta_path.is_file():
-        raise FileNotFoundError(f"Métadonnées transfert manquantes : {meta_path}")
+        raise FileNotFoundError(f"Métadonnées TPN manquantes : {meta_path}")
     meta = pd.read_csv(meta_path)
     gating_cols = [c for c in meta.columns if c.startswith("p_") or c in ("m_hat", "q_conf", "ambiguous")]
     gating = meta[gating_cols].copy() if gating_cols else pd.DataFrame(index=meta.index)
     metrics: Dict[str, Any] = {}
-    mpath = transfer_dir / "transfer_metrics.json"
+    mpath = transfer_dir / "transfer_metrics_adapted.json"
     if mpath.is_file():
         with open(mpath, encoding="utf-8") as f:
             metrics = json.load(f)

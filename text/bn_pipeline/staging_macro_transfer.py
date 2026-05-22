@@ -20,8 +20,6 @@ TOPICS_SUBDIR = "topics_bertopic"
 _TPN_METADATA = "metadata_with_tpn_macro_probs.csv"
 
 METADATA_BY_METHOD: dict[str, str] = {
-    "scgm_text": "metadata_with_macro_probs.csv",
-    "softtriple": "metadata_with_macro_probs.csv",
     "tpn_softtriple": _TPN_METADATA,
     "tpn_supcon": _TPN_METADATA,
     "tpn_batch_triplet": _TPN_METADATA,
@@ -72,7 +70,7 @@ def write_bn_compat_arrays(exports: Path, meta: pd.DataFrame) -> None:
     prob_cols = _macro_prob_columns(meta)
     if len(prob_cols) != len(MACRO_NAMES):
         raise ValueError(
-            f"Colonnes p_macro manquantes dans metadata_with_macro_probs "
+            f"Colonnes p_macro manquantes dans les métadonnées transfert "
             f"(attendu {list(MACRO_NAMES)}, trouvé {prob_cols})."
         )
     p_macro = meta[prob_cols].to_numpy(dtype=np.float64)
@@ -104,7 +102,7 @@ def write_bn_compat_arrays(exports: Path, meta: pd.DataFrame) -> None:
 
 def resolve_transfer_metadata_path(mt: Path, method: str) -> Path:
     """Chemin CSV métadonnées macro pour une méthode macro_transfer."""
-    name = METADATA_BY_METHOD.get(method, "metadata_with_macro_probs.csv")
+    name = METADATA_BY_METHOD.get(method, _TPN_METADATA)
     return mt / "transfer" / name
 
 
@@ -119,8 +117,8 @@ def stage_bn_exports_from_macro_transfer(
     """
     Copie les artefacts macro_transfer vers ``bn_staging/staging/bn_exports/``.
 
-    Entrées attendues sous ``output_test/<corpus>/macro_transfer/<method>/`` :
-    ``transfer/metadata_with_macro_probs.csv``, ``topics_bertopic/assignments.csv``,
+    Entrées attendues sous ``output_test/<corpus>/macro_transfer/tpn_<encodeur>/`` :
+    ``transfer/metadata_with_tpn_macro_probs.csv``, ``topics_bertopic/assignments.csv``,
     ``topics_bertopic/themes_by_macro.csv`` (colonnes ``theme_label``, ``top_words``),
     ``embeddings/prob_*.npy``.
     """
@@ -136,9 +134,7 @@ def stage_bn_exports_from_macro_transfer(
     exports = out_root / "staging" / "bn_exports"
     exports.mkdir(parents=True, exist_ok=True)
 
-    meta_name = metadata_filename or METADATA_BY_METHOD.get(
-        method, "metadata_with_macro_probs.csv"
-    )
+    meta_name = metadata_filename or METADATA_BY_METHOD.get(method, _TPN_METADATA)
     transfer_meta = mt / "transfer" / meta_name
     if not transfer_meta.is_file():
         raise FileNotFoundError(f"{meta_name} manquant : {transfer_meta}")

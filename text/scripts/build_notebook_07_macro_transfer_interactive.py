@@ -37,22 +37,22 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 07 — macro_transfer interactif (run local + visualisations)
+# 07 — Transfert macro TPN interactif (run local + visualisations)
 
-Exécute le pipeline **macro_transfer** sur un corpus de test (sans SLURM), puis affiche métriques, tableaux et cartes **UMAP / DataMapPlot / PCA-t-SNE**.
+Exécute le pipeline **TPN** sur un corpus de test (sans SLURM), puis affiche métriques, tableaux et cartes **UMAP / DataMapPlot / PCA-t-SNE**.
 
 | Notebook | Usage |
 |----------|--------|
-| **07** (ce fichier) | Run local d’**un** encodeur (`SOURCE_METHOD`) + viz 2D |
-| **06** | Lecture comparative **SCGM vs SoftTriple** après jobs cluster |
+| **07** (ce fichier) | Run local TPN (`BASE_METHOD`) + viz 2D |
+| **06** | Lecture comparative **TPN-SCGM vs TPN-SoftTriple** après jobs cluster |
+| **08** | Diagnostics initial/adapté (lecture seule) |
 
-**Sorties** : `output_test/<TEST_CORPUS>/macro_transfer/<SOURCE_METHOD>/`
+**Sorties** : `output_test/<TEST_CORPUS>/macro_transfer/tpn_<BASE_METHOD>/`
 
 **Prérequis** :
-- Checkpoint BTP : `output/scgm_text/checkpoints/` ou `output/softtriple/checkpoints/`
-- Embeddings Qwen test : `embeddings/test/Qwen3-Embedding-0.6B_<corpus>.csv` (sinon `python scripts/export_test_embeddings.py --corpus <id>`)
-- GPU recommandé (`DEVICE=cuda`) ; BERTopic (UMAP/HDBSCAN/c-TF-IDF, `stop_metier.txt`) peut être lourd en RAM
-- OpenAI : `bertopic.representation` activé dans le YAML (clé API + réseau requis)
+- Checkpoint BTP : `output/<BASE_METHOD>/checkpoints/`
+- Embeddings Qwen test : `embeddings/test/Qwen3-Embedding-0.6B_<corpus>.csv`
+- GPU recommandé ; OpenAI si `bertopic.representation` activé dans `configs/tpn_macro_transfer.yaml`
 """
         ),
         py(
@@ -62,16 +62,17 @@ from pathlib import Path
 
 # --- Parameters (papermill-friendly) ---
 TEST_CORPUS = "metallurgie"
-SOURCE_METHOD = "scgm_text"  # scgm_text | softtriple
+BASE_METHOD = "softtriple"  # softtriple | supcon | batch_triplet | scgm_text
 RUN_PIPELINE = True
 DEVICE = "cuda"  # cpu si pas de GPU
 CONFIDENCE_THRESHOLD = 0.5
-CONFIG_PATH = "configs/macro_transfer.yaml"
-FIG_DIR = None  # défaut : notebooks/figures/07_macro_transfer_<corpus>/
+CONFIG_PATH = "configs/tpn_macro_transfer.yaml"
+FIG_DIR = None  # défaut : notebooks/figures/07_tpn_<corpus>/
 
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+from macro_transfer.tpn_encode import resolve_tpn_checkpoint, tpn_method_name, validate_encoder_name
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import (
@@ -80,9 +81,10 @@ from safer_core.test_corpus import (
     resolve_test_paths_from_config,
 )
 
+validate_encoder_name(BASE_METHOD)
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-OUT_DIR = macro_transfer_output_dir(SOURCE_METHOD, _spec.id, anchor=TEXT_ROOT)
-FIG_DIR = Path(FIG_DIR) if FIG_DIR else TEXT_ROOT / "notebooks" / "figures" / f"07_macro_transfer_{_spec.id}"
+OUT_DIR = macro_transfer_output_dir(tpn_method_name(BASE_METHOD), _spec.id, anchor=TEXT_ROOT)
+FIG_DIR = Path(FIG_DIR) if FIG_DIR else TEXT_ROOT / "notebooks" / "figures" / f"07_tpn_{_spec.id}_{OUT_DIR.name}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 cfg_path = resolve_repo_path(CONFIG_PATH, repo_root=TEXT_ROOT)
@@ -90,21 +92,36 @@ RAW_CFG = load_yaml(cfg_path)
 RAW_CFG = {
     **RAW_CFG,
     "corpus": _spec.id,
+    "base_method": BASE_METHOD,
     "device": DEVICE,
     "repo_anchor": str(TEXT_ROOT),
 }
 
-_spec2, DATA_CSV, EMB_CSV = resolve_test_paths_from_config(RAW_CFG, corpus_id=_spec.id, anchor=TEXT_ROOT)
-CKPT_REL = (RAW_CFG.get("checkpoints") or {}).get(SOURCE_METHOD)
-if not CKPT_REL:
-    raise ValueError(f"checkpoints.{SOURCE_METHOD} manquant dans {CONFIG_PATH}")
-CHECKPOINT = resolve_repo_path(CKPT_REL, repo_root=TEXT_ROOT)
+_spec2, TARGET_DATA_CSV, EMB_CSV = resolve_test_paths_from_config(
+    RAW_CFG, corpus_id=_spec.id, anchor=TEXT_ROOT
+)
+_source = RAW_CFG.get("source") or {}
+SOURCE_DATA_CSV = resolve_repo_path(
+    _source.get("data_csv", "dataset/data_btp.csv"), repo_root=TEXT_ROOT
+)
+_method_cfg = dict(RAW_CFG.get("method") or {})
+_method_cfg["base_method"] = BASE_METHOD
+RAW_CFG["method"] = _method_cfg
+CHECKPOINT = resolve_repo_path(
+    resolve_tpn_checkpoint(
+        BASE_METHOD,
+        _method_cfg,
+        RAW_CFG.get("checkpoints") or {},
+    ),
+    repo_root=TEXT_ROOT,
+)
 
 print(f"Corpus : {_spec2.display_name} ({_spec2.id})")
-print("Méthode :", SOURCE_METHOD)
+print("BASE_METHOD :", BASE_METHOD)
 print("Sortie :", OUT_DIR)
 print("Checkpoint :", CHECKPOINT)
-print("data_csv :", DATA_CSV)
+print("source_data_csv :", SOURCE_DATA_CSV)
+print("target_data_csv :", TARGET_DATA_CSV)
 print("emb_csv :", EMB_CSV)
 print("RUN_PIPELINE :", RUN_PIPELINE)
 
@@ -121,7 +138,7 @@ emb_path = Path(EMB_CSV)
 if not emb_path.is_file():
     missing.append(f"embeddings test : {emb_path}")
     print("→ Exporter : python scripts/export_test_embeddings.py --corpus", TEST_CORPUS)
-data_path = Path(DATA_CSV)
+data_path = Path(TARGET_DATA_CSV)
 if not data_path.is_file():
     missing.append(f"data test : {data_path}")
 
@@ -130,30 +147,27 @@ if missing:
 print("Prérequis OK.")
 """
         ),
-        md("## Phase 1–3 — Pipeline (optionnel)"),
+        md("## Pipeline TPN (optionnel)"),
         py(
             r"""
-from macro_transfer.pipeline import run_macro_transfer_discovery
+from macro_transfer.tpn_pipeline import run_tpn_macro_transfer_discovery
 
 if RUN_PIPELINE:
-    print("=== Lancement pipeline macro_transfer ===")
-    manifest = run_macro_transfer_discovery(
-        method=SOURCE_METHOD,
+    print("=== Lancement pipeline TPN ===")
+    _emb_path = Path(EMB_CSV)
+    _emb = str(_emb_path) if _emb_path.is_file() else None
+    manifest = run_tpn_macro_transfer_discovery(
         checkpoint=str(CHECKPOINT),
-        data_csv=DATA_CSV,
-        emb_csv=EMB_CSV,
+        source_data_csv=str(SOURCE_DATA_CSV),
+        target_data_csv=str(TARGET_DATA_CSV),
         output_dir=str(OUT_DIR),
         config=RAW_CFG,
-        confidence_threshold=CONFIDENCE_THRESHOLD,
-        macro_temperature=float(RAW_CFG.get("macro_temperature", 1.0)),
-        softtriple_gamma=float(RAW_CFG.get("softtriple_gamma", 0.1)),
-        scgm_tau=RAW_CFG.get("scgm_tau"),
-        skip_bertopic=bool(RAW_CFG.get("skip_bertopic", False)),
         device=DEVICE,
-        batch_size=int(RAW_CFG.get("batch_size", 512)),
+        emb_csv=_emb,
+        skip_bertopic=bool(RAW_CFG.get("skip_bertopic", False)),
     )
     print("Terminé — n_units :", manifest.get("n_units"))
-    m = manifest.get("transfer_metrics") or {}
+    m = (manifest.get("metrics_adapted") or {})
     if m:
         print(f"accuracy={m.get('accuracy')} macro_f1={m.get('macro_f1')} mean_q_conf={m.get('mean_q_conf')}")
 else:

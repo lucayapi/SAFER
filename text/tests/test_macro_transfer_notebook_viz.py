@@ -39,7 +39,7 @@ def test_load_run_artifacts_minimal(tmp_path: Path):
     emb = root / "embeddings"
     emb.mkdir(parents=True)
     z = np.random.randn(20, 8).astype(np.float32)
-    np.save(emb / "projected.npy", z)
+    np.save(emb / "target_adapted.npy", z)
     transfer = root / "transfer"
     transfer.mkdir()
     meta = pd.DataFrame(
@@ -54,8 +54,8 @@ def test_load_run_artifacts_minimal(tmp_path: Path):
             "p_C": 0.25,
         }
     )
-    meta.to_csv(transfer / "metadata_with_macro_probs.csv", index=False)
-    with open(transfer / "transfer_metrics.json", "w", encoding="utf-8") as f:
+    meta.to_csv(transfer / "metadata_with_tpn_macro_probs.csv", index=False)
+    with open(transfer / "transfer_metrics_adapted.json", "w", encoding="utf-8") as f:
         json.dump({"n_eval": 20, "accuracy": 1.0}, f)
 
     art = load_run_artifacts(root)
