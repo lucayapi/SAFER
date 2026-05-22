@@ -201,14 +201,13 @@ def _flush_training_log(log_path: Optional[Path], log_rows: list[dict]) -> None:
     pd.DataFrame(log_rows).to_csv(path, index=False)
 
 
-def _log_epoch_progress(epoch: int, epochs: int, row: dict, *, best_loss: float) -> None:
+def _log_epoch_progress(epoch: int, epochs: int, row: dict) -> None:
     logger.info(
-        "TPN train epoch %d/%d | loss_total=%.6f (best=%.6f) | "
+        "TPN train epoch %d/%d | loss_total=%.6f | "
         "src=%.6f proto=%.6f kl=%.6f ent=%.6f div=%.6f pres=%.6f",
         epoch,
         epochs,
         row["loss_total"],
-        best_loss,
         row.get("loss_src", 0.0),
         row.get("loss_proto", 0.0),
         row.get("loss_kl", 0.0),
@@ -231,8 +230,6 @@ def train_tpn_adapter(
     weight_decay: float = 1e-4,
     device: str = "cpu",
     seed: int = 42,
-    early_stopping_patience: int = 10,
-    min_delta: float = 1e-5,
     log_path: Optional[Path] = None,
 ) -> tuple[nn.Module, pd.DataFrame]:
     torch.manual_seed(seed)
@@ -258,9 +255,6 @@ def train_tpn_adapter(
         logger.info("TPN adapter training: %d epochs (pas de training_log.csv)", epochs)
 
     log_rows: list[dict] = []
-    best_loss = float("inf")
-    best_state: Optional[dict] = None
-    patience_ctr = 0
 
     for epoch in range(1, epochs + 1):
         adapter.train()
@@ -287,35 +281,16 @@ def train_tpn_adapter(
         row = {"epoch": epoch, **_losses_row_to_dict(losses)}
         log_rows.append(row)
 
-        if row["loss_total"] < best_loss - min_delta:
-            best_loss = row["loss_total"]
-            best_state = {k: v.cpu().clone() for k, v in adapter.state_dict().items()}
-            patience_ctr = 0
-        else:
-            patience_ctr += 1
-
-        _log_epoch_progress(epoch, epochs, row, best_loss=best_loss)
+        _log_epoch_progress(epoch, epochs, row)
         _flush_training_log(log_path_resolved, log_rows)
-
-        if patience_ctr >= early_stopping_patience:
-            logger.info(
-                "TPN early stopping à l'epoch %d/%d (best_loss=%.6f, patience=%d)",
-                epoch,
-                epochs,
-                best_loss,
-                early_stopping_patience,
-            )
-            break
-
-    if best_state is not None:
-        adapter.load_state_dict(best_state)
 
     _flush_training_log(log_path_resolved, log_rows)
     if log_path_resolved is not None and log_rows:
+        loss_final = log_rows[-1]["loss_total"]
         logger.info(
-            "TPN entraînement terminé : %d epochs enregistrées, best_loss=%.6f → %s",
+            "TPN entraînement terminé : %d epochs enregistrées, loss_final=%.6f → %s",
             len(log_rows),
-            best_loss,
+            loss_final,
             log_path_resolved,
         )
 

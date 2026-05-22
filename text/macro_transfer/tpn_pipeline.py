@@ -342,8 +342,6 @@ def run_tpn_macro_transfer_discovery(
         weight_decay=float(tpn_cfg.get("weight_decay", 1e-4)),
         device=train_device,
         seed=train_seed,
-        early_stopping_patience=int(tpn_cfg.get("early_stopping_patience", 10)),
-        min_delta=float(tpn_cfg.get("min_delta", 1e-5)),
         log_path=training_dir / "training_log.csv",
     )
 

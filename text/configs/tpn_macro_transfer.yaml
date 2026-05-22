@@ -54,8 +54,6 @@ tpn:
   assignment_mode: soft
   detach_assignments: true
   target_weight_st: 1.0
-  early_stopping_patience: 10
-  min_delta: 1.0e-5
 
 adapter:
   type: residual_mlp
@@ -66,11 +64,11 @@ adapter:
 
 loss_weights:
   src: 1.0
-  proto: 1.0
+  proto: 0.5
   kl: 0.5
-  ent: 0.05
+  ent: 0.01
   div: 0.05
-  preserve: 0.1
+  preserve: 0.25
 
 gating:
   confidence_threshold: 0.35

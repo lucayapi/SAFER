@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import numpy as np
 import torch
 
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.tpn_adapter import ResidualMLPAdapter, _compute_tpn_losses
+from macro_transfer.tpn_adapter import ResidualMLPAdapter, _compute_tpn_losses, train_tpn_adapter
 
 
 def _synthetic_batch(*, dim: int = 16, n_s: int = 8, n_t: int = 8):
@@ -93,6 +94,30 @@ def test_detach_assignments_false_no_crash():
     )
     assert losses["loss_total"].requires_grad
     losses["loss_total"].backward()
+
+
+def test_train_tpn_adapter_runs_all_epochs():
+    dim = 16
+    n_s, n_t = 12, 10
+    rng = np.random.default_rng(0)
+    h_s = rng.standard_normal((n_s, dim)).astype(np.float32)
+    h_t = rng.standard_normal((n_t, dim)).astype(np.float32)
+    labels_s = np.array([MACRO_NAMES[i % len(MACRO_NAMES)] for i in range(n_s)])
+
+    adapter, log_df = train_tpn_adapter(
+        h_s,
+        h_t,
+        labels_s,
+        adapter_cfg={"type": "residual_mlp", "bottleneck_dim": 32, "scale": 0.1},
+        tpn_cfg={"tau": 0.3, "distance_metric": "euclidean", "detach_assignments": True},
+        loss_weights={"src": 1.0, "proto": 0.5, "kl": 0.5, "ent": 0.01, "div": 0.05, "preserve": 0.25},
+        epochs=3,
+        device="cpu",
+        seed=0,
+    )
+    assert len(log_df) == 3
+    assert list(log_df["epoch"]) == [1, 2, 3]
+    assert adapter is not None
 
 
 def test_entropy_only_grad():
