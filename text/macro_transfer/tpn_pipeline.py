@@ -18,7 +18,7 @@ from macro_transfer.tpn_adapter import adapt_embeddings_tpn, train_tpn_adapter
 from macro_transfer.tpn_encode import (
     default_contrastive_config_path,
     encode_corpus_for_tpn,
-    resolve_tpn_checkpoint,
+    scgm_checkpoint_input_mode,
     tpn_method_name,
     validate_encoder_name,
 )
@@ -149,12 +149,24 @@ def run_tpn_macro_transfer_discovery(
         source_cfg.get("emb_csv")
         or method_cfg.get("source_emb_csv")
         or cfg.get("source_emb_csv")
-        or scgm_emb_target
     )
     if scgm_emb_target:
         scgm_emb_target = str(resolve_repo_path(scgm_emb_target, repo_root=repo_anchor))
     if scgm_emb_source:
         scgm_emb_source = str(resolve_repo_path(scgm_emb_source, repo_root=repo_anchor))
+
+    if base_method == "scgm_text":
+        scgm_mode = scgm_checkpoint_input_mode(checkpoint)
+        if scgm_mode != "text":
+            if not scgm_emb_target:
+                raise ValueError(
+                    "scgm_text requiert method.emb_csv ou emb_csv (registre test) pour la cible"
+                )
+            if not scgm_emb_source:
+                raise ValueError(
+                    "scgm_text en mode precomputed_embeddings requiert source.emb_csv explicite "
+                    "pour éviter de mélanger les embeddings source (BTP) et cible (test)."
+                )
 
     enc_device = encoding_cfg.get("device", device)
     enc_bs = int(encoding_cfg.get("encode_batch_size", encode_batch_size))
@@ -197,10 +209,6 @@ def run_tpn_macro_transfer_discovery(
     )
 
     if base_method == "scgm_text":
-        if not scgm_emb_target:
-            raise ValueError("scgm_text requiert method.emb_csv ou emb_csv (registre test)")
-        if not scgm_emb_source:
-            raise ValueError("scgm_text source requiert source.emb_csv ou source_emb_csv")
         h_s = encode_corpus_for_tpn(
             base_method,
             texts_s,

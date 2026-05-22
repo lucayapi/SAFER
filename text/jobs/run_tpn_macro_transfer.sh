@@ -36,7 +36,7 @@ fi
 
 CONFIG="${CONFIG:-configs/tpn_macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
-CHECKPOINT="${CHECKPOINT:-output/softtriple/checkpoints/best_model}"
+CHECKPOINT="${CHECKPOINT:-}"
 SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 DEVICE="${DEVICE:-cuda}"
 EPOCHS="${EPOCHS:-50}"

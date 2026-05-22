@@ -14,13 +14,15 @@ import torch.nn.functional as F
 
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.tpn_prototypes import (
-    compute_source_prototypes,
-    compute_source_target_prototypes,
-    compute_target_prototypes_soft,
+    compute_source_prototypes_torch,
+    compute_source_target_prototypes_torch,
+    compute_target_prototypes_soft_torch,
     distribution_from_prototypes_torch,
     l2_normalize_np,
-    scores_from_prototypes,
-    soft_assignments,
+    prototype_distance_torch,
+    prototype_logits_torch,
+    soft_assignments_torch,
+    symmetric_kl_torch,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,11 +95,6 @@ def adapt_embeddings_tpn(adapter: nn.Module, h: np.ndarray, *, device: str = "cp
         return out.cpu().numpy().astype(np.float64)
 
 
-def _entropy_rows(p: torch.Tensor) -> float:
-    p = torch.clamp(p, min=EPS)
-    return float((-p * torch.log(p)).sum(dim=1).mean().item())
-
-
 def _compute_tpn_losses(
     adapter: nn.Module,
     h_s: torch.Tensor,
@@ -107,55 +104,38 @@ def _compute_tpn_losses(
     tpn_cfg: Dict[str, Any],
     loss_weights: Dict[str, float],
 ) -> Dict[str, Any]:
+    """Pertes TPN entièrement en Torch (graphe vers l'adaptateur)."""
     tau = float(tpn_cfg.get("tau", 0.3))
-    metric = str(tpn_cfg.get("distance_metric", "euclidean"))
+    metric = str(tpn_cfg.get("distance_metric", "euclidean"))  # type: ignore[assignment]
     rho = float(tpn_cfg.get("target_weight_st", 1.0))
     detach_q = bool(tpn_cfg.get("detach_assignments", True))
+    assignment_mode = str(tpn_cfg.get("assignment_mode", "soft"))  # type: ignore[assignment]
     n_macros = len(MACRO_NAMES)
 
     htilde_s = adapter(h_s)
     htilde_t = adapter(h_t)
 
-    labels_s = [MACRO_NAMES[int(i)] for i in y_ids.cpu().numpy()]
-    mu_s_np = compute_source_prototypes(
-        htilde_s.detach().cpu().numpy(), labels_s, macros=MACRO_NAMES
-    )
-    mu_s = torch.as_tensor(mu_s_np, dtype=htilde_s.dtype, device=htilde_s.device)
+    mu_s = compute_source_prototypes_torch(htilde_s, y_ids, n_macros, eps=EPS)
 
-    h_for_q = htilde_t.detach().cpu().numpy() if detach_q else htilde_t.cpu().numpy()
-    scores_t = scores_from_prototypes(h_for_q, mu_s_np, tau=tau, metric=metric)  # type: ignore[arg-type]
-    q_np = soft_assignments(
-        scores_t,
-        assignment_mode=str(tpn_cfg.get("assignment_mode", "soft")),  # type: ignore[arg-type]
-    )
-    q = torch.as_tensor(q_np, dtype=htilde_s.dtype, device=htilde_s.device)
+    logits_q = prototype_logits_torch(htilde_t, mu_s, tau=tau, metric=metric)  # type: ignore[arg-type]
+    q = soft_assignments_torch(logits_q, assignment_mode=assignment_mode)  # type: ignore[arg-type]
     if detach_q:
         q = q.detach()
 
-    mu_t_np = compute_target_prototypes_soft(htilde_t.detach().cpu().numpy(), q_np, eps=EPS)
-    mu_t = torch.as_tensor(mu_t_np, dtype=htilde_s.dtype, device=htilde_s.device)
-
-    mu_st_np = compute_source_target_prototypes(
-        htilde_s.detach().cpu().numpy(),
-        labels_s,
-        htilde_t.detach().cpu().numpy(),
-        q_np,
-        rho=rho,
-        eps=EPS,
-        macros=MACRO_NAMES,
+    mu_t = compute_target_prototypes_soft_torch(htilde_t, q, eps=EPS)
+    mu_st = compute_source_target_prototypes_torch(
+        htilde_s, y_ids, htilde_t, q, n_macros, rho=rho, eps=EPS
     )
-    mu_st = torch.as_tensor(mu_st_np, dtype=htilde_s.dtype, device=htilde_s.device)
 
-    p_st_src = distribution_from_prototypes_torch(
-        htilde_s, mu_st, tau=tau, metric=metric  # type: ignore[arg-type]
-    )
-    loss_src = F.nll_loss(torch.log(p_st_src + EPS), y_ids)
+    logits_src = prototype_logits_torch(htilde_s, mu_st, tau=tau, metric=metric)  # type: ignore[arg-type]
+    loss_src = F.cross_entropy(logits_src, y_ids)
 
-    loss_proto = (
-        ((mu_s - mu_t) ** 2).sum()
-        + ((mu_s - mu_st) ** 2).sum()
-        + ((mu_t - mu_st) ** 2).sum()
-    ) / (3.0 * n_macros)
+    proto_terms = []
+    for m in range(n_macros):
+        proto_terms.append(prototype_distance_torch(mu_s[m], mu_t[m], metric=metric))  # type: ignore[arg-type]
+        proto_terms.append(prototype_distance_torch(mu_s[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
+        proto_terms.append(prototype_distance_torch(mu_t[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
+    loss_proto = torch.stack(proto_terms).mean()
 
     combined = torch.cat([htilde_s, htilde_t], dim=0)
     p_s_all = distribution_from_prototypes_torch(
@@ -167,19 +147,17 @@ def _compute_tpn_losses(
     p_st_all = distribution_from_prototypes_torch(
         combined, mu_st, tau=tau, metric=metric  # type: ignore[arg-type]
     )
-
-    def _skl_batch(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (
-            (a * (torch.log(a + EPS) - torch.log(b + EPS))).sum(dim=1)
-            + (b * (torch.log(b + EPS) - torch.log(a + EPS))).sum(dim=1)
-        )
-
-    loss_kl = (_skl_batch(p_s_all, p_t_all) + _skl_batch(p_s_all, p_st_all) + _skl_batch(p_t_all, p_st_all)).mean()
+    loss_kl = (
+        symmetric_kl_torch(p_s_all, p_t_all, eps=EPS)
+        + symmetric_kl_torch(p_s_all, p_st_all, eps=EPS)
+        + symmetric_kl_torch(p_t_all, p_st_all, eps=EPS)
+    ).mean()
 
     p_st_tgt = distribution_from_prototypes_torch(
         htilde_t, mu_st, tau=tau, metric=metric  # type: ignore[arg-type]
     )
-    loss_ent = _entropy_rows(p_st_tgt)
+    p_clamped = p_st_tgt.clamp(min=EPS)
+    loss_ent = -(p_clamped * torch.log(p_clamped)).sum(dim=1).mean()
 
     p_bar = p_st_tgt.mean(dim=0)
     loss_div = (p_bar * torch.log(p_bar + EPS)).sum()
@@ -201,7 +179,7 @@ def _compute_tpn_losses(
         "loss_src": loss_src.detach(),
         "loss_proto": loss_proto.detach(),
         "loss_kl": loss_kl.detach(),
-        "loss_ent": loss_ent,
+        "loss_ent": loss_ent.detach(),
         "loss_div": loss_div.detach(),
         "loss_pres": loss_pres.detach(),
     }
@@ -252,6 +230,19 @@ def train_tpn_adapter(
         )
         losses["loss_total"].backward()
         opt.step()
+
+        if epoch == 1:
+            grad_norm = 0.0
+            for p in adapter.parameters():
+                if p.grad is not None:
+                    grad_norm += float(p.grad.data.norm(2).item()) ** 2
+            grad_norm = grad_norm**0.5
+            logger.debug(
+                "epoch 1 diag: grad_norm=%.4f loss_proto.requires_grad=%s loss_ent.requires_grad=%s",
+                grad_norm,
+                losses["loss_proto"].requires_grad,
+                losses["loss_ent"].requires_grad,
+            )
 
         row: dict = {"epoch": epoch}
         for k, v in losses.items():

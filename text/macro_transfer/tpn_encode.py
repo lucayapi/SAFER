@@ -62,11 +62,28 @@ def resolve_tpn_checkpoint(
     base_method: str,
     method_cfg: dict,
     checkpoints_block: Optional[dict] = None,
+    *,
+    explicit_checkpoint: Optional[str] = None,
+    base_method_overridden: bool = False,
 ) -> str:
+    """
+    Priorité : explicit_checkpoint > (si override CLI) checkpoints[base_method]
+    > method.checkpoint > checkpoints[base_method].
+    """
+    if explicit_checkpoint:
+        return str(explicit_checkpoint)
+    block = checkpoints_block or {}
+    if base_method_overridden:
+        ckpt = block.get(base_method)
+        if ckpt:
+            return str(ckpt)
+        raise ValueError(
+            f"Checkpoint manquant pour {base_method!r} "
+            f"(base_method surchargé par CLI : utiliser checkpoints.{base_method})"
+        )
     ckpt = method_cfg.get("checkpoint")
     if ckpt:
         return str(ckpt)
-    block = checkpoints_block or {}
     ckpt = block.get(base_method)
     if ckpt:
         return str(ckpt)
@@ -74,6 +91,14 @@ def resolve_tpn_checkpoint(
         f"Checkpoint manquant pour {base_method!r} "
         f"(method.checkpoint ou checkpoints.{base_method})"
     )
+
+
+def scgm_checkpoint_input_mode(checkpoint: str) -> str:
+    """Retourne input_mode du checkpoint SCGM (precomputed_embeddings | text)."""
+    from scgm_text.checkpoint_io import load_scgm_checkpoint
+
+    _, checkpoint_args, _ = load_scgm_checkpoint(checkpoint, map_location="cpu")
+    return str(checkpoint_args.get("input_mode", "precomputed_embeddings"))
 
 
 def _load_contrastive_cfg(

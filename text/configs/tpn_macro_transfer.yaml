@@ -32,9 +32,10 @@ target:
 method:
   name: tpn_softtriple
   base_method: softtriple
-  checkpoint: output/softtriple/checkpoints/best_model
+  # checkpoint : utiliser checkpoints.<base_method> ou --checkpoint CLI
   contrastive_config: configs/methods/softtriple.yaml
-  # emb_csv: null  # cible SCGM : registre test_corpora.yaml si omis
+  # emb_csv cible SCGM : registre test_corpora.yaml si omis
+  # source.emb_csv requis pour scgm_text + precomputed_embeddings (BTP)
 
 macros: [A0, A1, B, C]
 

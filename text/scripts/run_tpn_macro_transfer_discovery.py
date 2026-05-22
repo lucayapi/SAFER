@@ -74,8 +74,31 @@ def main() -> None:
     method_name = tpn_method_name(base_method)
 
     checkpoints_block = raw.get("checkpoints") or {}
-    ckpt = args.checkpoint or resolve_tpn_checkpoint(base_method, method_cfg, checkpoints_block)
+    base_method_overridden = bool(args.base_method)
+    ckpt = resolve_tpn_checkpoint(
+        base_method,
+        method_cfg,
+        checkpoints_block,
+        explicit_checkpoint=args.checkpoint,
+        base_method_overridden=base_method_overridden,
+    )
     ckpt = str(resolve_repo_path(ckpt, repo_root=TEXT_ROOT))
+    logging.getLogger(__name__).info(
+        "TPN encoder=%s checkpoint=%s (override_cli=%s)",
+        base_method,
+        ckpt,
+        base_method_overridden,
+    )
+
+    contrastive_cfg = method_cfg.get("contrastive_config") or raw.get("contrastive_config")
+    if contrastive_cfg and base_method in ("softtriple", "supcon", "batch_triplet"):
+        cfg_name = Path(str(contrastive_cfg)).stem
+        if cfg_name != base_method:
+            logging.getLogger(__name__).warning(
+                "contrastive_config %s ne correspond pas à base_method=%s",
+                contrastive_cfg,
+                base_method,
+            )
 
     emb_csv = args.emb_csv or method_cfg.get("emb_csv") or raw.get("emb_csv")
     if emb_csv:

@@ -32,6 +32,16 @@ def test_validate_encoder_name_rejects_unknown():
         validate_encoder_name("unknown_encoder")
 
 
+def test_resolve_tpn_checkpoint_explicit():
+    ckpt = resolve_tpn_checkpoint(
+        "supcon",
+        {},
+        {},
+        explicit_checkpoint="output/my/ckpt",
+    )
+    assert ckpt == "output/my/ckpt"
+
+
 def test_resolve_tpn_checkpoint_from_method_cfg():
     ckpt = resolve_tpn_checkpoint(
         "supcon",

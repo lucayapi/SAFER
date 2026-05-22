@@ -183,6 +183,41 @@ def symmetric_kl(p: np.ndarray, q: np.ndarray, eps: float = EPS) -> np.ndarray:
     return 0.5 * (kl_pq + kl_qp)
 
 
+def pairwise_distances_torch(h, protos, *, metric: DistanceMetric = "euclidean"):
+    """h (N,D), protos (M,D) → distances (N,M)."""
+    import torch
+
+    if metric == "cosine":
+        sim = h @ protos.T
+        return 1.0 - sim
+    diff = h.unsqueeze(1) - protos.unsqueeze(0)
+    return (diff * diff).sum(dim=2)
+
+
+def prototype_logits_torch(
+    h,
+    protos,
+    *,
+    tau: float = 0.3,
+    metric: DistanceMetric = "euclidean",
+):
+    """Logits = -d/tau, shape (N, M)."""
+    d = pairwise_distances_torch(h, protos, metric=metric)
+    return -d / max(float(tau), EPS)
+
+
+def soft_assignments_torch(logits, *, assignment_mode: AssignmentMode = "soft"):
+    """Softmax ou one-hot argmax sur logits (N, M)."""
+    import torch
+    import torch.nn.functional as F
+
+    if assignment_mode == "hard":
+        idx = logits.argmax(dim=1)
+        q = F.one_hot(idx, num_classes=logits.shape[1]).to(dtype=logits.dtype)
+        return q
+    return F.softmax(logits, dim=1)
+
+
 def distribution_from_prototypes_torch(
     h,
     mu,
@@ -190,18 +225,109 @@ def distribution_from_prototypes_torch(
     tau: float,
     metric: DistanceMetric,
 ):
-    """P(m|x) softmax(-d/tau) pour batch torch."""
+    """P(m|x) = softmax(-d/tau) pour batch torch."""
+    import torch.nn.functional as F
+
+    logits = prototype_logits_torch(h, mu, tau=tau, metric=metric)
+    return F.softmax(logits, dim=1)
+
+
+def prototype_distance_torch(a, b, *, metric: DistanceMetric = "euclidean"):
+    """Distance scalaire entre deux prototypes (D,) ou (1,D)."""
+    import torch
+
+    a = a.view(-1)
+    b = b.view(-1)
+    if metric == "cosine":
+        return 1.0 - (a * b).sum()
+    return ((a - b) ** 2).sum()
+
+
+def compute_source_prototypes_torch(
+    htilde_s,
+    y_ids,
+    n_macros: int,
+    *,
+    eps: float = EPS,
+):
+    """μ_m^s = mean des h~ avec y=m, puis L2-normalise (différentiable)."""
     import torch
     import torch.nn.functional as F
 
-    if metric == "cosine":
-        sim = h @ mu.T
-        d = 1.0 - sim
-    else:
-        diff = h.unsqueeze(1) - mu.unsqueeze(0)
-        d = (diff * diff).sum(dim=2)
-    logits = -d / max(float(tau), EPS)
-    return F.softmax(logits, dim=1)
+    dim = htilde_s.shape[1]
+    device = htilde_s.device
+    dtype = htilde_s.dtype
+    protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    for m in range(n_macros):
+        mask = y_ids == m
+        if not mask.any():
+            logger.warning("Aucun exemple source pour la macro index %d", m)
+            continue
+        protos[m] = htilde_s[mask].mean(dim=0)
+    return F.normalize(protos, p=2, dim=-1, eps=eps)
+
+
+def compute_target_prototypes_soft_torch(htilde_t, q, *, eps: float = EPS):
+    """μ_m^t = sum_j q_jm h_j / (sum_j q_jm + eps), puis L2."""
+    import torch
+    import torch.nn.functional as F
+
+    n_macros = q.shape[1]
+    dim = htilde_t.shape[1]
+    device = htilde_t.device
+    dtype = htilde_t.dtype
+    protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    for mi in range(n_macros):
+        mass = q[:, mi].sum()
+        if mass < eps:
+            logger.warning(
+                "Masse cible quasi nulle pour macro index %d (mass=%.2e)",
+                mi,
+                float(mass.detach().item() if hasattr(mass, "detach") else mass),
+            )
+        w = q[:, mi : mi + 1]
+        protos[mi] = (w * htilde_t).sum(dim=0) / (mass + eps)
+    return F.normalize(protos, p=2, dim=-1, eps=eps)
+
+
+def compute_source_target_prototypes_torch(
+    htilde_s,
+    y_ids,
+    htilde_t,
+    q,
+    n_macros: int,
+    *,
+    rho: float = 1.0,
+    eps: float = EPS,
+):
+    """μ_m^st = (sum_src + ρ sum_tgt q) / (N_m^s + ρ mass_t + eps), puis L2."""
+    import torch
+    import torch.nn.functional as F
+
+    dim = htilde_s.shape[1]
+    device = htilde_s.device
+    dtype = htilde_s.dtype
+    protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    for m in range(n_macros):
+        src_mask = y_ids == m
+        n_s = int(src_mask.sum().item())
+        sum_src = htilde_s[src_mask].sum(dim=0) if n_s > 0 else torch.zeros(dim, device=device, dtype=dtype)
+        mass_t = q[:, m].sum()
+        sum_tgt = (q[:, m : m + 1] * htilde_t).sum(dim=0)
+        denom = n_s + rho * mass_t + eps
+        protos[m] = (sum_src + rho * sum_tgt) / denom
+    return F.normalize(protos, p=2, dim=-1, eps=eps)
+
+
+def symmetric_kl_torch(p, q, *, eps: float = EPS):
+    """SKL(P,Q) par ligne, shape (N,) si batch."""
+    import torch
+
+    p = p.clamp(min=eps)
+    q = q.clamp(min=eps)
+    kl_pq = (p * (torch.log(p) - torch.log(q))).sum(dim=-1)
+    kl_qp = (q * (torch.log(q) - torch.log(p))).sum(dim=-1)
+    return 0.5 * (kl_pq + kl_qp)
 
 
 def prototype_distance_table(
