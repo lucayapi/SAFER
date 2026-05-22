@@ -38,6 +38,37 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--emb-csv", type=str, default=None, help="Embeddings Qwen corpus test (SCGM)")
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--skip-bertopic", action="store_true")
+    p.add_argument(
+        "--topic-embedding-mode",
+        type=str,
+        default=None,
+        choices=["initial", "adapted", "mixed"],
+        help="Espace embeddings BERTopic : initial|adapted|mixed",
+    )
+    p.add_argument("--topic-alpha", type=float, default=None, help="Alpha pour mode mixed")
+    p.add_argument(
+        "--run-bertopic-grid",
+        action="store_true",
+        help="Lance grid search A0/A1 (coûteux)",
+    )
+    p.add_argument(
+        "--grid-macros",
+        type=str,
+        default="A0,A1",
+        help="Macros pour la grid, séparées par virgule",
+    )
+    p.add_argument(
+        "--macro-topic-config",
+        type=str,
+        default=None,
+        help="YAML optionnel remplaçant bertopic.macro_params",
+    )
+    p.add_argument("--skip-compression-diagnostics", action="store_true")
+    p.add_argument(
+        "--bertopic-only",
+        action="store_true",
+        help="Relance BERTopic sur artefacts existants (embeddings + metadata)",
+    )
     p.add_argument("--epochs", type=int, default=None)
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--seed", type=int, default=None)
@@ -130,6 +161,10 @@ def main() -> None:
         enc["device"] = args.device
         raw["encoding"] = enc
 
+    grid_macros = None
+    if args.grid_macros:
+        grid_macros = [m.strip() for m in args.grid_macros.split(",") if m.strip()]
+
     manifest = run_tpn_macro_transfer_discovery(
         checkpoint=ckpt,
         source_data_csv=source_data_csv,
@@ -137,6 +172,13 @@ def main() -> None:
         output_dir=output_dir,
         config=raw,
         skip_bertopic=args.skip_bertopic or bool(raw.get("skip_bertopic", False)),
+        bertopic_only=args.bertopic_only,
+        topic_embedding_mode=args.topic_embedding_mode,
+        topic_alpha=args.topic_alpha,
+        run_bertopic_grid=args.run_bertopic_grid,
+        grid_macros=grid_macros,
+        macro_topic_config_path=args.macro_topic_config,
+        skip_compression_diagnostics=args.skip_compression_diagnostics,
         device=args.device or raw.get("encoding", {}).get("device", "cuda"),
         encode_batch_size=int(
             args.encode_batch_size

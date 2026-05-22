@@ -123,7 +123,7 @@ def run_macro_transfer_discovery(
                 + "\n\nOptions : abaisser confidence_threshold dans macro_transfer.yaml, "
                 "ou bertopic.include_ambiguous: true (topics sur toutes les unités m_hat)."
             )
-        themes_bertopic, assignments_bertopic = fit_bertopic_per_macro(
+        themes_bertopic, assignments_bertopic, _ = fit_bertopic_per_macro(
             z,
             meta,
             gating,

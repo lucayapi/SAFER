@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,10 @@ import torch
 import yaml
 
 from macro_transfer.encode import load_target_metadata
+from macro_transfer.bertopic_grid import run_macro_bertopic_grid_search
 from macro_transfer.intra_bertopic import fit_bertopic_per_macro
+from macro_transfer.macro_compression import compute_macro_compression_diagnostics
+from macro_transfer.topic_embeddings import resolve_topic_embedding_cfg
 from macro_transfer.tpn_adapter import adapt_embeddings_tpn, train_tpn_adapter
 from macro_transfer.tpn_encode import (
     default_contrastive_config_path,
@@ -88,6 +91,130 @@ def _compute_prototype_bundle(
     return {"mu_s": mu_s, "mu_t": mu_t, "mu_st": mu_st, "q": q}
 
 
+def _merge_bertopic_cfg(
+    bertopic_cfg: Dict[str, Any],
+    macro_topic_config_path: Optional[str],
+    repo_anchor: Path,
+) -> Dict[str, Any]:
+    cfg = dict(bertopic_cfg or {})
+    if not macro_topic_config_path:
+        return cfg
+    extra_path = resolve_repo_path(macro_topic_config_path, repo_root=repo_anchor)
+    with open(extra_path, encoding="utf-8") as f:
+        extra = yaml.safe_load(f) or {}
+    if "macro_params" in extra:
+        cfg["macro_params"] = {**(cfg.get("macro_params") or {}), **extra["macro_params"]}
+    for key in ("embedding_space", "grid_search", "diagnostics", "default_params"):
+        if key in extra and key not in cfg:
+            cfg[key] = extra[key]
+    return cfg
+
+
+def _run_bertopic_phase(
+    *,
+    out: Path,
+    meta_t: pd.DataFrame,
+    gating_adapted: pd.DataFrame,
+    h_t: np.ndarray,
+    h_t_adapted: np.ndarray,
+    method_name: str,
+    bertopic_cfg: Dict[str, Any],
+    topics_export_cfg: Dict[str, Any],
+    text_col_t: str,
+    repo_anchor: Path,
+    corpus_id: Optional[str],
+    topic_embedding_mode: Optional[str],
+    topic_alpha: Optional[float],
+    run_bertopic_grid: bool,
+    grid_macros: Optional[Sequence[str]],
+    skip_compression_diagnostics: bool,
+) -> Dict[str, Any]:
+    """Phase BERTopic : compression, grid optionnelle, fit intra-macro."""
+    bertopic_cfg = dict(bertopic_cfg)
+    if bertopic_cfg.get("enabled", True) is False:
+        return {}
+
+    topic_emb_cfg = resolve_topic_embedding_cfg(
+        bertopic_cfg,
+        cli_mode=topic_embedding_mode,
+        cli_alpha=topic_alpha,
+    )
+    compression_path = None
+    grid_path = None
+    diagnostics_cfg = dict(bertopic_cfg.get("diagnostics") or {})
+    grid_cfg = dict(bertopic_cfg.get("grid_search") or {})
+
+    if (
+        not skip_compression_diagnostics
+        and diagnostics_cfg.get("enabled", True)
+        and diagnostics_cfg.get("compute_compression", True)
+    ):
+        comp_df = compute_macro_compression_diagnostics(
+            h_t,
+            h_t_adapted,
+            gating_adapted["m_hat"].astype(str).tolist(),
+        )
+        compression_path = out / "macro_compression_diagnostics.csv"
+        comp_df.to_csv(compression_path, index=False)
+
+    do_grid = run_bertopic_grid or bool(grid_cfg.get("enabled", False))
+    if do_grid:
+        macros_grid = list(grid_macros) if grid_macros else list(grid_cfg.get("macros", ["A0", "A1"]))
+        texts_all = meta_t[text_col_t].astype(str).tolist()
+        run_macro_bertopic_grid_search(
+            texts_all,
+            h_t,
+            h_t_adapted,
+            gating_adapted["m_hat"].astype(str).tolist(),
+            macros=macros_grid,
+            grid_cfg=grid_cfg,
+            output_dir=out,
+            bertopic_cfg=bertopic_cfg,
+            random_state=int(bertopic_cfg.get("random_state", 42)),
+            anchor=repo_anchor if repo_anchor.is_dir() else None,
+        )
+        grid_path = out / "bertopic_grid_A0_A1.csv"
+
+    top_k_words = int(topics_export_cfg.get("top_k_words", 12))
+    top_k_sentences = int(topics_export_cfg.get("top_k_sentences", 5))
+    themes_bertopic, _assign, bertopic_partial = fit_bertopic_per_macro(
+        h_t,
+        meta_t,
+        gating_adapted,
+        method=method_name,
+        bertopic_cfg=bertopic_cfg,
+        output_dir=out / "topics_bertopic",
+        legacy_output_dir=out / "topics_bertopic",
+        per_macro_output_root=out / "bertopic",
+        run_output_root=out,
+        sentence_col=text_col_t,
+        top_k_words=top_k_words,
+        top_k_sentences=top_k_sentences,
+        repo_anchor=repo_anchor if repo_anchor.is_dir() else None,
+        corpus_id=corpus_id,
+        embeddings_initial=h_t,
+        embeddings_adapted=h_t_adapted,
+        topic_embedding_cfg=topic_emb_cfg,
+    )
+
+    summary_dir = out / "summary"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    if not themes_bertopic.empty:
+        summarize_topics_by_macro(themes_bertopic).to_csv(
+            summary_dir / "topics_summary.csv", index=False
+        )
+
+    return {
+        "embedding_mode": topic_emb_cfg["mode"],
+        "alpha": topic_emb_cfg["alpha"],
+        "normalize": topic_emb_cfg["normalize"],
+        "macro_topic_counts": bertopic_partial.get("macro_topic_counts", {}),
+        "warnings": bertopic_partial.get("warnings", []),
+        "compression_diagnostics_path": str(compression_path) if compression_path else None,
+        "grid_search_path": str(grid_path) if grid_path else None,
+    }
+
+
 def run_tpn_macro_transfer_discovery(
     *,
     checkpoint: str,
@@ -96,6 +223,13 @@ def run_tpn_macro_transfer_discovery(
     output_dir: str,
     config: Optional[Dict[str, Any]] = None,
     skip_bertopic: bool = False,
+    bertopic_only: bool = False,
+    topic_embedding_mode: Optional[str] = None,
+    topic_alpha: Optional[float] = None,
+    run_bertopic_grid: bool = False,
+    grid_macros: Optional[Sequence[str]] = None,
+    macro_topic_config_path: Optional[str] = None,
+    skip_compression_diagnostics: bool = False,
     device: str = "cuda",
     encode_batch_size: int = 8,
     epochs: Optional[int] = None,
@@ -125,8 +259,13 @@ def run_tpn_macro_transfer_discovery(
     loss_weights = dict(cfg.get("loss_weights") or {})
     gating_cfg = dict(cfg.get("gating") or {})
     encoding_cfg = dict(cfg.get("encoding") or {})
-    bertopic_cfg = cfg.get("bertopic") or {}
+    bertopic_cfg = _merge_bertopic_cfg(
+        cfg.get("bertopic") or {},
+        macro_topic_config_path,
+        repo_anchor,
+    )
     topics_export_cfg = cfg.get("topics_export") or {}
+    corpus_id = str(cfg.get("corpus") or "").strip() or None
 
     text_col_s = source_cfg.get("text_col", "sentence")
     label_col_s = source_cfg.get("label_col", "pred_label")
@@ -173,6 +312,71 @@ def run_tpn_macro_transfer_discovery(
     enc_bs = int(encoding_cfg.get("encode_batch_size", encode_batch_size))
     scgm_bs = int(encoding_cfg.get("scgm_infer_batch_size", cfg.get("infer_batch_size", 512)))
     max_seq_length = int(encoding_cfg.get("max_seq_length", 256))
+
+    emb_dir = out / "embeddings"
+    transfer_dir = out / "transfer"
+
+    if bertopic_only:
+        emb_dir.mkdir(parents=True, exist_ok=True)
+        transfer_dir.mkdir(parents=True, exist_ok=True)
+        h_t_path = emb_dir / "target_projected.npy"
+        h_t_adapted_path = emb_dir / "target_adapted.npy"
+        meta_path = transfer_dir / "metadata_with_tpn_macro_probs.csv"
+        if not h_t_path.is_file() or not h_t_adapted_path.is_file() or not meta_path.is_file():
+            raise FileNotFoundError(
+                "bertopic_only requiert target_projected.npy, target_adapted.npy et "
+                "transfer/metadata_with_tpn_macro_probs.csv dans output_dir"
+            )
+        h_t = np.load(h_t_path)
+        h_t_adapted = np.load(h_t_adapted_path)
+        meta_adapted = pd.read_csv(meta_path, low_memory=False)
+        meta_t = meta_adapted
+        from macro_transfer.constants import MACRO_NAMES
+
+        prob_cols = [f"p_{m}" for m in MACRO_NAMES]
+        gating_cols = ["m_hat", "ambiguous", "q_conf", "margin"] + prob_cols
+        missing = [c for c in gating_cols if c not in meta_adapted.columns]
+        if missing:
+            raise ValueError(f"metadata adaptée sans colonnes gating : {missing}")
+        gating_adapted = meta_adapted[gating_cols].copy()
+
+        bertopic_summary = {}
+        if not skip_bertopic:
+            bertopic_summary = _run_bertopic_phase(
+                out=out,
+                meta_t=meta_t,
+                gating_adapted=gating_adapted,
+                h_t=h_t,
+                h_t_adapted=h_t_adapted,
+                method_name=method_name,
+                bertopic_cfg=bertopic_cfg,
+                topics_export_cfg=topics_export_cfg,
+                text_col_t=text_col_t,
+                repo_anchor=repo_anchor,
+                corpus_id=corpus_id,
+                topic_embedding_mode=topic_embedding_mode,
+                topic_alpha=topic_alpha,
+                run_bertopic_grid=run_bertopic_grid,
+                grid_macros=grid_macros,
+                skip_compression_diagnostics=skip_compression_diagnostics,
+            )
+        topic_emb = resolve_topic_embedding_cfg(
+            bertopic_cfg, cli_mode=topic_embedding_mode, cli_alpha=topic_alpha
+        )
+        manifest = {
+            "method": method_name,
+            "base_encoder": base_method,
+            "bertopic_only": True,
+            "skip_bertopic": skip_bertopic,
+            "topic_embedding_mode": topic_emb["mode"],
+            "topic_embedding_alpha": topic_emb["alpha"],
+            "topic_embedding_normalize": topic_emb["normalize"],
+            "bertopic_summary": bertopic_summary,
+            "output_dir": str(out),
+        }
+        with open(out / "run_manifest.json", "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2, ensure_ascii=False)
+        return manifest
 
     # --- Source BTP (labellé, filtré) ---
     meta_s = load_filtered_metadata(
@@ -258,7 +462,6 @@ def run_tpn_macro_transfer_discovery(
         h_s = l2_normalize_np(h_s)
         h_t = l2_normalize_np(h_t)
 
-    emb_dir = out / "embeddings"
     emb_dir.mkdir(parents=True, exist_ok=True)
     np.save(emb_dir / "source_projected.npy", h_s)
     np.save(emb_dir / "target_projected.npy", h_t)
@@ -394,31 +597,29 @@ def run_tpn_macro_transfer_discovery(
     if len(coverage_df):
         coverage_df.to_csv(transfer_dir / "coverage_by_threshold.csv", index=False)
 
-    themes_bertopic = pd.DataFrame()
+    bertopic_summary: Dict[str, Any] = {}
     if not skip_bertopic:
-        top_k_words = int(topics_export_cfg.get("top_k_words", 12))
-        top_k_sentences = int(topics_export_cfg.get("top_k_sentences", 5))
-        corpus_id = str(cfg.get("corpus") or "").strip() or None
-        themes_bertopic, _assign = fit_bertopic_per_macro(
-            h_t_adapted,
-            meta_t,
-            gating_adapted,
-            method=method_name,
+        bertopic_summary = _run_bertopic_phase(
+            out=out,
+            meta_t=meta_t,
+            gating_adapted=gating_adapted,
+            h_t=h_t,
+            h_t_adapted=h_t_adapted,
+            method_name=method_name,
             bertopic_cfg=bertopic_cfg,
-            output_dir=out / "topics_bertopic",
-            sentence_col=text_col_t,
-            top_k_words=top_k_words,
-            top_k_sentences=top_k_sentences,
-            repo_anchor=repo_anchor if repo_anchor.is_dir() else None,
+            topics_export_cfg=topics_export_cfg,
+            text_col_t=text_col_t,
+            repo_anchor=repo_anchor,
             corpus_id=corpus_id,
+            topic_embedding_mode=topic_embedding_mode,
+            topic_alpha=topic_alpha,
+            run_bertopic_grid=run_bertopic_grid,
+            grid_macros=grid_macros,
+            skip_compression_diagnostics=skip_compression_diagnostics,
         )
-
-    summary_dir = out / "summary"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    if not themes_bertopic.empty:
-        summarize_topics_by_macro(themes_bertopic).to_csv(
-            summary_dir / "topics_summary.csv", index=False
-        )
+    topic_emb = resolve_topic_embedding_cfg(
+        bertopic_cfg, cli_mode=topic_embedding_mode, cli_alpha=topic_alpha
+    )
 
     embed_dim = int(h_s.shape[1]) if h_s.ndim == 2 else 0
     tpn_summary = {
@@ -451,6 +652,10 @@ def run_tpn_macro_transfer_discovery(
         "metrics_initial": metrics_initial,
         "metrics_adapted": metrics_adapted,
         "skip_bertopic": skip_bertopic,
+        "topic_embedding_mode": topic_emb["mode"],
+        "topic_embedding_alpha": topic_emb["alpha"],
+        "topic_embedding_normalize": topic_emb["normalize"],
+        "bertopic_summary": bertopic_summary,
     }
     with open(out / "run_manifest.json", "w", encoding="utf-8") as f:
         json.dump(

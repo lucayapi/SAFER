@@ -11,6 +11,10 @@
 #   SKIP_BERTOPIC=0
 #   DEVICE=cuda
 #   EPOCHS=50
+#   TOPIC_EMBEDDING_MODE=mixed   # initial | adapted | mixed
+#   TOPIC_ALPHA=0.25
+#   RUN_BERTOPIC_GRID=0
+#   BERTOPIC_ONLY=0
 #
 # Exemples :
 #   BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh
@@ -53,6 +57,18 @@ if [[ -n "${CHECKPOINT}" ]]; then
 fi
 if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
   extra+=(--skip-bertopic)
+fi
+if [[ -n "${TOPIC_EMBEDDING_MODE:-}" ]]; then
+  extra+=(--topic-embedding-mode "${TOPIC_EMBEDDING_MODE}")
+fi
+if [[ -n "${TOPIC_ALPHA:-}" ]]; then
+  extra+=(--topic-alpha "${TOPIC_ALPHA}")
+fi
+if [[ "${RUN_BERTOPIC_GRID:-0}" == "1" ]]; then
+  extra+=(--run-bertopic-grid)
+fi
+if [[ "${BERTOPIC_ONLY:-0}" == "1" ]]; then
+  extra+=(--bertopic-only)
 fi
 
 echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"

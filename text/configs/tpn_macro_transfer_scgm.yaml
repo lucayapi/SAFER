@@ -60,6 +60,21 @@ gating:
   ambiguous_rule: confidence_or_margin
 
 bertopic:
+  enabled: true
+  embedding_space:
+    mode: mixed
+    alpha: 0.25
+    normalize: true
+  macro_params:
+    A0: {min_topic_size: 25, min_cluster_size: 25, min_samples: 3, cluster_selection_method: leaf, n_neighbors: 10, n_components: 5, min_dist: 0.0}
+    A1: {min_topic_size: 20, min_cluster_size: 20, min_samples: 3, cluster_selection_method: leaf, n_neighbors: 10, n_components: 5, min_dist: 0.0}
+    B: {min_topic_size: 35, min_cluster_size: 35, min_samples: 10, cluster_selection_method: eom, n_neighbors: 15, n_components: 5, min_dist: 0.0}
+    C: {min_topic_size: 70, min_cluster_size: 70, min_samples: 15, cluster_selection_method: eom, n_neighbors: 20, n_components: 5, min_dist: 0.0}
+  grid_search:
+    enabled: false
+  diagnostics:
+    enabled: true
+    compute_compression: true
   include_ambiguous: true
   min_topic_size: 10
   nr_topics: null
