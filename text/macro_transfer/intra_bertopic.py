@@ -44,6 +44,11 @@ def _build_theme_rows(
             continue
         sub_t = sub_assign.loc[sub_assign["topic_id"] == tid]
         idx = sub_t["doc_idx"].to_numpy(dtype=np.int64)
+        if idx.size and (idx.max() >= len(z) or idx.min() < 0):
+            raise IndexError(
+                f"doc_idx hors limites pour z (max={int(idx.max())}, len(z)={len(z)}). "
+                "z doit être la matrice complète (len(meta), dim), pas un sous-ensemble macro."
+            )
         subset = meta.iloc[idx]
         z_sub = z[idx]
         centroid = z_sub.mean(axis=0) if len(z_sub) else None
@@ -167,6 +172,29 @@ def fit_bertopic_per_macro(
         )
     if z is not None and embeddings_initial is None:
         embeddings_initial = np.asarray(z, dtype=np.float64)
+
+    topic_emb_cfg = topic_embedding_cfg or {
+        "mode": "initial",
+        "alpha": 0.0,
+        "normalize": True,
+    }
+    z_full: np.ndarray
+    if embeddings_initial is not None:
+        z_full = build_topic_embeddings(
+            embeddings_initial,
+            embeddings_adapted,
+            mode=str(topic_emb_cfg.get("mode", "initial")),
+            alpha=float(topic_emb_cfg.get("alpha", 0.0)),
+            normalize=bool(topic_emb_cfg.get("normalize", True)),
+        )
+    elif z is not None:
+        z_full = np.asarray(z, dtype=np.float64)
+    else:
+        raise ValueError("z ou embeddings_initial requis pour fit_bertopic_per_macro")
+    if len(z_full) != len(meta):
+        raise ValueError(
+            f"embeddings ({len(z_full)}) et meta ({len(meta)}) ont des longueurs différentes"
+        )
 
     prob_cols = [f"p_{m}" for m in MACRO_NAMES]
     p_macro = gating[prob_cols].to_numpy(dtype=np.float64)
@@ -314,7 +342,7 @@ def fit_bertopic_per_macro(
                 macro,
                 sub_assign.loc[valid],
                 meta,
-                emb_sub,
+                z_full,
                 method=method,
                 sentence_col=sentence_col,
                 top_k_words=top_k_words,
