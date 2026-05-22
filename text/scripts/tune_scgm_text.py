@@ -13,7 +13,7 @@ from scgm_text.tuning import run_scgm_tuning
 
 
 def main() -> None:
-    raise SystemExit(run_scgm_tuning())
+    raise SystemExit(run_scgm_tuning(sys.argv[1:]))
 
 
 if __name__ == "__main__":

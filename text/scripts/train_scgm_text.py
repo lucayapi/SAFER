@@ -129,7 +129,7 @@ def build_metric_fields(args: argparse.Namespace) -> List[str]:
     return fields
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train SCGM-G on text or precomputed embeddings.")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument(
@@ -258,7 +258,7 @@ def parse_args() -> argparse.Namespace:
         default=False,
         help="Calcule NMI/ARI subtype sur le train (diagnostic secondaire).",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def apply_config(args: argparse.Namespace, config_path: Optional[str]) -> None:

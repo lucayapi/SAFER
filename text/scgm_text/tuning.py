@@ -113,7 +113,7 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--max-combos", type=int, default=None)
     parser.add_argument("--skip-final-fit", action="store_true")
     parser.add_argument("--seed", type=int, default=None, help="Override seed global")
-    tune_args, _ = parser.parse_known_args(argv)
+    tune_args, remaining = parser.parse_known_args(argv)
 
     spec = load_yaml(TEXT_ROOT / tune_args.grid_config)
     if os.environ.get("TEST_CORPUS"):
@@ -126,7 +126,7 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     tuning_output = str(spec.get("output_dir", "output/scgm_text/tuning"))
     final_output = str(spec.get("final_output_dir", "output/scgm_text"))
 
-    base_args = parse_args()
+    base_args = parse_args(remaining)
     apply_config(base_args, str(base_config))
     finalize_args(base_args)
     if tune_args.seed is not None:
