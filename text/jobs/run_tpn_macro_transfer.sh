@@ -36,6 +36,7 @@ fi
 
 CONFIG="${CONFIG:-configs/tpn_macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
+BASE_METHOD="${BASE_METHOD:-softtriple}"
 CHECKPOINT="${CHECKPOINT:-}"
 SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 DEVICE="${DEVICE:-cuda}"
@@ -54,6 +55,6 @@ if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
   extra+=(--skip-bertopic)
 fi
 
-echo "[tpn_macro_transfer] CORPUS=${CORPUS} $(date -Iseconds)"
+echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"
 python scripts/run_tpn_macro_transfer_discovery.py "${extra[@]}"
 echo "[tpn_macro_transfer] terminé CORPUS=${CORPUS} $(date -Iseconds)"

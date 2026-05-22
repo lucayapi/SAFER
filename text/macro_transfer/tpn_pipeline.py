@@ -136,6 +136,7 @@ def run_tpn_macro_transfer_discovery(
     text_col_t = target_cfg.get("text_col", cfg.get("text_col", "sentence"))
     label_col_t = target_cfg.get("label_col", cfg.get("label_col", "pred_label"))
     pred_ok_col_t = target_cfg.get("pred_ok_col", cfg.get("pred_ok_col", "pred_ok"))
+    group_col_t = target_cfg.get("group_col", group_col_s)
 
     contrastive_config = (
         method_cfg.get("contrastive_config")
@@ -188,18 +189,28 @@ def run_tpn_macro_transfer_discovery(
     meta_t = load_target_metadata(target_data_csv, text_col=text_col_t)
     texts_t = meta_t[text_col_t].astype(str).tolist()
 
-    encode_kw = dict(
+    encode_kw_shared = dict(
         contrastive_config=contrastive_path,
         device=str(enc_device),
         batch_size=enc_bs,
         repo_anchor=repo_anchor,
-        text_col=text_col_s,
-        label_col=label_col_s,
-        pred_ok_col=pred_ok_col_s,
-        group_col=group_col_s,
         max_seq_length=max_seq_length,
         scgm_infer_batch_size=scgm_bs,
     )
+    encode_kw_source = {
+        **encode_kw_shared,
+        "text_col": text_col_s,
+        "label_col": label_col_s,
+        "pred_ok_col": pred_ok_col_s,
+        "group_col": group_col_s,
+    }
+    encode_kw_target = {
+        **encode_kw_shared,
+        "text_col": text_col_t,
+        "label_col": label_col_t,
+        "pred_ok_col": pred_ok_col_t,
+        "group_col": group_col_t,
+    }
 
     logger.info(
         "Encodage %s source (%d) et cible (%d)",
@@ -216,7 +227,7 @@ def run_tpn_macro_transfer_discovery(
             data_csv=source_data_csv,
             emb_csv=scgm_emb_source,
             filter_pred_ok=True,
-            **encode_kw,
+            **encode_kw_source,
         )
         h_t = encode_corpus_for_tpn(
             base_method,
@@ -225,20 +236,22 @@ def run_tpn_macro_transfer_discovery(
             data_csv=target_data_csv,
             emb_csv=scgm_emb_target,
             filter_pred_ok=False,
-            text_col=text_col_t,
-            **encode_kw,
+            **encode_kw_target,
         )
     else:
         h_s = encode_corpus_for_tpn(
-            base_method, texts_s, checkpoint, filter_pred_ok=True, **encode_kw
+            base_method,
+            texts_s,
+            checkpoint,
+            filter_pred_ok=True,
+            **encode_kw_source,
         )
         h_t = encode_corpus_for_tpn(
             base_method,
             texts_t,
             checkpoint,
             filter_pred_ok=False,
-            text_col=text_col_t,
-            **encode_kw,
+            **encode_kw_target,
         )
 
     if bool(encoding_cfg.get("normalize_embeddings", True)):
