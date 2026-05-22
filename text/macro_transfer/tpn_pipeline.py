@@ -637,6 +637,8 @@ def run_tpn_macro_transfer_discovery(
         "metrics_initial": {k: v for k, v in metrics_initial.items() if k != "classification_report"},
         "metrics_adapted": {k: v for k, v in metrics_adapted.items() if k != "classification_report"},
     }
+    summary_dir = out / "summary"
+    summary_dir.mkdir(parents=True, exist_ok=True)
     with open(summary_dir / "tpn_summary.json", "w", encoding="utf-8") as f:
         json.dump(tpn_summary, f, indent=2, ensure_ascii=False)
 
