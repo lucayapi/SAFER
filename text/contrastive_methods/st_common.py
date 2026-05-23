@@ -34,6 +34,15 @@ def get_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
+def resolve_autocast_dtype(device: str) -> Optional[torch.dtype]:
+    """dtype pour autocast entraînement GPU (bf16 prioritaire, sinon fp16). CPU → None."""
+    if not str(device).startswith("cuda"):
+        return None
+    if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
+        return torch.bfloat16
+    return torch.float16
+
+
 def load_sentence_transformer(cfg: ContrastiveConfig) -> SentenceTransformer:
     model = SentenceTransformer(cfg.backbone_name, trust_remote_code=True)
     if cfg.max_seq_length:

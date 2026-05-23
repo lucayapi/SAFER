@@ -235,10 +235,19 @@ def encode_texts_with_hf_encoder(
     dl = DataLoader(ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     parts = []
     dev = torch.device(device)
+    from contrastive_methods.st_common import resolve_autocast_dtype
+
+    autocast_dtype = resolve_autocast_dtype(device)
+    use_amp = autocast_dtype is not None and dev.type == "cuda"
     for batch in dl:
-        input_ids = batch["input_ids"].to(dev)
-        attention_mask = batch["attention_mask"].to(dev)
-        emb = model(input_ids, attention_mask)
+        input_ids = batch["input_ids"].to(dev, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(dev, non_blocking=True)
+        with torch.autocast(
+            device_type=dev.type,
+            dtype=autocast_dtype or torch.float32,
+            enabled=use_amp,
+        ):
+            emb = model(input_ids, attention_mask)
         if normalize_embeddings:
             emb = F.normalize(emb, p=2, dim=1)
         parts.append(emb.cpu().numpy())

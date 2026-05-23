@@ -249,7 +249,7 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 **Losses d'entraînement** :
 - **Batch triplet** : [`BatchHardSoftMarginTripletLoss`](https://sbert.net/docs/sentence_transformer/loss_overview.html) (Sentence Transformers) + sampler `GROUP_BY_LABEL` ; `training.distance_metric` = euclidien par défaut.
 - **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) (`SupConLoss`, cosinus L2, 1 vue par phrase) ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
-- **SoftTriple** : loss native ; euclidien par défaut. Pendant l’entraînement : lignes `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` en console ; détail dans `metrics/train_log.csv`.
+- **SoftTriple** : loss native ; euclidien par défaut. Entraînement custom avec **AMP GPU** (bf16/fp16, aligné ST), val `loss` + géométrie en **une passe** par epoch. Console : `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` ; détail dans `metrics/train_log.csv`.
 
 Les métriques val/export (η², RankMe) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
 
