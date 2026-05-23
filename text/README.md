@@ -249,7 +249,7 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 **Losses d'entraînement** :
 - **Batch triplet** : [`BatchHardSoftMarginTripletLoss`](https://sbert.net/docs/sentence_transformer/loss_overview.html) (Sentence Transformers) + sampler `GROUP_BY_LABEL` ; `training.distance_metric` = euclidien par défaut.
 - **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) (`SupConLoss`, cosinus L2, 1 vue par phrase) ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
-- **SoftTriple** : loss native ; euclidien par défaut.
+- **SoftTriple** : loss native ; euclidien par défaut. Pendant l’entraînement : lignes `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` en console ; détail dans `metrics/train_log.csv`.
 
 Les métriques val/export (η², RankMe) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
 
@@ -294,9 +294,11 @@ python scripts/train_batch_triplet.py --config configs/methods/batch_triplet.yam
 
 Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
-**PKBatchSampler (Batch Triplet)** : ST 3.4.1 `GROUP_BY_LABEL` produit des batches mono-classe (incompatibles avec Batch Hard Triplet). Le repo utilise un sampler local P×K (`batch_triplet.sampler: pk`, défaut `classes_per_batch: 4`, `samples_per_class: batch_size/4`). Vérification : `python scripts/debug_pk_sampler.py`. Au démarrage : `[PKSampler DEBUG] batch=0 labels={"0":16,"1":16,"2":16,"3":16}`.
+**PKBatchSampler (Batch Triplet)** : batches équilibrés auto — P = nombre de macros dans le fold train, K = `batch_size / P` (ex. 64 et 4 classes → 16 ex./classe). Vérification : `python scripts/debug_pk_sampler.py`. Au démarrage : `[PKSampler DEBUG] batch=0 labels={"0":16,...}`.
 
-**Diagnostics Batch Triplet** (section `batch_triplet:`) : avec `log_diagnostics: true`, écrit `logs/batch_triplet_diagnostics.csv` et lignes `[TripletDiag step=…]`. Un batch mono-classe lève `[BATCH ERROR]` et arrête l'entraînement.
+**SupCon** : sampler shuffle standard ST (`BATCH_SAMPLER`), pas PK.
+
+**Diagnostics Batch Triplet** : `log_diagnostics: true` → `logs/batch_triplet_diagnostics.csv` + `[TripletDiag …]` (hard_pos, gap, …). Pas de dicts HF `{'loss':…}` en console ; `train_loss` par epoch dans `metrics/train_log.csv`.
 
 ### Tuning (grille + réentraînement final 100 %)
 
@@ -311,7 +313,7 @@ python scripts/tune_batch_triplet.py --grid-config configs/tuning/batch_triplet_
 
 Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`, `softtriple.gamma`, `training.distance_metric`, etc.). Hyperparamètres spécifiques sous `supcon:` / `softtriple:` / `batch_triplet:` uniquement (pas de `distance_metric` dupliqué).
 
-**Log d'entraînement** : `metrics/train_log.csv` — `epoch`, `train_loss`, `val_loss` (SoftTriple), puis `val_{k}` pour chaque `k` dans `GEOMETRY_METRIC_KEYS` (aligné sur `metrics_geometry_*.csv`). Plus de repli vers le log Hugging Face brut (`grad_norm`, `step`, …).
+**Log d'entraînement** : `metrics/train_log.csv` — `epoch`, `train_loss`, `val_loss` (SoftTriple), puis `val_{k}` pour chaque `k` dans `GEOMETRY_METRIC_KEYS` (aligné sur `metrics_geometry_*.csv`). Jobs SLURM : cache HF via `HF_HOME` uniquement (`jobs/_env.sh`, pas `TRANSFORMERS_CACHE`).
 
 Sorties tuning : `output/<method>/tuning/grid_summary.csv`, `best_combo.json`, `combos/<combo_id>/`.  
 Après tuning : réentraînement sur tout le corpus → `output/<method>/embeddings/final_embeddings.csv`.

@@ -19,8 +19,6 @@ from typing import Dict, Iterator, List, Mapping, Sequence, Union
 import torch
 from torch.utils.data import BatchSampler
 
-from contrastive_methods.config import ContrastiveConfig
-
 
 class SetEpochMixin:
     """Compatibilité Trainer ST : ``set_epoch`` avant chaque epoch."""
@@ -80,64 +78,46 @@ def validate_pk_batch(
                 )
 
 
-def resolve_batch_triplet_pk_params(
-    cfg: ContrastiveConfig,
+def resolve_balanced_pk_params(
     train_labels: Sequence[int],
+    batch_size: int,
+    *,
+    seed: int = 42,
 ) -> PKParams:
-    sampler = (cfg.batch_triplet_sampler or "pk").strip().lower()
-    if sampler != "pk":
-        raise ValueError(
-            f"batch_triplet.sampler={sampler!r} non supporté pour PK ; utiliser 'pk'."
-        )
+    """
+    P = nombre de labels distincts dans le train split ; K = batch_size // P (équilibré).
 
+    Ex. 4 macros et batch_size=64 → P=4, K=16.
+    """
     labels_arr = [int(x) for x in train_labels]
     unique_labels = sorted(set(labels_arr))
     n_unique = len(unique_labels)
     if n_unique < 2:
         raise ValueError(
-            f"Batch Triplet PK : au moins 2 labels distincts requis dans le train split, "
-            f"obtenu {n_unique}."
+            f"PK équilibré : au moins 2 labels distincts requis, obtenu {n_unique}."
         )
 
-    p = cfg.batch_triplet_classes_per_batch
-    if p is None:
-        p = min(4, n_unique)
-    p = int(p)
-
-    k = cfg.batch_triplet_samples_per_class
-    if k is None:
-        if cfg.batch_size % p != 0:
-            raise ValueError(
-                f"batch_size={cfg.batch_size} doit être divisible par classes_per_batch={p} "
-                f"(ou définir samples_per_class explicitement)."
-            )
-        k = cfg.batch_size // p
-    k = int(k)
-
-    batch_size = p * k
-    if cfg.batch_size != batch_size:
+    p = n_unique
+    bs = int(batch_size)
+    if bs % p != 0:
         raise ValueError(
-            f"batch_size={cfg.batch_size} incompatible avec PK : "
-            f"classes_per_batch={p} × samples_per_class={k} = {batch_size}. "
-            f"Ajuster training.batch_size ou batch_triplet.classes_per_batch / samples_per_class."
+            f"batch_size={bs} doit être divisible par le nombre de classes train={p} "
+            f"({unique_labels}). Ajuster training.batch_size."
         )
-    if p < 2:
-        raise ValueError(f"classes_per_batch doit être >= 2, obtenu {p}.")
+    k = bs // p
     if k < 2:
-        raise ValueError(f"samples_per_class doit être >= 2, obtenu {k}.")
-    if p > n_unique:
         raise ValueError(
-            f"classes_per_batch={p} > nombre de labels train={n_unique} "
-            f"({unique_labels})."
+            f"samples_per_class={k} < 2 : augmenter batch_size (actuel {bs}) "
+            f"pour {p} classes."
         )
 
     return PKParams(
-        sampler=sampler,
-        batch_size=batch_size,
+        sampler="pk",
+        batch_size=bs,
         classes_per_batch=p,
         samples_per_class=k,
         drop_last=True,
-        seed=int(cfg.seed),
+        seed=int(seed),
     )
 
 
@@ -206,7 +186,6 @@ class PKBatchSampler(SetEpochMixin, BatchSampler):
     def __iter__(self) -> Iterator[List[int]]:
         self.generator.manual_seed(self.seed + self.epoch)
         n_batches = len(self)
-        labels_tensor = torch.tensor(self.available_labels, dtype=torch.long)
 
         for _ in range(n_batches):
             perm = torch.randperm(len(self.available_labels), generator=self.generator)

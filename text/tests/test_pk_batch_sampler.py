@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.samplers.pk_batch_sampler import (
     PKBatchSampler,
     debug_pk_sampler_batches,
     label_counts_for_indices,
-    resolve_batch_triplet_pk_params,
+    resolve_balanced_pk_params,
     validate_pk_batch,
 )
 
@@ -60,32 +59,18 @@ def test_batch_size_must_equal_p_times_k():
         )
 
 
-def test_resolve_batch_triplet_pk_params_defaults():
-    cfg = ContrastiveConfig(
-        method_name="batch_triplet",
-        dataset_path=".",
-        batch_size=64,
-        batch_triplet_sampler="pk",
-        batch_triplet_classes_per_batch=4,
-        batch_triplet_samples_per_class=16,
-    )
-    params = resolve_batch_triplet_pk_params(cfg, [0, 0, 1, 1, 2, 2, 3, 3])
+def test_resolve_balanced_pk_params_auto():
+    labels = [0, 0, 1, 1, 2, 2, 3, 3]
+    params = resolve_balanced_pk_params(labels, batch_size=64, seed=42)
     assert params.classes_per_batch == 4
     assert params.samples_per_class == 16
     assert params.batch_size == 64
 
 
-def test_resolve_rejects_mismatched_batch_size():
-    cfg = ContrastiveConfig(
-        method_name="batch_triplet",
-        dataset_path=".",
-        batch_size=32,
-        batch_triplet_sampler="pk",
-        batch_triplet_classes_per_batch=4,
-        batch_triplet_samples_per_class=16,
-    )
-    with pytest.raises(ValueError, match="incompatible"):
-        resolve_batch_triplet_pk_params(cfg, [0, 0, 1, 1, 2, 2, 3, 3])
+def test_resolve_rejects_non_divisible_batch_size():
+    labels = [0, 0, 1, 1, 2, 2, 3, 3]
+    with pytest.raises(ValueError, match="divisible"):
+        resolve_balanced_pk_params(labels, batch_size=30)
 
 
 def test_set_epoch_changes_batch_order():

@@ -26,9 +26,6 @@ echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-}"
 python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())"
 
-export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-mkdir -p "${HF_HOME}"
-
 export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
 echo "TEST_CORPUS=${TEST_CORPUS}"
 # Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — K-fold groupé K=5

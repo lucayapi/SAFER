@@ -22,8 +22,7 @@ else
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
 
-export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-mkdir -p "${HF_HOME}" embeddings/test
+mkdir -p embeddings/test
 
 TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
 BACKBONE_NAME="${BACKBONE_NAME:-Qwen/Qwen3-Embedding-0.6B}"

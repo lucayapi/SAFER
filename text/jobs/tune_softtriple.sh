@@ -37,8 +37,4 @@ source "${TEXT_JOBS_DIR}/_tune_common.sh"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
-export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-export TRANSFORMERS_CACHE="${HF_HOME}"
-mkdir -p "${HF_HOME}"
-
 tune_job_run tune_softtriple.py configs/tuning/softtriple_grid.yaml

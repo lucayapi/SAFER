@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
 from metrics.geometry import GEOMETRY_METRIC_KEYS
@@ -10,6 +11,32 @@ TRAIN_LOG_COLUMNS: List[str] = (
     ["epoch", "train_loss", "val_loss"]
     + [f"val_{key}" for key in GEOMETRY_METRIC_KEYS]
 )
+
+
+class EpochLossAccumulator:
+    """Accumule les loss step pour moyenne par epoch (sans logs HF step)."""
+
+    def __init__(self) -> None:
+        self._by_epoch: Dict[int, List[float]] = defaultdict(list)
+
+    @staticmethod
+    def _epoch_index(epoch: Optional[float]) -> int:
+        if epoch is None:
+            return 1
+        ep = float(epoch)
+        base = int(ep)
+        if ep > base + 1e-6:
+            return base + 1
+        return max(1, base)
+
+    def record(self, loss: float, epoch: Optional[float]) -> None:
+        self._by_epoch[self._epoch_index(epoch)].append(float(loss))
+
+    def mean_for_epoch(self, epoch: int) -> Optional[float]:
+        vals = self._by_epoch.get(int(epoch), [])
+        if not vals:
+            return None
+        return sum(vals) / len(vals)
 
 
 def geometry_row_to_val_columns(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -38,8 +65,17 @@ def build_train_log_row(
     return row
 
 
-def mean_train_loss_for_epoch(log_history: List[Dict[str, Any]], epoch: int) -> Optional[float]:
-    """Moyenne des loss step HF pour l'epoch donné (fractionnaire inclus)."""
+def mean_train_loss_for_epoch(
+    log_history: List[Dict[str, Any]],
+    epoch: int,
+    *,
+    loss_accumulator: Optional[EpochLossAccumulator] = None,
+) -> Optional[float]:
+    """Moyenne des loss step pour l'epoch (accumulateur prioritaire, sinon log_history HF)."""
+    if loss_accumulator is not None:
+        acc = loss_accumulator.mean_for_epoch(epoch)
+        if acc is not None:
+            return acc
     losses: List[float] = []
     for entry in log_history:
         if "loss" not in entry or "eval" in entry:

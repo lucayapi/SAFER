@@ -62,10 +62,18 @@ activate_text_venv() {
   fi
 }
 
+# Cache Hugging Face (éviter TRANSFORMERS_CACHE, déprécié depuis transformers v5).
+setup_hf_cache_env() {
+  export HF_HOME="${HF_HOME:-${SCRATCH:-$HOME}/hf_cache}"
+  mkdir -p "${HF_HOME}"
+  unset TRANSFORMERS_CACHE
+}
+
 # Racine text/ + modules HPC + .env + venv (à appeler après cd vers text/).
 setup_text_job_env() {
   local env_file="${1:-.env}"
   load_hpc_modules
   load_text_dotenv "${env_file}"
+  setup_hf_cache_env
   activate_text_venv
 }

@@ -22,8 +22,6 @@ fi
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
-export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-mkdir -p "${HF_HOME}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 SUPCON_CONFIG="${SUPCON_CONFIG:-configs/methods/supcon.yaml}"

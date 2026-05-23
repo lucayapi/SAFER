@@ -26,10 +26,6 @@ else
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
 
-export HF_HOME="${SCRATCH:-$HOME}/hf_cache"
-export TRANSFORMERS_CACHE="${HF_HOME}"
-mkdir -p "${HF_HOME}"
-
 SKIP_BTP="${SKIP_BTP:-0}"
 SKIP_TEST="${SKIP_TEST:-0}"
 SKIP_NPY="${SKIP_NPY:-0}"

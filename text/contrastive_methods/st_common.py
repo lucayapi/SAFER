@@ -11,7 +11,6 @@ import torch
 from datasets import Dataset
 from sentence_transformers import SentenceTransformer, losses
 from sentence_transformers.training_args import BatchSamplers, SentenceTransformerTrainingArguments
-from sentence_transformers.trainer import SentenceTransformerTrainer
 from transformers import TrainerCallback
 
 from contrastive_methods.config import ContrastiveConfig
@@ -20,11 +19,11 @@ from contrastive_methods.samplers.pk_batch_sampler import (
     PKParams,
     build_pk_batch_sampler,
     debug_pk_sampler_batches,
-    train_label_distribution,
 )
-from contrastive_methods.st_triplet_trainer import TripletPKTrainer
+from contrastive_methods.st_triplet_trainer import ContrastiveSTTrainer
 from contrastive_methods.training_log import (
     TRAIN_LOG_COLUMNS,
+    EpochLossAccumulator,
     build_train_log_row,
     mean_train_loss_for_epoch,
 )
@@ -86,6 +85,7 @@ class ContrastiveEpochCallback(TrainerCallback):
         log_rows: List[Dict[str, Any]],
         *,
         use_val_geometry: bool,
+        loss_accumulator: Optional[EpochLossAccumulator] = None,
     ) -> None:
         self.model = model
         self.val_df = val_df
@@ -94,12 +94,17 @@ class ContrastiveEpochCallback(TrainerCallback):
         self.best_model_dir = best_model_dir
         self.log_rows = log_rows
         self.use_val_geometry = use_val_geometry
+        self.loss_accumulator = loss_accumulator
         self.best_score = float("-inf")
         self.best_geometry: Dict[str, Any] = {}
 
     def on_epoch_end(self, args, state, control, **kwargs):
         epoch = int(state.epoch) if state.epoch is not None else len(self.log_rows) + 1
-        train_loss = mean_train_loss_for_epoch(state.log_history, epoch)
+        train_loss = mean_train_loss_for_epoch(
+            state.log_history,
+            epoch,
+            loss_accumulator=self.loss_accumulator,
+        )
 
         val_geometry: Optional[Dict[str, Any]] = None
         if self.use_val_geometry and len(self.val_df) > 0:
@@ -125,7 +130,6 @@ def build_training_arguments(
     *,
     steps_per_epoch: int,
     use_eval: bool,
-    use_pk_batch_sampler: bool = False,
 ) -> SentenceTransformerTrainingArguments:
     device = get_device()
     use_bf16 = (
@@ -134,11 +138,6 @@ def build_training_arguments(
         and torch.cuda.is_bf16_supported()
     )
     use_fp16 = device.startswith("cuda") and not use_bf16
-    batch_sampler = (
-        BatchSamplers.BATCH_SAMPLER
-        if use_pk_batch_sampler
-        else BatchSamplers.GROUP_BY_LABEL
-    )
     return SentenceTransformerTrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=cfg.epochs,
@@ -150,14 +149,14 @@ def build_training_arguments(
         gradient_checkpointing=cfg.gradient_checkpointing,
         fp16=use_fp16,
         bf16=use_bf16,
-        batch_sampler=batch_sampler,
+        batch_sampler=BatchSamplers.BATCH_SAMPLER,
         eval_strategy="no",
         save_strategy="no",
         load_best_model_at_end=False,
-        logging_strategy="steps",
-        logging_steps=max(1, steps_per_epoch // 2),
+        logging_strategy="no",
         report_to=[],
         seed=cfg.seed,
+        disable_tqdm=False,
     )
 
 
@@ -192,21 +191,13 @@ def train_st_model(
 ) -> tuple[SentenceTransformer, Dict[str, Any], float]:
     train_ds = dataframe_to_hf_dataset(train_df, text_col)
     train_labels = train_df["label_id"].astype(int).tolist()
+    loss_accumulator = EpochLossAccumulator()
 
     if triplet_pk is not None:
         pk_sampler = build_pk_batch_sampler(train_labels, triplet_pk)
         steps_per_epoch = max(
             1,
             math.ceil(len(pk_sampler) / max(1, cfg.gradient_accumulation_steps)),
-        )
-        print(f"[DEBUG] method = {cfg.method_name}", flush=True)
-        print(f"[DEBUG] sampler = {triplet_pk.sampler}", flush=True)
-        print(f"[DEBUG] batch_size = {triplet_pk.batch_size}", flush=True)
-        print(f"[DEBUG] classes_per_batch = {triplet_pk.classes_per_batch}", flush=True)
-        print(f"[DEBUG] samples_per_class = {triplet_pk.samples_per_class}", flush=True)
-        print(
-            f"[DEBUG] train label distribution = {train_label_distribution(train_labels)}",
-            flush=True,
         )
         debug_pk_sampler_batches(
             pk_sampler,
@@ -230,7 +221,6 @@ def train_st_model(
         checkpoints_dir / "trainer",
         steps_per_epoch=steps_per_epoch,
         use_eval=use_eval,
-        use_pk_batch_sampler=triplet_pk is not None,
     )
     best_dir = checkpoints_dir / "best_model"
     best_dir.mkdir(parents=True, exist_ok=True)
@@ -246,23 +236,21 @@ def train_st_model(
                 best_dir,
                 log_rows,
                 use_val_geometry=use_eval,
+                loss_accumulator=loss_accumulator,
             )
         )
     if hasattr(train_loss, "set_training_context"):
         callbacks.append(TripletDiagnosticsCallback(train_loss))
 
-    trainer_cls = TripletPKTrainer if triplet_pk is not None else SentenceTransformerTrainer
-    trainer_kwargs: Dict[str, Any] = dict(
+    trainer = ContrastiveSTTrainer(
         model=model,
         args=args,
         train_dataset=train_ds,
         loss=train_loss,
         callbacks=callbacks,
+        pk_params=triplet_pk,
+        loss_accumulator=loss_accumulator,
     )
-    if triplet_pk is not None:
-        trainer_kwargs["pk_params"] = triplet_pk
-
-    trainer = trainer_cls(**trainer_kwargs)
     trainer.train()
 
     best_geometry: Dict[str, Any] = {}

@@ -16,7 +16,7 @@ from contrastive_methods.data import prepare_text_dataset, split_train_val, trai
 from contrastive_methods.samplers.pk_batch_sampler import (
     PKBatchSampler,
     debug_pk_sampler_batches,
-    resolve_batch_triplet_pk_params,
+    resolve_balanced_pk_params,
 )
 
 
@@ -36,7 +36,7 @@ def main() -> int:
     train_df, _ = train_val_metadata(dataset, train_idx, val_idx)
     labels = train_df["label_id"].astype(int).tolist()
 
-    pk_params = resolve_batch_triplet_pk_params(cfg, labels)
+    pk_params = resolve_balanced_pk_params(labels, cfg.batch_size, seed=cfg.seed)
     sampler = PKBatchSampler(
         labels=labels,
         batch_size=pk_params.batch_size,
@@ -51,7 +51,10 @@ def main() -> int:
         expected_classes=pk_params.classes_per_batch,
         expected_samples_per_class=pk_params.samples_per_class,
     )
-    print(f"OK — {args.n_batches} batchs vérifiés (P={pk_params.classes_per_batch}, K={pk_params.samples_per_class}).")
+    print(
+        f"OK — {args.n_batches} batchs vérifiés "
+        f"(P={pk_params.classes_per_batch}, K={pk_params.samples_per_class})."
+    )
     return 0
 
 

@@ -19,9 +19,17 @@ from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.st_common import ContrastiveEpochCallback
 from contrastive_methods.training_log import (
     TRAIN_LOG_COLUMNS,
+    EpochLossAccumulator,
     build_train_log_row,
     mean_train_loss_for_epoch,
 )
+
+
+def test_mean_train_loss_for_epoch_uses_accumulator():
+    acc = EpochLossAccumulator()
+    acc.record(0.4, 0.5)
+    acc.record(0.2, 0.9)
+    assert mean_train_loss_for_epoch([], 1, loss_accumulator=acc) == pytest.approx(0.3)
 
 
 def test_mean_train_loss_for_epoch_averages_steps():
@@ -30,8 +38,8 @@ def test_mean_train_loss_for_epoch_averages_steps():
         {"epoch": 1, "loss": 0.2},
         {"epoch": 2, "loss": 0.1},
     ]
-    assert mean_train_loss_for_epoch(history, 1) == 0.3
-    assert mean_train_loss_for_epoch(history, 2) == 0.1
+    assert mean_train_loss_for_epoch(history, 1) == pytest.approx(0.3)
+    assert mean_train_loss_for_epoch(history, 2) == pytest.approx(0.1)
 
 
 def test_build_train_log_row_val_columns():
@@ -62,7 +70,7 @@ def test_contrastive_epoch_callback_writes_standard_columns(mock_eval):
             "label_id": [0, 1],
         }
     )
-    cfg = ContrastiveConfig(method_name="supcon")
+    cfg = ContrastiveConfig(method_name="supcon", dataset_path=Path("."))
     model = MagicMock()
     cb = ContrastiveEpochCallback(
         model,
@@ -90,7 +98,11 @@ def test_contrastive_epoch_callback_writes_standard_columns(mock_eval):
 @patch("contrastive_methods.st_common.evaluate_st_val_geometry")
 def test_contrastive_epoch_callback_final_fit_train_only(mock_eval):
     log_rows = []
-    cfg = ContrastiveConfig(method_name="batch_triplet", final_fit_full_data=True)
+    cfg = ContrastiveConfig(
+        method_name="batch_triplet",
+        dataset_path=Path("."),
+        final_fit_full_data=True,
+    )
     cb = ContrastiveEpochCallback(
         MagicMock(),
         pd.DataFrame(),

@@ -42,6 +42,28 @@ class _SplitDataset(torch.utils.data.Dataset):
         return {"text": self.texts[idx], "label": self.labels[idx]}
 
 
+def _print_softtriple_epoch(
+    epoch: int,
+    total_epochs: int,
+    train_loss: float,
+    *,
+    val_loss: Optional[float] = None,
+    val_geometry: Optional[Dict[str, Any]] = None,
+    selection_metric: str = "eta2_macro_balanced_perc",
+) -> None:
+    parts = [
+        f"[SoftTriple epoch={epoch}/{total_epochs}]",
+        f"train_loss={train_loss:.4f}",
+    ]
+    if val_loss is not None:
+        parts.append(f"val_loss={val_loss:.4f}")
+    if val_geometry is not None:
+        key = selection_metric
+        if key in val_geometry:
+            parts.append(f"{key}={float(val_geometry[key]):.4f}")
+    print(" | ".join(parts), flush=True)
+
+
 def _run_epoch(
     encoder: HFTextEncoder,
     loss_module: SoftTripleLoss,
@@ -193,6 +215,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
 
     t_train = time.perf_counter()
     for epoch in range(cfg.epochs):
+        epoch_no = epoch + 1
         train_loss = _run_epoch(
             encoder, loss_module, train_loader, optimizer, dev, train=True
         )
@@ -203,9 +226,17 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             )
             geom = evaluate_hf_val_geometry(encoder, val_df, cfg, dataset.text_col, device)
             score = selection_score(geom, cfg.selection_metric)
+            _print_softtriple_epoch(
+                epoch_no,
+                cfg.epochs,
+                train_loss,
+                val_loss=val_loss,
+                val_geometry=geom,
+                selection_metric=cfg.selection_metric,
+            )
             log_rows.append(
                 build_train_log_row(
-                    epoch + 1,
+                    epoch_no,
                     train_loss,
                     val_geometry=geom,
                     val_loss=val_loss,
@@ -216,7 +247,8 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
                 best_geometry = dict(geom)
                 _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
         else:
-            log_rows.append(build_train_log_row(epoch + 1, train_loss))
+            _print_softtriple_epoch(epoch_no, cfg.epochs, train_loss)
+            log_rows.append(build_train_log_row(epoch_no, train_loss))
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
 
     train_wall_time_sec = time.perf_counter() - t_train
