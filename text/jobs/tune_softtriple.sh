@@ -21,6 +21,8 @@
 #SBATCH --time=48:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
+#SBATCH --mail-user=lucayapi@gmail.com
+#SBATCH --mail-type=BEGIN,END,FAIL
 
 set -euo pipefail
 if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/_bootstrap.sh" ]]; then
