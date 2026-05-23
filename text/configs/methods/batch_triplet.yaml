@@ -29,9 +29,3 @@ training:
   gradient_accumulation_steps: 1
   gradient_checkpointing: false
   distance_metric: euclidean
-
-batch_triplet:
-  log_diagnostics: true
-  diagnostics_every_steps: 50
-  implementation: custom_diagnostics
-  loss_type: soft_margin

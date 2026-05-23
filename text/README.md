@@ -298,7 +298,7 @@ Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
 **SupCon** : sampler shuffle standard ST (`BATCH_SAMPLER`), pas PK.
 
-**Diagnostics Batch Triplet** : `log_diagnostics: true` → `logs/batch_triplet_diagnostics.csv` + `[TripletDiag …]` (hard_pos, gap, …). Pas de dicts HF `{'loss':…}` en console ; `train_loss` par epoch dans `metrics/train_log.csv`.
+**Batch Triplet** : loss native Sentence Transformers (`BatchHardSoftMarginTripletLoss`). `train_loss` par epoch dans `metrics/train_log.csv` (pas de dicts HF `{'loss':…}` en console).
 
 ### Tuning (grille + réentraînement final 100 %)
 

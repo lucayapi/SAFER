@@ -20,7 +20,8 @@ def test_load_batch_triplet_yaml():
     assert cfg.method_name == "batch_triplet"
     assert cfg.val_ratio == 0.1
     assert cfg.batch_size == 64
-    assert cfg.triplet_log_diagnostics is True
+    assert cfg.triplet_log_diagnostics is False
+    assert cfg.triplet_implementation == "sentence_transformers"
     assert cfg.distance_metric == "euclidean"
 
 
