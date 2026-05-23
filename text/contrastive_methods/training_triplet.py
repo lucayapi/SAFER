@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 
 from contrastive_methods.config import ContrastiveConfig
-from contrastive_methods.losses.triplet_st import build_batch_hard_soft_margin_loss
+from contrastive_methods.losses.triplet_st import build_batch_triplet_loss
+from contrastive_methods.triplet_diagnostics import TripletDiagnosticLogger
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.eval_geometry import evaluate_st_val_geometry
 from contrastive_methods.export import export_st_embeddings
@@ -33,7 +34,16 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
 
     model = load_sentence_transformer(cfg)
-    train_loss = build_batch_hard_soft_margin_loss(cfg, model)
+    diagnostic_logger = None
+    if cfg.triplet_log_diagnostics or (
+        (cfg.triplet_implementation or "").strip().lower() == "custom_diagnostics"
+    ):
+        diag_path = Path(layout["logs"]) / "batch_triplet_diagnostics.csv"
+        diagnostic_logger = TripletDiagnosticLogger(
+            diag_path,
+            every_steps=cfg.triplet_diagnostics_every_steps,
+        )
+    train_loss = build_batch_triplet_loss(cfg, model, diagnostic_logger=diagnostic_logger)
 
     t_train = time.perf_counter()
     model, val_geometry, best_score = train_st_model(

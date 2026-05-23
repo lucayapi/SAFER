@@ -43,6 +43,29 @@ def dataframe_to_hf_dataset(df: pd.DataFrame, text_col: str) -> Dataset:
     )
 
 
+class TripletDiagnosticsCallback(TrainerCallback):
+    """Met à jour le contexte (step, epoch, lr) sur la loss diagnostics."""
+
+    def __init__(self, train_loss) -> None:
+        self.train_loss = train_loss
+
+    def on_step_end(self, args, state, control, **kwargs):
+        if not hasattr(self.train_loss, "set_training_context"):
+            return control
+        lr = None
+        if state.log_history:
+            last = state.log_history[-1]
+            lr = last.get("learning_rate")
+        if lr is None and hasattr(args, "learning_rate"):
+            lr = args.learning_rate
+        self.train_loss.set_training_context(
+            global_step=int(state.global_step),
+            epoch=float(state.epoch) if state.epoch is not None else None,
+            learning_rate=float(lr) if lr is not None else None,
+        )
+        return control
+
+
 class ContrastiveEpochCallback(TrainerCallback):
     """Log epoch (train_loss + val géométrie) et sélection best_model sur δ_macro val."""
 
@@ -181,6 +204,8 @@ def train_st_model(
                 use_val_geometry=use_eval,
             )
         )
+    if hasattr(train_loss, "set_training_context"):
+        callbacks.append(TripletDiagnosticsCallback(train_loss))
 
     trainer = SentenceTransformerTrainer(
         model=model,

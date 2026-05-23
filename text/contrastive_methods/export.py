@@ -23,10 +23,10 @@ def embeddings_to_dataframe(
     embeddings: np.ndarray,
 ) -> pd.DataFrame:
     dim = embeddings.shape[1]
-    frame = pd.DataFrame({"doc_id": doc_ids.astype(np.int64)})
     cols = dim_column_names(dim)
-    frame[cols] = embeddings.astype(np.float32)
-    return frame
+    ids_df = pd.DataFrame({"doc_id": doc_ids.astype(np.int64)})
+    emb_df = pd.DataFrame(embeddings.astype(np.float32), columns=cols)
+    return pd.concat([ids_df, emb_df], axis=1)
 
 
 def export_st_embeddings(

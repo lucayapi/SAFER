@@ -52,6 +52,11 @@ class ContrastiveConfig:
     supcon_normalize_embeddings: bool = True
     # batch triplet (Sentence Transformers)
     batch_triplet_margin: Optional[float] = None
+    triplet_log_diagnostics: bool = False
+    triplet_diagnostics_every_steps: int = 50
+    triplet_diagnostics_eps: float = 1e-6
+    triplet_implementation: str = "sentence_transformers"
+    triplet_loss_type: str = "soft_margin"
     # distance (SupCon, SoftTriple, batch triplet)
     distance_metric: str = "euclidean"
     final_fit_full_data: bool = False
@@ -204,6 +209,21 @@ def load_contrastive_config(
             float(m)
             if (m := pick("triplet_margin", default=None, sources=(batch_triplet,))) is not None
             else None
+        ),
+        triplet_log_diagnostics=bool(
+            pick("log_diagnostics", default=False, sources=(batch_triplet,))
+        ),
+        triplet_diagnostics_every_steps=int(
+            pick("diagnostics_every_steps", default=50, sources=(batch_triplet,))
+        ),
+        triplet_diagnostics_eps=float(
+            pick("diagnostics_eps", default=1e-6, sources=(batch_triplet,))
+        ),
+        triplet_implementation=str(
+            pick("implementation", default="sentence_transformers", sources=(batch_triplet,))
+        ),
+        triplet_loss_type=str(
+            pick("loss_type", default="soft_margin", sources=(batch_triplet,))
         ),
         distance_metric=str(
             pick(

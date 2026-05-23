@@ -294,6 +294,8 @@ python scripts/train_batch_triplet.py --config configs/methods/batch_triplet.yam
 
 Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
+**Diagnostics Batch Triplet** (optionnel, section `batch_triplet:` du YAML) : avec `log_diagnostics: true` (ou `implementation: custom_diagnostics`), l'entraînement écrit `logs/batch_triplet_diagnostics.csv` et affiche des lignes `[TripletDiag step=…]` dans la console (`diagnostics_every_steps`, défaut 50). Colonnes utiles : `mean_hard_pos_dist`, `mean_hard_neg_dist`, `triplet_gap`, `active_triplet_ratio`, `batch_label_counts`. Par défaut `log_diagnostics: false` → loss Sentence Transformers native, comportement inchangé.
+
 ### Tuning (grille + réentraînement final 100 %)
 
 YAML dédiés sous `configs/tuning/` (ne modifient pas les configs `methods/`) :

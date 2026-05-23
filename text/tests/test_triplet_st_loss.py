@@ -15,7 +15,10 @@ if str(TEXT_ROOT) not in sys.path:
 pytest.importorskip("sentence_transformers")
 
 from contrastive_methods.config import ContrastiveConfig
-from contrastive_methods.losses.triplet_st import build_batch_hard_soft_margin_loss
+from contrastive_methods.losses.triplet_st import (
+    build_batch_hard_soft_margin_loss,
+    build_batch_triplet_loss,
+)
 from contrastive_methods.st_common import resolve_triplet_distance
 from sentence_transformers import losses
 
@@ -39,6 +42,13 @@ def test_build_batch_hard_soft_margin_loss_type():
     cfg = _minimal_cfg()
     model = MagicMock()
     loss = build_batch_hard_soft_margin_loss(cfg, model)
+    assert isinstance(loss, losses.BatchHardSoftMarginTripletLoss)
+
+
+def test_build_batch_triplet_loss_default_native():
+    cfg = _minimal_cfg()
+    model = MagicMock()
+    loss = build_batch_triplet_loss(cfg, model)
     assert isinstance(loss, losses.BatchHardSoftMarginTripletLoss)
 
 

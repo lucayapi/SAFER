@@ -32,4 +32,9 @@ training:
 
 # BatchHardSoftMarginTripletLoss (SBERT) — voir loss_overview SBERT
 batch_triplet:
-  # triplet_margin: 5.0  # optionnel si supporté par votre version sentence-transformers
+  log_diagnostics: false
+  diagnostics_every_steps: 50
+  diagnostics_eps: 1.0e-6
+  implementation: sentence_transformers  # sentence_transformers | custom_diagnostics
+  loss_type: soft_margin  # soft_margin | hard
+  # triplet_margin: 5.0  # pour loss_type: hard (BatchHardTripletLoss)
