@@ -16,6 +16,13 @@ from transformers import TrainerCallback
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.eval_geometry import evaluate_st_val_geometry, selection_score
+from contrastive_methods.samplers.pk_batch_sampler import (
+    PKParams,
+    build_pk_batch_sampler,
+    debug_pk_sampler_batches,
+    train_label_distribution,
+)
+from contrastive_methods.st_triplet_trainer import TripletPKTrainer
 from contrastive_methods.training_log import (
     TRAIN_LOG_COLUMNS,
     build_train_log_row,
@@ -118,6 +125,7 @@ def build_training_arguments(
     *,
     steps_per_epoch: int,
     use_eval: bool,
+    use_pk_batch_sampler: bool = False,
 ) -> SentenceTransformerTrainingArguments:
     device = get_device()
     use_bf16 = (
@@ -126,6 +134,11 @@ def build_training_arguments(
         and torch.cuda.is_bf16_supported()
     )
     use_fp16 = device.startswith("cuda") and not use_bf16
+    batch_sampler = (
+        BatchSamplers.BATCH_SAMPLER
+        if use_pk_batch_sampler
+        else BatchSamplers.GROUP_BY_LABEL
+    )
     return SentenceTransformerTrainingArguments(
         output_dir=str(output_dir),
         num_train_epochs=cfg.epochs,
@@ -137,7 +150,7 @@ def build_training_arguments(
         gradient_checkpointing=cfg.gradient_checkpointing,
         fp16=use_fp16,
         bf16=use_bf16,
-        batch_sampler=BatchSamplers.GROUP_BY_LABEL,
+        batch_sampler=batch_sampler,
         eval_strategy="no",
         save_strategy="no",
         load_best_model_at_end=False,
@@ -175,18 +188,49 @@ def train_st_model(
     train_loss,
     checkpoints_dir: Path,
     train_log_path: Optional[Path] = None,
+    triplet_pk: Optional[PKParams] = None,
 ) -> tuple[SentenceTransformer, Dict[str, Any], float]:
     train_ds = dataframe_to_hf_dataset(train_df, text_col)
-    steps_per_epoch = max(
-        1,
-        math.ceil(
-            len(train_df)
-            / max(1, cfg.batch_size * cfg.gradient_accumulation_steps)
-        ),
-    )
+    train_labels = train_df["label_id"].astype(int).tolist()
+
+    if triplet_pk is not None:
+        pk_sampler = build_pk_batch_sampler(train_labels, triplet_pk)
+        steps_per_epoch = max(
+            1,
+            math.ceil(len(pk_sampler) / max(1, cfg.gradient_accumulation_steps)),
+        )
+        print(f"[DEBUG] method = {cfg.method_name}", flush=True)
+        print(f"[DEBUG] sampler = {triplet_pk.sampler}", flush=True)
+        print(f"[DEBUG] batch_size = {triplet_pk.batch_size}", flush=True)
+        print(f"[DEBUG] classes_per_batch = {triplet_pk.classes_per_batch}", flush=True)
+        print(f"[DEBUG] samples_per_class = {triplet_pk.samples_per_class}", flush=True)
+        print(
+            f"[DEBUG] train label distribution = {train_label_distribution(train_labels)}",
+            flush=True,
+        )
+        debug_pk_sampler_batches(
+            pk_sampler,
+            train_labels,
+            n_batches=5,
+            expected_classes=triplet_pk.classes_per_batch,
+            expected_samples_per_class=triplet_pk.samples_per_class,
+        )
+    else:
+        steps_per_epoch = max(
+            1,
+            math.ceil(
+                len(train_df)
+                / max(1, cfg.batch_size * cfg.gradient_accumulation_steps)
+            ),
+        )
+
     use_eval = len(val_df) > 0 and not cfg.final_fit_full_data
     args = build_training_arguments(
-        cfg, checkpoints_dir / "trainer", steps_per_epoch=steps_per_epoch, use_eval=use_eval
+        cfg,
+        checkpoints_dir / "trainer",
+        steps_per_epoch=steps_per_epoch,
+        use_eval=use_eval,
+        use_pk_batch_sampler=triplet_pk is not None,
     )
     best_dir = checkpoints_dir / "best_model"
     best_dir.mkdir(parents=True, exist_ok=True)
@@ -207,13 +251,18 @@ def train_st_model(
     if hasattr(train_loss, "set_training_context"):
         callbacks.append(TripletDiagnosticsCallback(train_loss))
 
-    trainer = SentenceTransformerTrainer(
+    trainer_cls = TripletPKTrainer if triplet_pk is not None else SentenceTransformerTrainer
+    trainer_kwargs: Dict[str, Any] = dict(
         model=model,
         args=args,
         train_dataset=train_ds,
         loss=train_loss,
         callbacks=callbacks,
     )
+    if triplet_pk is not None:
+        trainer_kwargs["pk_params"] = triplet_pk
+
+    trainer = trainer_cls(**trainer_kwargs)
     trainer.train()
 
     best_geometry: Dict[str, Any] = {}

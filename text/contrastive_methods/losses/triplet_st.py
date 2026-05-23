@@ -4,7 +4,7 @@ Batch Hard Triplet (Sentence Transformers + diagnostics optionnels).
 Utilise ``BatchHardSoftMarginTripletLoss`` ou un wrapper custom avec monitoring.
 https://sbert.net/docs/sentence_transformer/loss_overview.html
 
-Requiert ``BatchSamplers.GROUP_BY_LABEL`` (voir ``st_common.build_training_arguments``).
+Requiert ``PKBatchSampler`` (voir ``st_triplet_trainer``) — ST 3.4.1 ``GROUP_BY_LABEL`` est mono-classe.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from contrastive_methods.st_common import resolve_triplet_distance
 from contrastive_methods.triplet_diagnostics import (
     TripletDiagnosticLogger,
     compute_batch_hard_triplet_stats,
+    raise_on_invalid_triplet_batch,
     triplet_loss_from_hard_distances,
 )
 
@@ -85,7 +86,7 @@ class BatchTripletLossWithDiagnostics(nn.Module):
                 margin=self.margin,
             )
         else:
-            loss = embeddings.sum() * 0.0
+            raise_on_invalid_triplet_batch(stats)
 
         if self.diagnostic_logger is not None:
             with torch.no_grad():

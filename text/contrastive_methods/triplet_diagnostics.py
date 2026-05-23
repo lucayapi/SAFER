@@ -236,6 +236,22 @@ def compute_batch_hard_triplet_stats(
     )
 
 
+def _mono_label_batch_error_message(stats: BatchHardTripletStats) -> str:
+    counts = json.dumps(stats.batch_label_counts, sort_keys=True)
+    return (
+        "[BATCH ERROR] BatchTriplet received a mono-label batch; no valid negative exists. "
+        f"batch_label_counts={counts}, n_valid_anchors={stats.n_valid_anchors}."
+    )
+
+
+def raise_on_invalid_triplet_batch(stats: BatchHardTripletStats) -> None:
+    if stats.n_valid_anchors > 0:
+        return
+    msg = _mono_label_batch_error_message(stats)
+    print(msg, flush=True)
+    raise RuntimeError(msg)
+
+
 def stats_to_log_row(
     stats: BatchHardTripletStats,
     *,
@@ -302,6 +318,9 @@ class TripletDiagnosticLogger:
         self._forward_count += 1
         if self._forward_count % self.every_steps != 0:
             return
+
+        if stats.n_valid_anchors == 0:
+            print(_mono_label_batch_error_message(stats), flush=True)
 
         row = stats_to_log_row(
             stats,

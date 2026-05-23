@@ -20,7 +20,7 @@ model:
   max_seq_length: 256
 
 training:
-  batch_size: 16
+  batch_size: 64  # P×K = 4×16
   eval_batch_size: 16
   encode_batch_size: 16
   epochs: 30
@@ -30,11 +30,14 @@ training:
   gradient_checkpointing: false
   distance_metric: euclidean
 
-# BatchHardSoftMarginTripletLoss (SBERT) — voir loss_overview SBERT
+# BatchHardSoftMarginTripletLoss — PK sampler requis (ST 3.4.1 GROUP_BY_LABEL = mono-classe)
 batch_triplet:
-  log_diagnostics: false
+  sampler: pk
+  classes_per_batch: 4
+  samples_per_class: 16
+  log_diagnostics: true
   diagnostics_every_steps: 50
   diagnostics_eps: 1.0e-6
-  implementation: sentence_transformers  # sentence_transformers | custom_diagnostics
-  loss_type: soft_margin  # soft_margin | hard
+  implementation: custom_diagnostics
+  loss_type: soft_margin
   # triplet_margin: 5.0  # pour loss_type: hard (BatchHardTripletLoss)

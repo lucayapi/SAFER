@@ -7,6 +7,7 @@ from pathlib import Path
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.losses.triplet_st import build_batch_triplet_loss
+from contrastive_methods.samplers.pk_batch_sampler import resolve_batch_triplet_pk_params
 from contrastive_methods.triplet_diagnostics import TripletDiagnosticLogger
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.eval_geometry import evaluate_st_val_geometry
@@ -44,6 +45,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
             every_steps=cfg.triplet_diagnostics_every_steps,
         )
     train_loss = build_batch_triplet_loss(cfg, model, diagnostic_logger=diagnostic_logger)
+    triplet_pk = resolve_batch_triplet_pk_params(cfg, train_df["label_id"].tolist())
 
     t_train = time.perf_counter()
     model, val_geometry, best_score = train_st_model(
@@ -55,6 +57,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
         train_loss,
         checkpoints,
         train_log_path=metrics_dir / "train_log.csv",
+        triplet_pk=triplet_pk,
     )
     train_wall_time_sec = time.perf_counter() - t_train
 

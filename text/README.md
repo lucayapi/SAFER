@@ -294,7 +294,9 @@ python scripts/train_batch_triplet.py --config configs/methods/batch_triplet.yam
 
 Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
-**Diagnostics Batch Triplet** (optionnel, section `batch_triplet:` du YAML) : avec `log_diagnostics: true` (ou `implementation: custom_diagnostics`), l'entraînement écrit `logs/batch_triplet_diagnostics.csv` et affiche des lignes `[TripletDiag step=…]` dans la console (`diagnostics_every_steps`, défaut 50). Colonnes utiles : `mean_hard_pos_dist`, `mean_hard_neg_dist`, `triplet_gap`, `active_triplet_ratio`, `batch_label_counts`. Par défaut `log_diagnostics: false` → loss Sentence Transformers native, comportement inchangé.
+**PKBatchSampler (Batch Triplet)** : ST 3.4.1 `GROUP_BY_LABEL` produit des batches mono-classe (incompatibles avec Batch Hard Triplet). Le repo utilise un sampler local P×K (`batch_triplet.sampler: pk`, défaut `classes_per_batch: 4`, `samples_per_class: batch_size/4`). Vérification : `python scripts/debug_pk_sampler.py`. Au démarrage : `[PKSampler DEBUG] batch=0 labels={"0":16,"1":16,"2":16,"3":16}`.
+
+**Diagnostics Batch Triplet** (section `batch_triplet:`) : avec `log_diagnostics: true`, écrit `logs/batch_triplet_diagnostics.csv` et lignes `[TripletDiag step=…]`. Un batch mono-classe lève `[BATCH ERROR]` et arrête l'entraînement.
 
 ### Tuning (grille + réentraînement final 100 %)
 

@@ -157,3 +157,25 @@ def test_wrapper_forward_requires_grad():
     loss = wrapper(features, labels)
     assert loss.ndim == 0
     loss.backward()
+
+
+def test_wrapper_mono_label_raises():
+    model = MagicMock()
+
+    def encode_forward(features):
+        n = features["input_ids"].shape[0]
+        return {"sentence_embedding": torch.randn(n, 4, requires_grad=True)}
+
+    model.side_effect = encode_forward
+
+    wrapper = BatchTripletLossWithDiagnostics(
+        model=model,
+        distance_metric="cosine",
+        soft_margin=True,
+        margin=None,
+        diagnostic_logger=None,
+    )
+    labels = torch.tensor([0, 0, 0, 0])
+    features = [{"input_ids": torch.zeros(4, 2, dtype=torch.long)}]
+    with pytest.raises(RuntimeError, match="mono-label batch"):
+        wrapper(features, labels)
