@@ -26,6 +26,7 @@ from contrastive_methods.training_log import (
     EpochLossAccumulator,
     build_train_log_row,
     mean_train_loss_for_epoch,
+    print_contrastive_epoch_line,
 )
 
 
@@ -120,6 +121,14 @@ class ContrastiveEpochCallback(TrainerCallback):
 
         self.log_rows.append(
             build_train_log_row(epoch, train_loss, val_geometry=val_geometry)
+        )
+        print_contrastive_epoch_line(
+            self.cfg.method_name,
+            epoch,
+            self.cfg.epochs,
+            train_loss,
+            val_geometry=val_geometry if self.use_val_geometry else None,
+            selection_metric=self.cfg.selection_metric,
         )
         return control
 

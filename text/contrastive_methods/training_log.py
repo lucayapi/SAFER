@@ -65,6 +65,36 @@ def build_train_log_row(
     return row
 
 
+def contrastive_method_epoch_tag(method_name: str) -> str:
+    """Libellé console pour les méthodes ST (triplet, supcon)."""
+    tags = {
+        "batch_triplet": "BatchTriplet",
+        "supcon": "SupCon",
+    }
+    return tags.get((method_name or "").strip(), method_name)
+
+
+def print_contrastive_epoch_line(
+    method_name: str,
+    epoch: int,
+    total_epochs: int,
+    train_loss: Optional[float],
+    *,
+    val_geometry: Optional[Dict[str, Any]] = None,
+    selection_metric: str = "eta2_macro_balanced_perc",
+) -> None:
+    """Affiche train_loss (et métrique val) en console, une ligne par epoch."""
+    tag = contrastive_method_epoch_tag(method_name)
+    parts = [f"[{tag} epoch={epoch}/{total_epochs}]"]
+    if train_loss is not None:
+        parts.append(f"train_loss={train_loss:.4f}")
+    else:
+        parts.append("train_loss=nan")
+    if val_geometry is not None and selection_metric in val_geometry:
+        parts.append(f"{selection_metric}={float(val_geometry[selection_metric]):.4f}")
+    print(" | ".join(parts), flush=True)
+
+
 def mean_train_loss_for_epoch(
     log_history: List[Dict[str, Any]],
     epoch: int,

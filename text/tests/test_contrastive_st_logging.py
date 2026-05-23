@@ -54,6 +54,38 @@ def test_build_train_log_row_val_columns():
 
 
 @patch("contrastive_methods.st_common.evaluate_st_val_geometry")
+def test_contrastive_epoch_callback_prints_epoch_line(mock_eval, capsys):
+    mock_eval.return_value = {"eta2_macro_balanced_perc": 9.5}
+    log_rows = []
+    val_df = pd.DataFrame(
+        {"sentence": ["a"], "pred_label": ["A0"], "label_id": [0]}
+    )
+    cfg = ContrastiveConfig(
+        method_name="batch_triplet",
+        dataset_path=Path("."),
+        epochs=30,
+    )
+    acc = EpochLossAccumulator()
+    acc.record(0.6, 1.0)
+    acc.record(0.4, 1.0)
+    cb = ContrastiveEpochCallback(
+        MagicMock(),
+        val_df,
+        "sentence",
+        cfg,
+        Path("/tmp/best"),
+        log_rows,
+        use_val_geometry=True,
+        loss_accumulator=acc,
+    )
+    cb.on_epoch_end(None, MagicMock(epoch=1, log_history=[]), None)
+    out = capsys.readouterr().out
+    assert "[BatchTriplet epoch=1/30]" in out
+    assert "train_loss=0.5000" in out
+    assert "eta2_macro_balanced_perc=9.5000" in out
+
+
+@patch("contrastive_methods.st_common.evaluate_st_val_geometry")
 def test_contrastive_epoch_callback_writes_standard_columns(mock_eval):
     mock_eval.return_value = {
         "eta2_macro_balanced_perc": 12.0,

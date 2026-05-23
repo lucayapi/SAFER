@@ -298,7 +298,7 @@ Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
 **SupCon** : sampler shuffle standard ST (`BATCH_SAMPLER`), pas PK.
 
-**Batch Triplet** : loss native Sentence Transformers (`BatchHardSoftMarginTripletLoss`). `train_loss` par epoch dans `metrics/train_log.csv` (pas de dicts HF `{'loss':…}` en console).
+**Batch Triplet / SupCon** : loss native ST. Pendant l’entraînement : `[BatchTriplet epoch=k/N] train_loss=… | eta2_macro_balanced_perc=…` (idem `SupCon`) ; détail dans `metrics/train_log.csv`. Un dict HF récapitulatif peut encore apparaître à la fin de `trainer.train()` (pas un log par epoch).
 
 ### Tuning (grille + réentraînement final 100 %)
 
