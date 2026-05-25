@@ -1,19 +1,18 @@
-"""Collate batches pour mode texte."""
+"""Collate batches pour pipeline SCGM end2end (texte tokenisé)."""
 
 from __future__ import annotations
 
-from typing import Any, Callable, List, Tuple
+from typing import Any, Callable, Dict, List
+
 
 import torch
 
 
 def make_text_collate_fn(tokenizer, max_length: int) -> Callable:
-    def collate_text_batch(
-        batch: List[Tuple[str, torch.Tensor, torch.Tensor]],
-    ) -> dict[str, torch.Tensor]:
-        texts = [item[0] for item in batch]
-        label_ids = torch.stack([item[1] for item in batch])
-        indices = torch.stack([item[2] for item in batch])
+    def collate_text_batch(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        texts = [item["text"] for item in batch]
+        label_ids = torch.tensor([int(item["label"]) for item in batch], dtype=torch.long)
+        indices = torch.tensor([int(item["index"]) for item in batch], dtype=torch.long)
         encoded = tokenizer(
             texts,
             padding=True,
@@ -25,6 +24,7 @@ def make_text_collate_fn(tokenizer, max_length: int) -> Callable:
             "input_ids": encoded["input_ids"],
             "attention_mask": encoded["attention_mask"],
             "label_ids": label_ids,
+            "labels": label_ids,
             "indices": indices,
         }
 

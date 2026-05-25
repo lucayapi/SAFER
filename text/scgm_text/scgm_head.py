@@ -1,15 +1,22 @@
-"""Tête SCGM-G partagée (ancres mu_y / mu_z, loss, inférence)."""
+"""Tête SCGM-G (ancres mu_y / mu_z, loss, inférence).
+
+Official-like SCGM objective:
+  L = L_CE + gamma * L_SCGM
+where L_SCGM is optimized through an EM procedure:
+  E-step: infer q(z_i | v_i, y_i) with Sinkhorn
+  M-step: update theta, psi, phi using SGD
+  v_i = normalize(E_psi(f_theta(x_i)))
+theta, psi and phi must all be trainable.
+"""
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-from scgm_text.distillation import DistillKL
 
 
 def glorot(shape):
@@ -18,14 +25,13 @@ def glorot(shape):
 
 
 class SCGMHead(nn.Module):
-    """Paramètres et opérations SCGM sur des features h déjà encodées."""
+    """Paramètres et opérations SCGM sur des features v déjà normalisées."""
 
     def __init__(
         self,
         hiddim: int,
         num_classes: int,
         num_subclasses: int,
-        kd_t: float = 4.0,
     ) -> None:
         super().__init__()
         self.mu_y = nn.Parameter(glorot([num_classes, hiddim]), requires_grad=True)
@@ -34,7 +40,6 @@ class SCGMHead(nn.Module):
         self.num_classes = num_classes
         self.num_subclasses = num_subclasses
         self.criterion_cls = nn.CrossEntropyLoss()
-        self.criterion_div = DistillKL(kd_t)
         self._logged_macro_no_relu = False
 
     def scgm_parameters(self):
@@ -47,8 +52,6 @@ class SCGMHead(nn.Module):
         mu_y_norm: torch.Tensor,
         norm_type: str,
     ) -> torch.Tensor:
-        # For text embeddings, keep signed dimensions for prototype similarity.
-        # SCGM theory uses dot products between normalized embeddings/prototypes; no ReLU here.
         if norm_type == "logit":
             return features_norm @ self.mu_y.t()
         if norm_type == "weight":
@@ -66,15 +69,12 @@ class SCGMHead(nn.Module):
         y,
         tau,
         alpha,
-        logit_t1=None,
-        logit_t2=None,
-        logit_t3=None,
         beta1=1.0,
         beta2=1.0,
         beta3=1.0,
         ang_norm=False,
         norm_type="logit",
-        kd_t: Optional[float] = None,
+        **_ignored,
     ):
         if not self._logged_macro_no_relu:
             print(
@@ -82,9 +82,6 @@ class SCGMHead(nn.Module):
                 flush=True,
             )
             self._logged_macro_no_relu = True
-
-        if kd_t is not None:
-            self.criterion_div.T = float(kd_t)
 
         n = logit.shape[0]
         mu_z = F.normalize(self.mu_z, p=2, dim=1)
@@ -111,32 +108,11 @@ class SCGMHead(nn.Module):
         ls2 = ls2.sum() / n
 
         logit3 = self._macro_class_logits(logit, logit_norm, mu_y, norm_type)
-
         ls3 = self.criterion_cls(logit3, y.argmax(1))
 
-        if beta1 == 1.0 or logit_t1 is None:
-            ls_div1 = torch.tensor(0.0, device=logit.device)
-        else:
-            ls_div1 = self.criterion_div(logit1, logit_t1)
-
-        if beta2 == 1.0 or logit_t2 is None:
-            ls_div2 = torch.tensor(0.0, device=logit.device)
-        else:
-            ls_div2 = self.criterion_div(logit2, logit_t2)
-
-        if beta3 == 1.0 or logit_t3 is None:
-            ls_div3 = torch.tensor(0.0, device=logit.device)
-        else:
-            ls_div3 = self.criterion_div(logit3, logit_t3)
-
-        ls = (
-            alpha * (beta1 * ls1 + beta2 * ls2)
-            + beta3 * ls3
-            + (1.0 - beta1) * ls_div1
-            + (1.0 - beta2) * ls_div2
-            + (1.0 - beta3) * ls_div3
-        )
-        return ls, ls1, ls2, ls3, ls_div1, ls_div2, ls_div3
+        ls = alpha * (beta1 * ls1 + beta2 * ls2) + beta3 * ls3
+        zero = torch.tensor(0.0, device=logit.device)
+        return ls, ls1, ls2, ls3, zero, zero, zero
 
     def pred(self, x, tau):
         x = F.normalize(x, p=2, dim=1)
@@ -178,7 +154,6 @@ class SCGMHead(nn.Module):
         logit1 = logit1 / tau
 
         logit2 = (y @ mu_y) @ (mu_z.t())
-
         logit3 = self._macro_class_logits(x, x_norm, mu_y, norm_type)
 
         return logit1, logit2, logit3

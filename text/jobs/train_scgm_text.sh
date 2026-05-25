@@ -5,7 +5,7 @@
 #SBATCH --constraint='a100|h100'
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-user=lucayapi@gmail.com
@@ -28,19 +28,10 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 
 export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
 echo "TEST_CORPUS=${TEST_CORPUS}"
-# Mode papier : embeddings figés (CSV) + SCGM strict (SGD, cosine, MLP) — K-fold groupé K=5
-echo "Mode entraînement : K-fold (n_folds depuis configs/scgm_text_strict_fidelity.yaml)"
+echo "Mode entraînement : SCGM strict fidelity (configs/scgm_text_strict_fidelity.yaml)"
 python scripts/train_scgm_text.py \
   --config configs/scgm_text_strict_fidelity.yaml \
-  --scgm_strict_mode \
-  --kfold 5 \
   --data_csv dataset/data_btp.csv \
-  --emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv \
   --label_col pred_label \
-  --group_col accident_id \
-  --output_dir output/scgm_text
-
-# Après train (eval BTP + test → output_test/ inclus dans train_scgm_text.py) :
-#   sbatch jobs/export_raw_geometry.sh
-#   sbatch jobs/export_test_embeddings.sh   # si embeddings/test/*.csv absent
-#   CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
+  --group_col accident_id
+

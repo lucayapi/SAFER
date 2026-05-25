@@ -1,51 +1,33 @@
-"""Utilitaires batch (device, forward features)."""
+"""Utilitaires batch (device, forward features) — end2end dict batches only."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple, Union
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
 
 
 def batch_to_device(
-    batch: Union[torch.Tensor, Dict[str, torch.Tensor], Tuple],
+    batch: Dict[str, torch.Tensor],
     device: torch.device,
-) -> Union[torch.Tensor, Dict[str, torch.Tensor], Tuple]:
-    if isinstance(batch, torch.Tensor):
-        return batch.to(device)
-    if isinstance(batch, dict):
-        out: Dict[str, torch.Tensor] = {}
-        for key, value in batch.items():
-            if torch.is_tensor(value):
-                out[key] = value.to(device)
-            else:
-                out[key] = value
-        return out
-    if isinstance(batch, (list, tuple)):
-        return type(batch)(batch_to_device(x, device) for x in batch)
-    return batch
+) -> Dict[str, torch.Tensor]:
+    out: Dict[str, torch.Tensor] = {}
+    for key, value in batch.items():
+        if torch.is_tensor(value):
+            out[key] = value.to(device)
+        else:
+            out[key] = value
+    return out
 
 
-def forward_features(model: nn.Module, batch: Any) -> torch.Tensor:
-    """Forward jusqu'aux features normalisées h (dict HF, tuple DataLoader, ou tenseur)."""
-    if isinstance(batch, dict):
-        return model(batch)
-    if isinstance(batch, (list, tuple)):
-        # DataLoader precomputed : (embeddings, label_ids, indices)
-        return model(batch[0])
-    if isinstance(batch, torch.Tensor):
-        return model(batch)
-    raise TypeError(f"Unsupported batch type for forward_features: {type(batch)!r}")
+def forward_features(model: nn.Module, batch: Dict[str, Any]) -> torch.Tensor:
+    if not isinstance(batch, dict):
+        raise TypeError(f"SCGM end2end expects dict batch, got {type(batch)!r}")
+    return model(batch)
 
 
-def unpack_batch(
-    batch: Any,
-) -> Tuple[Any, torch.Tensor, torch.Tensor]:
-    """Retourne (features_input, label_ids, indices)."""
-    if isinstance(batch, dict):
-        label_ids = batch["label_ids"]
-        indices = batch["indices"]
-        return batch, label_ids, indices
-    embeddings, label_ids, indices = batch
-    return embeddings, label_ids, indices
+def unpack_batch(batch: Dict[str, Any]) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor]:
+    label_ids = batch["label_ids"]
+    indices = batch["indices"]
+    return batch, label_ids, indices

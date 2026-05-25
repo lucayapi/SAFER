@@ -94,11 +94,15 @@ def resolve_tpn_checkpoint(
 
 
 def scgm_checkpoint_input_mode(checkpoint: str) -> str:
-    """Retourne input_mode du checkpoint SCGM (precomputed_embeddings | text)."""
+    """Retourne le mode d'encodage SCGM : end2end checkpoints → text."""
     from scgm_text.checkpoint_io import load_scgm_checkpoint
 
     _, checkpoint_args, _ = load_scgm_checkpoint(checkpoint, map_location="cpu")
-    return str(checkpoint_args.get("input_mode", "precomputed_embeddings"))
+    if checkpoint_args.get("pipeline") == "end2end_text":
+        return "text"
+    if checkpoint_args.get("input_mode") == "precomputed_embeddings":
+        return "precomputed_embeddings"
+    return "text"
 
 
 def _load_contrastive_cfg(

@@ -7,52 +7,54 @@ import argparse
 import numpy as np
 import pytest
 import torch
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 
 from scgm_text.scgm_text_model import SCGMTextModel
 from scripts.train_scgm_text import checkpoint_selection_score, evaluate_split
 
 
-def _args():
-    return argparse.Namespace(
-        input_mode="precomputed_embeddings",
-        projection="identity",
-        hiddim=8,
-        n_class=4,
-        n_subclass=8,
-        freeze_backbone=True,
-        backbone_model_name_or_path="",
-        pooling="mean",
-        max_seq_length=32,
-    )
+class _TinyTextDS(Dataset):
+    def __len__(self):
+        return 80
+
+    def __getitem__(self, i):
+        return {
+            "text": "sample",
+            "label": int(i % 4),
+            "group": "g",
+            "row_id": i,
+            "index": i,
+        }
 
 
-def _collate_precomputed(batch):
-    emb, y, idx = zip(*batch)
+def _collate(batch):
+    n = len(batch)
     return {
-        "embeddings": torch.stack(emb),
-        "label_ids": torch.stack(y),
-        "indices": torch.stack(idx),
+        "input_ids": torch.randint(1, 50, (n, 8)),
+        "attention_mask": torch.ones(n, 8, dtype=torch.long),
+        "label_ids": torch.tensor([b["label"] for b in batch], dtype=torch.long),
+        "indices": torch.tensor([b["index"] for b in batch], dtype=torch.long),
     }
 
 
-def _make_loader(n: int = 80, dim: int = 8, seed: int = 0) -> DataLoader:
-    rng = np.random.default_rng(seed)
-    x = torch.tensor(rng.normal(size=(n, dim)), dtype=torch.float32)
-    y = torch.tensor(rng.integers(0, 4, size=n), dtype=torch.long)
-    idx = torch.arange(n, dtype=torch.long)
-    return DataLoader(
-        TensorDataset(x, y, idx),
-        batch_size=16,
-        collate_fn=_collate_precomputed,
+def _model():
+    return SCGMTextModel(
+        hiddim=32,
+        num_classes=4,
+        num_subclasses=8,
+        backbone_model_name_or_path="__test_dummy__",
+        projection="linear",
     )
 
 
+def _loader() -> DataLoader:
+    return DataLoader(_TinyTextDS(), batch_size=16, collate_fn=_collate)
+
+
 def test_evaluate_split_returns_eta2_keys():
-    model = SCGMTextModel.from_args(_args(), input_dim=8)
-    loader = _make_loader()
+    model = _model()
     metrics, _, _, _, _ = evaluate_split(
-        model, loader, torch.device("cpu"), tau=0.1, n_class=4, prefix="val"
+        model, _loader(), torch.device("cpu"), tau=0.1, n_class=4, prefix="val"
     )
     assert "val_eta2_macro_balanced" in metrics
     assert "val_eta2_weighted" in metrics
@@ -62,11 +64,10 @@ def test_evaluate_split_returns_eta2_keys():
 
 
 def test_evaluate_split_classifier_diagnostics_optional():
-    model = SCGMTextModel.from_args(_args(), input_dim=8)
-    loader = _make_loader()
+    model = _model()
     metrics, _, _, _, _ = evaluate_split(
         model,
-        loader,
+        _loader(),
         torch.device("cpu"),
         tau=0.1,
         n_class=4,

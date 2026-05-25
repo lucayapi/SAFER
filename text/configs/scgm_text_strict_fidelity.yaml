@@ -1,18 +1,23 @@
-# Choix d'entraînement proches du SCGM-G officiel (SGD + cosine).
-# Entrée = embeddings texte fixes (pas ResNet / BREEDS).
+# SCGM end2end — fidélité papier ICLR 2022 (SGD + cosine).
+# Tous les hyperparamètres modifiables ici (data / model / training).
 
 data:
   data_csv: dataset/data_btp.csv
-  emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
-  test_corpus: metallurgie
+  text_col: sentence
+  label_col: pred_label
   group_col: accident_id
+  pred_ok_col: pred_ok
+  test_corpus: metallurgie
   val_ratio: 0.1
 
 model:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  max_seq_length: 256
+  pooling: mean
   projection: mlp
   hiddim: 128
   n_class: 4
-  n_subclass: 100
+  n_subclass: 32
   tau: 0.1
   alpha: 0.5
   lmd: 25.0
@@ -21,14 +26,19 @@ model:
 training:
   n_folds: 5
   optimizer: sgd
-  lr: 0.03
+  lr_backbone: 1.0e-5
+  lr_projector: 0.01
+  lr_head: 0.03
   momentum: 0.9
-  weight_decay: 0.0001
+  weight_decay_backbone: 0.0001
+  weight_decay_projector: 0.0001
+  weight_decay_head: 0.0001
   scheduler: cosine
   num_cycles: 10
-  epochs: 200
-  batch_size: 256
-  use_self_distillation: false
-  kd_t: 4.0
+  epochs: 50
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  gradient_checkpointing: true
   beta: 1.0
-  teacher_mode: none
+  num_workers: 2
+  output_dir: output/scgm_text

@@ -14,16 +14,14 @@ from scgm_text.training_diagnostics import (
 
 def _cfg(**kwargs):
     base = dict(
-        optimizer="adamw",
-        lr=1e-3,
-        head_lr=1e-3,
-        backbone_lr=2e-5,
-        weight_decay=1e-4,
-        head_weight_decay=1e-4,
-        backbone_weight_decay=0.01,
-        input_mode="text",
-        projection="identity",
-        freeze_backbone=False,
+        optimizer="sgd",
+        momentum=0.9,
+        lr_backbone=2e-5,
+        lr_projector=1e-4,
+        lr_head=1e-3,
+        weight_decay_backbone=0.01,
+        weight_decay_projector=1e-4,
+        weight_decay_head=1e-4,
         n_class=4,
         n_subclass=8,
         tau=0.1,
@@ -42,28 +40,25 @@ def _text_batch(batch_size: int = 4) -> dict:
     }
 
 
-def _model_text(identity: bool = True, freeze: bool = False) -> SCGMTextModel:
+def _model(projection: str = "linear") -> SCGMTextModel:
     return SCGMTextModel(
-        input_dim=32,
         hiddim=32,
         num_classes=4,
         num_subclasses=8,
-        projection="identity" if identity else "linear",
-        input_mode="text",
+        projection=projection,
         backbone_model_name_or_path="__test_dummy__",
-        freeze_backbone=freeze,
     )
 
 
-def test_identity_text_backbone_has_trainable_params():
-    model = _model_text(identity=True, freeze=False)
+def test_backbone_has_trainable_params():
+    model = _model()
     trainable = sum(p.numel() for p in model.backbone.parameters() if p.requires_grad)
     assert trainable > 0
     assert model.has_trainable_backbone
 
 
-def test_identity_text_backbone_updates_after_step():
-    model = _model_text(identity=True, freeze=False)
+def test_backbone_updates_after_step():
+    model = _model()
     cfg = _cfg()
     optimizer = build_optimizer(model, cfg)
     batch = _text_batch()
@@ -82,75 +77,13 @@ def test_identity_text_backbone_updates_after_step():
     assert change > 0.0
 
 
-def test_forward_features_tuple_batch_precomputed():
-    model = SCGMTextModel(
-        input_dim=32,
-        hiddim=16,
-        num_classes=4,
-        num_subclasses=8,
-        projection="mlp",
-        input_mode="precomputed_embeddings",
-    )
-    batch = (
-        torch.randn(3, 32),
-        torch.tensor([0, 1, 2], dtype=torch.long),
-        torch.tensor([0, 1, 2], dtype=torch.long),
-    )
-    features = forward_features(model, batch)
-    assert features.shape == (3, 16)
+def test_forward_features_dict_batch():
+    model = _model()
+    features = forward_features(model, _text_batch())
+    assert features.shape == (4, 32)
 
 
-def test_precomputed_identity_has_no_backbone():
-    model = SCGMTextModel(
-        input_dim=32,
-        hiddim=32,
-        num_classes=4,
-        num_subclasses=8,
-        projection="identity",
-        input_mode="precomputed_embeddings",
-    )
-    assert model.backbone is None
-    assert not model.has_trainable_backbone
-
-
-def test_freeze_backbone_true_no_update():
-    model = _model_text(identity=True, freeze=True)
-    cfg = _cfg(freeze_backbone=True)
-    optimizer = build_optimizer(model, cfg)
-    batch = _text_batch()
-    q = torch.zeros(4, 8)
-    q[torch.arange(4), torch.randint(0, 8, (4,))] = 1.0
-    y = torch.zeros(4, 4)
-    y[torch.arange(4), batch["label_ids"]] = 1.0
-
-    before = snapshot_backbone_weights(model)
-    features = forward_features(model, batch)
-    loss, *_ = model.loss(features, q, y, cfg.tau, cfg.alpha)
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
-    change = measure_backbone_weight_change(model, before)
-    assert change == 0.0
-
-
-def test_optimizer_param_groups():
-    model = _model_text(identity=False, freeze=False)
-    cfg = _cfg(projection="linear")
-    opt = build_optimizer(model, cfg)
-    names = {g.get("name") for g in opt.param_groups}
-    assert "backbone" in names
-    assert "projection" in names
-    assert "scgm" in names
-
-    model_pre = SCGMTextModel(
-        input_dim=32,
-        hiddim=16,
-        num_classes=4,
-        num_subclasses=8,
-        projection="identity",
-        input_mode="precomputed_embeddings",
-    )
-    opt_pre = build_optimizer(model_pre, _cfg(input_mode="precomputed_embeddings", projection="identity"))
-    names_pre = {g.get("name") for g in opt_pre.param_groups}
-    assert "backbone" not in names_pre
-    assert "scgm" in names_pre
+def test_mlp_projection_output_dim():
+    model = _model(projection="mlp")
+    features = model(_text_batch())
+    assert features.shape[1] == 32

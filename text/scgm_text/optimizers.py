@@ -1,4 +1,4 @@
-"""Optimizer factory for SCGM-Text training."""
+"""Optimizer factory for SCGM strict-fidelity training (SGD, 3 param groups)."""
 
 from __future__ import annotations
 
@@ -7,76 +7,73 @@ from typing import Any, Dict, List
 import torch
 
 
-def _head_lr(config: Any) -> float:
-    if getattr(config, "head_lr", None) is not None:
-        return float(config.head_lr)
-    return float(getattr(config, "lr", 1e-3))
+def _lr(config: Any, primary: str, fallback: str, default: float) -> float:
+    val = getattr(config, primary, None)
+    if val is not None:
+        return float(val)
+    return float(getattr(config, fallback, default))
 
 
-def _head_weight_decay(config: Any) -> float:
-    if getattr(config, "head_weight_decay", None) is not None:
-        return float(config.head_weight_decay)
-    return float(getattr(config, "weight_decay", 1e-4))
+def _wd(config: Any, primary: str, fallback: str, default: float) -> float:
+    val = getattr(config, primary, None)
+    if val is not None:
+        return float(val)
+    return float(getattr(config, fallback, default))
 
 
 def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimizer:
-    name = str(getattr(config, "optimizer", "adamw")).strip().lower()
-    backbone_lr = float(getattr(config, "backbone_lr", 2e-5))
-    backbone_wd = float(getattr(config, "backbone_weight_decay", 0.01))
-    head_lr = _head_lr(config)
-    head_wd = _head_weight_decay(config)
+    name = str(getattr(config, "optimizer", "sgd")).strip().lower()
+    if name != "sgd":
+        raise ValueError(
+            f"SCGM training only supports optimizer=sgd (got {name!r}). "
+            "Adam/AdamW have been removed."
+        )
+
+    lr_backbone = _lr(config, "lr_backbone", "backbone_lr", 1e-5)
+    lr_projector = _lr(config, "lr_projector", "head_lr", 0.01)
+    lr_head = _lr(config, "lr_head", "head_lr", 0.03)
+
+    wd_backbone = _wd(config, "weight_decay_backbone", "backbone_weight_decay", 1e-4)
+    wd_projector = _wd(config, "weight_decay_projector", "head_weight_decay", 1e-4)
+    wd_head = _wd(config, "weight_decay_head", "head_weight_decay", 1e-4)
 
     param_groups: List[Dict[str, Any]] = []
 
-    if getattr(model, "has_trainable_backbone", False):
-        backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
-        if backbone_params:
-            param_groups.append(
-                {
-                    "params": backbone_params,
-                    "lr": backbone_lr,
-                    "weight_decay": backbone_wd,
-                    "name": "backbone",
-                }
-            )
+    backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
+    if backbone_params:
+        param_groups.append(
+            {
+                "params": backbone_params,
+                "lr": lr_backbone,
+                "weight_decay": wd_backbone,
+                "name": "backbone",
+            }
+        )
 
-    if getattr(model, "has_projection", False):
-        proj_params = [p for p in model.projector.parameters() if p.requires_grad]
-        if proj_params:
-            param_groups.append(
-                {
-                    "params": proj_params,
-                    "lr": head_lr,
-                    "weight_decay": head_wd,
-                    "name": "projection",
-                }
-            )
+    proj_params = [p for p in model.projector.parameters() if p.requires_grad]
+    if proj_params:
+        param_groups.append(
+            {
+                "params": proj_params,
+                "lr": lr_projector,
+                "weight_decay": wd_projector,
+                "name": "projector",
+            }
+        )
 
-    scgm_params = []
-    if hasattr(model, "scgm_parameters"):
-        scgm_params = [p for p in model.scgm_parameters() if p.requires_grad]
-    else:
-        scgm_params = [
-            p
-            for n, p in model.named_parameters()
-            if p.requires_grad and "projector" not in n and "backbone" not in n
-        ]
+    scgm_params = [p for p in model.scgm_parameters() if p.requires_grad]
     if scgm_params:
         param_groups.append(
             {
                 "params": scgm_params,
-                "lr": head_lr,
-                "weight_decay": head_wd,
-                "name": "scgm",
+                "lr": lr_head,
+                "weight_decay": wd_head,
+                "name": "head",
             }
         )
 
     if not param_groups:
         raise ValueError("Aucun paramètre entraînable pour l'optimiseur.")
 
-    if name == "adamw":
-        return torch.optim.AdamW(param_groups)
-    if name == "sgd":
-        momentum = float(getattr(config, "momentum", 0.9))
-        return torch.optim.SGD(param_groups, momentum=momentum)
-    raise ValueError(f"Unknown optimizer: {name!r} (expected adamw or sgd)")
+    momentum = float(getattr(config, "momentum", 0.9))
+    return torch.optim.SGD(param_groups, momentum=momentum)

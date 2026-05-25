@@ -6,18 +6,26 @@ from typing import Any, Dict, Literal, Optional
 
 import torch.nn as nn
 
-ProjectionName = Literal["identity", "linear", "mlp"]
+ProjectionName = Literal["linear", "mlp"]
+# Official end2end pipeline: fc (alias linear) or mlp only.
 
 
 def normalize_projection_name(projection: Optional[str], with_mlp: Optional[bool] = None) -> str:
     """
-    Anciens checkpoints : seulement ``with_mlp`` (bool).
-    Nouveaux : ``projection`` ∈ {identity, linear, mlp}.
+    ``projection`` ∈ {fc, linear, mlp}. ``fc`` ≡ ``linear``.
+    ``identity`` is rejected on the official end2end path.
     """
     if projection is not None and str(projection).strip():
         p = str(projection).strip().lower()
-        if p in ("identity", "linear", "mlp"):
-            return p
+        if p in ("fc", "linear"):
+            return "linear"
+        if p == "mlp":
+            return "mlp"
+        if p == "identity":
+            raise ValueError(
+                "projection=identity is not supported on the official SCGM end2end pipeline. "
+                "Use projection=fc (linear) or mlp with hiddim < backbone dim."
+            )
         raise ValueError(f"projection inconnu : {projection!r}")
     if with_mlp is None:
         return "mlp"

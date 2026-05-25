@@ -15,7 +15,7 @@ if ROOT_DIR not in sys.path:
 from scgm_text.batch_utils import batch_to_device, forward_features
 from scgm_text.checkpoint_io import load_scgm_checkpoint
 from scgm_text.collate import make_text_collate_fn
-from scgm_text.dataset_text_embeddings import ID2LABEL, TextEmbeddingDataset
+from scgm_text.data_metadata import ID2LABEL
 from scgm_text.dataset_text_raw import TextRawDataset
 from scgm_text.topic_export import export_topic_tables
 from safer_core.paths import layout_method_output
@@ -25,7 +25,6 @@ from scgm_text.utils_io import ensure_dir, save_numpy
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export SCGM text model outputs.")
     parser.add_argument("--data_csv", type=str, default="dataset/data_btp.csv")
-    parser.add_argument("--emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_btp.csv")
     parser.add_argument("--checkpoint", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--label_col", type=str, default="pred_label")
@@ -77,35 +76,28 @@ def run_export(args: argparse.Namespace) -> None:
     model.to(device)
     model.eval()
 
-    input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
     tau = checkpoint_args.get("tau", 0.1)
     n_class = checkpoint_args.get("n_class", 4)
+    hiddim = int(checkpoint_args.get("hiddim", model.hiddim))
 
-    if input_mode == "text":
-        dataset = TextRawDataset(
-            data_csv=args.data_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-            text_col=args.text_col,
-        )
-        from transformers import AutoTokenizer
+    dataset = TextRawDataset(
+        data_csv=args.data_csv,
+        label_col=args.label_col,
+        pred_ok_col=args.pred_ok_col,
+        group_col=args.group_col,
+        text_col=args.text_col,
+    )
+    from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(
-            checkpoint_args.get("backbone_model_name_or_path", "Qwen/Qwen3-Embedding-0.6B")
-        )
-        collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
-        batch_size = min(args.batch_size, 32)
-    else:
-        dataset = TextEmbeddingDataset(
-            data_csv=args.data_csv,
-            emb_csv=args.emb_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-        )
-        collate_fn = None
-        batch_size = args.batch_size
+    backbone = (
+        checkpoint_args.get("backbone_model_name_or_path")
+        or checkpoint_args.get("backbone_name")
+        or "Qwen/Qwen3-Embedding-0.6B"
+    )
+    tokenizer = AutoTokenizer.from_pretrained(backbone, trust_remote_code=True)
+    collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
+    batch_size = min(args.batch_size, 32)
+    print(f"[export] end2end SCGM embeddings dim={hiddim}", flush=True)
 
     metadata_df = dataset.get_metadata_df()
 
@@ -121,24 +113,12 @@ def run_export(args: argparse.Namespace) -> None:
     with torch.no_grad():
         for start in range(0, len(dataset), batch_size):
             end = min(start + batch_size, len(dataset))
-            if input_mode == "text":
-                items = [dataset[index] for index in range(start, end)]
-                batch = collate_fn(items)
-                batch = batch_to_device(batch, device)
-                label_ids = batch["label_ids"]
-                raw_embeddings.append(model.encode(batch).cpu().numpy())
-                features = forward_features(model, batch)
-            else:
-                batch_embeddings = []
-                batch_labels = []
-                for index in range(start, end):
-                    embedding, label_id, _ = dataset[index]
-                    batch_embeddings.append(embedding)
-                    batch_labels.append(label_id)
-                embeddings = torch.stack(batch_embeddings).to(device)
-                label_ids = torch.stack(batch_labels)
-                raw_embeddings.append(embeddings.cpu().numpy())
-                features = model(embeddings)
+            items = [dataset[index] for index in range(start, end)]
+            batch = collate_fn(items)
+            batch = batch_to_device(batch, device)
+            label_ids = batch["label_ids"]
+            features = forward_features(model, batch)
+            raw_embeddings.append(features.cpu().numpy())
 
             batch_y = labels_to_onehot(label_ids.to(device), n_class)
             prob_y_x, prob_z_x, prob_y_z = model.pred(features, tau)

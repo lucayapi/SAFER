@@ -1,4 +1,4 @@
-"""Backbone texte Hugging Face (fine-tunable)."""
+"""Backbone texte Hugging Face (fine-tunable, differentiable forward)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from scgm_text.pooling import pool_outputs
 
 
 class TextBackbone(nn.Module):
-    """Encodeur ``f_theta`` : AutoModel + pooling."""
+    """Encodeur f_theta : AutoModel + mean pooling (attention_mask)."""
 
     def __init__(
         self,
@@ -19,6 +19,7 @@ class TextBackbone(nn.Module):
         pooling: str = "mean",
         train_last_n_layers: Optional[int] = None,
         freeze: bool = False,
+        gradient_checkpointing: bool = False,
     ) -> None:
         super().__init__()
         self.model_name_or_path = str(model_name_or_path)
@@ -31,8 +32,13 @@ class TextBackbone(nn.Module):
         else:
             from transformers import AutoModel
 
-            self.model = AutoModel.from_pretrained(self.model_name_or_path)
+            self.model = AutoModel.from_pretrained(
+                self.model_name_or_path,
+                trust_remote_code=True,
+            )
             self.hidden_size = int(self.model.config.hidden_size)
+            if gradient_checkpointing and hasattr(self.model, "gradient_checkpointing_enable"):
+                self.model.gradient_checkpointing_enable()
 
         if freeze:
             self.freeze_all()
@@ -45,12 +51,12 @@ class TextBackbone(nn.Module):
 
     def unfreeze_last_n_layers(self, n: int) -> None:
         self.freeze_all()
-        if n <= 0:
+        if n <= 0 or self.model is None:
             return
         layers = getattr(self.model, "encoder", None)
         if layers is not None and hasattr(layers, "layer"):
             layer_list = list(layers.layer)
-        elif self.model is not None and hasattr(self.model, "layers"):
+        elif hasattr(self.model, "layers"):
             layer_list = list(self.model.layers)
         else:
             for param in self.parameters():
@@ -58,11 +64,6 @@ class TextBackbone(nn.Module):
             return
         for layer in layer_list[-n:]:
             for param in layer.parameters():
-                param.requires_grad = True
-        if hasattr(self.model, "embeddings"):
-            pass
-        if hasattr(self.model, "pooler") and self.model.pooler is not None:
-            for param in self.model.pooler.parameters():
                 param.requires_grad = True
 
     def forward(
@@ -78,12 +79,4 @@ class TextBackbone(nn.Module):
             attention_mask=attention_mask,
             return_dict=True,
         )
-        last_hidden = outputs.last_hidden_state
-        return pool_outputs(last_hidden, attention_mask, mode=self.pooling)
-
-    def encode(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        return self.forward(input_ids, attention_mask)
+        return pool_outputs(outputs.last_hidden_state, attention_mask, mode=self.pooling)

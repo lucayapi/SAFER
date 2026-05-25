@@ -16,24 +16,11 @@ if ROOT_DIR not in sys.path:
 
 from scgm_text.batch_utils import batch_to_device, forward_features, unpack_batch
 from scgm_text.collate import make_text_collate_fn
-from scgm_text.dataset_text_embeddings import (
-    ID2LABEL,
-    LABEL2ID,
-    TextEmbeddingDataset,
-    build_dataloaders,
-    split_by_group,
-)
-from scgm_text.dataset_text_raw import TextRawDataset, build_text_dataloaders
-from scgm_text.distillation import (
-    build_teacher,
-    snapshot_teacher_from_student,
-    teacher_logits,
-)
+from scgm_text.data_metadata import ID2LABEL, LABEL2ID
+from scgm_text.dataset_text_raw import TextRawDataset, build_text_dataloaders, split_by_group
 from scgm_text.fidelity import (
-    apply_precomputed_identity_defaults,
+    apply_config_to_args,
     apply_scgm_strict_defaults,
-    apply_strict_finetune_identity_defaults,
-    apply_text_pragmatic_defaults,
     describe_fidelity_mode,
     flatten_config_yaml,
 )
@@ -53,12 +40,13 @@ from scgm_text.projection import normalize_projection_name
 from scgm_text.schedulers import step_scheduler
 from scgm_text.scgm_text_model import SCGMTextModel
 from scgm_text.training_diagnostics import (
-    assert_backbone_trainable_when_identity_text,
+    assert_end2end_trainable,
     measure_backbone_weight_change,
+    print_end2end_startup,
+    print_grad_norms,
     print_trainable_parameters,
     snapshot_backbone_weights,
     verify_backbone_updated,
-    warn_identity_frozen_backbone,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
 from metrics.geometry import (
@@ -87,7 +75,6 @@ BASE_METRIC_FIELDS = [
     "scheduler",
     "projection",
     "fidelity_mode",
-    "use_self_distillation",
     "train_entropy_pz",
     "train_entropy_py_z",
     "n_active_z",
@@ -130,45 +117,54 @@ def build_metric_fields(args: argparse.Namespace) -> List[str]:
 
 
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train SCGM-G on text or precomputed embeddings.")
-    parser.add_argument("--config", type=str, default=None)
+    parser = argparse.ArgumentParser(description="Train SCGM-G end-to-end on raw text.")
     parser.add_argument(
-        "--input_mode",
+        "--config",
         type=str,
-        default="precomputed_embeddings",
-        choices=["text", "precomputed_embeddings"],
+        default="configs/scgm_text_strict_fidelity.yaml",
     )
     parser.add_argument(
-        "--backbone_model_name_or_path",
+        "--backbone_name",
         type=str,
         default="Qwen/Qwen3-Embedding-0.6B",
+        help="HuggingFace backbone (alias: backbone_model_name_or_path in checkpoint).",
     )
     parser.add_argument("--text_col", type=str, default=None)
     parser.add_argument("--pooling", type=str, default="mean", choices=["cls", "mean"])
-    parser.add_argument("--freeze_backbone", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--train_last_n_layers", type=int, default=None)
     parser.add_argument("--max_seq_length", type=int, default=256)
-    parser.add_argument("--backbone_lr", type=float, default=2e-5)
+    parser.add_argument("--lr_backbone", type=float, default=None)
+    parser.add_argument("--lr_projector", type=float, default=None)
+    parser.add_argument("--lr_head", type=float, default=None)
+    parser.add_argument("--backbone_lr", type=float, default=None)
     parser.add_argument("--head_lr", type=float, default=None)
-    parser.add_argument("--backbone_weight_decay", type=float, default=0.01)
+    parser.add_argument("--weight_decay_backbone", type=float, default=None)
+    parser.add_argument("--weight_decay_projector", type=float, default=None)
+    parser.add_argument("--weight_decay_head", type=float, default=None)
+    parser.add_argument("--backbone_weight_decay", type=float, default=None)
     parser.add_argument("--head_weight_decay", type=float, default=None)
-    parser.add_argument("--strict_finetune_identity", action="store_true")
-    parser.add_argument("--precomputed_identity", action="store_true")
-    parser.add_argument("--verify_backbone_update", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1)
+    parser.add_argument("--gradient_checkpointing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--debug_grad_norm", action="store_true")
+    parser.add_argument("--verify_backbone_update", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--run_name", type=str, default=None)
     parser.add_argument("--data_csv", type=str, default="dataset/data_btp.csv")
-    parser.add_argument("--emb_csv", type=str, default="embeddings/Qwen3-Embedding-0.6B_btp.csv")
     parser.add_argument("--output_dir", type=str, default="output/scgm_text")
     parser.add_argument("--label_col", type=str, default="pred_label")
     parser.add_argument("--pred_ok_col", type=str, default="pred_ok")
     parser.add_argument("--group_col", type=str, default="accident_id")
-    parser.add_argument("--batch_size", type=int, default=512)
-    parser.add_argument("--epochs", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--lr", type=float, default=None, help="Alias legacy → lr_head si lr_head absent.")
     parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--optimizer", type=str, default="adamw", choices=["adamw", "sgd"])
-    parser.add_argument("--scheduler", type=str, default="none", choices=["none", "cosine"])
+    parser.add_argument("--optimizer", type=str, default="sgd", choices=["sgd"])
+    parser.add_argument(
+        "--scheduler",
+        type=str,
+        default="cosine",
+        choices=["none", "cosine", "cosine_warm_restarts"],
+    )
     parser.add_argument("--num_cycles", type=int, default=10)
     parser.add_argument("--hiddim", type=int, default=128)
     parser.add_argument("--n_class", type=int, default=4)
@@ -183,25 +179,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--projection",
         type=str,
-        default="identity",
-        choices=["identity", "linear", "mlp"],
+        default="mlp",
+        choices=["fc", "linear", "mlp"],
     )
-    parser.add_argument("--with_mlp", action=argparse.BooleanOptionalAction, default=None)
-    parser.add_argument("--scgm_strict_mode", action="store_true")
-    parser.add_argument("--text_pragmatic_mode", action="store_true")
-    parser.add_argument("--use_self_distillation", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--kd_t", type=float, default=4.0)
     parser.add_argument("--beta", type=float, default=1.0)
     parser.add_argument("--beta1", type=float, default=None)
     parser.add_argument("--beta2", type=float, default=None)
     parser.add_argument("--beta3", type=float, default=None)
-    parser.add_argument(
-        "--teacher_mode",
-        type=str,
-        default="none",
-        choices=["none", "ema", "previous_epoch"],
-    )
-    parser.add_argument("--ema_decay", type=float, default=0.999)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--smoke_epochs", type=int, default=None)
@@ -228,15 +212,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--test_corpus",
         type=str,
         default=None,
-        help="Identifiant configs/test_corpora.yaml (prioritaire sur test_data_csv / test_emb_csv)",
+        help="Identifiant configs/test_corpora.yaml (prioritaire sur test_data_csv)",
     )
     parser.add_argument(
         "--test_data_csv",
-        type=str,
-        default=None,
-    )
-    parser.add_argument(
-        "--test_emb_csv",
         type=str,
         default=None,
     )
@@ -266,43 +245,39 @@ def apply_config(args: argparse.Namespace, config_path: Optional[str]) -> None:
         return
     raw = load_yaml_config(config_path)
     flat = flatten_config_yaml(raw) if any(k in raw for k in ("model", "training", "data")) else raw
-    for key, value in flat.items():
-        key_norm = key.replace("-", "_")
-        if key_norm == "n_folds":
-            args.kfold = int(value)
-            continue
-        if key_norm == "test_corpus" and value:
-            args.test_corpus = str(value)
-            continue
-        if hasattr(args, key_norm):
-            setattr(args, key_norm, value)
+    apply_config_to_args(args, flat)
 
 
 def finalize_args(args: argparse.Namespace) -> None:
-    preset_flags = sum(
-        bool(x)
-        for x in (
-            args.scgm_strict_mode,
-            args.text_pragmatic_mode,
-            args.strict_finetune_identity,
-            args.precomputed_identity,
-        )
-    )
-    if preset_flags > 1:
-        raise ValueError("Un seul preset d'entraînement à la fois.")
-    if args.strict_finetune_identity:
-        apply_strict_finetune_identity_defaults(args)
-    elif args.precomputed_identity:
-        apply_precomputed_identity_defaults(args)
-    elif args.scgm_strict_mode:
-        apply_scgm_strict_defaults(args)
-    elif args.text_pragmatic_mode:
-        apply_text_pragmatic_defaults(args)
+    apply_scgm_strict_defaults(args)
 
-    if args.head_lr is None:
+    args.backbone_model_name_or_path = str(
+        getattr(args, "backbone_model_name_or_path", None) or args.backbone_name
+    )
+
+    if args.lr_backbone is not None:
+        args.backbone_lr = float(args.lr_backbone)
+    if args.lr_head is not None:
+        args.head_lr = float(args.lr_head)
+    elif args.lr is not None:
+        args.lr_head = float(args.lr)
         args.head_lr = float(args.lr)
-    if args.head_weight_decay is None:
-        args.head_weight_decay = float(args.weight_decay)
+    elif getattr(args, "head_lr", None) is None:
+        args.head_lr = float(getattr(args, "lr_head", 0.03))
+    if args.weight_decay_backbone is not None:
+        args.backbone_weight_decay = float(args.weight_decay_backbone)
+    if args.weight_decay_projector is not None:
+        args.head_weight_decay = float(args.weight_decay_projector)
+    if args.weight_decay_head is not None:
+        args.head_weight_decay = float(args.weight_decay_head)
+    elif args.weight_decay is not None:
+        wd = float(args.weight_decay)
+        if args.backbone_weight_decay is None:
+            args.backbone_weight_decay = wd
+        if args.head_weight_decay is None:
+            args.head_weight_decay = wd
+
+    args.optimizer = "sgd"
 
     if args.beta1 is None:
         args.beta1 = args.beta
@@ -311,37 +286,16 @@ def finalize_args(args: argparse.Namespace) -> None:
     if args.beta3 is None:
         args.beta3 = args.beta
 
-    if args.use_self_distillation and args.teacher_mode == "none":
-        args.teacher_mode = "ema"
-
     if args.run_name:
         args.output_dir = os.path.join("output", "scgm_text", args.run_name)
     args.output_dir = str(resolve_output_dir("scgm_text", args.output_dir))
+    args.projection = normalize_projection_name(args.projection, None)
 
-    if getattr(args, "with_mlp", None) is not None:
-        args.projection = normalize_projection_name(None, args.with_mlp)
-    else:
-        args.projection = normalize_projection_name(args.projection, None)
-
-    if not getattr(args, "fidelity_mode", None):
-        args.fidelity_mode = "custom"
-
-    if args.input_mode == "text" and not args.backbone_model_name_or_path:
-        raise ValueError("input_mode=text exige --backbone_model_name_or_path.")
-
-    if args.verify_backbone_update is None:
-        args.verify_backbone_update = (
-            args.input_mode == "text"
-            and args.projection == "identity"
-            and not args.freeze_backbone
-        )
-
-    warn_identity_frozen_backbone(args)
     _resolve_test_corpus_args(args)
 
 
 def _resolve_test_corpus_args(args: argparse.Namespace) -> None:
-    """Remplit test_data_csv / test_emb_csv depuis test_corpus ou le registre."""
+    """Remplit test_data_csv depuis test_corpus ou le registre."""
     import os
 
     from safer_core.test_corpus import resolve_test_corpus
@@ -350,14 +304,10 @@ def _resolve_test_corpus_args(args: argparse.Namespace) -> None:
     if corpus:
         spec = resolve_test_corpus(corpus)
         args.test_data_csv = str(spec.data_csv)
-        args.test_emb_csv = str(spec.emb_csv)
         return
-    if not getattr(args, "test_data_csv", None) or not getattr(args, "test_emb_csv", None):
+    if not getattr(args, "test_data_csv", None):
         spec = resolve_test_corpus(None)
-        if not getattr(args, "test_data_csv", None):
-            args.test_data_csv = str(spec.data_csv)
-        if not getattr(args, "test_emb_csv", None):
-            args.test_emb_csv = str(spec.emb_csv)
+        args.test_data_csv = str(spec.data_csv)
 
 
 def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
@@ -573,21 +523,19 @@ def save_checkpoint(
     path: str,
     model: SCGMTextModel,
     args: argparse.Namespace,
-    input_dim: int,
     train_idx: np.ndarray,
     val_idx: np.ndarray,
-    ema_teacher=None,
 ) -> None:
     payload = {
         "state_dict": model.state_dict(),
         "args": vars(args),
         "label2id": LABEL2ID,
-        "input_dim": input_dim,
+        "hiddim": int(model.hiddim),
+        "backbone_dim": int(model.input_dim),
         "train_idx": train_idx,
         "val_idx": val_idx,
+        "pipeline": "end2end_text",
     }
-    if ema_teacher is not None:
-        payload["teacher_state_dict"] = ema_teacher.state_dict()
     torch.save(payload, path)
 
 
@@ -615,13 +563,17 @@ def load_resume(
         ckpt = torch.load(path, map_location="cpu")
     model.load_state_dict(ckpt["state_dict"])
     saved = ckpt.get("args", {})
-    skip = {"scgm_strict_mode", "text_pragmatic_mode", "config", "resume_from_checkpoint", "smoke_epochs"}
+    skip = {"config", "resume_from_checkpoint", "smoke_epochs"}
     for key, value in saved.items():
         if key in skip:
             continue
         if hasattr(args, key):
             setattr(args, key, value)
-    return ckpt.get("teacher_state_dict")
+    if saved.get("input_mode") == "precomputed_embeddings":
+        raise ValueError(
+            "Checkpoint precomputed_embeddings is no longer supported. Retrain with end2end SCGM."
+        )
+    return None
 
 
 def _smoke_backbone_step(
@@ -644,7 +596,10 @@ def _smoke_backbone_step(
 
     before = snapshot_backbone_weights(model)
     features = forward_features(model, batch)
-    loss, *_ = model.loss(features, q_dummy, batch_y, args.tau, args.alpha, kd_t=args.kd_t)
+    loss, *_ = model.loss(
+        features, q_dummy, batch_y, args.tau, args.alpha,
+        beta1=args.beta1, beta2=args.beta2, beta3=args.beta3,
+    )
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
@@ -661,11 +616,6 @@ def run_training(
     t_run_start = time.perf_counter()
     set_seed(args.seed)
     print(describe_fidelity_mode(args), flush=True)
-    print(
-        f"input_mode={args.input_mode} projection={args.projection} "
-        f"freeze_backbone={args.freeze_backbone}",
-        flush=True,
-    )
 
     layout = layout_method_output("scgm_text", args.output_dir)
     args.output_dir = str(layout["root"])
@@ -675,62 +625,37 @@ def run_training(
     ensure_dir(layout["checkpoints"])
     ensure_dir(layout["logs"])
 
-    collate_fn = None
-    if args.input_mode == "text":
-        from transformers import AutoTokenizer
+    from transformers import AutoTokenizer
 
-        dataset = TextRawDataset(
-            data_csv=args.data_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-            text_col=args.text_col,
-        )
-        tokenizer = AutoTokenizer.from_pretrained(args.backbone_model_name_or_path)
-        collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
-        if train_idx_override is not None and val_idx_override is not None:
-            train_idx, val_idx = train_idx_override, val_idx_override
-        elif getattr(args, "final_fit_full_data", False):
-            n = len(dataset)
-            train_idx = np.arange(n, dtype=np.int64)
-            val_idx = np.array([], dtype=np.int64)
-        else:
-            train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
-        train_loader, val_loader = build_text_dataloaders(
-            dataset,
-            train_idx=train_idx,
-            val_idx=val_idx,
-            batch_size=args.batch_size,
-            collate_fn=collate_fn,
-            num_workers=args.num_workers,
-        )
-        input_dim = 0
+    dataset = TextRawDataset(
+        data_csv=args.data_csv,
+        label_col=args.label_col,
+        pred_ok_col=args.pred_ok_col,
+        group_col=args.group_col,
+        text_col=args.text_col,
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.backbone_model_name_or_path, trust_remote_code=True
+    )
+    collate_fn = make_text_collate_fn(tokenizer, args.max_seq_length)
+    if train_idx_override is not None and val_idx_override is not None:
+        train_idx, val_idx = train_idx_override, val_idx_override
+    elif getattr(args, "final_fit_full_data", False):
+        n = len(dataset)
+        train_idx = np.arange(n, dtype=np.int64)
+        val_idx = np.array([], dtype=np.int64)
     else:
-        dataset = TextEmbeddingDataset(
-            data_csv=args.data_csv,
-            emb_csv=args.emb_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-        )
-        if train_idx_override is not None and val_idx_override is not None:
-            train_idx, val_idx = train_idx_override, val_idx_override
-        elif getattr(args, "final_fit_full_data", False):
-            n = len(dataset)
-            train_idx = np.arange(n, dtype=np.int64)
-            val_idx = np.array([], dtype=np.int64)
-        else:
-            train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
-        train_loader, val_loader = build_dataloaders(
-            dataset,
-            train_idx=train_idx,
-            val_idx=val_idx,
-            batch_size=args.batch_size,
-            num_workers=args.num_workers,
-        )
-        input_dim = int(dataset.get_input_dim())
-        if args.projection == "identity":
-            args.hiddim = input_dim
+        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+    pin_memory = args.device == "cuda"
+    train_loader, val_loader = build_text_dataloaders(
+        dataset,
+        train_idx=train_idx,
+        val_idx=val_idx,
+        batch_size=args.batch_size,
+        collate_fn=collate_fn,
+        num_workers=args.num_workers,
+        pin_memory=pin_memory,
+    )
 
     if args.device == "cuda" and torch.cuda.is_available():
         device = torch.device("cuda")
@@ -740,31 +665,22 @@ def run_training(
         device = torch.device("cpu")
     print(f"Device effectif: {device}", flush=True)
 
-    model = SCGMTextModel.from_args(args, input_dim=input_dim).to(device)
-    if args.input_mode == "text":
-        input_dim = int(model.hiddim)
-        args.hiddim = input_dim
+    model = SCGMTextModel.from_args(args).to(device)
+    print_end2end_startup(model)
 
-    ema_teacher = None
     if args.resume_from_checkpoint:
-        teacher_sd = load_resume(args.resume_from_checkpoint, model, args)
+        load_resume(args.resume_from_checkpoint, model, args)
         print(f"Resumed from {args.resume_from_checkpoint}", flush=True)
-        if args.use_self_distillation:
-            ema_teacher = build_teacher(model, args.teacher_mode, args.ema_decay)
-            if teacher_sd and ema_teacher is not None:
-                ema_teacher.load_state_dict(teacher_sd)
 
     optimizer = build_optimizer(model, args)
     print_trainable_parameters(model)
-    assert_backbone_trainable_when_identity_text(model, args, optimizer)
+    assert_end2end_trainable(model, optimizer)
 
-    if args.verify_backbone_update and args.input_mode == "text":
+    if args.verify_backbone_update:
         _smoke_backbone_step(model, train_loader, optimizer, device, args)
 
-    if args.use_self_distillation and ema_teacher is None:
-        ema_teacher = build_teacher(model, args.teacher_mode, args.ema_decay)
-        if args.teacher_mode == "previous_epoch":
-            snapshot_teacher_from_student(ema_teacher, model)
+    grad_accum = max(1, int(args.gradient_accumulation_steps))
+    debug_grad_done = False
 
     train_labels = dataset.metadata_df.iloc[train_idx]["label_id"].to_numpy(dtype=np.int64)
     q_new = initialize_q_new(len(train_idx), args.n_subclass, train_labels)
@@ -773,8 +689,9 @@ def run_training(
     config_payload = vars(args).copy()
     config_payload["label2id"] = LABEL2ID
     config_payload["id2label"] = ID2LABEL
-    config_payload["input_dim"] = input_dim
+    config_payload["backbone_dim"] = int(model.input_dim)
     config_payload["hiddim"] = int(model.hiddim)
+    config_payload["pipeline"] = "end2end_text"
     config_payload["train_idx"] = train_idx.tolist()
     config_payload["val_idx"] = val_idx.tolist()
     config_payload["label_distribution"] = dataset.get_label_distribution()
@@ -808,9 +725,6 @@ def run_training(
         legacy_writer.writeheader()
 
         for epoch in range(1, args.epochs + 1):
-            if args.teacher_mode == "previous_epoch" and ema_teacher is not None:
-                snapshot_teacher_from_student(ema_teacher, model)
-
             current_lr = step_scheduler(optimizer, args, epoch, args.epochs)
 
             if epoch % args.n_iter_estep == 1:
@@ -828,6 +742,8 @@ def run_training(
             model.train()
             totals = {k: 0.0 for k in ("loss", "ls1", "ls2", "ls3", "ls_div1", "ls_div2", "ls_div3", "macro", "latent")}
             num_batches = 0
+            optimizer.zero_grad(set_to_none=True)
+            micro_step = 0
 
             for batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
                 batch = batch_to_device(batch, device)
@@ -838,29 +754,25 @@ def run_training(
                 batch_q = torch.tensor(q_new[local_indices], dtype=torch.float32, device=device)
 
                 features = forward_features(model, batch)
-                logit_t1 = logit_t2 = logit_t3 = None
-                if args.use_self_distillation and ema_teacher is not None:
-                    logit_t1, logit_t2, logit_t3 = teacher_logits(
-                        ema_teacher.teacher, features, batch_y, args.tau
-                    )
-
                 loss, ls1, ls2, ls3, ls_div1, ls_div2, ls_div3 = model.loss(
                     features,
                     batch_q,
                     batch_y,
                     args.tau,
                     args.alpha,
-                    logit_t1=logit_t1,
-                    logit_t2=logit_t2,
-                    logit_t3=logit_t3,
                     beta1=args.beta1,
                     beta2=args.beta2,
                     beta3=args.beta3,
-                    kd_t=args.kd_t,
                 )
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                (loss / grad_accum).backward()
+                micro_step += 1
+
+                if micro_step % grad_accum == 0:
+                    if args.debug_grad_norm and not debug_grad_done:
+                        print_grad_norms(model)
+                        debug_grad_done = True
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
 
                 totals["loss"] += float(loss.detach().cpu())
                 totals["ls1"] += float(ls1.detach().cpu())
@@ -872,6 +784,13 @@ def run_training(
                 totals["macro"] += float(ls3.detach().cpu())
                 totals["latent"] += float((ls1 + ls2).detach().cpu())
                 num_batches += 1
+
+            if micro_step % grad_accum != 0:
+                if args.debug_grad_norm and not debug_grad_done:
+                    print_grad_norms(model)
+                    debug_grad_done = True
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
 
             nb = max(num_batches, 1)
             train_metrics, _, _, _, train_geom = evaluate_split(
@@ -968,17 +887,12 @@ def run_training(
                 flush=True,
             )
 
-            if ema_teacher is not None and args.teacher_mode == "ema":
-                ema_teacher.update(model)
-
             save_checkpoint(
                 os.path.join(dirs["checkpoints_dir"], "last_model.pt"),
                 model,
                 args,
-                input_dim,
                 train_idx,
                 val_idx,
-                ema_teacher,
             )
             score = checkpoint_selection_score(
                 val_metrics,
@@ -993,10 +907,8 @@ def run_training(
                     os.path.join(dirs["checkpoints_dir"], "best_model.pt"),
                     model,
                     args,
-                    input_dim,
                     train_idx,
                     val_idx,
-                    ema_teacher,
                 )
 
     if not best_geometry and last_eval_geom:
@@ -1025,22 +937,13 @@ def run_training(
 def run_kfold(args: argparse.Namespace) -> None:
     from safer_core.kfold_eval import group_kfold_splits, save_kfold_tables
 
-    if args.input_mode == "text":
-        dataset = TextRawDataset(
-            data_csv=args.data_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-            text_col=args.text_col,
-        )
-    else:
-        dataset = TextEmbeddingDataset(
-            data_csv=args.data_csv,
-            emb_csv=args.emb_csv,
-            label_col=args.label_col,
-            pred_ok_col=args.pred_ok_col,
-            group_col=args.group_col,
-        )
+    dataset = TextRawDataset(
+        data_csv=args.data_csv,
+        label_col=args.label_col,
+        pred_ok_col=args.pred_ok_col,
+        group_col=args.group_col,
+        text_col=args.text_col,
+    )
     groups = dataset.metadata_df[args.group_col].to_numpy()
     splits = group_kfold_splits(groups, args.kfold, args.seed)
     fold_rows: List[Dict[str, Any]] = []
@@ -1069,9 +972,7 @@ def run_post_train_eval(args: argparse.Namespace) -> None:
         checkpoint_path=str(ckpt),
         output_root=str(layout["root"]),
         data_btp=args.data_csv,
-        emb_btp=args.emb_csv,
         data_test=args.test_data_csv,
-        emb_test=args.test_emb_csv,
         test_corpus_id=getattr(args, "test_corpus", None),
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,

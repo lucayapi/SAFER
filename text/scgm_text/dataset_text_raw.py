@@ -1,4 +1,4 @@
-"""Dataset texte brut (tokenisation au collate)."""
+"""Dataset texte brut (tokenisation au collate) — pipeline SCGM end2end."""
 
 from __future__ import annotations
 
@@ -7,23 +7,17 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import torch
+from sklearn.model_selection import GroupShuffleSplit
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from scgm_text.dataset_text_embeddings import (
-    load_filtered_metadata,
-    split_by_group,
-)
+from scgm_text.data_metadata import load_filtered_metadata, resolve_text_column
 
 
-def resolve_text_column(metadata_df: pd.DataFrame, text_col: Optional[str] = None) -> str:
-    if text_col and text_col in metadata_df.columns:
-        return text_col
-    for candidate in ("sentence", "accident_summary", "text"):
-        if candidate in metadata_df.columns:
-            return candidate
-    raise ValueError(
-        "Colonne texte introuvable. Fournir --text_col ou ajouter sentence / accident_summary."
-    )
+def split_by_group(dataset: Dataset, val_ratio: float, seed: int) -> Tuple[np.ndarray, np.ndarray]:
+    groups = dataset.get_groups()  # type: ignore[attr-defined]
+    splitter = GroupShuffleSplit(n_splits=1, test_size=val_ratio, random_state=seed)
+    train_idx, val_idx = next(splitter.split(np.zeros(len(dataset)), groups=groups))
+    return train_idx.astype(np.int64), val_idx.astype(np.int64)
 
 
 class TextRawDataset(Dataset):
@@ -47,6 +41,8 @@ class TextRawDataset(Dataset):
         else:
             metadata_df = metadata_df.copy()
             metadata_df.reset_index(drop=True, inplace=True)
+            if "row_id" not in metadata_df.columns:
+                metadata_df["row_id"] = np.arange(len(metadata_df), dtype=np.int64)
 
         self.metadata_df = metadata_df
         self.label_col = label_col
@@ -54,15 +50,20 @@ class TextRawDataset(Dataset):
         self.text_col = resolve_text_column(metadata_df, text_col)
         self.texts = metadata_df[self.text_col].astype(str).tolist()
         self.label_ids = metadata_df["label_id"].to_numpy(dtype=np.int64)
+        self.groups = metadata_df[group_col].astype(str).tolist()
+        self.row_ids = metadata_df["row_id"].to_numpy(dtype=np.int64)
 
     def __len__(self) -> int:
         return len(self.metadata_df)
 
-    def __getitem__(self, index: int) -> Tuple[str, torch.Tensor, torch.Tensor]:
-        text = self.texts[index]
-        label_id = torch.tensor(self.label_ids[index], dtype=torch.long)
-        selected_index = torch.tensor(index, dtype=torch.long)
-        return text, label_id, selected_index
+    def __getitem__(self, index: int) -> Dict[str, object]:
+        return {
+            "text": self.texts[index],
+            "label": int(self.label_ids[index]),
+            "group": self.groups[index],
+            "row_id": int(self.row_ids[index]),
+            "index": index,
+        }
 
     def get_metadata_df(self) -> pd.DataFrame:
         return self.metadata_df.copy()
@@ -74,14 +75,13 @@ class TextRawDataset(Dataset):
     def get_groups(self) -> np.ndarray:
         return self.metadata_df[self.group_col].astype(str).to_numpy()
 
-    def get_input_dim(self) -> int:
-        raise RuntimeError("get_input_dim() non défini avant chargement du backbone.")
-
 
 class IndexedTextSubset(Subset):
-    def __getitem__(self, index: int):
-        text, label_id, _ = self.dataset[self.indices[index]]
-        return text, label_id, torch.tensor(index, dtype=torch.long)
+    def __getitem__(self, index: int) -> Dict[str, object]:
+        item = self.dataset[self.indices[index]]
+        item = dict(item)
+        item["index"] = index
+        return item
 
 
 def build_text_dataloaders(
@@ -91,6 +91,7 @@ def build_text_dataloaders(
     batch_size: int,
     collate_fn,
     num_workers: int = 0,
+    pin_memory: bool = False,
 ) -> Tuple[DataLoader, DataLoader]:
     train_loader = DataLoader(
         IndexedTextSubset(dataset, train_idx.tolist()),
@@ -99,6 +100,7 @@ def build_text_dataloaders(
         drop_last=False,
         num_workers=num_workers,
         collate_fn=collate_fn,
+        pin_memory=pin_memory,
     )
     val_loader = DataLoader(
         Subset(dataset, val_idx.tolist()),
@@ -107,9 +109,6 @@ def build_text_dataloaders(
         drop_last=False,
         num_workers=num_workers,
         collate_fn=collate_fn,
+        pin_memory=pin_memory,
     )
     return train_loader, val_loader
-
-
-def split_raw_by_group(dataset: TextRawDataset, val_ratio: float, seed: int):
-    return split_by_group(dataset, val_ratio, seed)  # type: ignore[arg-type]
