@@ -325,11 +325,37 @@ def _path_display(path: Path) -> str:
         return str(p).replace("\\\\", "/")
 
 
-def require_scgm_artifacts() -> None:
+def resolve_scgm_checkpoint_path() -> Path:
+    \"\"\"best_model.pt, sinon last_model.pt (fit final interrompu avant sélection).\"\"\"
+    for name in ("best_model.pt", "last_model.pt"):
+        candidate = (CHECKPOINTS_DIR / name).resolve()
+        if candidate.is_file():
+            if name != "best_model.pt":
+                print(
+                    f"[checkpoint] Utilisation de {name} "
+                    "(best_model.pt absent — relancer le fit final 100 % BTP si besoin)."
+                )
+            return candidate
+    return Path(CHECKPOINT_PATH).resolve()
+
+
+def require_scgm_artifacts(*, kfold_summary_present: bool = False) -> None:
+    global CHECKPOINT_PATH
+    CHECKPOINT_PATH = resolve_scgm_checkpoint_path()
     missing: list[str] = []
-    if not Path(CHECKPOINT_PATH).resolve().is_file():
-        missing.append(_path_display(Path(CHECKPOINT_PATH)))
-    if not (OUTPUT_PATH / "metrics" / "train_log.csv").is_file() and not (OUTPUT_PATH / "logs.csv").is_file():
+    if not CHECKPOINT_PATH.is_file():
+        if kfold_summary_present:
+            print(
+                "Mode lecture K-fold uniquement (pas de checkpoint fit final). "
+                "Relancer sbatch jobs/train_scgm_text.sh pour le fit 100 % BTP "
+                "si vous avez besoin des projections / corpus BTP."
+            )
+        else:
+            missing.append(_path_display(CHECKPOINTS_DIR / "best_model.pt"))
+    has_train_log = (OUTPUT_PATH / "metrics" / "train_log.csv").is_file() or (
+        OUTPUT_PATH / "logs.csv"
+    ).is_file()
+    if not has_train_log and not kfold_summary_present:
         missing.append("metrics/train_log.csv ou logs.csv")
     if missing:
         raise FileNotFoundError(
@@ -337,6 +363,8 @@ def require_scgm_artifacts() -> None:
             f"Manquant : {missing}"
         )
 
+
+_kfold_summary_early = _load_csv_optional((OUTPUT_PATH / KFOLD_SUMMARY).resolve())
 
 PATHS = {
     "checkpoint": Path(CHECKPOINT_PATH).resolve(),
@@ -353,13 +381,13 @@ PATHS = {
     "raw_embeddings": (EXPORTS_DIR / "raw_embeddings.npy").resolve(),
 }
 
-require_scgm_artifacts()
+require_scgm_artifacts(kfold_summary_present=_kfold_summary_early is not None)
 
 logs = _load_csv_optional(OUTPUT_PATH / "metrics" / "train_log.csv")
 if logs is None:
     logs = _load_csv_optional(OUTPUT_PATH / "logs.csv")
 
-kfold_summary = _load_csv_optional(PATHS["kfold_summary"])
+kfold_summary = _kfold_summary_early if _kfold_summary_early is not None else _load_csv_optional(PATHS["kfold_summary"])
 kfold_per_fold = _load_csv_optional(PATHS["kfold_per_fold"])
 metrics_btp = _load_csv_optional(PATHS["metrics_btp"])
 metrics_test = _load_csv_optional(PATHS["metrics_test"])

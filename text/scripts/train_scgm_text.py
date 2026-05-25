@@ -591,6 +591,19 @@ def save_checkpoint(
     torch.save(payload, path)
 
 
+def ensure_best_checkpoint_file(checkpoints_dir: str) -> None:
+    """Garantit best_model.pt (copie depuis last_model.pt si la sélection val n'a rien écrit)."""
+    import shutil
+
+    best = os.path.join(checkpoints_dir, "best_model.pt")
+    last = os.path.join(checkpoints_dir, "last_model.pt")
+    if os.path.isfile(best):
+        return
+    if os.path.isfile(last):
+        shutil.copy2(last, best)
+        print("[checkpoint] best_model.pt créé depuis last_model.pt", flush=True)
+
+
 def load_resume(
     path: str,
     model: SCGMTextModel,
@@ -988,6 +1001,8 @@ def run_training(
 
     if not best_geometry and last_eval_geom:
         best_geometry = _geometry_keys_from_row(last_eval_geom)
+
+    ensure_best_checkpoint_file(dirs["checkpoints_dir"])
 
     config_payload["best_checkpoint_metric"] = args.best_checkpoint_metric
     config_payload["best_checkpoint_lambda"] = args.best_checkpoint_lambda

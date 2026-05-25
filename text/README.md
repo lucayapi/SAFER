@@ -98,6 +98,8 @@ cd jobs && bash submit_tuning_all.sh
 
 # 6. Agrégation (tableaux BTP + test → notebooks/01_compare_embedding_methods.ipynb)
 python scripts/collect_results.py
+# → comparisons/tables/embedding_geometry_comparison_btp.csv (fit final)
+# → comparisons/tables/embedding_geometry_comparison_btp_kfold.csv (μ±σ val K-fold)
 python scripts/compare_methods.py
 python scripts/compare_methods.py --corpus test
 ```
@@ -205,7 +207,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | Notebook | Rôle |
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
-| `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — deux tableaux (BTP + test métallurgie), η² / RankMe |
+| `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — BTP **K-fold (μ±σ)**, BTP fit final, test métallurgie ; η² / RankMe |
 | `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_tpn_macro_transfer.sh`. |
 | `04_bayesian_network_macro_transfer.ipynb` | BN sur corpus test (staging **macro_transfer** → `output_test/<TEST_CORPUS>/bn_staging/`) |
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |

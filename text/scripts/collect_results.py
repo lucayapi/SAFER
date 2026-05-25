@@ -17,6 +17,7 @@ from metrics.compare_display import (
     EMBEDDING_COMPARE_METHODS,
     METHOD_DISPLAY,
     RAW_TEST_RESULTS_KEY,
+    collect_kfold_btp_comparison,
     fill_eta2_macro_balanced_perc,
     fill_rankme_over_d,
     method_label,
@@ -188,9 +189,19 @@ def main() -> None:
     test_path = tables / "embedding_geometry_comparison_test.csv"
     alias_path = Path(args.output) if args.output else tables / "embedding_geometry_comparison.csv"
 
+    df_kfold_btp = collect_kfold_btp_comparison(root)
+    kfold_btp_path = tables / "embedding_geometry_comparison_btp_kfold.csv"
+
     if not df_btp.empty:
         _write_table(df_btp, btp_path)
         _write_table(df_btp, alias_path)
+    if not df_kfold_btp.empty:
+        _write_table(df_kfold_btp, kfold_btp_path)
+    elif not df_btp.empty:
+        print(
+            f"(absent) {kfold_btp_path} — pas de metrics/kfold_summary.csv "
+            "(relancer train K-fold n_folds>1)"
+        )
     if not df_test.empty:
         _write_table(df_test, test_path)
     elif not df_btp.empty:

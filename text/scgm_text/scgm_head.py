@@ -35,9 +35,29 @@ class SCGMHead(nn.Module):
         self.num_subclasses = num_subclasses
         self.criterion_cls = nn.CrossEntropyLoss()
         self.criterion_div = DistillKL(kd_t)
+        self._logged_macro_no_relu = False
 
     def scgm_parameters(self):
         return [self.mu_y, self.mu_z]
+
+    def _macro_class_logits(
+        self,
+        features: torch.Tensor,
+        features_norm: torch.Tensor,
+        mu_y_norm: torch.Tensor,
+        norm_type: str,
+    ) -> torch.Tensor:
+        # For text embeddings, keep signed dimensions for prototype similarity.
+        # SCGM theory uses dot products between normalized embeddings/prototypes; no ReLU here.
+        if norm_type == "logit":
+            return features_norm @ self.mu_y.t()
+        if norm_type == "weight":
+            return features @ mu_y_norm.t()
+        if norm_type == "logit_and_weight":
+            return features_norm @ mu_y_norm.t()
+        if norm_type == "none":
+            return features @ self.mu_y.t()
+        raise NotImplementedError(f"norm_type inconnu : {norm_type!r}")
 
     def loss(
         self,
@@ -56,6 +76,13 @@ class SCGMHead(nn.Module):
         norm_type="logit",
         kd_t: Optional[float] = None,
     ):
+        if not self._logged_macro_no_relu:
+            print(
+                "[SCGM] macro logits computed without ReLU before prototype dot product.",
+                flush=True,
+            )
+            self._logged_macro_no_relu = True
+
         if kd_t is not None:
             self.criterion_div.T = float(kd_t)
 
@@ -83,16 +110,7 @@ class SCGMHead(nn.Module):
         ls2 = -torch.log(ls2_num / ls2_den.sum(0).view(1, -1)) * q
         ls2 = ls2.sum() / n
 
-        if norm_type == "logit":
-            logit3 = (F.relu(logit_norm)) @ (self.mu_y.t())
-        elif norm_type == "weight":
-            logit3 = (F.relu(logit)) @ (mu_y.t())
-        elif norm_type == "logit_and_weight":
-            logit3 = (F.relu(logit_norm)) @ (mu_y.t())
-        elif norm_type == "none":
-            logit3 = (F.relu(logit)) @ (self.mu_y.t())
-        else:
-            raise NotImplementedError
+        logit3 = self._macro_class_logits(logit, logit_norm, mu_y, norm_type)
 
         ls3 = self.criterion_cls(logit3, y.argmax(1))
 
@@ -161,15 +179,6 @@ class SCGMHead(nn.Module):
 
         logit2 = (y @ mu_y) @ (mu_z.t())
 
-        if norm_type == "logit":
-            logit3 = (F.relu(x_norm)) @ (self.mu_y.t())
-        elif norm_type == "weight":
-            logit3 = (F.relu(x)) @ (mu_y.t())
-        elif norm_type == "logit_and_weight":
-            logit3 = (F.relu(x_norm)) @ (mu_y.t())
-        elif norm_type == "none":
-            logit3 = (F.relu(x)) @ (mu_y.t())
-        else:
-            raise NotImplementedError
+        logit3 = self._macro_class_logits(x, x_norm, mu_y, norm_type)
 
         return logit1, logit2, logit3

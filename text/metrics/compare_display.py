@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Sequence
+import math
+from pathlib import Path
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
+
+from metrics.geometry import GEOMETRY_METRIC_KEYS
 
 from metrics.embedding_dims import embedding_dim_for_display_label
 
@@ -37,6 +41,16 @@ GEOM_DISPLAY_COLS: tuple[str, ...] = (
     "eta2_weighted",
     "rankme_over_d",
     "embedding_dim",
+    "c1_global",
+    "c10_global",
+)
+
+# Métriques val K-fold agrégées (μ±σ) pour le tableau BTP du notebook 01
+KFOLD_SLIM_METRICS: tuple[str, ...] = (
+    "eta2_macro_balanced",
+    "eta2_macro_balanced_perc",
+    "eta2_weighted",
+    "rankme_global",
     "c1_global",
     "c10_global",
 )
@@ -135,3 +149,163 @@ def slim_geometry_table(df: pd.DataFrame) -> pd.DataFrame:
     if not cols:
         return slim
     return slim[cols].copy()
+
+
+def format_mean_std(
+    mean: Optional[float],
+    std: Optional[float],
+    *,
+    decimals: int = 2,
+) -> str:
+    """Chaîne « m ± s » pour affichage notebook."""
+    if mean is None or (isinstance(mean, float) and math.isnan(mean)):
+        return "—"
+    m = float(mean)
+    if std is None or (isinstance(std, float) and math.isnan(std)):
+        return f"{m:.{decimals}f}"
+    s = float(std)
+    if s == 0.0:
+        return f"{m:.{decimals}f}"
+    return f"{m:.{decimals}f} ± {s:.{decimals}f}"
+
+
+def _load_kfold_summary_row(method_dir: Path) -> Optional[dict]:
+    path = method_dir / "metrics" / "kfold_summary.csv"
+    if not path.is_file():
+        return None
+    df = pd.read_csv(path)
+    if df.empty:
+        return None
+    return df.iloc[0].to_dict()
+
+
+def _enrich_kfold_rankme_over_d(df: pd.DataFrame) -> pd.DataFrame:
+    """Dérive mean/std rankme_over_d à partir de rankme_global et d par méthode."""
+    if df.empty or "mean_rankme_global" not in df.columns:
+        return df
+    out = df.copy()
+    defaults = default_embedding_dims_series(out)
+    if "embedding_dim" in out.columns:
+        d = pd.to_numeric(out["embedding_dim"], errors="coerce")
+        d = d.where(d.notna() & (d > 0), defaults)
+    else:
+        d = defaults
+    out["embedding_dim"] = d
+    d_safe = d.replace(0, np.nan)
+    mean_rm = pd.to_numeric(out["mean_rankme_global"], errors="coerce")
+    out["mean_rankme_over_d"] = mean_rm / d_safe
+    if "std_rankme_global" in out.columns:
+        std_rm = pd.to_numeric(out["std_rankme_global"], errors="coerce")
+        out["std_rankme_over_d"] = std_rm / d_safe
+    return out
+
+
+def collect_kfold_btp_comparison(
+    root: Path,
+    method_keys: Sequence[str] = EMBEDDING_COMPARE_METHODS,
+) -> pd.DataFrame:
+    """
+    Agrège metrics/kfold_summary.csv (validation K-fold) par méthode sous ``root/``.
+    Colonnes : method, n_folds, mean_<metric>, std_<metric>.
+    """
+    rows: list[dict] = []
+    for key in method_keys:
+        method_dir = root / key
+        if not method_dir.is_dir():
+            continue
+        raw = _load_kfold_summary_row(method_dir)
+        if raw is None:
+            continue
+        entry: dict = {
+            "method": method_label(key),
+            "method_key": key,
+            "n_folds": raw.get("n_folds"),
+        }
+        for metric in GEOMETRY_METRIC_KEYS:
+            mean_col = f"mean_{metric}"
+            std_col = f"std_{metric}"
+            if mean_col in raw:
+                entry[mean_col] = raw[mean_col]
+            if std_col in raw:
+                entry[std_col] = raw[std_col]
+        rows.append(entry)
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    # η²_% manquant dans certains résumés K-fold
+    if "mean_eta2_macro_balanced" in df.columns:
+        eta2 = pd.to_numeric(df["mean_eta2_macro_balanced"], errors="coerce")
+        if "mean_eta2_macro_balanced_perc" not in df.columns:
+            df["mean_eta2_macro_balanced_perc"] = eta2 * 100.0
+        else:
+            perc = pd.to_numeric(df["mean_eta2_macro_balanced_perc"], errors="coerce")
+            df["mean_eta2_macro_balanced_perc"] = perc.where(perc.notna(), eta2 * 100.0)
+        if "std_eta2_macro_balanced_perc" not in df.columns and "std_eta2_macro_balanced" in df.columns:
+            df["std_eta2_macro_balanced_perc"] = (
+                pd.to_numeric(df["std_eta2_macro_balanced"], errors="coerce") * 100.0
+            )
+    return order_methods(_enrich_kfold_rankme_over_d(df))
+
+
+def kfold_slim_metric_keys() -> tuple[str, ...]:
+    """Clés affichées (inclut rankme_over_d si dérivé)."""
+    keys = list(KFOLD_SLIM_METRICS)
+    return tuple(keys)
+
+
+def kfold_geometry_display_table(
+    df_kfold: pd.DataFrame,
+    *,
+    metrics: Sequence[str] = KFOLD_SLIM_METRICS,
+    decimals: int = 2,
+) -> pd.DataFrame:
+    """Tableau lisible μ±σ pour le notebook (une colonne par métrique)."""
+    if df_kfold.empty:
+        return df_kfold
+    df = _enrich_kfold_rankme_over_d(df_kfold)
+    display_metrics = list(metrics)
+    if "rankme_global" in display_metrics and "mean_rankme_over_d" in df.columns:
+        display_metrics = [
+            "rankme_over_d" if m == "rankme_global" else m for m in display_metrics
+        ]
+    out = pd.DataFrame({"method": df["method"].astype(str)})
+    if "n_folds" in df.columns:
+        out["n_folds"] = df["n_folds"]
+    for metric in display_metrics:
+        mean_col = f"mean_{metric}"
+        std_col = f"std_{metric}"
+        if mean_col not in df.columns:
+            continue
+        out[metric] = [
+            format_mean_std(
+                row.get(mean_col),
+                row.get(std_col) if std_col in df.columns else None,
+                decimals=decimals,
+            )
+            for _, row in df.iterrows()
+        ]
+    return out
+
+
+def kfold_barplot_frame(
+    df_kfold: pd.DataFrame,
+    metric: str,
+) -> pd.DataFrame:
+    """DataFrame method / mean / std pour barres d'erreur matplotlib."""
+    if df_kfold.empty:
+        return pd.DataFrame(columns=["method", "mean", "std"])
+    df = _enrich_kfold_rankme_over_d(df_kfold)
+    key = metric
+    if metric == "rankme_over_d" and f"mean_{metric}" not in df.columns:
+        key = "rankme_global"
+    mean_col = f"mean_{key}"
+    std_col = f"std_{key}"
+    if mean_col not in df.columns:
+        return pd.DataFrame(columns=["method", "mean", "std"])
+    return pd.DataFrame(
+        {
+            "method": df["method"].astype(str),
+            "mean": pd.to_numeric(df[mean_col], errors="coerce"),
+            "std": pd.to_numeric(df.get(std_col, 0.0), errors="coerce").fillna(0.0),
+        }
+    )

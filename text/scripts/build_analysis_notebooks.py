@@ -51,7 +51,13 @@ os.chdir(ROOT)
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from metrics.compare_display import EMBEDDING_COMPARE_METHODS, METHOD_DISPLAY, slim_geometry_table
+from metrics.compare_display import (
+    EMBEDDING_COMPARE_METHODS,
+    METHOD_DISPLAY,
+    kfold_barplot_frame,
+    kfold_geometry_display_table,
+    slim_geometry_table,
+)
 from safer_core.paths import ensure_comparisons_dirs
 
 TABLES = ensure_comparisons_dirs() / "tables"
@@ -61,6 +67,7 @@ if not (TABLES / "embedding_geometry_comparison_btp.csv").is_file() and _legacy_
     TABLES = _legacy_tables
 
 PATH_BTP = TABLES / "embedding_geometry_comparison_btp.csv"
+PATH_BTP_KFOLD = TABLES / "embedding_geometry_comparison_btp_kfold.csv"
 PATH_TEST = TABLES / "embedding_geometry_comparison_test.csv"
 EXPECTED = [METHOD_DISPLAY[k] for k in EMBEDDING_COMPARE_METHODS]
 
@@ -71,6 +78,7 @@ if not PATH_BTP.is_file():
     )
 
 df_btp = pd.read_csv(PATH_BTP)
+df_btp_kfold = pd.read_csv(PATH_BTP_KFOLD) if PATH_BTP_KFOLD.is_file() else pd.DataFrame()
 df_test = pd.read_csv(PATH_TEST) if PATH_TEST.is_file() else pd.DataFrame()
 
 for frame, corpus_name in [(df_btp, "BTP"), (df_test, "test métallurgie")]:
@@ -87,7 +95,16 @@ for frame, corpus_name in [(df_btp, "BTP"), (df_test, "test métallurgie")]:
 COMPARE_01_DISPLAY = """
 import matplotlib.pyplot as plt
 
-print("## Corpus BTP (entraînement)")
+print("## Corpus BTP — validation K-fold (μ ± σ sur les folds)")
+if df_btp_kfold.empty:
+    print(
+        "(absent) Relancer collect_results.py après entraînement K-fold "
+        "(metrics/kfold_summary.csv par méthode). Embedding brut : pas de K-fold."
+    )
+else:
+    display(kfold_geometry_display_table(df_btp_kfold))
+
+print("\\n## Corpus BTP — fit final 100 % (métriques sur tout le BTP)")
 display(slim_geometry_table(df_btp))
 
 print("\\n## Corpus test — métallurgie")
@@ -115,7 +132,29 @@ def _barplot_corpus(df, title_prefix):
         plt.tight_layout()
         plt.show()
 
-_barplot_corpus(df_btp, "BTP")
+def _barplot_kfold(df_kfold, title_prefix):
+    if df_kfold.empty:
+        return
+    for col, ylab in BAR_METRICS:
+        frame = kfold_barplot_frame(df_kfold, col)
+        if frame.empty:
+            continue
+        fig, ax = plt.subplots(figsize=(8, 4))
+        ax.bar(
+            frame["method"].astype(str),
+            frame["mean"].astype(float),
+            yerr=frame["std"].astype(float),
+            capsize=4,
+        )
+        ax.set_ylabel(ylab)
+        ax.set_title(f"{title_prefix} — {ylab}")
+        plt.xticks(rotation=30, ha="right")
+        plt.tight_layout()
+        plt.show()
+
+if not df_btp_kfold.empty:
+    _barplot_kfold(df_btp_kfold, "BTP K-fold val")
+_barplot_corpus(df_btp, "BTP fit final")
 _barplot_corpus(df_test, "Test métallurgie")
 
 # Lecture seule — aucun entraînement.
@@ -158,8 +197,7 @@ def main() -> None:
                         "Cinq lignes : **Embedding brut**, **Batch Triplet**, **SupCon**, "
                         "**SoftTriple**, **SCGM** (BTP + test métallurgie).\n\n"
                         "Prérequis : `python scripts/collect_results.py` "
-                        "(tableaux `embedding_geometry_comparison_btp.csv` et "
-                        "`embedding_geometry_comparison_test.csv`). "
+                        "(BTP fit final, **BTP K-fold μ±σ**, test). "
                         "**Pas d'entraînement** dans ce notebook.",
                         "markdown",
                     ),
