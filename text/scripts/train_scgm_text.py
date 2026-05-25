@@ -173,6 +173,13 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--lmd", type=float, default=25.0)
     parser.add_argument("--n_iter_estep", type=int, default=5)
+    parser.add_argument(
+        "--sinkhorn_sample_prior",
+        type=str,
+        default="uniform",
+        choices=["uniform", "macro_balanced"],
+        help="Sinkhorn E-step sample marginal b: uniform (paper) or macro_balanced.",
+    )
     parser.add_argument("--val_ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--device", type=str, default="cuda")
@@ -356,6 +363,8 @@ def run_estep(
     n_train: int,
     n_subclass: int,
     lmd: float,
+    train_labels: np.ndarray,
+    sample_prior: str = "uniform",
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     score_parts: List[np.ndarray] = []
     index_parts: List[np.ndarray] = []
@@ -376,7 +385,14 @@ def run_estep(
     if len(batch_idx) != n_train:
         raise ValueError(f"E-step size mismatch: got {len(batch_idx)} rows, expected {n_train}")
 
-    _, argmax_q, sink_diag = sinkhorn_assign(score_tr, lmd)
+    _, argmax_q, sink_diag = sinkhorn_assign(
+        score_tr,
+        lmd,
+        labels=train_labels[batch_idx],
+        n_classes=n_class,
+        sample_prior=sample_prior,
+        log_marginals=True,
+    )
     q_new = np.zeros((n_train, n_subclass), dtype=np.float32)
     q_new[batch_idx, argmax_q] = 1.0
     q_diag = q_assignment_distribution(q_new)
@@ -737,6 +753,8 @@ def run_training(
                     n_train=len(train_idx),
                     n_subclass=args.n_subclass,
                     lmd=args.lmd,
+                    train_labels=train_labels,
+                    sample_prior=args.sinkhorn_sample_prior,
                 )
 
             model.train()
