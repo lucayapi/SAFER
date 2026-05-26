@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 EncoderName = Literal["softtriple", "supcon", "batch_triplet", "scgm_text"]
 
+# Lot end2end Qwen (mode text) : défaut si absent du YAML
+DEFAULT_SCGM_TEXT_BATCH_SIZE = 64
+
 
 def resolve_scgm_encode_log_every_batches(
     yaml_value: Optional[Union[int, str]] = None,
@@ -295,6 +298,7 @@ def _project_scgm_embeddings(
     n_expected: Optional[int] = None,
     log_label: str = "corpus",
     log_every_batches: int = 1,
+    scgm_text_batch_size: int = DEFAULT_SCGM_TEXT_BATCH_SIZE,
 ) -> np.ndarray:
     from scgm_text.batch_utils import batch_to_device, forward_features
     from scgm_text.checkpoint_io import load_scgm_checkpoint
@@ -351,10 +355,11 @@ def _project_scgm_embeddings(
             checkpoint_args.get("backbone_model_name_or_path", "Qwen/Qwen3-Embedding-0.6B")
         )
         collate_fn = make_text_collate_fn(tokenizer, max_seq_length)
-        eff_batch = min(batch_size, 32)
+        eff_batch = max(1, int(scgm_text_batch_size))
         n_total = len(dataset)
         logger.info(
-            "SCGM encode [%s] text: %d unités, eff_batch=%d max_seq=%d",
+            "SCGM encode [%s] text: %d unités, eff_batch=%d max_seq=%d "
+            "(scgm_text_batch_size ; réduire si OOM GPU)",
             log_label,
             n_total,
             eff_batch,
@@ -484,6 +489,7 @@ def encode_corpus_for_tpn(
     scgm_infer_batch_size: int = 512,
     log_label: str = "corpus",
     log_every_batches: int = 1,
+    scgm_text_batch_size: int = DEFAULT_SCGM_TEXT_BATCH_SIZE,
 ) -> np.ndarray:
     """
     Encode un corpus pour TPN.
@@ -529,4 +535,5 @@ def encode_corpus_for_tpn(
         n_expected=n_expected,
         log_label=log_label,
         log_every_batches=log_every_batches,
+        scgm_text_batch_size=scgm_text_batch_size,
     )

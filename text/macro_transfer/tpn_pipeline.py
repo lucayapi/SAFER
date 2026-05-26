@@ -19,6 +19,7 @@ from macro_transfer.macro_compression import compute_macro_compression_diagnosti
 from macro_transfer.topic_embeddings import resolve_topic_embedding_cfg
 from macro_transfer.tpn_adapter import adapt_embeddings_tpn, train_tpn_adapter
 from macro_transfer.tpn_encode import (
+    DEFAULT_SCGM_TEXT_BATCH_SIZE,
     default_contrastive_config_path,
     encode_corpus_for_tpn,
     resolve_scgm_encode_log_every_batches,
@@ -327,6 +328,9 @@ def run_tpn_macro_transfer_discovery(
     enc_device = encoding_cfg.get("device", device)
     enc_bs = int(encoding_cfg.get("encode_batch_size", encode_batch_size))
     scgm_bs = int(encoding_cfg.get("scgm_infer_batch_size", cfg.get("infer_batch_size", 512)))
+    scgm_text_bs = int(
+        encoding_cfg.get("scgm_text_batch_size", DEFAULT_SCGM_TEXT_BATCH_SIZE)
+    )
     max_seq_length = int(encoding_cfg.get("max_seq_length", 256))
     encode_log_every_batches = resolve_scgm_encode_log_every_batches(
         encoding_cfg.get("log_every_batches")
@@ -419,6 +423,7 @@ def run_tpn_macro_transfer_discovery(
         repo_anchor=repo_anchor,
         max_seq_length=max_seq_length,
         scgm_infer_batch_size=scgm_bs,
+        scgm_text_batch_size=scgm_text_bs,
         log_every_batches=encode_log_every_batches,
     )
     encode_kw_source = {

@@ -39,7 +39,9 @@ macros: ["A0", "A1", "B", "C"]
 encoding:
   device: "cuda"
   encode_batch_size: 8
-  scgm_infer_batch_size: 512
+  # End2end SCGM (texte → Qwen → projecteur) ; baisser si OOM GPU
+  scgm_text_batch_size: 64
+  # scgm_infer_batch_size: 512  # uniquement si mode precomputed (source/method.emb_csv)
   log_every_batches: 1
   normalize_embeddings: true
 
