@@ -77,10 +77,16 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    import sys
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        force=True,
+        stream=sys.stdout,
     )
+    logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
     args = _parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     raw = load_yaml(cfg_path)
@@ -165,6 +171,14 @@ def main() -> None:
     if args.grid_macros:
         grid_macros = [m.strip() for m in args.grid_macros.split(",") if m.strip()]
 
+    logging.getLogger(__name__).info(
+        "Démarrage TPN : corpus=%s encoder=%s out=%s device=%s epochs=%s",
+        corpus_id,
+        base_method,
+        output_dir,
+        args.device or raw.get("encoding", {}).get("device", "cuda"),
+        args.epochs or raw.get("tpn", {}).get("epochs", 50),
+    )
     manifest = run_tpn_macro_transfer_discovery(
         checkpoint=ckpt,
         source_data_csv=source_data_csv,

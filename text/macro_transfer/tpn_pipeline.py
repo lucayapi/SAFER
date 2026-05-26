@@ -432,13 +432,15 @@ def run_tpn_macro_transfer_discovery(
     }
 
     logger.info(
-        "Encodage %s source (%d) et cible (%d)",
+        "=== Phase 1/5 : encodage %s — source=%d cible=%d (batch=%d device=%s) ===",
         base_method,
         len(texts_s),
         len(texts_t),
+        enc_bs,
+        enc_device,
     )
-
     if base_method == "scgm_text":
+        logger.info("--- Encodage SOURCE (BTP) ---")
         h_s = encode_corpus_for_tpn(
             base_method,
             texts_s,
@@ -446,8 +448,10 @@ def run_tpn_macro_transfer_discovery(
             data_csv=source_data_csv,
             emb_csv=scgm_emb_source,
             filter_pred_ok=True,
+            log_label="source_btp",
             **encode_kw_source,
         )
+        logger.info("--- Encodage CIBLE (test) ---")
         h_t = encode_corpus_for_tpn(
             base_method,
             texts_t,
@@ -455,23 +459,33 @@ def run_tpn_macro_transfer_discovery(
             data_csv=target_data_csv,
             emb_csv=scgm_emb_target,
             filter_pred_ok=False,
+            log_label=f"target_{corpus_id or 'test'}",
             **encode_kw_target,
         )
     else:
+        logger.info("--- Encodage SOURCE (BTP) ---")
         h_s = encode_corpus_for_tpn(
             base_method,
             texts_s,
             checkpoint,
             filter_pred_ok=True,
+            log_label="source_btp",
             **encode_kw_source,
         )
+        logger.info("--- Encodage CIBLE (test) ---")
         h_t = encode_corpus_for_tpn(
             base_method,
             texts_t,
             checkpoint,
             filter_pred_ok=False,
+            log_label=f"target_{corpus_id or 'test'}",
             **encode_kw_target,
         )
+    logger.info(
+        "=== Phase 1 terminée : embeddings projetés source=%s cible=%s ===",
+        getattr(h_s, "shape", None),
+        getattr(h_t, "shape", None),
+    )
 
     if bool(encoding_cfg.get("normalize_embeddings", True)):
         h_s = l2_normalize_np(h_s)
@@ -489,6 +503,7 @@ def run_tpn_macro_transfer_discovery(
     training_dir.mkdir(parents=True, exist_ok=True)
 
     # --- Phase initiale (prototypes sur embeddings projetés) ---
+    logger.info("=== Phase 2/5 : gating initial (prototypes projetés) ===")
     init_bundle = _compute_prototype_bundle(h_s, labels_s, h_t, tpn_cfg=tpn_cfg)
     prob_initial = init_bundle["q"]
     np.savez(
@@ -518,11 +533,28 @@ def run_tpn_macro_transfer_discovery(
     save_tpn_eval(metrics_initial, transfer_dir, "initial")
     with open(transfer_dir / "gating_stats_initial.json", "w", encoding="utf-8") as f:
         json.dump(summarize_gating_stats(gating_initial), f, indent=2, ensure_ascii=False)
+    logger.info(
+        "=== Phase 2 terminée : metrics initial acc=%.4f macro_f1=%.4f bal_acc=%.4f ===",
+        float(metrics_initial.get("accuracy", float("nan"))),
+        float(metrics_initial.get("macro_f1", float("nan"))),
+        float(metrics_initial.get("balanced_accuracy", float("nan"))),
+    )
 
     # --- Entraînement adaptateur ---
     train_epochs = int(epochs if epochs is not None else tpn_cfg.get("epochs", 50))
     train_lr = float(learning_rate if learning_rate is not None else tpn_cfg.get("learning_rate", 1e-3))
     train_seed = int(seed if seed is not None else tpn_cfg.get("seed", 42))
+    train_device = (
+        str(enc_device)
+        if str(enc_device).startswith("cuda") and torch.cuda.is_available()
+        else "cpu"
+    )
+    logger.info(
+        "=== Phase 3/5 : entraînement adaptateur TPN (%d epochs, lr=%s, device=%s) ===",
+        train_epochs,
+        train_lr,
+        train_device,
+    )
 
     resolved_cfg = {
         "method_name": method_name,
@@ -542,12 +574,6 @@ def run_tpn_macro_transfer_discovery(
     with open(training_dir / "training_config_resolved.yaml", "w", encoding="utf-8") as f:
         yaml.safe_dump(resolved_cfg, f, allow_unicode=True, sort_keys=False)
 
-    train_device = (
-        str(enc_device)
-        if str(enc_device).startswith("cuda") and torch.cuda.is_available()
-        else "cpu"
-    )
-
     adapter, _log_df = train_tpn_adapter(
         h_s,
         h_t,
@@ -562,7 +588,13 @@ def run_tpn_macro_transfer_discovery(
         seed=train_seed,
         log_path=training_dir / "training_log.csv",
     )
+    logger.info(
+        "=== Phase 3 terminée : loss_final=%.6f (voir %s) ===",
+        float(_log_df["loss_total"].iloc[-1]) if len(_log_df) else float("nan"),
+        training_dir / "training_log.csv",
+    )
 
+    logger.info("=== Phase 4/5 : embeddings adaptés + gating final ===")
     adapter = adapter.to(train_device)
     h_s_adapted = adapt_embeddings_tpn(adapter, h_s, device=train_device)
     h_t_adapted = adapt_embeddings_tpn(adapter, h_t, device=train_device)
@@ -611,9 +643,16 @@ def run_tpn_macro_transfer_discovery(
     )
     if len(coverage_df):
         coverage_df.to_csv(transfer_dir / "coverage_by_threshold.csv", index=False)
+    logger.info(
+        "=== Phase 4 terminée : metrics adapté acc=%.4f macro_f1=%.4f bal_acc=%.4f ===",
+        float(metrics_adapted.get("accuracy", float("nan"))),
+        float(metrics_adapted.get("macro_f1", float("nan"))),
+        float(metrics_adapted.get("balanced_accuracy", float("nan"))),
+    )
 
     bertopic_summary: Dict[str, Any] = {}
     if not skip_bertopic:
+        logger.info("=== Phase 5/5 : BERTopic intra-macro ===")
         bertopic_summary = _run_bertopic_phase(
             out=out,
             meta_t=meta_t,
@@ -632,6 +671,9 @@ def run_tpn_macro_transfer_discovery(
             grid_macros=grid_macros,
             skip_compression_diagnostics=skip_compression_diagnostics,
         )
+        logger.info("=== Phase 5 terminée : BERTopic ===")
+    elif skip_bertopic:
+        logger.info("=== Phase 5 ignorée (skip_bertopic) ===")
     topic_emb = resolve_topic_embedding_cfg(
         bertopic_cfg, cli_mode=topic_embedding_mode, cli_alpha=topic_alpha
     )

@@ -74,5 +74,7 @@ if [[ "${BERTOPIC_ONLY:-0}" == "1" ]]; then
 fi
 
 echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"
-python scripts/run_tpn_macro_transfer_discovery.py "${extra[@]}"
+echo "[tpn_macro_transfer] Logs : tail -f slurm-${SLURM_JOB_ID:-local}.out  (PYTHONUNBUFFERED=1)"
+export TPN_ENCODE_LOG_EVERY="${TPN_ENCODE_LOG_EVERY:-25}"
+python -u scripts/run_tpn_macro_transfer_discovery.py "${extra[@]}"
 echo "[tpn_macro_transfer] terminé CORPUS=${CORPUS} $(date -Iseconds)"

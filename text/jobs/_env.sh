@@ -72,6 +72,7 @@ setup_hf_cache_env() {
 # Racine text/ + modules HPC + .env + venv (à appeler après cd vers text/).
 setup_text_job_env() {
   local env_file="${1:-.env}"
+  export PYTHONUNBUFFERED=1
   load_hpc_modules
   load_text_dotenv "${env_file}"
   setup_hf_cache_env

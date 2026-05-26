@@ -271,8 +271,8 @@ def train_tpn_adapter(
                 if p.grad is not None:
                     grad_norm += float(p.grad.data.norm(2).item()) ** 2
             grad_norm = grad_norm**0.5
-            logger.debug(
-                "epoch 1 diag: grad_norm=%.4f loss_proto.requires_grad=%s loss_ent.requires_grad=%s",
+            logger.info(
+                "TPN epoch 1 diag: grad_norm=%.4f loss_proto.requires_grad=%s loss_ent.requires_grad=%s",
                 grad_norm,
                 losses["loss_proto"].requires_grad,
                 losses["loss_ent"].requires_grad,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Literal, Optional, Union
 
@@ -22,6 +24,45 @@ from scgm_text.dataset_text_raw import TextRawDataset
 logger = logging.getLogger(__name__)
 
 EncoderName = Literal["softtriple", "supcon", "batch_triplet", "scgm_text"]
+
+_ENCODE_LOG_EVERY_BATCHES = max(1, int(os.environ.get("TPN_ENCODE_LOG_EVERY", "25")))
+
+
+def _log_scgm_encode_progress(
+    log_label: str,
+    done: int,
+    total: int,
+    *,
+    t0: float,
+    input_mode: str,
+    batch_size: int,
+    device: str,
+    force: bool = False,
+) -> None:
+    """Progression encodage SCGM (visible dans slurm-*.out via tail -f)."""
+    if total <= 0:
+        return
+    step = max(1, total // max(1, _ENCODE_LOG_EVERY_BATCHES))
+    if not force and done % step != 0 and done != total:
+        return
+    elapsed = time.monotonic() - t0
+    pct = 100.0 * float(done) / float(total)
+    rate = float(done) / elapsed if elapsed > 0 else 0.0
+    eta_s = (float(total - done) / rate) if rate > 0 else 0.0
+    logger.info(
+        "SCGM encode [%s] %d/%d (%.1f%%) mode=%s batch=%d device=%s "
+        "elapsed=%.0fs eta=%.0fs",
+        log_label,
+        done,
+        total,
+        pct,
+        input_mode,
+        batch_size,
+        device,
+        elapsed,
+        eta_s,
+    )
+
 CONTRASTIVE_ENCODERS: tuple[str, ...] = ("softtriple", "supcon", "batch_triplet")
 
 
@@ -205,6 +246,7 @@ def _project_scgm_embeddings(
     max_seq_length: int,
     device: str,
     n_expected: Optional[int] = None,
+    log_label: str = "corpus",
 ) -> np.ndarray:
     from scgm_text.batch_utils import batch_to_device, forward_features
     from scgm_text.checkpoint_io import load_scgm_checkpoint
@@ -217,6 +259,14 @@ def _project_scgm_embeddings(
     model.eval()
     input_mode = _resolve_scgm_input_mode(checkpoint_args, raw_ckpt)
     projected: list[np.ndarray] = []
+    t0 = time.monotonic()
+    logger.info(
+        "SCGM encode [%s] démarré mode=%s n_expected=%s checkpoint=%s",
+        log_label,
+        input_mode,
+        n_expected if n_expected is not None else "?",
+        checkpoint,
+    )
 
     if input_mode == "text":
         if filter_pred_ok:
@@ -254,13 +304,31 @@ def _project_scgm_embeddings(
         )
         collate_fn = make_text_collate_fn(tokenizer, max_seq_length)
         eff_batch = min(batch_size, 32)
+        n_total = len(dataset)
+        logger.info(
+            "SCGM encode [%s] text: %d unités, eff_batch=%d max_seq=%d",
+            log_label,
+            n_total,
+            eff_batch,
+            max_seq_length,
+        )
         with torch.no_grad():
-            for start in range(0, len(dataset), eff_batch):
-                end = min(start + eff_batch, len(dataset))
+            for start in range(0, n_total, eff_batch):
+                end = min(start + eff_batch, n_total)
                 items = [dataset[index] for index in range(start, end)]
                 batch = batch_to_device(collate_fn(items), dev)
                 features = forward_features(model, batch)
                 projected.append(features.cpu().numpy())
+                _log_scgm_encode_progress(
+                    log_label,
+                    end,
+                    n_total,
+                    t0=t0,
+                    input_mode=input_mode,
+                    batch_size=eff_batch,
+                    device=str(dev),
+                    force=(end == n_total),
+                )
     else:
         if not emb_csv:
             raise ValueError("scgm_text (mode precomputed_embeddings) requiert emb_csv")
@@ -282,9 +350,17 @@ def _project_scgm_embeddings(
             metadata_df=meta,
             dim_columns=dim_columns,
         )
+        n_total = len(dataset)
+        logger.info(
+            "SCGM encode [%s] precomputed: %d unités, batch=%d emb_csv=%s",
+            log_label,
+            n_total,
+            batch_size,
+            emb_csv,
+        )
         with torch.no_grad():
-            for start in range(0, len(dataset), batch_size):
-                end = min(start + batch_size, len(dataset))
+            for start in range(0, n_total, batch_size):
+                end = min(start + batch_size, n_total)
                 batch_embeddings = []
                 for index in range(start, end):
                     embedding, _, _ = dataset[index]
@@ -292,8 +368,24 @@ def _project_scgm_embeddings(
                 embeddings = torch.stack(batch_embeddings).to(dev)
                 features = forward_features(model, embeddings)
                 projected.append(features.cpu().numpy())
+                _log_scgm_encode_progress(
+                    log_label,
+                    end,
+                    n_total,
+                    t0=t0,
+                    input_mode=input_mode,
+                    batch_size=batch_size,
+                    device=str(dev),
+                    force=(end == n_total),
+                )
 
     z = np.concatenate(projected, axis=0)
+    logger.info(
+        "SCGM encode [%s] terminé shape=%s elapsed=%.0fs",
+        log_label,
+        tuple(z.shape),
+        time.monotonic() - t0,
+    )
     if n_expected is not None and len(z) != n_expected:
         raise ValueError(
             f"SCGM projection : {len(z)} lignes projetées, attendu {n_expected} "
@@ -320,6 +412,7 @@ def encode_corpus_for_tpn(
     filter_pred_ok: bool = True,
     max_seq_length: int = 256,
     scgm_infer_batch_size: int = 512,
+    log_label: str = "corpus",
 ) -> np.ndarray:
     """
     Encode un corpus pour TPN.
@@ -363,4 +456,5 @@ def encode_corpus_for_tpn(
         max_seq_length=max_seq_length,
         device=device,
         n_expected=n_expected,
+        log_label=log_label,
     )

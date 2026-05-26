@@ -207,6 +207,7 @@ def fit_bertopic_per_macro(
 
     for macro in MACRO_NAMES:
         mi = MACRO_NAMES.index(macro)
+        logger.info("BERTopic intra-macro : début macro=%s", macro)
         m_hat_mask = gating["m_hat"].astype(str) == macro
         if include_ambiguous:
             mask = m_hat_mask
@@ -277,6 +278,13 @@ def fit_bertopic_per_macro(
             "largest_topic_id": stats.get("largest_topic_id", -1),
             "largest_topic_share": stats["largest_topic_share"],
         }
+        logger.info(
+            "BERTopic intra-macro : macro=%s terminé n_units=%d n_topics=%d noise=%.2f",
+            macro,
+            stats["n_units"],
+            stats["n_topics"],
+            stats["noise_rate"],
+        )
 
         if macro in ("A0", "A1") and stats["n_topics"] <= 2:
             msg = (
