@@ -25,7 +25,44 @@ logger = logging.getLogger(__name__)
 
 EncoderName = Literal["softtriple", "supcon", "batch_triplet", "scgm_text"]
 
-_ENCODE_LOG_EVERY_BATCHES = max(1, int(os.environ.get("TPN_ENCODE_LOG_EVERY", "25")))
+
+def resolve_scgm_encode_log_every_batches(
+    yaml_value: Optional[Union[int, str]] = None,
+) -> int:
+    """
+    Journaliser la progression tous les N batches (défaut 1 = chaque batch).
+
+    Priorité : variables d'environnement > ``encoding.log_every_batches`` (YAML) > 1.
+    """
+    for key in ("TPN_ENCODE_LOG_EVERY_BATCHES", "TPN_ENCODE_LOG_EVERY"):
+        raw = os.environ.get(key)
+        if raw is not None and str(raw).strip() != "":
+            return max(1, int(raw))
+    if yaml_value is not None and str(yaml_value).strip() != "":
+        return max(1, int(yaml_value))
+    return 1
+
+
+def scgm_encode_log_every_batches() -> int:
+    """Rétrocompat tests / appels sans YAML."""
+    return resolve_scgm_encode_log_every_batches()
+
+
+def _should_log_scgm_encode_batch(
+    batch_idx: int,
+    total_batches: int,
+    *,
+    log_every_batches: int,
+    force: bool = False,
+) -> bool:
+    if force or total_batches <= 0:
+        return bool(force)
+    if batch_idx <= 0:
+        return False
+    if batch_idx == 1 or batch_idx >= total_batches:
+        return True
+    every = max(1, log_every_batches)
+    return batch_idx % every == 0
 
 
 def _log_scgm_encode_progress(
@@ -33,26 +70,36 @@ def _log_scgm_encode_progress(
     done: int,
     total: int,
     *,
+    batch_idx: int,
+    total_batches: int,
     t0: float,
     input_mode: str,
     batch_size: int,
     device: str,
     force: bool = False,
+    log_every_batches: int = 1,
 ) -> None:
     """Progression encodage SCGM (visible dans slurm-*.out via tail -f)."""
     if total <= 0:
         return
-    step = max(1, total // max(1, _ENCODE_LOG_EVERY_BATCHES))
-    if not force and done % step != 0 and done != total:
+    log_every = max(1, int(log_every_batches))
+    if not force and not _should_log_scgm_encode_batch(
+        batch_idx,
+        total_batches,
+        log_every_batches=log_every,
+        force=False,
+    ):
         return
     elapsed = time.monotonic() - t0
     pct = 100.0 * float(done) / float(total)
     rate = float(done) / elapsed if elapsed > 0 else 0.0
     eta_s = (float(total - done) / rate) if rate > 0 else 0.0
     logger.info(
-        "SCGM encode [%s] %d/%d (%.1f%%) mode=%s batch=%d device=%s "
-        "elapsed=%.0fs eta=%.0fs",
+        "SCGM encode [%s] batch %d/%d | %d/%d (%.1f%%) mode=%s eff_batch=%d "
+        "device=%s elapsed=%.0fs eta=%.0fs",
         log_label,
+        batch_idx,
+        total_batches,
         done,
         total,
         pct,
@@ -247,6 +294,7 @@ def _project_scgm_embeddings(
     device: str,
     n_expected: Optional[int] = None,
     log_label: str = "corpus",
+    log_every_batches: int = 1,
 ) -> np.ndarray:
     from scgm_text.batch_utils import batch_to_device, forward_features
     from scgm_text.checkpoint_io import load_scgm_checkpoint
@@ -312,8 +360,16 @@ def _project_scgm_embeddings(
             eff_batch,
             max_seq_length,
         )
+        total_batches = (n_total + eff_batch - 1) // eff_batch
+        log_every = max(1, int(log_every_batches))
+        logger.info(
+            "SCGM encode [%s] progression : 1 log tous les %d batch(es) (~%d lignes)",
+            log_label,
+            log_every,
+            (total_batches + log_every - 1) // log_every + 1,
+        )
         with torch.no_grad():
-            for start in range(0, n_total, eff_batch):
+            for batch_idx, start in enumerate(range(0, n_total, eff_batch), start=1):
                 end = min(start + eff_batch, n_total)
                 items = [dataset[index] for index in range(start, end)]
                 batch = batch_to_device(collate_fn(items), dev)
@@ -323,11 +379,14 @@ def _project_scgm_embeddings(
                     log_label,
                     end,
                     n_total,
+                    batch_idx=batch_idx,
+                    total_batches=total_batches,
                     t0=t0,
                     input_mode=input_mode,
                     batch_size=eff_batch,
                     device=str(dev),
                     force=(end == n_total),
+                    log_every_batches=log_every,
                 )
     else:
         if not emb_csv:
@@ -358,8 +417,16 @@ def _project_scgm_embeddings(
             batch_size,
             emb_csv,
         )
+        total_batches = (n_total + batch_size - 1) // batch_size
+        log_every = max(1, int(log_every_batches))
+        logger.info(
+            "SCGM encode [%s] progression : 1 log tous les %d batch(es) (~%d lignes)",
+            log_label,
+            log_every,
+            (total_batches + log_every - 1) // log_every + 1,
+        )
         with torch.no_grad():
-            for start in range(0, n_total, batch_size):
+            for batch_idx, start in enumerate(range(0, n_total, batch_size), start=1):
                 end = min(start + batch_size, n_total)
                 batch_embeddings = []
                 for index in range(start, end):
@@ -372,11 +439,14 @@ def _project_scgm_embeddings(
                     log_label,
                     end,
                     n_total,
+                    batch_idx=batch_idx,
+                    total_batches=total_batches,
                     t0=t0,
                     input_mode=input_mode,
                     batch_size=batch_size,
                     device=str(dev),
                     force=(end == n_total),
+                    log_every_batches=log_every,
                 )
 
     z = np.concatenate(projected, axis=0)
@@ -413,6 +483,7 @@ def encode_corpus_for_tpn(
     max_seq_length: int = 256,
     scgm_infer_batch_size: int = 512,
     log_label: str = "corpus",
+    log_every_batches: int = 1,
 ) -> np.ndarray:
     """
     Encode un corpus pour TPN.
@@ -457,4 +528,5 @@ def encode_corpus_for_tpn(
         device=device,
         n_expected=n_expected,
         log_label=log_label,
+        log_every_batches=log_every_batches,
     )

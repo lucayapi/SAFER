@@ -26,6 +26,7 @@ encoding:
   device: cuda
   encode_batch_size: 8
   scgm_infer_batch_size: 512
+  log_every_batches: 1
   normalize_embeddings: true
 
 tpn:

@@ -19,6 +19,7 @@ def test_tpn_config_yaml_parses(cfg_path: Path) -> None:
     assert "encoding" in data
     enc = data["encoding"]
     assert "encode_batch_size" in enc
+    assert "log_every_batches" in enc
     assert "normalize_embeddings" in enc
     # Re-parse brut pour détecter les ':' manquants (erreur utilisateur courante).
     yaml.safe_load(cfg_path.read_text(encoding="utf-8"))

@@ -41,6 +41,8 @@ macros: ["A0", "A1", "B", "C"]
 encoding:
   device: "cuda"
   encode_batch_size: 8
+  # Progression SLURM phase 1 (SCGM) : 1 = chaque batch, 10 = une ligne tous les 10 batches
+  log_every_batches: 1
   normalize_embeddings: true
 
 tpn:

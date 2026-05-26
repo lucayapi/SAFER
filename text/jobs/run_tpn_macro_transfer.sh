@@ -75,6 +75,6 @@ fi
 
 echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"
 echo "[tpn_macro_transfer] Logs : tail -f slurm-${SLURM_JOB_ID:-local}.out  (PYTHONUNBUFFERED=1)"
-export TPN_ENCODE_LOG_EVERY="${TPN_ENCODE_LOG_EVERY:-25}"
+# Optionnel : surcharge encoding.log_every_batches du YAML (ex. export TPN_ENCODE_LOG_EVERY_BATCHES=10)
 python -u scripts/run_tpn_macro_transfer_discovery.py "${extra[@]}"
 echo "[tpn_macro_transfer] terminé CORPUS=${CORPUS} $(date -Iseconds)"

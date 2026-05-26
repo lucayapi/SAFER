@@ -21,6 +21,7 @@ from macro_transfer.tpn_adapter import adapt_embeddings_tpn, train_tpn_adapter
 from macro_transfer.tpn_encode import (
     default_contrastive_config_path,
     encode_corpus_for_tpn,
+    resolve_scgm_encode_log_every_batches,
     scgm_checkpoint_input_mode,
     tpn_method_name,
     validate_encoder_name,
@@ -327,6 +328,9 @@ def run_tpn_macro_transfer_discovery(
     enc_bs = int(encoding_cfg.get("encode_batch_size", encode_batch_size))
     scgm_bs = int(encoding_cfg.get("scgm_infer_batch_size", cfg.get("infer_batch_size", 512)))
     max_seq_length = int(encoding_cfg.get("max_seq_length", 256))
+    encode_log_every_batches = resolve_scgm_encode_log_every_batches(
+        encoding_cfg.get("log_every_batches")
+    )
 
     emb_dir = out / "embeddings"
     transfer_dir = out / "transfer"
@@ -415,6 +419,7 @@ def run_tpn_macro_transfer_discovery(
         repo_anchor=repo_anchor,
         max_seq_length=max_seq_length,
         scgm_infer_batch_size=scgm_bs,
+        log_every_batches=encode_log_every_batches,
     )
     encode_kw_source = {
         **encode_kw_shared,
@@ -432,12 +437,14 @@ def run_tpn_macro_transfer_discovery(
     }
 
     logger.info(
-        "=== Phase 1/5 : encodage %s — source=%d cible=%d (batch=%d device=%s) ===",
+        "=== Phase 1/5 : encodage %s — source=%d cible=%d (batch=%d device=%s "
+        "log_every_batches=%d) ===",
         base_method,
         len(texts_s),
         len(texts_t),
         enc_bs,
         enc_device,
+        encode_log_every_batches,
     )
     if base_method == "scgm_text":
         logger.info("--- Encodage SOURCE (BTP) ---")

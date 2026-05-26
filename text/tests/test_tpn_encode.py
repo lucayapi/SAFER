@@ -10,11 +10,53 @@ import pytest
 
 from macro_transfer.tpn_encode import (
     CONTRASTIVE_ENCODERS,
+    _should_log_scgm_encode_batch,
     encode_corpus_for_tpn,
+    resolve_scgm_encode_log_every_batches,
     resolve_tpn_checkpoint,
+    scgm_encode_log_every_batches,
     tpn_method_name,
     validate_encoder_name,
 )
+
+
+def test_scgm_encode_log_every_batches_default(monkeypatch):
+    monkeypatch.delenv("TPN_ENCODE_LOG_EVERY_BATCHES", raising=False)
+    monkeypatch.delenv("TPN_ENCODE_LOG_EVERY", raising=False)
+    assert scgm_encode_log_every_batches() == 1
+
+
+def test_scgm_encode_log_every_batches_env(monkeypatch):
+    monkeypatch.setenv("TPN_ENCODE_LOG_EVERY_BATCHES", "10")
+    assert scgm_encode_log_every_batches() == 10
+
+
+def test_resolve_scgm_encode_log_every_batches_yaml(monkeypatch):
+    monkeypatch.delenv("TPN_ENCODE_LOG_EVERY_BATCHES", raising=False)
+    monkeypatch.delenv("TPN_ENCODE_LOG_EVERY", raising=False)
+    assert resolve_scgm_encode_log_every_batches(5) == 5
+    assert resolve_scgm_encode_log_every_batches(None) == 1
+
+
+def test_resolve_scgm_encode_log_every_batches_env_over_yaml(monkeypatch):
+    monkeypatch.setenv("TPN_ENCODE_LOG_EVERY_BATCHES", "3")
+    assert resolve_scgm_encode_log_every_batches(10) == 3
+
+
+def test_should_log_scgm_encode_batch_every_batch():
+    total = 5
+    logged = [
+        _should_log_scgm_encode_batch(i, total, log_every_batches=1)
+        for i in range(1, total + 1)
+    ]
+    assert logged == [True] * total
+
+
+def test_should_log_scgm_encode_batch_sparse():
+    assert _should_log_scgm_encode_batch(1, 10, log_every_batches=5)
+    assert not _should_log_scgm_encode_batch(3, 10, log_every_batches=5)
+    assert _should_log_scgm_encode_batch(5, 10, log_every_batches=5)
+    assert _should_log_scgm_encode_batch(10, 10, log_every_batches=5)
 
 
 def test_tpn_method_name():
