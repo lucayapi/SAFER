@@ -118,7 +118,7 @@ def run_scgm_tuning(argv: Optional[List[str]] = None) -> int:
     spec = load_yaml(TEXT_ROOT / tune_args.grid_config)
     if os.environ.get("TEST_CORPUS"):
         spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
-    base_config = TEXT_ROOT / str(spec.get("base_config", "configs/scgm_text_strict_fidelity.yaml"))
+    base_config = TEXT_ROOT / str(spec.get("base_config", "configs/scgm_text.yaml"))
     grid = spec.get("grid") or {}
     validate_scgm_grid_keys(grid)
     n_folds = int(spec.get("n_folds", 5))

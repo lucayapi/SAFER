@@ -134,15 +134,16 @@ Logs SLURM : `jobs/slurm-<job_name>-<job_id>.out` (et `.err`) après `sbatch` de
 
 Macros observées `A0`–`C` ; latents `z` = thèmes intra-macro. Données : `dataset/data_btp.csv` + `embeddings/Qwen3-Embedding-0.6B_btp.csv` (alignement `doc_id`).
 
-**`input_mode`** : `text` (backbone HF fine-tunable) ou `precomputed_embeddings` (colonnes `dim_*`). **`projection`** : `identity` | `linear` | `mlp`. Avec `text` + `freeze_backbone=false`, `identity` signifie **h = f_θ(x)** (pas des embeddings figés).
+Pipeline **end2end** : texte → Qwen (`backbone_trainable` / `train_last_n_layers` dans la config) → projecteur (`linear` | `mlp`) → tête SCGM.
+
+**Config unique** : [`configs/scgm_text.yaml`](configs/scgm_text.yaml) — modes backbone documentés en tête du fichier (gelé / k dernières couches / complet).
 
 **Sélection du meilleur checkpoint** (`best_model.pt`) : `val_eta2_macro_balanced` par défaut (pas F1). Option `--best_checkpoint_metric composite` avec `--best_checkpoint_lambda` (score = eta² − λ·C1). Diagnostics classifieur / subtype : `--compute_classifier_diagnostics` / `--compute_subtype_diagnostics` (désactivés par défaut).
 
-Presets d'entraînement :
-
 ```bash
-python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
-python scripts/train_scgm_text.py --config configs/scgm_text_strict_finetune_identity.yaml --strict_finetune_identity
+python scripts/train_scgm_text.py --config configs/scgm_text.yaml
+# ou
+sbatch jobs/train_scgm_text.sh
 ```
 
 **Topics** : uniquement via **macro_transfer** sur corpus test (notebook 06). Export SCGM BTP complet (`export_scgm_text_outputs.py`) reste en CLI manuelle si besoin.

@@ -1,3 +1,2 @@
-# Référence méthode SCGM — config unique : configs/scgm_text_strict_fidelity.yaml
-method_name: scgm_text
-config: configs/scgm_text_strict_fidelity.yaml
+# Référence méthode SCGM — config unique d'entraînement.
+config: configs/scgm_text.yaml

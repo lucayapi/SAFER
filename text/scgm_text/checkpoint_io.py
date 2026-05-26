@@ -38,6 +38,11 @@ def load_scgm_checkpoint(
         or "Qwen/Qwen3-Embedding-0.6B"
     )
     proj = projection_from_checkpoint_args(checkpoint_args)
+    backbone_trainable = bool(checkpoint_args.get("backbone_trainable", True))
+    train_last_n_layers = checkpoint_args.get("train_last_n_layers")
+    if train_last_n_layers is not None:
+        train_last_n_layers = int(train_last_n_layers)
+
     model = SCGMTextModel(
         hiddim=int(checkpoint_args.get("hiddim", 128)),
         num_classes=int(checkpoint_args.get("n_class", 4)),
@@ -46,6 +51,8 @@ def load_scgm_checkpoint(
         projection=proj,
         pooling=checkpoint_args.get("pooling", "mean"),
         gradient_checkpointing=False,
+        backbone_trainable=backbone_trainable,
+        train_last_n_layers=train_last_n_layers,
     )
     model.load_state_dict(checkpoint["state_dict"])
     return model, checkpoint_args, checkpoint

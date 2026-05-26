@@ -9,6 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from scgm_text.backbone import TextBackbone
+from scgm_text.config_parsing import normalize_backbone_trainability
 from scgm_text.projection import build_embedding_projector, normalize_projection_name
 from scgm_text.scgm_head import SCGMHead
 
@@ -40,6 +41,7 @@ class SCGMTextModel(nn.Module):
         pooling: str = "mean",
         gradient_checkpointing: bool = False,
         train_last_n_layers: Optional[int] = None,
+        backbone_trainable: bool = True,
     ) -> None:
         super().__init__()
         proj_name = normalize_projection_name(projection, None)
@@ -47,12 +49,25 @@ class SCGMTextModel(nn.Module):
         self.pooling = str(pooling).strip().lower()
         self.backbone_model_name_or_path = str(backbone_model_name_or_path)
 
+        backbone_trainable, train_last_n_layers = normalize_backbone_trainability(
+            bool(backbone_trainable), train_last_n_layers
+        )
+        self.backbone_trainable = backbone_trainable
+        self.train_last_n_layers = train_last_n_layers
+
+        effective_gc = bool(gradient_checkpointing) and backbone_trainable
+        if gradient_checkpointing and not effective_gc:
+            print(
+                "[SCGM] gradient_checkpointing disabled because backbone_trainable=false",
+                flush=True,
+            )
+
         self.backbone = TextBackbone(
             model_name_or_path=self.backbone_model_name_or_path,
             pooling=self.pooling,
-            train_last_n_layers=train_last_n_layers,
-            freeze=False,
-            gradient_checkpointing=gradient_checkpointing,
+            freeze=not backbone_trainable,
+            train_last_n_layers=train_last_n_layers if backbone_trainable else None,
+            gradient_checkpointing=effective_gc,
         )
         backbone_dim = self.backbone.hidden_size
         self.hiddim = int(hiddim)
@@ -85,7 +100,12 @@ class SCGMTextModel(nn.Module):
         return self.head.scgm_parameters()
 
     def encode(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
-        h = self.backbone(batch["input_ids"], batch["attention_mask"])
+        if not self.has_trainable_backbone:
+            with torch.no_grad():
+                h = self.backbone(batch["input_ids"], batch["attention_mask"])
+            h = h.detach()
+        else:
+            h = self.backbone(batch["input_ids"], batch["attention_mask"])
         v = self.projector(h)
         return F.normalize(v, p=2, dim=1)
 
@@ -108,6 +128,9 @@ class SCGMTextModel(nn.Module):
 
     @classmethod
     def from_args(cls, args: Any) -> "SCGMTextModel":
+        backbone_trainable = bool(getattr(args, "backbone_trainable", True))
+        train_last_n_layers = getattr(args, "train_last_n_layers", None)
+        gc = bool(getattr(args, "effective_gradient_checkpointing", getattr(args, "gradient_checkpointing", False)))
         return cls(
             hiddim=int(getattr(args, "hiddim", 128)),
             num_classes=int(args.n_class),
@@ -116,6 +139,7 @@ class SCGMTextModel(nn.Module):
             projection=getattr(args, "projection", "linear"),
             dropout=float(getattr(args, "dropout", 0.0)),
             pooling=getattr(args, "pooling", "mean"),
-            gradient_checkpointing=bool(getattr(args, "gradient_checkpointing", False)),
-            train_last_n_layers=getattr(args, "train_last_n_layers", None),
+            gradient_checkpointing=gc,
+            train_last_n_layers=train_last_n_layers,
+            backbone_trainable=backbone_trainable,
         )

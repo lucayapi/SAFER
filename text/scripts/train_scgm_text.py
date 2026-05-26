@@ -40,7 +40,7 @@ from scgm_text.projection import normalize_projection_name
 from scgm_text.schedulers import step_scheduler
 from scgm_text.scgm_text_model import SCGMTextModel
 from scgm_text.training_diagnostics import (
-    assert_end2end_trainable,
+    assert_scgm_trainability,
     measure_backbone_weight_change,
     print_end2end_startup,
     print_grad_norms,
@@ -49,19 +49,6 @@ from scgm_text.training_diagnostics import (
     verify_backbone_updated,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
-
-# Affichage périodique pour logs SLURM (pas de tqdm interactif).
-SCGM_PROGRESS_EVERY = 50
-
-
-def _log_progress(tag: str, step: int, total: int, *, every: int = SCGM_PROGRESS_EVERY) -> None:
-    if total <= 0:
-        return
-    if step == 1 or step == total or (every > 0 and step % every == 0):
-        pct = 100.0 * step / total
-        print(f"[SCGM] {tag} {step}/{total} ({pct:.0f}%)", flush=True)
-
-
 from metrics.geometry import (
     GEOMETRY_METRIC_KEYS,
     PRIMARY_SELECTION_METRIC,
@@ -134,7 +121,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/scgm_text_strict_fidelity.yaml",
+        default="configs/scgm_text.yaml",
     )
     parser.add_argument(
         "--backbone_name",
@@ -145,6 +132,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--text_col", type=str, default=None)
     parser.add_argument("--pooling", type=str, default="mean", choices=["cls", "mean"])
     parser.add_argument("--train_last_n_layers", type=int, default=None)
+    parser.add_argument(
+        "--backbone_trainable",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="If false, Qwen forward is no_grad; only projector + SCGM head train.",
+    )
     parser.add_argument("--max_seq_length", type=int, default=256)
     parser.add_argument("--lr_backbone", type=float, default=None)
     parser.add_argument("--lr_projector", type=float, default=None)
@@ -299,6 +292,19 @@ def finalize_args(args: argparse.Namespace) -> None:
 
     args.optimizer = "sgd"
 
+    args.backbone_trainable, args.train_last_n_layers = normalize_backbone_trainability(
+        bool(getattr(args, "backbone_trainable", True)),
+        getattr(args, "train_last_n_layers", None),
+    )
+    args.effective_gradient_checkpointing = bool(
+        getattr(args, "gradient_checkpointing", False)
+    ) and bool(args.backbone_trainable)
+    if getattr(args, "gradient_checkpointing", False) and not args.effective_gradient_checkpointing:
+        print(
+            "[SCGM] effective_gradient_checkpointing=false (backbone frozen)",
+            flush=True,
+        )
+
     if args.beta1 is None:
         args.beta1 = args.beta
     if args.beta2 is None:
@@ -381,14 +387,9 @@ def run_estep(
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     score_parts: List[np.ndarray] = []
     index_parts: List[np.ndarray] = []
-    n_batches = len(train_loader)
-    print(
-        f"[SCGM] E-step forward start (n_train={n_train}, batches={n_batches}, prior={sample_prior})",
-        flush=True,
-    )
     model.eval()
     with torch.no_grad():
-        for batch_i, batch in enumerate(train_loader, start=1):
+        for batch in train_loader:
             batch = batch_to_device(batch, device)
             _, label_ids, selected_indices = unpack_batch(batch)
             label_ids = label_ids.to(device)
@@ -397,26 +398,20 @@ def run_estep(
             score_for_sinkhorn, _, _ = model.compute_latent_sinkhorn_scores(features, batch_y, tau)
             score_parts.append(score_for_sinkhorn.detach().cpu().numpy())
             index_parts.append(to_local_train_indices(selected_indices, train_loader, n_train))
-            _log_progress("E-step forward", batch_i, n_batches)
 
     score_tr = np.concatenate(score_parts, axis=0)
     batch_idx = np.concatenate(index_parts, axis=0)
     if len(batch_idx) != n_train:
         raise ValueError(f"E-step size mismatch: got {len(batch_idx)} rows, expected {n_train}")
 
-    print(
-        f"[SCGM] E-step Sinkhorn assign (n={score_tr.shape[0]}, r={score_tr.shape[1]}, lmd={lmd}) …",
-        flush=True,
-    )
     _, argmax_q, sink_diag = sinkhorn_assign(
         score_tr,
         lmd,
         labels=train_labels[batch_idx],
         n_classes=n_class,
         sample_prior=sample_prior,
-        log_marginals=True,
+        log_marginals=False,
     )
-    print("[SCGM] E-step done.", flush=True)
     q_new = np.zeros((n_train, n_subclass), dtype=np.float32)
     q_new[batch_idx, argmax_q] = 1.0
     q_diag = q_assignment_distribution(q_new)
@@ -468,7 +463,6 @@ def evaluate_split(
     prefix: str = "val",
     *,
     compute_classifier_diagnostics: bool = False,
-    progress_tag: Optional[str] = None,
 ) -> Tuple[Dict[str, float], np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     model.eval()
     y_true: List[int] = []
@@ -477,12 +471,9 @@ def evaluate_split(
     embeddings: List[np.ndarray] = []
     prob_z_list: List[np.ndarray] = []
     prob_yz_list: List[np.ndarray] = []
-    n_batches = len(data_loader)
-    if progress_tag:
-        print(f"[SCGM] {progress_tag} start ({n_batches} batches)", flush=True)
 
     with torch.no_grad():
-        for batch_i, batch in enumerate(data_loader, start=1):
+        for batch in data_loader:
             batch = batch_to_device(batch, device)
             _, label_ids, _ = unpack_batch(batch)
             features = forward_features(model, batch)
@@ -495,8 +486,6 @@ def evaluate_split(
             embeddings.append(features.detach().cpu().numpy())
             prob_z_list.append(prob_z_x.cpu().numpy())
             prob_yz_list.append(prob_y_z.cpu().numpy())
-            if progress_tag:
-                _log_progress(progress_tag, batch_i, n_batches)
 
     y_true_arr = np.asarray(y_true, dtype=np.int64)
     y_pred_arr = np.asarray(y_pred, dtype=np.int64)
@@ -640,7 +629,9 @@ def _smoke_backbone_step(
     q_dummy = torch.zeros(len(local), args.n_subclass, device=device)
     q_dummy[torch.arange(len(local)), torch.randint(0, args.n_subclass, (len(local),), device=device)] = 1.0
 
-    before = snapshot_backbone_weights(model)
+    before = snapshot_backbone_weights(
+        model, all_params=not bool(getattr(args, "backbone_trainable", True))
+    )
     features = forward_features(model, batch)
     loss, *_ = model.loss(
         features, q_dummy, batch_y, args.tau, args.alpha,
@@ -720,7 +711,7 @@ def run_training(
 
     optimizer = build_optimizer(model, args)
     print_trainable_parameters(model)
-    assert_end2end_trainable(model, optimizer)
+    assert_scgm_trainability(model, optimizer, args.backbone_trainable)
 
     if args.verify_backbone_update:
         _smoke_backbone_step(model, train_loader, optimizer, device, args)
@@ -772,7 +763,6 @@ def run_training(
 
         for epoch in range(1, args.epochs + 1):
             current_lr = step_scheduler(optimizer, args, epoch, args.epochs)
-            print(f"\n[SCGM] ===== Epoch {epoch}/{args.epochs} (lr={current_lr:.6f}) =====", flush=True)
 
             if epoch % args.n_iter_estep == 1:
                 q_new, sinkhorn_diag = run_estep(
@@ -793,10 +783,8 @@ def run_training(
             num_batches = 0
             optimizer.zero_grad(set_to_none=True)
             micro_step = 0
-            n_train_batches = len(train_loader)
-            print(f"[SCGM] M-step train start ({n_train_batches} batches)", flush=True)
 
-            for batch_i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1):
+            for batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
                 batch = batch_to_device(batch, device)
                 _, label_ids, selected_indices = unpack_batch(batch)
                 label_ids = label_ids.to(device)
@@ -820,7 +808,9 @@ def run_training(
 
                 if micro_step % grad_accum == 0:
                     if args.debug_grad_norm and not debug_grad_done:
-                        print_grad_norms(model)
+                        print_grad_norms(
+                            model, expect_backbone_trainable=args.backbone_trainable
+                        )
                         debug_grad_done = True
                     optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
@@ -835,17 +825,17 @@ def run_training(
                 totals["macro"] += float(ls3.detach().cpu())
                 totals["latent"] += float((ls1 + ls2).detach().cpu())
                 num_batches += 1
-                _log_progress(f"M-step epoch {epoch}", batch_i, n_train_batches)
 
             if micro_step % grad_accum != 0:
                 if args.debug_grad_norm and not debug_grad_done:
-                    print_grad_norms(model)
+                    print_grad_norms(
+                        model, expect_backbone_trainable=args.backbone_trainable
+                    )
                     debug_grad_done = True
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
             nb = max(num_batches, 1)
-            print("[SCGM] M-step train done, eval train …", flush=True)
             train_metrics, _, _, _, train_geom = evaluate_split(
                 model,
                 train_loader,
@@ -854,7 +844,6 @@ def run_training(
                 args.n_class,
                 prefix="train",
                 compute_classifier_diagnostics=args.compute_classifier_diagnostics,
-                progress_tag=f"eval train epoch {epoch}",
             )
             if args.compute_subtype_diagnostics:
                 train_metrics.update(
@@ -864,7 +853,6 @@ def run_training(
                 )
             has_val = len(val_idx) > 0
             if has_val:
-                print("[SCGM] eval val …", flush=True)
                 val_metrics, _, _, _, val_geom = evaluate_split(
                     model,
                     val_loader,
@@ -873,7 +861,6 @@ def run_training(
                     args.n_class,
                     prefix="val",
                     compute_classifier_diagnostics=args.compute_classifier_diagnostics,
-                    progress_tag=f"eval val epoch {epoch}",
                 )
                 eval_geom = val_geom
             else:

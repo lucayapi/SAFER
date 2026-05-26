@@ -17,9 +17,16 @@ from scgm_text.training_diagnostics import grad_norm_by_group, print_end2end_sta
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(
+        description="Smoke SCGM end2end gradients. See debug_scgm_trainability_modes.py for 3 backbone modes."
+    )
     p.add_argument("--hiddim", type=int, default=32)
     p.add_argument("--batch-size", type=int, default=8)
+    p.add_argument(
+        "--backbone-trainable",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     return p.parse_args()
 
 
@@ -32,6 +39,7 @@ def main() -> None:
         num_subclasses=8,
         backbone_model_name_or_path="__test_dummy__",
         projection="linear",
+        backbone_trainable=args.backbone_trainable,
     ).to(device)
     print_end2end_startup(model)
 
@@ -55,7 +63,10 @@ def main() -> None:
     norms = grad_norm_by_group(model)
     for name, val in norms.items():
         print(f"[SCGM DEBUG] grad_norm_{name}={val:.6e}", flush=True)
-    assert norms["backbone"] > 0.0, "grad_norm_backbone must be > 0"
+    if args.backbone_trainable:
+        assert norms["backbone"] > 0.0, "grad_norm_backbone must be > 0"
+    else:
+        assert norms["backbone"] == 0.0, "grad_norm_backbone must be 0 when frozen"
     assert norms["projector"] > 0.0, "grad_norm_projector must be > 0"
     assert norms["head"] > 0.0, "grad_norm_head must be > 0"
     print("[SCGM DEBUG] end2end gradient check OK", flush=True)

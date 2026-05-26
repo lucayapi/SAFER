@@ -21,6 +21,23 @@ def _wd(config: Any, primary: str, fallback: str, default: float) -> float:
     return float(getattr(config, fallback, default))
 
 
+def _log_param_group(name: str, params: List[torch.nn.Parameter], lr: float | None = None) -> None:
+    if not params:
+        print(f"[SCGM Optimizer] group={name} skipped (0 trainable params)", flush=True)
+        return
+    n = sum(p.numel() for p in params)
+    if lr is not None:
+        print(
+            f"[SCGM Optimizer] group={name} params={len(params)} numel={n:,} lr={lr}",
+            flush=True,
+        )
+    else:
+        print(
+            f"[SCGM Optimizer] group={name} params={len(params)} numel={n:,}",
+            flush=True,
+        )
+
+
 def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimizer:
     name = str(getattr(config, "optimizer", "sgd")).strip().lower()
     if name != "sgd":
@@ -40,6 +57,7 @@ def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimize
     param_groups: List[Dict[str, Any]] = []
 
     backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
+    _log_param_group("backbone", backbone_params, lr_backbone if backbone_params else None)
     if backbone_params:
         param_groups.append(
             {
@@ -51,6 +69,7 @@ def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimize
         )
 
     proj_params = [p for p in model.projector.parameters() if p.requires_grad]
+    _log_param_group("projector", proj_params, lr_projector)
     if proj_params:
         param_groups.append(
             {
@@ -62,6 +81,7 @@ def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimize
         )
 
     scgm_params = [p for p in model.scgm_parameters() if p.requires_grad]
+    _log_param_group("head", scgm_params, lr_head)
     if scgm_params:
         param_groups.append(
             {

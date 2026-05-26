@@ -54,8 +54,17 @@ def flatten_config_yaml(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def apply_config_to_args(args: Namespace, flat: Dict[str, Any]) -> None:
+    if "backbone_trainable" in flat or "backbone-trainable" in flat:
+        args._config_had_backbone_trainable = True  # type: ignore[attr-defined]
     for key, value in flat.items():
         key_norm = key.replace("-", "_")
+        if key_norm == "freeze_backbone" and not getattr(
+            args, "_config_had_backbone_trainable", False
+        ):
+            from scgm_text.config_parsing import str2bool
+
+            args.backbone_trainable = not str2bool(value)
+            continue
         if key_norm in _IGNORED_CONFIG_KEYS:
             continue
         if key_norm == "n_folds":

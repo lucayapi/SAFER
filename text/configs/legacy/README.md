@@ -1,5 +1,5 @@
 # Configs SCGM obsolètes
 
-Fichiers historiques (precomputed embeddings, AdamW). **Ne plus utiliser pour l'entraînement.**
+Les YAML historiques (precomputed embeddings, AdamW) ont été retirés.
 
-Config active : [`../scgm_text_strict_fidelity.yaml`](../scgm_text_strict_fidelity.yaml)
+**Config unique active :** [`../scgm_text.yaml`](../scgm_text.yaml)

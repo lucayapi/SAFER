@@ -1,5 +1,13 @@
-# SCGM end2end — fidélité papier ICLR 2022 (SGD + cosine).
-# Tous les hyperparamètres modifiables ici (data / model / training).
+# SCGM-text end2end — config unique (data / model / training).
+# Modifier les hyperparamètres ici ; pas d'autres YAML SCGM pour l'entraînement principal.
+#
+# Modes backbone (model.backbone_trainable + model.train_last_n_layers) :
+#   A gelé     : backbone_trainable: false, train_last_n_layers: null
+#                → seuls projecteur (ψ) et tête SCGM (φ) ; Qwen en no_grad
+#   B partiel  : backbone_trainable: true,  train_last_n_layers: 2  (ou 4)
+#   C complet  : backbone_trainable: true,  train_last_n_layers: null
+#
+# Sinkhorn E-step (model.sinkhorn_sample_prior) : uniform | macro_balanced
 
 data:
   data_csv: dataset/data_btp.csv
@@ -12,6 +20,8 @@ data:
 
 model:
   backbone_name: Qwen/Qwen3-Embedding-0.6B
+  backbone_trainable: true
+  train_last_n_layers: null
   max_seq_length: 256
   pooling: mean
   projection: mlp
