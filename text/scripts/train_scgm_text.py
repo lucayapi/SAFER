@@ -16,6 +16,7 @@ if ROOT_DIR not in sys.path:
 
 from scgm_text.batch_utils import batch_to_device, forward_features, unpack_batch
 from scgm_text.collate import make_text_collate_fn
+from scgm_text.config_parsing import normalize_backbone_trainability
 from scgm_text.data_metadata import ID2LABEL, LABEL2ID
 from scgm_text.dataset_text_raw import TextRawDataset, build_text_dataloaders, split_by_group
 from scgm_text.fidelity import (
