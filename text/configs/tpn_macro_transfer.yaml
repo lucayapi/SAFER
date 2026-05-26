@@ -1,19 +1,19 @@
 # Transfert macro TPN (encodeur gelé modulable + adaptateur prototypique).
 # Sorties : output_test/<corpus>/macro_transfer/tpn_<encodeur>/
 #
-# Usage (SoftTriple, défaut) :
+# Usage (défaut SCGM) :
 #   CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
-# Autres encodeurs :
-#   CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh
-#   BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer.yaml python scripts/run_tpn_macro_transfer_discovery.py ...
+# Autres encodeurs (même fichier) :
+#   BASE_METHOD=softtriple CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
+#   CHECKPOINT=output/scgm_text_speed/checkpoints/best_model.pt bash jobs/run_tpn_macro_transfer.sh
 
 corpus: metallurgie
 
 checkpoints:
+  scgm_text: output/scgm_text/checkpoints/best_model.pt
   softtriple: output/softtriple/checkpoints/best_model
   supcon: output/supcon/checkpoints/best_model
   batch_triplet: output/batch_triplet/checkpoints/best_model
-  scgm_text: output/scgm_text/checkpoints/best_model.pt
 
 source:
   data_csv: dataset/data_btp.csv
@@ -21,8 +21,7 @@ source:
   label_col: pred_label
   pred_ok_col: pred_ok
   group_col: accident_id
-  # SCGM source — embeddings BTP Qwen (si absent, voir registre BTP)
-  # emb_csv optionnel : embeddings/Qwen3-Embedding-0.6B_btp.csv
+  # SCGM mode precomputed : emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 target:
   text_col: sentence
@@ -30,18 +29,17 @@ target:
   pred_ok_col: pred_ok
 
 method:
-  name: tpn_softtriple
-  base_method: softtriple
-  # checkpoint — checkpoints.<base_method> ou --checkpoint CLI
-  contrastive_config: configs/methods/softtriple.yaml
+  base_method: scgm_text
+  # checkpoint — checkpoints.<base_method> ou CHECKPOINT / --checkpoint CLI
   # emb_csv cible SCGM — registre test_corpora.yaml si omis
+  # contrastive_config — auto configs/methods/<encodeur>.yaml si encodeur contrastif
 
 macros: ["A0", "A1", "B", "C"]
 
 encoding:
   device: "cuda"
   encode_batch_size: 8
-  # Progression SLURM phase 1 (SCGM) : 1 = chaque batch, 10 = une ligne tous les 10 batches
+  scgm_infer_batch_size: 512
   log_every_batches: 1
   normalize_embeddings: true
 

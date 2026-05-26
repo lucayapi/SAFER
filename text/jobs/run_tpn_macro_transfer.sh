@@ -6,8 +6,8 @@
 # Variables :
 #   CORPUS=metallurgie
 #   CONFIG=configs/tpn_macro_transfer.yaml
-#   BASE_METHOD=softtriple   # softtriple | supcon | batch_triplet | scgm_text
-#   CHECKPOINT=output/softtriple/checkpoints/best_model
+#   BASE_METHOD=scgm_text      # scgm_text | softtriple | supcon | batch_triplet
+#   CHECKPOINT=output/scgm_text_speed/checkpoints/best_model.pt
 #   SKIP_BERTOPIC=0
 #   DEVICE=cuda
 #   EPOCHS=50
@@ -17,8 +17,8 @@
 #   BERTOPIC_ONLY=0
 #
 # Exemples :
-#   BASE_METHOD=supcon CONFIG=configs/tpn_macro_transfer_supcon.yaml bash jobs/run_tpn_macro_transfer.sh
-#   BASE_METHOD=scgm_text CONFIG=configs/tpn_macro_transfer_scgm.yaml bash jobs/run_tpn_macro_transfer.sh
+#   BASE_METHOD=softtriple bash jobs/run_tpn_macro_transfer.sh
+#   CHECKPOINT=output/scgm_text_speed/checkpoints/best_model.pt bash jobs/run_tpn_macro_transfer.sh
 #
 # Prérequis : checkpoint entraîné pour l'encodeur choisi (train_*.sh)
 
@@ -42,7 +42,7 @@ fi
 
 CONFIG="${CONFIG:-configs/tpn_macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
-BASE_METHOD="${BASE_METHOD:-softtriple}"
+BASE_METHOD="${BASE_METHOD:-scgm_text}"
 CHECKPOINT="${CHECKPOINT:-}"
 SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 DEVICE="${DEVICE:-cuda}"

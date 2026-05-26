@@ -10,7 +10,7 @@ import yaml
 from safer_core.io import load_yaml
 
 TEXT_ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = sorted((TEXT_ROOT / "configs").glob("tpn_macro_transfer*.yaml"))
+CONFIGS = [TEXT_ROOT / "configs" / "tpn_macro_transfer.yaml"]
 
 
 @pytest.mark.parametrize("cfg_path", CONFIGS, ids=lambda p: p.name)
@@ -20,7 +20,9 @@ def test_tpn_config_yaml_parses(cfg_path: Path) -> None:
     enc = data["encoding"]
     assert "encode_batch_size" in enc
     assert "log_every_batches" in enc
+    assert "scgm_infer_batch_size" in enc
     assert "normalize_embeddings" in enc
+    assert data.get("method", {}).get("base_method") == "scgm_text"
     # Re-parse brut pour détecter les ':' manquants (erreur utilisateur courante).
     yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 

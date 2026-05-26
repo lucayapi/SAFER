@@ -107,7 +107,7 @@ def main() -> None:
     method_cfg = dict(raw.get("method") or {})
     if args.base_method:
         method_cfg["base_method"] = args.base_method
-    base_method = validate_encoder_name(method_cfg.get("base_method") or "softtriple")
+    base_method = validate_encoder_name(method_cfg.get("base_method") or "scgm_text")
     method_name = tpn_method_name(base_method)
 
     checkpoints_block = raw.get("checkpoints") or {}

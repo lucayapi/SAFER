@@ -53,8 +53,8 @@ from scgm_text.dataset_text_embeddings import load_filtered_metadata
 
 logger = logging.getLogger(__name__)
 
-# Rétrocompat : défaut SoftTriple
-METHOD_NAME = "tpn_softtriple"
+# Rétrocompat : nom de méthode TPN par défaut (encodeur = scgm_text)
+METHOD_NAME = "tpn_scgm_text"
 EXPORT_COLS_BASE = ("sentence", "accident_id", "fact_id", "pred_label", "pred_ok", "doc_id")
 
 
@@ -260,7 +260,7 @@ def run_tpn_macro_transfer_discovery(
 
     method_cfg = dict(cfg.get("method") or {})
     base_method = validate_encoder_name(
-        method_cfg.get("base_method") or method_cfg.get("name") or "softtriple"
+        method_cfg.get("base_method") or method_cfg.get("name") or "scgm_text"
     )
     raw_method_name = method_cfg.get("name")
     if raw_method_name and str(raw_method_name).startswith("tpn_"):
