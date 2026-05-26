@@ -47,6 +47,11 @@ def optimize_l_sk(prob, lmd, a=None, b=None, ddtype=np.float64):
             err = np.nansum(np.abs(c / np.clip(c_new, 1e-12, None) - 1))
         c = c_new
         cnt += 1
+        if cnt == 1 or cnt % 100 == 0:
+            print(
+                f"sinkhornknopp: iter {cnt} err={err:.4f} (n={n_samples}, k={k})",
+                flush=True,
+            )
     print("sinkhornknopp: error: ", err, " step ", cnt, flush=True)
 
     prob *= np.squeeze(c)
