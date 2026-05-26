@@ -1,4 +1,5 @@
 import numpy as np
+from time import time
 
 
 def optimize_l_sk(prob, lmd, a=None, b=None, ddtype=np.float64):
@@ -9,6 +10,8 @@ def optimize_l_sk(prob, lmd, a=None, b=None, ddtype=np.float64):
     a : (n_latents,) row marginal target after transpose (latent), sum=1.
     b : (n_samples,) column marginal target (sample), sum=1.
     """
+    tt = time()
+
     n_samples = prob.shape[0]
     k = prob.shape[1]
 
@@ -44,10 +47,19 @@ def optimize_l_sk(prob, lmd, a=None, b=None, ddtype=np.float64):
             err = np.nansum(np.abs(c / np.clip(c_new, 1e-12, None) - 1))
         c = c_new
         cnt += 1
+        if cnt == 1 or cnt % 100 == 0:
+            print(
+                f"sinkhornknopp: iter {cnt} err={err:.4f} (n={n_samples}, k={k})",
+                flush=True,
+            )
+
+    print(f"sinkhornknopp: error={err:.4f} step={cnt}", flush=True)
 
     prob *= np.squeeze(c)
     prob = prob.T
     prob *= np.squeeze(r)  # (n_samples, k)
     argmaxes = np.nanargmax(prob, axis=1)
+
+    print("opt took {0:.2f}min, {1:4d}iters".format(((time() - tt) / 60.0), cnt), flush=True)
 
     return prob, argmaxes

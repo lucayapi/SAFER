@@ -50,6 +50,18 @@ from scgm_text.training_diagnostics import (
     verify_backbone_updated,
 )
 from scgm_text.sinkhorn_estep import sinkhorn_assign
+
+SCGM_PROGRESS_EVERY_DEFAULT = 50
+
+
+def _log_progress(tag: str, step: int, total: int, *, every: int) -> None:
+    if every <= 0 or total <= 0:
+        return
+    if step == 1 or step == total or step % every == 0:
+        pct = 100.0 * step / total
+        print(f"[SCGM] {tag} {step}/{total} ({pct:.0f}%)", flush=True)
+
+
 from metrics.geometry import (
     GEOMETRY_METRIC_KEYS,
     PRIMARY_SELECTION_METRIC,
@@ -202,6 +214,12 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--beta3", type=float, default=None)
     parser.add_argument("--resume_from_checkpoint", type=str, default=None)
     parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument(
+        "--progress_every",
+        type=int,
+        default=SCGM_PROGRESS_EVERY_DEFAULT,
+        help="Log E-step/M-step/eval every N batches (0=disable intermediate logs).",
+    )
     parser.add_argument("--smoke_epochs", type=int, default=None)
     parser.add_argument(
         "--best_checkpoint_metric",
@@ -385,12 +403,19 @@ def run_estep(
     lmd: float,
     train_labels: np.ndarray,
     sample_prior: str = "uniform",
+    *,
+    progress_every: int = SCGM_PROGRESS_EVERY_DEFAULT,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     score_parts: List[np.ndarray] = []
     index_parts: List[np.ndarray] = []
+    n_batches = len(train_loader)
+    print(
+        f"[SCGM] E-step forward start (n_train={n_train}, batches={n_batches}, prior={sample_prior})",
+        flush=True,
+    )
     model.eval()
     with torch.no_grad():
-        for batch in train_loader:
+        for batch_i, batch in enumerate(train_loader, start=1):
             batch = batch_to_device(batch, device)
             _, label_ids, selected_indices = unpack_batch(batch)
             label_ids = label_ids.to(device)
@@ -399,20 +424,26 @@ def run_estep(
             score_for_sinkhorn, _, _ = model.compute_latent_sinkhorn_scores(features, batch_y, tau)
             score_parts.append(score_for_sinkhorn.detach().cpu().numpy())
             index_parts.append(to_local_train_indices(selected_indices, train_loader, n_train))
+            _log_progress("E-step forward", batch_i, n_batches, every=progress_every)
 
     score_tr = np.concatenate(score_parts, axis=0)
     batch_idx = np.concatenate(index_parts, axis=0)
     if len(batch_idx) != n_train:
         raise ValueError(f"E-step size mismatch: got {len(batch_idx)} rows, expected {n_train}")
 
+    print(
+        f"[SCGM] E-step Sinkhorn assign (n={score_tr.shape[0]}, r={score_tr.shape[1]}, lmd={lmd}) …",
+        flush=True,
+    )
     _, argmax_q, sink_diag = sinkhorn_assign(
         score_tr,
         lmd,
         labels=train_labels[batch_idx],
         n_classes=n_class,
         sample_prior=sample_prior,
-        log_marginals=False,
+        log_marginals=True,
     )
+    print("[SCGM] E-step done.", flush=True)
     q_new = np.zeros((n_train, n_subclass), dtype=np.float32)
     q_new[batch_idx, argmax_q] = 1.0
     q_diag = q_assignment_distribution(q_new)
@@ -464,6 +495,8 @@ def evaluate_split(
     prefix: str = "val",
     *,
     compute_classifier_diagnostics: bool = False,
+    progress_tag: Optional[str] = None,
+    progress_every: int = SCGM_PROGRESS_EVERY_DEFAULT,
 ) -> Tuple[Dict[str, float], np.ndarray, np.ndarray, np.ndarray, Dict[str, Any]]:
     model.eval()
     y_true: List[int] = []
@@ -472,9 +505,12 @@ def evaluate_split(
     embeddings: List[np.ndarray] = []
     prob_z_list: List[np.ndarray] = []
     prob_yz_list: List[np.ndarray] = []
+    n_batches = len(data_loader)
+    if progress_tag and progress_every > 0:
+        print(f"[SCGM] {progress_tag} start ({n_batches} batches)", flush=True)
 
     with torch.no_grad():
-        for batch in data_loader:
+        for batch_i, batch in enumerate(data_loader, start=1):
             batch = batch_to_device(batch, device)
             _, label_ids, _ = unpack_batch(batch)
             features = forward_features(model, batch)
@@ -487,6 +523,8 @@ def evaluate_split(
             embeddings.append(features.detach().cpu().numpy())
             prob_z_list.append(prob_z_x.cpu().numpy())
             prob_yz_list.append(prob_y_z.cpu().numpy())
+            if progress_tag:
+                _log_progress(progress_tag, batch_i, n_batches, every=progress_every)
 
     y_true_arr = np.asarray(y_true, dtype=np.int64)
     y_pred_arr = np.asarray(y_pred, dtype=np.int64)
@@ -563,13 +601,13 @@ def save_checkpoint(
     val_idx: np.ndarray,
 ) -> None:
     payload = {
-        "state_dict": model.state_dict(),
-        "args": vars(args),
-        "label2id": LABEL2ID,
+            "state_dict": model.state_dict(),
+            "args": vars(args),
+            "label2id": LABEL2ID,
         "hiddim": int(model.hiddim),
         "backbone_dim": int(model.input_dim),
-        "train_idx": train_idx,
-        "val_idx": val_idx,
+            "train_idx": train_idx,
+            "val_idx": val_idx,
         "pipeline": "end2end_text",
     }
     torch.save(payload, path)
@@ -683,7 +721,7 @@ def run_training(
         train_idx = np.arange(n, dtype=np.int64)
         val_idx = np.array([], dtype=np.int64)
     else:
-        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+    train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
     pin_memory = args.device == "cuda"
     train_loader, val_loader = build_text_dataloaders(
         dataset,
@@ -740,16 +778,16 @@ def run_training(
     metric_fields = build_metric_fields(args)
     init_metrics_csv(dirs["train_log_csv"], metric_fields)
     legacy_fields = [
-        "epoch",
-        "train_loss",
-        "loss_macro",
-        "loss_latent",
+                "epoch",
+                "train_loss",
+                "loss_macro",
+                "loss_latent",
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
     "val_eta2_macro_balanced_perc",
-    "rankme_global",
-        "c1_global",
-        "c10_global",
+                "rankme_global",
+                "c1_global",
+                "c10_global",
     ]
     if args.compute_classifier_diagnostics:
         legacy_fields.extend(["val_acc", "val_macro_f1", "val_balanced_acc"])
@@ -762,8 +800,10 @@ def run_training(
         legacy_writer = csv.DictWriter(legacy_file, fieldnames=legacy_fields)
         legacy_writer.writeheader()
 
+        progress_every = int(getattr(args, "progress_every", SCGM_PROGRESS_EVERY_DEFAULT))
         for epoch in range(1, args.epochs + 1):
             current_lr = step_scheduler(optimizer, args, epoch, args.epochs)
+            print(f"\n[SCGM] ===== Epoch {epoch}/{args.epochs} (lr={current_lr:.6f}) =====", flush=True)
 
             if epoch % args.n_iter_estep == 1:
                 q_new, sinkhorn_diag = run_estep(
@@ -777,6 +817,7 @@ def run_training(
                     lmd=args.lmd,
                     train_labels=train_labels,
                     sample_prior=args.sinkhorn_sample_prior,
+                    progress_every=progress_every,
                 )
 
             model.train()
@@ -784,8 +825,11 @@ def run_training(
             num_batches = 0
             optimizer.zero_grad(set_to_none=True)
             micro_step = 0
+            n_train_batches = len(train_loader)
+            if progress_every > 0:
+                print(f"[SCGM] M-step train start ({n_train_batches} batches)", flush=True)
 
-            for batch in tqdm(train_loader, desc=f"Epoch {epoch}", leave=False):
+            for batch_i, batch in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}", leave=False), start=1):
                 batch = batch_to_device(batch, device)
                 _, label_ids, selected_indices = unpack_batch(batch)
                 label_ids = label_ids.to(device)
@@ -826,6 +870,7 @@ def run_training(
                 totals["macro"] += float(ls3.detach().cpu())
                 totals["latent"] += float((ls1 + ls2).detach().cpu())
                 num_batches += 1
+                _log_progress(f"M-step epoch {epoch}", batch_i, n_train_batches, every=progress_every)
 
             if micro_step % grad_accum != 0:
                 if args.debug_grad_norm and not debug_grad_done:
@@ -837,6 +882,8 @@ def run_training(
                 optimizer.zero_grad(set_to_none=True)
 
             nb = max(num_batches, 1)
+            if progress_every > 0:
+                print("[SCGM] M-step train done, eval train …", flush=True)
             train_metrics, _, _, _, train_geom = evaluate_split(
                 model,
                 train_loader,
@@ -845,6 +892,8 @@ def run_training(
                 args.n_class,
                 prefix="train",
                 compute_classifier_diagnostics=args.compute_classifier_diagnostics,
+                progress_tag=f"eval train epoch {epoch}",
+                progress_every=progress_every,
             )
             if args.compute_subtype_diagnostics:
                 train_metrics.update(
@@ -854,6 +903,8 @@ def run_training(
                 )
             has_val = len(val_idx) > 0
             if has_val:
+                if progress_every > 0:
+                    print("[SCGM] eval val …", flush=True)
                 val_metrics, _, _, _, val_geom = evaluate_split(
                     model,
                     val_loader,
@@ -862,6 +913,8 @@ def run_training(
                     args.n_class,
                     prefix="val",
                     compute_classifier_diagnostics=args.compute_classifier_diagnostics,
+                    progress_tag=f"eval val epoch {epoch}",
+                    progress_every=progress_every,
                 )
                 eval_geom = val_geom
             else:
@@ -1050,7 +1103,7 @@ def main() -> None:
         record_final_fit_wall_time(layout["metrics"], time.perf_counter() - t_final)
         run_post_train_eval(final_args)
     else:
-        run_training(args)
+    run_training(args)
         run_post_train_eval(args)
 
 

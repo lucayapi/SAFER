@@ -52,4 +52,5 @@ training:
   gradient_checkpointing: true
   beta: 1.0
   num_workers: 2
+  progress_every: 50
   output_dir: output/scgm_text
