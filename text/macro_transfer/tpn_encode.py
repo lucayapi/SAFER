@@ -14,13 +14,9 @@ from contrastive_methods.config import ContrastiveConfig, load_contrastive_confi
 from contrastive_methods.eval_geometry import encode_contrastive_texts
 from macro_transfer.encode import load_target_metadata
 from safer_core.paths import resolve_repo_path
-from scgm_text.dataset_text_embeddings import (
-    LABEL2ID,
-    VALID_LABELS,
-    create_doc_id_if_missing,
-    load_filtered_metadata,
-    merge_metadata_with_embeddings,
-)
+from scgm_text.data_metadata import LABEL2ID, VALID_LABELS, load_filtered_metadata
+from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+from scgm_text.utils_io import create_doc_id_if_missing
 from scgm_text.dataset_text_raw import TextRawDataset
 
 logger = logging.getLogger(__name__)
