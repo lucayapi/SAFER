@@ -721,7 +721,7 @@ def run_training(
         train_idx = np.arange(n, dtype=np.int64)
         val_idx = np.array([], dtype=np.int64)
     else:
-    train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
+        train_idx, val_idx = split_by_group(dataset, val_ratio=args.val_ratio, seed=args.seed)
     pin_memory = args.device == "cuda"
     train_loader, val_loader = build_text_dataloaders(
         dataset,
@@ -1103,7 +1103,7 @@ def main() -> None:
         record_final_fit_wall_time(layout["metrics"], time.perf_counter() - t_final)
         run_post_train_eval(final_args)
     else:
-    run_training(args)
+        run_training(args)
         run_post_train_eval(args)
 
 
