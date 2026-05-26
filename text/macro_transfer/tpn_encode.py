@@ -89,16 +89,34 @@ def resolve_tpn_checkpoint(
     )
 
 
+def _resolve_scgm_input_mode(
+    checkpoint_args: dict,
+    checkpoint: Optional[dict] = None,
+) -> str:
+    """
+    Déduit le mode d'encodage SCGM à partir des métadonnées du checkpoint.
+
+    Les checkpoints end2end récents n'ont pas toujours ``input_mode`` ; l'ancien défaut
+    ``precomputed_embeddings`` provoquait à tort l'exigence de ``emb_csv``.
+    """
+    if checkpoint_args.get("input_mode") == "precomputed_embeddings":
+        return "precomputed_embeddings"
+    if (
+        checkpoint_args.get("pipeline") == "end2end_text"
+        or (checkpoint or {}).get("pipeline") == "end2end_text"
+        or checkpoint_args.get("backbone_model_name_or_path")
+        or checkpoint_args.get("backbone_name")
+    ):
+        return "text"
+    return "text"
+
+
 def scgm_checkpoint_input_mode(checkpoint: str) -> str:
     """Retourne le mode d'encodage SCGM : end2end checkpoints → text."""
     from scgm_text.checkpoint_io import load_scgm_checkpoint
 
-    _, checkpoint_args, _ = load_scgm_checkpoint(checkpoint, map_location="cpu")
-    if checkpoint_args.get("pipeline") == "end2end_text":
-        return "text"
-    if checkpoint_args.get("input_mode") == "precomputed_embeddings":
-        return "precomputed_embeddings"
-    return "text"
+    _, checkpoint_args, raw = load_scgm_checkpoint(checkpoint, map_location="cpu")
+    return _resolve_scgm_input_mode(checkpoint_args, raw)
 
 
 def _load_contrastive_cfg(
@@ -194,10 +212,10 @@ def _project_scgm_embeddings(
     from scgm_text.dataset_text_embeddings import TextEmbeddingDataset
 
     dev = torch.device(device if torch.cuda.is_available() or device == "cpu" else "cpu")
-    model, checkpoint_args, _ = load_scgm_checkpoint(checkpoint, map_location="cpu")
+    model, checkpoint_args, raw_ckpt = load_scgm_checkpoint(checkpoint, map_location="cpu")
     model.to(dev)
     model.eval()
-    input_mode = checkpoint_args.get("input_mode", "precomputed_embeddings")
+    input_mode = _resolve_scgm_input_mode(checkpoint_args, raw_ckpt)
     projected: list[np.ndarray] = []
 
     if input_mode == "text":
