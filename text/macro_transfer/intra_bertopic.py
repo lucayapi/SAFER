@@ -242,6 +242,7 @@ def fit_bertopic_per_macro(
                 "n_units": len(texts),
                 "n_topics": 1,
                 "noise_rate": 0.0,
+                "largest_topic_id": 0,
                 "largest_topic_share": 1.0,
             }
             continue
@@ -273,6 +274,7 @@ def fit_bertopic_per_macro(
             "n_units": stats["n_units"],
             "n_topics": stats["n_topics"],
             "noise_rate": stats["noise_rate"],
+            "largest_topic_id": stats.get("largest_topic_id", -1),
             "largest_topic_share": stats["largest_topic_share"],
         }
 

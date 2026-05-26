@@ -565,6 +565,40 @@ else:
     print("Pas d’export « risque gravité » (mode sans colonne de gravité ou effectifs nuls).")
 """
         ),
+        md("## 12b — Scénarios typiques : configuration probable et interprétation (OpenAI)"),
+        py(
+            r"""
+ENABLE_OPENAI_SCENARIOS = True
+OPENAI_SCENARIO_MAX_ROWS = 12
+
+themes_bn_path = SCGM_TOPICS / "themes_by_macro.csv"
+themes_bn = pd.read_csv(themes_bn_path) if themes_bn_path.is_file() else pd.DataFrame()
+n_accidents_bn = int(acc_df["accident_id"].nunique()) if "accident_id" in acc_df.columns else len(acc_df)
+
+from bn_pipeline.scenario_interpretation import (
+    enrich_scenarios_table,
+    export_scenario_interpretations,
+)
+
+if len(freq_df):
+    scenario_interp = enrich_scenarios_table(
+        freq_df,
+        n_accidents_bn,
+        themes_bn,
+        enable_openai=bool(ENABLE_OPENAI_SCENARIOS),
+        max_rows=int(OPENAI_SCENARIO_MAX_ROWS),
+        cache_path=TABLES / "scenario_interpretations.csv",
+    )
+    export_scenario_interpretations(scenario_interp, TABLES / "scenario_interpretations.csv")
+    display(
+        scenario_interp[
+            [c for c in ("configuration_probable", "interpretation", "prob") if c in scenario_interp.columns]
+        ]
+    )
+else:
+    print("Aucun scénario fréquent — relancer le BN avec plus de support.")
+"""
+        ),
         md("## 13 — Helpers d’affichage (carte CPD, scénario)"),
         py(
             r"""

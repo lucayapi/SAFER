@@ -39,7 +39,14 @@ from macro_transfer.tpn_prototypes import (
     macro_probs_from_source_prototypes,
     prototype_distance_table,
 )
-from macro_transfer.topics_export import summarize_topics_by_macro
+from macro_transfer.report_tables import (
+    build_transfer_metrics_comparison,
+    embedding_paths_manifest,
+)
+from macro_transfer.topics_export import (
+    build_macro_topic_test_table,
+    summarize_topics_by_macro,
+)
 from safer_core.paths import resolve_repo_path
 from scgm_text.dataset_text_embeddings import load_filtered_metadata
 
@@ -177,7 +184,7 @@ def _run_bertopic_phase(
 
     top_k_words = int(topics_export_cfg.get("top_k_words", 12))
     top_k_sentences = int(topics_export_cfg.get("top_k_sentences", 5))
-    themes_bertopic, _assign, bertopic_partial = fit_bertopic_per_macro(
+    themes_bertopic, assignments_df, bertopic_partial = fit_bertopic_per_macro(
         h_t,
         meta_t,
         gating_adapted,
@@ -203,12 +210,20 @@ def _run_bertopic_phase(
         summarize_topics_by_macro(themes_bertopic).to_csv(
             summary_dir / "topics_summary.csv", index=False
         )
+    macro_counts = bertopic_partial.get("macro_topic_counts", {})
+    macro_stats = build_macro_topic_test_table(
+        macro_counts,
+        assignments_df,
+        themes_bertopic,
+    )
+    macro_stats.to_csv(summary_dir / "macro_topic_stats.csv", index=False)
 
     return {
         "embedding_mode": topic_emb_cfg["mode"],
         "alpha": topic_emb_cfg["alpha"],
         "normalize": topic_emb_cfg["normalize"],
-        "macro_topic_counts": bertopic_partial.get("macro_topic_counts", {}),
+        "macro_topic_counts": macro_counts,
+        "macro_topic_stats_path": str(summary_dir / "macro_topic_stats.csv"),
         "warnings": bertopic_partial.get("warnings", []),
         "compression_diagnostics_path": str(compression_path) if compression_path else None,
         "grid_search_path": str(grid_path) if grid_path else None,
@@ -622,6 +637,14 @@ def run_tpn_macro_transfer_discovery(
     )
 
     embed_dim = int(h_s.shape[1]) if h_s.ndim == 2 else 0
+    emb_paths = embedding_paths_manifest(out)
+    summary_dir = out / "summary"
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    transfer_cmp = build_transfer_metrics_comparison(
+        metrics_initial, metrics_adapted, base_method
+    )
+    transfer_cmp.to_csv(summary_dir / "transfer_metrics_comparison.csv", index=False)
+
     tpn_summary = {
         "method": method_name,
         "base_encoder": base_method,
@@ -634,11 +657,11 @@ def run_tpn_macro_transfer_discovery(
         "target_data_csv": str(target_data_csv),
         "n_source": int(len(meta_s)),
         "n_target": int(len(meta_t)),
+        "embedding_paths": emb_paths,
         "metrics_initial": {k: v for k, v in metrics_initial.items() if k != "classification_report"},
         "metrics_adapted": {k: v for k, v in metrics_adapted.items() if k != "classification_report"},
+        "transfer_metrics_comparison_path": str(summary_dir / "transfer_metrics_comparison.csv"),
     }
-    summary_dir = out / "summary"
-    summary_dir.mkdir(parents=True, exist_ok=True)
     with open(summary_dir / "tpn_summary.json", "w", encoding="utf-8") as f:
         json.dump(tpn_summary, f, indent=2, ensure_ascii=False)
 
@@ -651,6 +674,7 @@ def run_tpn_macro_transfer_discovery(
         "output_dir": str(out),
         "n_source": int(len(meta_s)),
         "n_target": int(len(meta_t)),
+        "embedding_paths": emb_paths,
         "metrics_initial": metrics_initial,
         "metrics_adapted": metrics_adapted,
         "skip_bertopic": skip_bertopic,
@@ -658,6 +682,7 @@ def run_tpn_macro_transfer_discovery(
         "topic_embedding_alpha": topic_emb["alpha"],
         "topic_embedding_normalize": topic_emb["normalize"],
         "bertopic_summary": bertopic_summary,
+        "transfer_metrics_comparison_path": str(summary_dir / "transfer_metrics_comparison.csv"),
     }
     with open(out / "run_manifest.json", "w", encoding="utf-8") as f:
         json.dump(

@@ -614,3 +614,200 @@ def display_topics_tables(out_dir: Path, topic_subdir: str, algo_tag: str) -> No
         display(th.groupby("macro")["n_units"].sum().reset_index())
     except ImportError:
         print(th.head(20).to_string())
+
+
+def _confusion_matrix_from_metrics(metrics: Dict[str, Any]) -> Optional[pd.DataFrame]:
+    conf = metrics.get("confusion") or {}
+    if not conf:
+        return None
+    rows = []
+    for true_m in MACRO_NAMES:
+        row = {"true": true_m}
+        for pred_m in MACRO_NAMES:
+            row[pred_m] = int(conf.get(true_m, {}).get(pred_m, 0))
+        rows.append(row)
+    cm = pd.DataFrame(rows).set_index("true")
+    return cm.reindex(index=MACRO_NAMES, columns=MACRO_NAMES, fill_value=0)
+
+
+def plot_confusion_from_metrics(
+    metrics: Dict[str, Any],
+    title: str,
+    save_path: Optional[Path] = None,
+    *,
+    show: bool = True,
+) -> Optional[plt.Figure]:
+    """Heatmap matrice de confusion depuis transfer_metrics_*.json."""
+    cm = _confusion_matrix_from_metrics(metrics)
+    if cm is None or cm.values.sum() == 0:
+        print("Confusion absente ou vide —", title)
+        return None
+    import seaborn as sns
+
+    fig, ax = plt.subplots(figsize=(5.5, 4.5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
+    ax.set_xlabel("Prédit (m_hat)")
+    ax.set_ylabel("Vérité (pred_label)")
+    ax.set_title(title)
+    plt.tight_layout()
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_path, dpi=140, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return fig
+
+
+def _subsample_stratified(
+    n_source: int,
+    n_target: int,
+    max_points: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Indices source et cible sous-échantillonnés."""
+    rng = np.random.default_rng(seed)
+    half = max(2, max_points // 2)
+    n_s = min(n_source, half)
+    n_t = min(n_target, max_points - n_s)
+    idx_s = (
+        rng.choice(n_source, size=n_s, replace=False)
+        if n_source > n_s
+        else np.arange(n_source)
+    )
+    idx_t = (
+        rng.choice(n_target, size=n_t, replace=False)
+        if n_target > n_t
+        else np.arange(n_target)
+    )
+    return np.asarray(idx_s, dtype=np.int64), np.asarray(idx_t, dtype=np.int64)
+
+
+def _load_domain_embedding_pair(
+    out_dir: Path,
+    phase: str,
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """phase: 'projected' (initial) ou 'adapted'."""
+    emb = Path(out_dir) / "embeddings"
+    if phase == "projected":
+        p_s, p_t = emb / "source_projected.npy", emb / "target_projected.npy"
+    else:
+        p_s, p_t = emb / "source_adapted.npy", emb / "target_adapted.npy"
+    if not p_s.is_file() or not p_t.is_file():
+        return None, None
+    return np.load(p_s), np.load(p_t)
+
+
+def _tsne_2d(z: np.ndarray, seed: int) -> np.ndarray:
+    from sklearn.manifold import TSNE
+
+    n = len(z)
+    if n < 3:
+        return np.zeros((n, 2), dtype=np.float64)
+    perplexity = float(min(30, max(2, n - 1)))
+    return TSNE(
+        n_components=2,
+        perplexity=perplexity,
+        random_state=seed,
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(z)
+
+
+def _plot_domain_panel(
+    ax: plt.Axes,
+    z_source: np.ndarray,
+    z_target: np.ndarray,
+    title: str,
+    *,
+    source_label: str = "Source BTP",
+    target_label: str = "Test",
+) -> None:
+    z = np.vstack([z_source, z_target])
+    xy = _tsne_2d(z, seed=42)
+    n_s = len(z_source)
+    ax.scatter(
+        xy[:n_s, 0],
+        xy[:n_s, 1],
+        s=8,
+        alpha=0.45,
+        c="#1f77b4",
+        label=source_label,
+    )
+    ax.scatter(
+        xy[n_s:, 0],
+        xy[n_s:, 1],
+        s=8,
+        alpha=0.45,
+        c="#888888",
+        label=target_label,
+    )
+    ax.set_title(title)
+    ax.legend(markerscale=2, fontsize=8)
+
+
+def plot_domain_tsne_side_by_side(
+    out_dir: Path,
+    fig_dir: Optional[Path] = None,
+    *,
+    max_points: int = 4000,
+    seed: int = 42,
+    source_label: str = "Source BTP",
+    target_label: str = "Test",
+    test_corpus_name: Optional[str] = None,
+    show: bool = True,
+) -> Optional[plt.Figure]:
+    """
+    Figure 1×2 : t-SNE source (bleu) + cible (gris) — encodage initial (gauche) vs adapté (droite).
+    """
+    root = Path(out_dir)
+    z_s_proj, z_t_proj = _load_domain_embedding_pair(root, "projected")
+    z_s_adapt, z_t_adapt = _load_domain_embedding_pair(root, "adapted")
+    if z_s_proj is None or z_t_proj is None:
+        print(f"Embeddings domaine manquants sous {root / 'embeddings'}")
+        return None
+
+    n_source = len(z_s_proj)
+    n_target = len(z_t_proj)
+    manifest_path = root / "run_manifest.json"
+    if manifest_path.is_file():
+        with open(manifest_path, encoding="utf-8") as f:
+            man = json.load(f)
+        n_source = int(man.get("n_source", n_source))
+        n_target = int(man.get("n_target", n_target))
+
+    idx_s, idx_t = _subsample_stratified(n_source, n_target, max_points, seed)
+    tgt_name = target_label if test_corpus_name is None else f"Test {test_corpus_name}"
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
+    _plot_domain_panel(
+        axes[0],
+        z_s_proj[idx_s],
+        z_t_proj[idx_t],
+        "Encodage initial (projeté)",
+        source_label=source_label,
+        target_label=tgt_name,
+    )
+    if z_s_adapt is not None and z_t_adapt is not None:
+        _plot_domain_panel(
+            axes[1],
+            z_s_adapt[idx_s],
+            z_t_adapt[idx_t],
+            "Encodage adapté (TPN)",
+            source_label=source_label,
+            target_label=tgt_name,
+        )
+    else:
+        axes[1].set_visible(False)
+    fig.suptitle("t-SNE — domaines source vs test", y=1.02)
+    plt.tight_layout()
+    if fig_dir is not None:
+        fig_dir = Path(fig_dir)
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(fig_dir / "tsne_domain_initial_vs_adapted.png", dpi=140, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return fig

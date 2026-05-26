@@ -11,6 +11,7 @@ import pytest
 
 from macro_transfer.notebook_viz import (
     RunArtifacts,
+    _confusion_matrix_from_metrics,
     load_run_artifacts,
     merge_assignments,
     _theme_label_map,
@@ -80,3 +81,38 @@ def test_merge_assignments_and_theme_map():
     )
     labels = _theme_label_map(themes)
     assert labels[("A0", 0)].startswith("A0|T0")
+
+
+def test_confusion_matrix_from_metrics():
+    metrics = {
+        "confusion": {
+            "A0": {"A0": 5, "A1": 1, "B": 0, "C": 0},
+            "A1": {"A0": 0, "A1": 3, "B": 1, "C": 0},
+            "B": {"A0": 0, "A1": 0, "B": 4, "C": 0},
+            "C": {"A0": 0, "A1": 0, "B": 0, "C": 2},
+        }
+    }
+    cm = _confusion_matrix_from_metrics(metrics)
+    assert cm is not None
+    assert int(cm.loc["A0", "A0"]) == 5
+
+
+def test_domain_embeddings_paths(tmp_path: Path):
+    emb = tmp_path / "embeddings"
+    emb.mkdir()
+    np.save(emb / "source_projected.npy", np.random.randn(5, 4).astype(np.float32))
+    np.save(emb / "target_projected.npy", np.random.randn(7, 4).astype(np.float32))
+    np.save(emb / "source_adapted.npy", np.random.randn(5, 4).astype(np.float32))
+    np.save(emb / "target_adapted.npy", np.random.randn(7, 4).astype(np.float32))
+    with open(tmp_path / "run_manifest.json", "w", encoding="utf-8") as f:
+        json.dump({"n_source": 5, "n_target": 7}, f)
+    from macro_transfer.notebook_viz import plot_domain_tsne_side_by_side
+
+    fig = plot_domain_tsne_side_by_side(
+        tmp_path,
+        tmp_path / "figs",
+        max_points=20,
+        show=False,
+    )
+    assert fig is not None
+    assert (tmp_path / "figs" / "tsne_domain_initial_vs_adapted.png").is_file()

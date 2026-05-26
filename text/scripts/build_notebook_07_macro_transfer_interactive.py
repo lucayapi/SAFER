@@ -178,12 +178,32 @@ else:
         py(
             r"""
 from macro_transfer.notebook_viz import load_run_artifacts, plot_transfer_macro_overview
+from macro_transfer.report_tables import format_transfer_metrics_table, load_transfer_metrics_pair
 
 artifacts = load_run_artifacts(OUT_DIR)
 plot_transfer_macro_overview(
     artifacts,
     confidence_threshold=CONFIDENCE_THRESHOLD,
     fig_dir=FIG_DIR,
+)
+
+m_init, m_adapt = load_transfer_metrics_pair(OUT_DIR)
+if m_init or m_adapt:
+    display(format_transfer_metrics_table(m_init, m_adapt, BASE_METHOD))
+"""
+        ),
+        md("## t-SNE source BTP vs test — initial vs adapté"),
+        py(
+            r"""
+from macro_transfer.notebook_viz import plot_domain_tsne_side_by_side
+
+plot_domain_tsne_side_by_side(
+    OUT_DIR,
+    FIG_DIR,
+    max_points=4000,
+    source_label="Source BTP",
+    target_label=f"Test {TEST_CORPUS}",
+    test_corpus_name=TEST_CORPUS,
 )
 """
         ),

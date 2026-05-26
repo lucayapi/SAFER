@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -108,3 +108,99 @@ def summarize_topics_by_macro(themes: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+def _theme_label_for(
+    themes: pd.DataFrame,
+    macro: str,
+    topic_id: int,
+) -> str:
+    if themes.empty or "macro" not in themes.columns or "topic_id" not in themes.columns:
+        return ""
+    sub = themes.loc[
+        (themes["macro"].astype(str) == str(macro))
+        & (themes["topic_id"].astype(int) == int(topic_id))
+    ]
+    if sub.empty:
+        return ""
+    row = sub.iloc[0]
+    for col in ("theme_label", "theme_title", "theme_summary", "top_words"):
+        if col in row.index and pd.notna(row[col]) and str(row[col]).strip():
+            return str(row[col]).strip()
+    return ""
+
+
+def _dominant_topic_from_assignments(
+    assignments: pd.DataFrame,
+    macro: str,
+) -> tuple[int, str]:
+    """Topic_id le plus fréquent (hors bruit) pour une macro."""
+    if assignments.empty:
+        return -1, ""
+    macro_col = "macro" if "macro" in assignments.columns else "m_hat"
+    if macro_col not in assignments.columns:
+        return -1, ""
+    sub = assignments.loc[assignments[macro_col].astype(str) == str(macro)].copy()
+    if "topic_id" not in sub.columns:
+        return -1, ""
+    valid = sub.loc[sub["topic_id"].astype(int) >= 0]
+    if valid.empty:
+        return -1, ""
+    counts = valid["topic_id"].astype(int).value_counts()
+    tid = int(counts.index[0])
+    return tid, ""
+
+
+def build_macro_topic_test_table(
+    macro_topic_counts: Dict[str, Any],
+    assignments: pd.DataFrame,
+    themes: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Tableau récapitulatif topics par macro (corpus test).
+
+    Colonnes : macro, n_units, n_topics, bruit_pct, plus_gros_topic, plus_gros_topic_pct.
+    """
+    rows: list[dict[str, Any]] = []
+    for macro in MACRO_NAMES:
+        stats = dict(macro_topic_counts.get(macro) or {})
+        n_units = int(stats.get("n_units", 0))
+        n_topics = int(stats.get("n_topics", 0))
+        noise_rate = float(stats.get("noise_rate", 0.0))
+        largest_share = float(stats.get("largest_topic_share", 0.0))
+        tid = int(stats.get("largest_topic_id", -1))
+        if tid < 0 and not assignments.empty:
+            tid, _ = _dominant_topic_from_assignments(assignments, macro)
+        label = _theme_label_for(themes, macro, tid) if tid >= 0 else ""
+        if not label and tid >= 0:
+            label = f"T{tid}"
+        rows.append(
+            {
+                "macro": macro,
+                "n_units": n_units,
+                "n_topics": n_topics,
+                "bruit_pct": round(100.0 * noise_rate, 1),
+                "plus_gros_topic": label,
+                "plus_gros_topic_pct": round(100.0 * largest_share, 1),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def format_macro_topic_stats_display(df: pd.DataFrame) -> pd.DataFrame:
+    """Renomme les colonnes pour affichage notebook (FR)."""
+    if df.empty:
+        return df
+    rename = {
+        "macro": "Macro",
+        "n_units": "Unités",
+        "n_topics": "Topics",
+        "bruit_pct": "Bruit",
+        "plus_gros_topic": "Plus gros topic",
+        "plus_gros_topic_pct": "Part plus gros topic (%)",
+    }
+    out = df.rename(columns={k: v for k, v in rename.items() if k in df.columns})
+    for col in ("Bruit", "Part plus gros topic (%)"):
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{x:.1f}%" if pd.notna(x) else "")
+    return out

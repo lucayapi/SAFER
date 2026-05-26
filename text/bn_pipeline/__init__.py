@@ -38,6 +38,12 @@ from .bn_visualization import (
     try_plotly_interactive,
     try_pyvis_bn_graph,
 )
+from .scenario_interpretation import (
+    build_configuration_probable,
+    build_topic_variable_label_map,
+    enrich_scenarios_table,
+    export_scenario_interpretations,
+)
 from .scenario_mining import export_scenarios, extract_typical_scenarios
 from .utils import (
     ensure_output_dirs,
@@ -89,6 +95,10 @@ __all__ = [
     "join_theme_summary_to_selected_variables",
     "extract_typical_scenarios",
     "export_scenarios",
+    "build_topic_variable_label_map",
+    "build_configuration_probable",
+    "enrich_scenarios_table",
+    "export_scenario_interpretations",
     "run_model_diagnostics",
     "compare_structure_rows",
 ]

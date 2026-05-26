@@ -117,12 +117,26 @@ elif manifest_path.is_file() and manifest.get("bertopic_summary"):
         md("## § Métriques initial vs adapté"),
         py(
             r"""
+from macro_transfer.report_tables import (
+    encoder_display_name,
+    format_transfer_metrics_table,
+    load_transfer_metrics_pair,
+)
+
 def load_metrics(prefix):
     p = OUT_DIR / "transfer" / f"transfer_metrics_{prefix}.json"
     return json.load(open(p, encoding="utf-8")) if p.is_file() else {}
 
-m_init = load_metrics("initial")
-m_adapt = load_metrics("adapted")
+m_init, m_adapt = load_transfer_metrics_pair(OUT_DIR)
+cmp_csv = OUT_DIR / "summary" / "transfer_metrics_comparison.csv"
+if cmp_csv.is_file():
+    print("=== Tableau métriques (CSV pipeline) ===")
+    display(pd.read_csv(cmp_csv))
+else:
+    metrics_table = format_transfer_metrics_table(m_init, m_adapt, BASE_METHOD)
+    print(f"=== Tableau Modèle — {encoder_display_name(BASE_METHOD)} ({TEST_CORPUS}) ===")
+    display(metrics_table)
+
 rows = []
 for label, m in (("initial", m_init), ("adapted", m_adapt)):
     if not m:
@@ -138,7 +152,8 @@ for label, m in (("initial", m_init), ("adapted", m_adapt)):
         "mean_entropy": m.get("mean_entropy"),
     })
 metrics_df = pd.DataFrame(rows)
-display(metrics_df)
+if len(metrics_df):
+    display(metrics_df)
 
 if len(metrics_df) >= 1:
     fig, ax = plt.subplots(figsize=(8, 4))
@@ -201,22 +216,21 @@ for col, title in [("q_conf", "Confiance"), ("margin", "Marge top1-top2"), ("ent
         md("## § Matrices de confusion (si labels disponibles)"),
         py(
             r"""
-def plot_confusion(meta, title):
-    if "pred_label" not in meta.columns:
-        print("pred_label absent — skip", title)
-        return
-    from macro_transfer.constants import MACRO_NAMES, VALID_LABELS
-    sub = meta[meta["pred_label"].isin(VALID_LABELS) & meta["m_hat"].isin(MACRO_NAMES)]
-    if sub.empty:
-        return
-    cm = pd.crosstab(sub["pred_label"], sub["m_hat"]).reindex(index=MACRO_NAMES, columns=MACRO_NAMES, fill_value=0)
-    fig, ax = plt.subplots(figsize=(5, 4))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-    ax.set_title(title)
-    plt.show()
+from macro_transfer.notebook_viz import plot_confusion_from_metrics
 
-plot_confusion(meta_init, "Confusion — initial")
-plot_confusion(meta_adapt, "Confusion — adapté")
+enc_slug = BASE_METHOD.replace("_", "")
+if m_init:
+    plot_confusion_from_metrics(
+        m_init,
+        f"Confusion — {encoder_display_name(BASE_METHOD)} initial",
+        FIG_DIR / f"confusion_{enc_slug}_initial_meta.png",
+    )
+if m_adapt:
+    plot_confusion_from_metrics(
+        m_adapt,
+        f"Confusion — {encoder_display_name(BASE_METHOD)} adapté",
+        FIG_DIR / f"confusion_{enc_slug}_adapted_meta.png",
+    )
 """
         ),
         md("## § Distances entre prototypes"),
@@ -283,50 +297,33 @@ if comp_path.is_file():
         plt.show()
 """
         ),
-        md("## § Embeddings 2D (PCA) — avant / après adaptation"),
+        md("## § t-SNE domaines source (BTP) vs test — initial vs adapté"),
         py(
             r"""
-from sklearn.decomposition import PCA
+from macro_transfer.notebook_viz import plot_domain_tsne_side_by_side
 
-emb_dir = OUT_DIR / "embeddings"
-p_proj = emb_dir / "target_projected.npy"
-p_adapt = emb_dir / "target_adapted.npy"
-if not p_proj.is_file() or not p_adapt.is_file():
-    raise FileNotFoundError(f"Embeddings TPN manquants sous {emb_dir}")
-
-color_col = "m_hat" if "m_hat" in meta_adapt.columns else None
-label_col = "pred_label" if "pred_label" in meta_adapt.columns else None
-
-def pca_plot(z, meta, title, color_by):
-    if color_by is None or color_by not in meta.columns:
-        print("skip PCA:", title, "(colonne couleur absente)")
-        return
-    if len(z) != len(meta):
-        print(f"skip PCA: {title} — z ({len(z)}) != meta ({len(meta)})")
-        return
-    n = min(len(z), len(meta), 8000)
-    idx = np.random.default_rng(42).choice(len(z), size=n, replace=False) if len(z) > n else np.arange(len(z))
-    xy = PCA(n_components=2, random_state=42).fit_transform(z[idx])
-    labels = meta.iloc[idx][color_by].astype(str)
-    fig, ax = plt.subplots(figsize=(7, 5))
-    for lab in sorted(labels.unique()):
-        m = labels == lab
-        ax.scatter(xy[m, 0], xy[m, 1], s=8, alpha=0.5, label=lab)
-    ax.set_title(title)
-    ax.legend(markerscale=2, fontsize=8)
-    plt.show()
-
-z_proj = np.load(p_proj)
-z_adapt = np.load(p_adapt)
-pca_plot(z_proj, meta_init, f"PCA projected — {TEST_CORPUS}", color_col or label_col)
-pca_plot(z_adapt, meta_adapt, f"PCA adapted — {TEST_CORPUS}", color_col)
-if label_col and label_col != color_col:
-    pca_plot(z_adapt, meta_adapt, f"PCA adapted (pred_label) — {TEST_CORPUS}", label_col)
+plot_domain_tsne_side_by_side(
+    OUT_DIR,
+    FIG_DIR,
+    max_points=4000,
+    seed=42,
+    source_label="Source BTP",
+    target_label=f"Test {TEST_CORPUS}",
+    test_corpus_name=TEST_CORPUS,
+)
 """
         ),
         md("## § Topics BERTopic"),
         py(
             r"""
+from macro_transfer.report_tables import load_macro_topic_stats
+from macro_transfer.topics_export import format_macro_topic_stats_display
+
+topic_stats = load_macro_topic_stats(OUT_DIR)
+if not topic_stats.empty:
+    print("=== Tableau récapitulatif par macro ===")
+    display(format_macro_topic_stats_display(topic_stats))
+
 themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
 summary_path = OUT_DIR / "summary" / "topics_summary.csv"
 if summary_path.is_file():

@@ -28,6 +28,7 @@ def compute_topic_stats(
             "n_topics": 0,
             "n_noise": n_noise,
             "noise_rate": noise_rate,
+            "largest_topic_id": -1,
             "largest_topic_size": 0,
             "largest_topic_share": 0.0,
             "median_topic_size": 0.0,
@@ -38,6 +39,8 @@ def compute_topic_stats(
     unique, counts = np.unique(valid, return_counts=True)
     sizes = counts.astype(np.float64)
     n_topics = int(len(unique))
+    largest_idx = int(np.argmax(sizes))
+    largest_topic_id = int(unique[largest_idx])
     largest = int(sizes.max())
     largest_share = float(largest / max(n_units, 1))
     probs = sizes / sizes.sum()
@@ -47,6 +50,7 @@ def compute_topic_stats(
         "n_topics": n_topics,
         "n_noise": n_noise,
         "noise_rate": noise_rate,
+        "largest_topic_id": largest_topic_id,
         "largest_topic_size": largest,
         "largest_topic_share": largest_share,
         "median_topic_size": float(np.median(sizes)),

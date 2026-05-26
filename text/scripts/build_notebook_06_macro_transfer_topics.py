@@ -127,6 +127,21 @@ for label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
     plt.show()
 """
         ),
+        md("## § Tableau récapitulatif topics (corpus test)"),
+        py(
+            r"""
+from macro_transfer.report_tables import load_macro_topic_stats
+from macro_transfer.topics_export import format_macro_topic_stats_display
+
+for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
+    stats = load_macro_topic_stats(root)
+    if stats.empty:
+        print(f"[{method_label}] macro_topic_stats absent — relancer jobs/run_tpn_macro_transfer.sh")
+        continue
+    print(f"\n=== {method_label} — topics par macro ({TEST_CORPUS}) ===")
+    display(format_macro_topic_stats_display(stats))
+"""
+        ),
         md("## § Topics BERTopic"),
         py(
             r"""
