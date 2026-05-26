@@ -136,6 +136,13 @@ def sinkhorn_assign(
     n_classes: int = 4,
     sample_prior: str = "uniform",
     log_marginals: bool = False,
+    max_iter: int = 500,
+    tol: float = 1e-4,
+    tol_mode: str = "mean",
+    check_every: int = 10,
+    eps: float = 1e-12,
+    normalize_input: bool = True,
+    verbose: bool = True,
 ) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
     """
     Assign latent components via Sinkhorn-Knopp.
@@ -171,17 +178,38 @@ def sinkhorn_assign(
         a_np = a_t.detach().cpu().numpy()
         b_np = b_t.detach().cpu().numpy()
 
-    prob, argmax_q = optimize_l_sk(scores, lmd, a=a_np, b=b_np)
+    prob, argmax_q, sk_meta = optimize_l_sk(
+        scores,
+        lmd,
+        a=a_np,
+        b=b_np,
+        max_iter=max_iter,
+        tol=tol,
+        tol_mode=tol_mode,
+        check_every=check_every,
+        eps=eps,
+        normalize_input=normalize_input,
+        verbose=verbose,
+    )
     prob = np.asarray(prob, dtype=np.float64)
     row_sums = prob.sum(axis=1, keepdims=True)
-    row_sums = np.clip(row_sums, 1e-12, None)
+    row_sums = np.clip(row_sums, eps, None)
     prob_norm = prob / row_sums
-    entropy = -np.sum(prob_norm * np.log(np.clip(prob_norm, 1e-12, None)))
+    entropy = -np.sum(prob_norm * np.log(np.clip(prob_norm, eps, None)))
     active = int(np.unique(argmax_q).size)
     diagnostics = {
         "sinkhorn_assignment_entropy": float(entropy / max(prob.shape[0], 1)),
         "sinkhorn_n_active_z": float(active),
         "sinkhorn_mean_row_mass": float(prob.sum(axis=1).mean()),
         "sinkhorn_sample_prior": sample_prior,
+        "sinkhorn_converged": float(sk_meta.get("converged", False)),
+        "sinkhorn_n_iter": float(sk_meta.get("n_iter", 0)),
+        "sinkhorn_err_final": float(sk_meta.get("err_final", float("nan"))),
+        "sinkhorn_err_sum_final": float(sk_meta.get("err_sum_final", float("nan"))),
+        "sinkhorn_err_mean_final": float(sk_meta.get("err_mean_final", float("nan"))),
+        "sinkhorn_tol_mode": str(sk_meta.get("tol_mode", tol_mode)),
+        "sinkhorn_tol": float(sk_meta.get("tol", tol)),
+        "sinkhorn_max_iter": float(sk_meta.get("max_iter", max_iter)),
+        "sinkhorn_lmd_effective": float(sk_meta.get("lmd", lmd)),
     }
     return prob, argmax_q, diagnostics

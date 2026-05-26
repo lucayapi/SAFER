@@ -31,8 +31,17 @@ model:
   tau: 0.1
   alpha: 0.5
   lmd: 25.0
+  lmd_start: 5.0
+  lmd_warmup_epochs: 5
   n_iter_estep: 5
   sinkhorn_sample_prior: uniform
+  sinkhorn_max_iter: 500
+  sinkhorn_tol: 1.0e-4
+  sinkhorn_tol_mode: mean
+  sinkhorn_check_every: 10
+  sinkhorn_eps: 1.0e-12
+  sinkhorn_normalize_input: true
+  # debug rapide: lmd: 10.0, lmd_start: null, lmd_warmup_epochs: 0
 
 training:
   n_folds: 5

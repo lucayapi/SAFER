@@ -94,6 +94,10 @@ BASE_METRIC_FIELDS = [
     "z_usage_entropy",
     "sinkhorn_n_active_z",
     "sinkhorn_assignment_entropy",
+    "sinkhorn_converged",
+    "sinkhorn_n_iter",
+    "sinkhorn_err_mean_final",
+    "sinkhorn_lmd_effective",
     "train_eta2_macro_balanced",
     "train_eta2_weighted",
     "val_eta2_macro_balanced",
@@ -191,7 +195,24 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--tau", type=float, default=0.1)
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--lmd", type=float, default=25.0)
+    parser.add_argument("--lmd_start", type=float, default=None)
+    parser.add_argument("--lmd_warmup_epochs", type=int, default=0)
     parser.add_argument("--n_iter_estep", type=int, default=5)
+    parser.add_argument("--sinkhorn_max_iter", type=int, default=500)
+    parser.add_argument("--sinkhorn_tol", type=float, default=1e-4)
+    parser.add_argument(
+        "--sinkhorn_tol_mode",
+        type=str,
+        default="mean",
+        choices=["mean", "sum", "marginal_l1"],
+    )
+    parser.add_argument("--sinkhorn_check_every", type=int, default=10)
+    parser.add_argument("--sinkhorn_eps", type=float, default=1e-12)
+    parser.add_argument(
+        "--sinkhorn_normalize_input",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+    )
     parser.add_argument(
         "--sinkhorn_sample_prior",
         type=str,
@@ -355,6 +376,22 @@ def _resolve_test_corpus_args(args: argparse.Namespace) -> None:
         args.test_data_csv = str(spec.data_csv)
 
 
+def get_effective_lmd(
+    epoch: int,
+    lmd: float,
+    lmd_start: Optional[float] = None,
+    lmd_warmup_epochs: int = 0,
+) -> float:
+    """Linear warm-up: epoch 1 -> lmd_start, epoch warmup -> lmd (see plan convention)."""
+    target = float(lmd)
+    if lmd_start is None or int(lmd_warmup_epochs) <= 0:
+        return target
+    start = float(lmd_start)
+    warmup = int(lmd_warmup_epochs)
+    progress = min(1.0, max(0.0, (int(epoch) - 1) / max(1, warmup - 1)))
+    return start + progress * (target - start)
+
+
 def labels_to_onehot(label_ids: torch.Tensor, num_classes: int) -> torch.Tensor:
     batch_size = label_ids.shape[0]
     onehot = torch.zeros(batch_size, num_classes, dtype=torch.float32, device=label_ids.device)
@@ -405,6 +442,12 @@ def run_estep(
     sample_prior: str = "uniform",
     *,
     progress_every: int = SCGM_PROGRESS_EVERY_DEFAULT,
+    sinkhorn_max_iter: int = 500,
+    sinkhorn_tol: float = 1e-4,
+    sinkhorn_tol_mode: str = "mean",
+    sinkhorn_check_every: int = 10,
+    sinkhorn_eps: float = 1e-12,
+    sinkhorn_normalize_input: bool = True,
 ) -> Tuple[np.ndarray, Dict[str, float]]:
     score_parts: List[np.ndarray] = []
     index_parts: List[np.ndarray] = []
@@ -442,6 +485,13 @@ def run_estep(
         n_classes=n_class,
         sample_prior=sample_prior,
         log_marginals=True,
+        max_iter=sinkhorn_max_iter,
+        tol=sinkhorn_tol,
+        tol_mode=sinkhorn_tol_mode,
+        check_every=sinkhorn_check_every,
+        eps=sinkhorn_eps,
+        normalize_input=sinkhorn_normalize_input,
+        verbose=True,
     )
     print("[SCGM] E-step done.", flush=True)
     q_new = np.zeros((n_train, n_subclass), dtype=np.float32)
@@ -806,6 +856,17 @@ def run_training(
             print(f"\n[SCGM] ===== Epoch {epoch}/{args.epochs} (lr={current_lr:.6f}) =====", flush=True)
 
             if epoch % args.n_iter_estep == 1:
+                lmd_eff = get_effective_lmd(
+                    epoch,
+                    args.lmd,
+                    getattr(args, "lmd_start", None),
+                    getattr(args, "lmd_warmup_epochs", 0),
+                )
+                print(
+                    f"[SCGM Sinkhorn] epoch={epoch} lmd_effective={lmd_eff:.4f} "
+                    f"lmd_target={float(args.lmd):.4f}",
+                    flush=True,
+                )
                 q_new, sinkhorn_diag = run_estep(
                     model=model,
                     train_loader=train_loader,
@@ -814,10 +875,16 @@ def run_training(
                     n_class=args.n_class,
                     n_train=len(train_idx),
                     n_subclass=args.n_subclass,
-                    lmd=args.lmd,
+                    lmd=lmd_eff,
                     train_labels=train_labels,
                     sample_prior=args.sinkhorn_sample_prior,
                     progress_every=progress_every,
+                    sinkhorn_max_iter=args.sinkhorn_max_iter,
+                    sinkhorn_tol=args.sinkhorn_tol,
+                    sinkhorn_tol_mode=args.sinkhorn_tol_mode,
+                    sinkhorn_check_every=args.sinkhorn_check_every,
+                    sinkhorn_eps=args.sinkhorn_eps,
+                    sinkhorn_normalize_input=args.sinkhorn_normalize_input,
                 )
 
             model.train()

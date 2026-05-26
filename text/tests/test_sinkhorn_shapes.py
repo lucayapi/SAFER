@@ -11,6 +11,8 @@ def test_sinkhorn_assign_shapes():
     assert argmax_q.shape == (20,)
     assert 0 < diag["sinkhorn_n_active_z"] <= 6
     assert "sinkhorn_assignment_entropy" in diag
+    assert "sinkhorn_converged" in diag
+    assert "sinkhorn_n_iter" in diag
 
 
 def test_sinkhorn_assign_macro_balanced_shapes():
