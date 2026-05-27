@@ -1,4 +1,4 @@
-"""Encodage modulaire pour le pipeline TPN (encodeur gelé au choix)."""
+"""Encodage modulaire pour le pipeline TPN full encoder."""
 
 from __future__ import annotations
 
@@ -117,17 +117,21 @@ CONTRASTIVE_ENCODERS: tuple[str, ...] = ("softtriple", "supcon", "batch_triplet"
 
 
 def tpn_method_name(base_method: str) -> str:
-    """Nom de sortie macro_transfer : ``tpn_<encodeur>``."""
+    """Nom de sortie macro_transfer : ``tpn_full_<encodeur>``."""
     base = str(base_method).strip()
     if not base:
         raise ValueError("base_method vide")
-    if base.startswith("tpn_"):
+    if base.startswith("tpn_full_"):
         return base
-    return f"tpn_{base}"
+    if base.startswith("tpn_"):
+        base = base[4:]
+    return f"tpn_full_{base}"
 
 
 def validate_encoder_name(method: str) -> EncoderName:
     m = str(method).strip()
+    if m.startswith("tpn_full_"):
+        m = m[9:]
     if m.startswith("tpn_"):
         m = m[4:]
     allowed = (*CONTRASTIVE_ENCODERS, "scgm_text")

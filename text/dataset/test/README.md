@@ -35,7 +35,7 @@ Les corpus disponibles sont déclarés dans [`configs/test_corpora.yaml`](../../
 export TEST_CORPUS=metallurgie
 
 # CLI
-python scripts/run_tpn_macro_transfer_discovery.py --corpus metallurgie
+python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie
 sbatch jobs/train_scgm_text.sh   # avec TEST_CORPUS dans l'environnement
 sbatch jobs/export_raw_geometry.sh
 sbatch jobs/export_test_embeddings.sh

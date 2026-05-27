@@ -150,26 +150,30 @@ print("Prérequis OK.")
         md("## Pipeline TPN (optionnel)"),
         py(
             r"""
-from macro_transfer.tpn_pipeline import run_tpn_macro_transfer_discovery
+import subprocess
 
 if RUN_PIPELINE:
-    print("=== Lancement pipeline TPN ===")
-    _emb_path = Path(EMB_CSV)
-    _emb = str(_emb_path) if _emb_path.is_file() else None
-    manifest = run_tpn_macro_transfer_discovery(
-        checkpoint=str(CHECKPOINT),
-        source_data_csv=str(SOURCE_DATA_CSV),
-        target_data_csv=str(TARGET_DATA_CSV),
-        output_dir=str(OUT_DIR),
-        config=RAW_CFG,
-        device=DEVICE,
-        emb_csv=_emb,
-        skip_bertopic=bool(RAW_CFG.get("skip_bertopic", False)),
-    )
-    print("Terminé — n_units :", manifest.get("n_units"))
-    m = (manifest.get("metrics_adapted") or {})
-    if m:
-        print(f"accuracy={m.get('accuracy')} macro_f1={m.get('macro_f1')} mean_q_conf={m.get('mean_q_conf')}")
+    print("=== Lancement pipeline TPN full encoder ===")
+    cmd = [
+        sys.executable,
+        "scripts/run_tpn_full_encoder_transfer.py",
+        "--config",
+        "configs/tpn_macro_transfer.yaml",
+        "--corpus",
+        TEST_CORPUS,
+        "--base-method",
+        BASE_METHOD,
+        "--checkpoint",
+        str(CHECKPOINT),
+        "--device",
+        DEVICE,
+        "--output-dir",
+        str(OUT_DIR),
+    ]
+    if bool(RAW_CFG.get("skip_bertopic", False)):
+        cmd.append("--skip-bertopic")
+    subprocess.run(cmd, check=True)
+    print("Terminé — voir :", OUT_DIR)
 else:
     print("RUN_PIPELINE=False — lecture depuis disque :", OUT_DIR)
 """

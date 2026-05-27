@@ -18,7 +18,7 @@ resolve_transfer_metadata_path = _mod.resolve_transfer_metadata_path
 
 @pytest.mark.parametrize(
     "method",
-    ["tpn_softtriple", "tpn_supcon", "tpn_batch_triplet", "tpn_scgm_text"],
+    ["tpn_full_softtriple", "tpn_full_supcon", "tpn_full_batch_triplet", "tpn_full_scgm_text"],
 )
 def test_tpn_metadata_filename(method: str):
     assert METADATA_BY_METHOD[method] == "metadata_with_tpn_macro_probs.csv"
@@ -26,7 +26,7 @@ def test_tpn_metadata_filename(method: str):
 
 @pytest.mark.parametrize(
     "method",
-    ["tpn_softtriple", "tpn_supcon"],
+    ["tpn_full_softtriple", "tpn_full_supcon"],
 )
 def test_resolve_transfer_metadata_path(method: str):
     mt = Path(f"output_test/metallurgie/macro_transfer/{method}")

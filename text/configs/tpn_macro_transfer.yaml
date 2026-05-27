@@ -1,12 +1,3 @@
-# Transfert macro TPN (encodeur gelé modulable + adaptateur prototypique).
-# Sorties : output_test/<corpus>/macro_transfer/tpn_<encodeur>/
-#
-# Usage (défaut SCGM) :
-#   CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
-# Autres encodeurs (même fichier) :
-#   BASE_METHOD=softtriple CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
-#   CHECKPOINT=output/scgm_text_speed/checkpoints/best_model.pt bash jobs/run_tpn_macro_transfer.sh
-
 corpus: metallurgie
 
 checkpoints:
@@ -21,7 +12,6 @@ source:
   label_col: pred_label
   pred_ok_col: pred_ok
   group_col: accident_id
-  # SCGM mode precomputed : emb_csv embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 target:
   text_col: sentence
@@ -29,50 +19,50 @@ target:
   pred_ok_col: pred_ok
 
 method:
-  base_method: scgm_text
-  # checkpoint — checkpoints.<base_method> ou CHECKPOINT / --checkpoint CLI
-  # emb_csv cible SCGM — registre test_corpora.yaml si omis
-  # contrastive_config — auto configs/methods/<encodeur>.yaml si encodeur contrastif
-
-macros: ["A0", "A1", "B", "C"]
+  name: tpn_full_softtriple
+  base_method: softtriple
+  checkpoint: output/softtriple/checkpoints/best_model
+  contrastive_config: configs/methods/softtriple.yaml
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
 
 encoding:
-  device: "cuda"
-  encode_batch_size: 8
-  # End2end SCGM (texte → Qwen → projecteur) ; baisser si OOM GPU
-  scgm_text_batch_size: 64
-  # scgm_infer_batch_size: 512  # uniquement si mode precomputed (source/method.emb_csv)
-  log_every_batches: 1
+  max_seq_length: 256
   normalize_embeddings: true
-  # Reprendre phase 1 si source_projected.npy + target_projected.npy existent (mêmes tailles)
-  reuse_projected_embeddings: true
-  force_reencode: false
+  pooling: mean
+  device: cuda
+
+full_encoder:
+  freeze_backbone: false
+  source_batch_size: 16
+  target_batch_size: 16
+  gradient_accumulation_steps: 2
+  epochs: 5
+  learning_rate: 2.0e-5
+  weight_decay: 1.0e-4
+  warmup_ratio: 0.1
+  max_grad_norm: 1.0
+  fp16: true
+  bf16: false
+  balanced_source_batches: true
+  drop_last: true
+  prototype_mode: batch
+  ema_momentum: 0.95
 
 tpn:
-  seed: 42
-  epochs: 50
-  learning_rate: 1.0e-3
-  weight_decay: 1.0e-4
   tau: 0.3
   distance_metric: euclidean
-  assignment_mode: soft
-  detach_assignments: true
+  assignment_mode: hard
+  pseudo_label_threshold: 0.6
   target_weight_st: 1.0
-
-adapter:
-  type: residual_mlp
-  bottleneck_dim: 256
-  dropout: 0.05
-  scale: 0.1
-  init_last_zero: true
+  src_classifier_prototypes: source
 
 loss_weights:
   src: 1.0
-  proto: 0.5
-  kl: 0.5
+  proto: 1.0
+  kl: 1.0
   ent: 0.01
-  div: 0.05
-  preserve: 0.25  # λ_pres — balayage : scripts/run_tpn_macro_transfer_preserve_tuning.py
+  div: 0.01
+  preserve: 0.0
 
 gating:
   confidence_threshold: 0.35
@@ -184,4 +174,4 @@ topics_export:
   top_k_words: 12
   top_k_sentences: 5
 
-skip_bertopic: false
+skip_bertopic: true

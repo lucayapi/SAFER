@@ -60,9 +60,9 @@ def test_should_log_scgm_encode_batch_sparse():
 
 
 def test_tpn_method_name():
-    assert tpn_method_name("softtriple") == "tpn_softtriple"
-    assert tpn_method_name("supcon") == "tpn_supcon"
-    assert tpn_method_name("tpn_batch_triplet") == "tpn_batch_triplet"
+    assert tpn_method_name("softtriple") == "tpn_full_softtriple"
+    assert tpn_method_name("supcon") == "tpn_full_supcon"
+    assert tpn_method_name("tpn_batch_triplet") == "tpn_full_batch_triplet"
 
 
 def test_validate_encoder_name_strips_tpn_prefix():

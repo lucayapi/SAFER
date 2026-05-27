@@ -20,18 +20,18 @@ TOPICS_SUBDIR = "topics_bertopic"
 _TPN_METADATA = "metadata_with_tpn_macro_probs.csv"
 
 METADATA_BY_METHOD: dict[str, str] = {
-    "tpn_softtriple": _TPN_METADATA,
-    "tpn_supcon": _TPN_METADATA,
-    "tpn_batch_triplet": _TPN_METADATA,
-    "tpn_scgm_text": _TPN_METADATA,
+    "tpn_full_softtriple": _TPN_METADATA,
+    "tpn_full_supcon": _TPN_METADATA,
+    "tpn_full_batch_triplet": _TPN_METADATA,
+    "tpn_full_scgm_text": _TPN_METADATA,
 }
 
 # Sous-dossier bn_staging par défaut (évite d'écraser scgm/softtriple).
 BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
-    "tpn_softtriple": "tpn_softtriple",
-    "tpn_supcon": "tpn_supcon",
-    "tpn_batch_triplet": "tpn_batch_triplet",
-    "tpn_scgm_text": "tpn_scgm_text",
+    "tpn_full_softtriple": "tpn_full_softtriple",
+    "tpn_full_supcon": "tpn_full_supcon",
+    "tpn_full_batch_triplet": "tpn_full_batch_triplet",
+    "tpn_full_scgm_text": "tpn_full_scgm_text",
 }
 
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
@@ -117,7 +117,7 @@ def stage_bn_exports_from_macro_transfer(
     """
     Copie les artefacts macro_transfer vers ``bn_staging/staging/bn_exports/``.
 
-    Entrées attendues sous ``output_test/<corpus>/macro_transfer/tpn_<encodeur>/`` :
+    Entrées attendues sous ``output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/`` :
     ``transfer/metadata_with_tpn_macro_probs.csv``, ``topics_bertopic/assignments.csv``,
     ``topics_bertopic/themes_by_macro.csv`` (colonnes ``theme_label``, ``top_words``),
     ``embeddings/prob_*.npy``.

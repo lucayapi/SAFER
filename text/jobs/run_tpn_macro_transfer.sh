@@ -1,21 +1,20 @@
 #!/bin/bash
-# Transfert macro TPN (encodeur gelé modulable + adaptateur) sur corpus test.
+# Transfert macro TPN full-encoder (end-to-end) sur corpus test.
 #
 # Usage :
 #   cd ~/SAFER/text && bash jobs/run_tpn_macro_transfer.sh
 # Variables :
 #   CORPUS=metallurgie
-#   CONFIG=configs/tpn_macro_transfer.yaml
+#   CONFIG=configs/tpn_macro_transfer.yaml   # config unique full encoder
 #   BASE_METHOD=scgm_text      # scgm_text | softtriple | supcon | batch_triplet
 #   CHECKPOINT=output/scgm_text_speed/checkpoints/best_model.pt
-#   SKIP_BERTOPIC=0
+#   SKIP_BERTOPIC=1
 #   DEVICE=cuda
 #   EPOCHS=50
-#   TOPIC_EMBEDDING_MODE=mixed   # initial | adapted | mixed
-#   TOPIC_ALPHA=0.25
-#   RUN_BERTOPIC_GRID=0
-#   BERTOPIC_ONLY=0
-#   FORCE_REENCODE=1   # ignore source/target_projected.npy existants
+#   BACKBONE_NAME=Qwen/Qwen3-Embedding-0.6B
+#   LR=2e-5
+#   PROTOTYPE_MODE=batch  # batch | ema_global
+#   PSEUDO_LABEL_THRESHOLD=0.6
 #
 # Exemples :
 #   BASE_METHOD=softtriple bash jobs/run_tpn_macro_transfer.sh
@@ -45,9 +44,9 @@ CONFIG="${CONFIG:-configs/tpn_macro_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
 BASE_METHOD="${BASE_METHOD:-scgm_text}"
 CHECKPOINT="${CHECKPOINT:-}"
-SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
+SKIP_BERTOPIC="${SKIP_BERTOPIC:-1}"
 DEVICE="${DEVICE:-cuda}"
-EPOCHS="${EPOCHS:-50}"
+EPOCHS="${EPOCHS:-5}"
 
 export TEST_CORPUS="${CORPUS}"
 
@@ -58,27 +57,24 @@ fi
 if [[ -n "${CHECKPOINT}" ]]; then
   extra+=(--checkpoint "${CHECKPOINT}")
 fi
+if [[ -n "${BACKBONE_NAME:-}" ]]; then
+  extra+=(--backbone-name "${BACKBONE_NAME}")
+fi
+if [[ -n "${LR:-}" ]]; then
+  extra+=(--lr "${LR}")
+fi
 if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
   extra+=(--skip-bertopic)
 fi
-if [[ -n "${TOPIC_EMBEDDING_MODE:-}" ]]; then
-  extra+=(--topic-embedding-mode "${TOPIC_EMBEDDING_MODE}")
+if [[ -n "${PROTOTYPE_MODE:-}" ]]; then
+  extra+=(--prototype-mode "${PROTOTYPE_MODE}")
 fi
-if [[ -n "${TOPIC_ALPHA:-}" ]]; then
-  extra+=(--topic-alpha "${TOPIC_ALPHA}")
-fi
-if [[ "${RUN_BERTOPIC_GRID:-0}" == "1" ]]; then
-  extra+=(--run-bertopic-grid)
-fi
-if [[ "${BERTOPIC_ONLY:-0}" == "1" ]]; then
-  extra+=(--bertopic-only)
-fi
-if [[ "${FORCE_REENCODE:-0}" == "1" ]]; then
-  extra+=(--force-reencode)
+if [[ -n "${PSEUDO_LABEL_THRESHOLD:-}" ]]; then
+  extra+=(--pseudo-label-threshold "${PSEUDO_LABEL_THRESHOLD}")
 fi
 
 echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"
 echo "[tpn_macro_transfer] Logs : tail -f slurm-${SLURM_JOB_ID:-local}.out  (PYTHONUNBUFFERED=1)"
-# Optionnel : surcharge encoding.log_every_batches du YAML (ex. export TPN_ENCODE_LOG_EVERY_BATCHES=10)
-python -u scripts/run_tpn_macro_transfer_discovery.py "${extra[@]}"
+# Entrypoint unique full encoder
+python -u scripts/run_tpn_full_encoder_transfer.py "${extra[@]}"
 echo "[tpn_macro_transfer] terminé CORPUS=${CORPUS} $(date -Iseconds)"

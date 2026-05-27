@@ -175,25 +175,38 @@ Les anciens dossiers `resultats/` et `resultats_test/` peuvent être renommés e
 
 ## Transfert macro TPN + topics cible (corpus test)
 
-Pipeline **`macro_transfer/`** (TPN) : encodeur contrastif BTP **gelé** → adaptateur prototypique sur la cible → gating macro \(p(m|u)\) → topics **BERTopic** intra-macro (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`), libellés via **`bertopic.representation.OpenAI`** par défaut.
+Pipeline **`macro_transfer/`** (TPN full encoder) : encodeur texte entraîné end-to-end + classification prototypique (distances aux prototypes) → gating macro \(p(m|u)\) → topics **BERTopic** intra-macro (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`), libellés via **`bertopic.representation.OpenAI`** par défaut.
 
 **Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`).
 
-Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yaml). Encodeur choisi via `BASE_METHOD` dans `jobs/run_tpn_macro_transfer.sh`.
+Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yaml) (**config unique**). Encodeur choisi via `BASE_METHOD` dans `jobs/run_tpn_macro_transfer.sh`.
 
 **Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml)) + contexte sectoriel ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml)).
 
 | Étape | Commande |
 |-------|----------|
-| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (défaut `scgm_text`) |
-| Encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
-| CLI | `python scripts/run_tpn_macro_transfer_discovery.py --corpus <id>` |
-| BERTopic seul | `--bertopic-only` (artefacts déjà encodés) |
-| Notebook 06 | comparaison `tpn_scgm_text` vs `tpn_softtriple` |
+| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (défaut `softtriple`) |
+| Encodeur | `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
+| CLI | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus <id>` |
+| Skip BERTopic | `SKIP_BERTOPIC=1` (par défaut dans le YAML) |
+| Notebook 06 | comparaison `tpn_full_scgm_text` vs `tpn_full_softtriple` |
 | Notebook 07 | run local TPN + viz 2D |
 | Notebook 08 | diagnostics TPN (initial vs adapté) |
 
-**Sorties** : `output_test/<corpus_id>/macro_transfer/tpn_<encodeur>/`
+**Sorties** : `output_test/<corpus_id>/macro_transfer/tpn_full_<encodeur>/`
+
+### Mode unique full-encoder (end-to-end)
+
+Le repo utilise maintenant uniquement **TPN full encoder** : pas d'adaptateur `g_ϕ`, l'encodeur texte complet est optimisé end-to-end avec classifieur prototypique (distances aux prototypes).
+
+Commandes :
+
+| Étape | Commande |
+|-------|----------|
+| Full encoder sans BERTopic | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie --skip-bertopic` |
+| Full encoder complet | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie` |
+
+Sorties : `output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/` avec notamment `transfer/metadata_with_tpn_full_macro_probs.csv`, `transfer/metrics_tpn_full.json`, `embeddings/source_full_embeddings.npy`, `embeddings/target_full_embeddings.npy`.
 
 ## Réseaux bayésiens
 
