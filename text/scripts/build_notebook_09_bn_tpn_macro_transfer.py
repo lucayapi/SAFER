@@ -579,7 +579,7 @@ else:
 ENABLE_OPENAI_SCENARIOS = True
 OPENAI_SCENARIO_MAX_ROWS = 12
 
-themes_bn_path = SCGM_TOPICS / "themes_by_macro.csv"
+themes_bn_path = TPN_TOPICS / "themes_by_macro.csv"
 themes_bn = pd.read_csv(themes_bn_path) if themes_bn_path.is_file() else pd.DataFrame()
 n_accidents_bn = int(acc_df["accident_id"].nunique()) if "accident_id" in acc_df.columns else len(acc_df)
 

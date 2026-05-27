@@ -62,7 +62,7 @@ from macro_transfer.tpn_encode import tpn_method_name
 from safer_core.test_corpus import macro_transfer_output_dir
 
 TEST_CORPUS = os.environ.get("TEST_CORPUS", "metallurgie")
-BASE_METHOD = os.environ.get("BASE_METHOD", "softtriple")
+BASE_METHOD = os.environ.get("BASE_METHOD", "scgm_text")
 OUT_DIR = macro_transfer_output_dir(tpn_method_name(BASE_METHOD), TEST_CORPUS, anchor=TEXT_ROOT)
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"08_tpn_{TEST_CORPUS}_{OUT_DIR.name}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -334,6 +334,68 @@ if themes_path.is_file():
     display(th[[c for c in cols if c in th.columns]])
 else:
     print("themes_by_macro.csv absent (BERTopic non exécuté ou échec)")
+"""
+        ),
+        md(
+            "## § Lecture d'un récit (texte coloré par thème / macro)\n"
+            "\n"
+            "Phrases surlignées selon le topic BERTopic intra-macro (`color_by='topic'`) "
+            "ou la macro TPN (`color_by='macro'`). Modifier `ACCIDENT_ID` ou "
+            "`os.environ['ACCIDENT_ID']` pour changer de récit."
+        ),
+        py(
+            r"""
+from macro_transfer.notebook_viz import (
+    build_topics_display_dataframe,
+    load_run_artifacts,
+    pick_accident_id_for_colored_text,
+    show_colored_text_inline,
+)
+
+_assign_path = OUT_DIR / "topics_bertopic" / "assignments.csv"
+if not _assign_path.is_file():
+    print(
+        "assignments.csv absent — relancer le pipeline TPN avec BERTopic "
+        f"(attendu : {_assign_path})"
+    )
+elif "accident_id" not in meta_adapt.columns:
+    print("Colonne accident_id absente des métadonnées TPN.")
+else:
+    artifacts = load_run_artifacts(OUT_DIR)
+    _df_topics = build_topics_display_dataframe(artifacts, confidence_threshold=0.0)
+    _counts = _df_topics.groupby("accident_id").size().sort_values(ascending=False)
+    print("Top accidents (nb phrases / unités) :")
+    display(_counts.head(10).to_frame("n_units"))
+
+    _acc_env = os.environ.get("ACCIDENT_ID", "").strip()
+    if _acc_env:
+        _candidates = _df_topics["accident_id"].dropna().unique()
+        _dtype = type(_candidates[0]) if len(_candidates) else str
+        try:
+            _prefer = _dtype(_acc_env)
+        except (TypeError, ValueError):
+            _prefer = _acc_env
+    else:
+        _prefer = None
+
+    ACCIDENT_ID = pick_accident_id_for_colored_text(
+        _df_topics, min_units=5, prefer_id=_prefer
+    )
+    _n_units = int(_counts.get(ACCIDENT_ID, 0))
+    print(f"Récit affiché : accident_id={ACCIDENT_ID} ({_n_units} unités textuelles)")
+
+    show_colored_text_inline(
+        _df_topics,
+        ACCIDENT_ID,
+        min_prob=0.0,
+        font_size_px=10,
+        legend_font_size_px=9,
+        legend_title="Thèmes",
+        show_prob=False,
+        color_by="topic",
+        highlight_style="border",
+        keep_outliers_plain=True,
+    )
 """
         ),
         md("## § Courbe d'entraînement"),

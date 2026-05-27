@@ -67,6 +67,35 @@ def _projected_embedding_paths(emb_dir: Path) -> tuple[Path, Path]:
     return emb / SOURCE_PROJECTED_NAME, emb / TARGET_PROJECTED_NAME
 
 
+def resolve_projected_cache_dir(
+    encoding_cfg: Dict[str, Any],
+    emb_dir: Path,
+    *,
+    repo_anchor: Path,
+) -> Path:
+    """Répertoire des .npy projetés phase 1 (partagé entre runs si `projected_cache_dir` est défini)."""
+    raw = encoding_cfg.get("projected_cache_dir")
+    if raw is None or str(raw).strip() == "":
+        return Path(emb_dir)
+    p = Path(str(raw))
+    if not p.is_absolute():
+        p = resolve_repo_path(p, repo_root=repo_anchor)
+    return p
+
+
+def sync_projected_embeddings_to_emb_dir(
+    h_s: np.ndarray,
+    h_t: np.ndarray,
+    emb_dir: Path,
+) -> None:
+    """Copie source/target projetés dans le dossier embeddings du run courant."""
+    emb_dir = Path(emb_dir)
+    emb_dir.mkdir(parents=True, exist_ok=True)
+    src_path, tgt_path = _projected_embedding_paths(emb_dir)
+    np.save(src_path, np.asarray(h_s, dtype=np.float64))
+    np.save(tgt_path, np.asarray(h_t, dtype=np.float64))
+
+
 def try_load_cached_projected_embeddings(
     emb_dir: Path,
     *,
@@ -407,6 +436,9 @@ def run_tpn_macro_transfer_discovery(
 
     emb_dir = out / "embeddings"
     transfer_dir = out / "transfer"
+    projected_cache_dir = resolve_projected_cache_dir(
+        encoding_cfg, emb_dir, repo_anchor=repo_anchor
+    )
 
     if bertopic_only:
         emb_dir.mkdir(parents=True, exist_ok=True)
@@ -511,13 +543,15 @@ def run_tpn_macro_transfer_discovery(
     }
 
     emb_dir.mkdir(parents=True, exist_ok=True)
+    projected_cache_dir.mkdir(parents=True, exist_ok=True)
     n_source = len(texts_s)
     n_target = len(texts_t)
     reuse_projected = bool(encoding_cfg.get("reuse_projected_embeddings", True))
     force_reencode = bool(encoding_cfg.get("force_reencode", False))
+    shared_cache = projected_cache_dir.resolve() != emb_dir.resolve()
 
     h_s, h_t, encode_skipped = try_load_cached_projected_embeddings(
-        emb_dir,
+        projected_cache_dir,
         n_source=n_source,
         n_target=n_target,
         reuse=reuse_projected,
@@ -587,15 +621,25 @@ def run_tpn_macro_transfer_discovery(
             h_s = l2_normalize_np(h_s)
             h_t = l2_normalize_np(h_t)
 
-        src_path, tgt_path = _projected_embedding_paths(emb_dir)
+        src_path, tgt_path = _projected_embedding_paths(projected_cache_dir)
         np.save(src_path, h_s)
         np.save(tgt_path, h_t)
+        if shared_cache:
+            logger.info(
+                "Cache projections partagé : %s (sync vers %s)",
+                projected_cache_dir,
+                emb_dir,
+            )
     else:
         logger.info(
             "=== Phase 1/5 sautée (cache) : source=%s cible=%s ===",
             h_s.shape if h_s is not None else None,
             h_t.shape if h_t is not None else None,
         )
+        if shared_cache:
+            logger.info("Cache projections partagé : %s", projected_cache_dir)
+
+    sync_projected_embeddings_to_emb_dir(h_s, h_t, emb_dir)
 
     proto_dir = out / "prototypes"
     proto_dir.mkdir(parents=True, exist_ok=True)
@@ -817,6 +861,7 @@ def run_tpn_macro_transfer_discovery(
         "target_data_csv": str(target_data_csv),
         "output_dir": str(out),
         "encode_skipped": encode_skipped,
+        "projected_cache_dir": str(projected_cache_dir),
         "n_source": int(len(meta_s)),
         "n_target": int(len(meta_t)),
         "embedding_paths": emb_paths,

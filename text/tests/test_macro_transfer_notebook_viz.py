@@ -12,8 +12,11 @@ import pytest
 from macro_transfer.notebook_viz import (
     RunArtifacts,
     _confusion_matrix_from_metrics,
+    build_topics_display_dataframe,
     load_run_artifacts,
     merge_assignments,
+    pick_accident_id_for_colored_text,
+    render_colored_accident_html,
     _theme_label_map,
 )
 from safer_core.test_corpus import macro_transfer_output_dir
@@ -70,17 +73,24 @@ def test_merge_assignments_and_theme_map():
         {"m_hat": ["A0", "A0", "A1"], "q_conf": [0.9, 0.3, 0.8], "doc_idx": [0, 1, 2]}
     )
     assign = pd.DataFrame(
-        {"doc_idx": [0, 2], "macro": ["A0", "A1"], "topic_id": [0, 1]}
+        {
+            "doc_idx": [0, 2],
+            "macro": ["A0", "A1"],
+            "topic_id": [0, 1],
+            "prob": [0.9, 0.7],
+        }
     )
     merged = merge_assignments(meta, assign, confidence_threshold=0.5)
     assert len(merged) == 2
     assert merged.iloc[0]["topic_id"] == 0
+    assert float(merged.iloc[0]["prob"]) == 0.9
 
     themes = pd.DataFrame(
         {"macro": ["A0"], "topic_id": [0], "top_words": "acier fusion"}
     )
     labels = _theme_label_map(themes)
-    assert labels[("A0", 0)].startswith("A0|T0")
+    assert labels[("A0", 0)].startswith("A0")
+    assert "acier fusion" in labels[("A0", 0)]
 
 
 def test_confusion_matrix_from_metrics():
@@ -116,3 +126,81 @@ def test_domain_embeddings_paths(tmp_path: Path):
     )
     assert fig is not None
     assert (tmp_path / "figs" / "tsne_domain_initial_vs_adapted.png").is_file()
+
+
+def _minimal_tpn_run(tmp_path: Path) -> Path:
+    root = tmp_path / "tpn_run"
+    emb = root / "embeddings"
+    emb.mkdir(parents=True)
+    transfer = root / "transfer"
+    transfer.mkdir()
+    topics = root / "topics_bertopic"
+    topics.mkdir()
+    n = 6
+    np.save(emb / "target_adapted.npy", np.random.randn(n, 4).astype(np.float32))
+    meta = pd.DataFrame(
+        {
+            "sentence": [f"phrase {i} sur l'accident." for i in range(n)],
+            "accident_id": [1, 1, 1, 2, 2, 2],
+            "m_hat": ["A0", "A0", "A1", "B", "B", "C"],
+            "q_conf": [0.95, 0.88, 0.91, 0.85, 0.80, 0.99],
+            "doc_idx": list(range(n)),
+        }
+    )
+    meta.to_csv(transfer / "metadata_with_tpn_macro_probs.csv", index=False)
+    pd.DataFrame(
+        {
+            "doc_idx": [0, 1, 2, 3, 4, 5],
+            "macro": ["A0", "A0", "A1", "B", "B", "C"],
+            "topic_id": [0, 1, 0, 0, 1, 0],
+            "prob": [0.9, 0.8, 0.85, 0.7, 0.75, 0.92],
+        }
+    ).to_csv(topics / "assignments.csv", index=False)
+    pd.DataFrame(
+        {
+            "macro": ["A0", "A0", "A1", "B", "B", "C"],
+            "topic_id": [0, 1, 0, 0, 1, 0],
+            "theme_label": ["Thème A0-0", "Thème A0-1", "Thème A1-0", "Thème B-0", "Thème B-1", "Thème C-0"],
+            "n_units": [1, 1, 1, 1, 1, 1],
+        }
+    ).to_csv(topics / "themes_by_macro.csv", index=False)
+    return root
+
+
+def test_build_topics_display_dataframe(tmp_path: Path):
+    root = _minimal_tpn_run(tmp_path)
+    art = load_run_artifacts(root)
+    df = build_topics_display_dataframe(art, confidence_threshold=0.0)
+    assert "theme_label" in df.columns
+    assert "theme_label_short" in df.columns
+    assert "Thème A0-0" in df.loc[df["doc_idx"] == 0, "theme_label_short"].iloc[0]
+    assert len(df) == 6
+
+
+def test_pick_accident_id_for_colored_text():
+    df = pd.DataFrame(
+        {
+            "accident_id": [1, 1, 1, 2, 2],
+            "sentence": ["a", "b", "c", "d", "e"],
+        }
+    )
+    assert pick_accident_id_for_colored_text(df, min_units=3) == 1
+    assert pick_accident_id_for_colored_text(df, min_units=3, prefer_id=2) == 2
+
+
+def test_render_colored_accident_html(tmp_path: Path):
+    root = _minimal_tpn_run(tmp_path)
+    art = load_run_artifacts(root)
+    df = build_topics_display_dataframe(art, confidence_threshold=0.0)
+    html_topic = render_colored_accident_html(df, 1, color_by="topic")
+    assert "phrase 0" in html_topic
+    assert "phrase 1" in html_topic
+    assert "Thème A0-0" in html_topic
+    assert "box-shadow" in html_topic or "border-left" in html_topic
+    assert html_topic.count("phrase") >= 3
+
+    html_macro = render_colored_accident_html(
+        df, 1, color_by="macro", legend_title="Macros"
+    )
+    assert "#1f77b4" in html_macro
+    assert "Macros" in html_macro

@@ -72,7 +72,7 @@ loss_weights:
   kl: 0.5
   ent: 0.01
   div: 0.05
-  preserve: 0.25
+  preserve: 0.25  # λ_pres — balayage : scripts/run_tpn_macro_transfer_preserve_tuning.py
 
 gating:
   confidence_threshold: 0.35
