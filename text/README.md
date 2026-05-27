@@ -185,8 +185,8 @@ Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yam
 
 | Étape | Commande |
 |-------|----------|
-| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (défaut `softtriple`) |
-| Encodeur | `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
+| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (défaut `scgm_text`) |
+| Encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
 | CLI | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus <id>` |
 | Skip BERTopic | `SKIP_BERTOPIC=1` (par défaut dans le YAML) |
 | Notebook 06 | comparaison `tpn_full_scgm_text` vs `tpn_full_softtriple` |

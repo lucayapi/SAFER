@@ -104,7 +104,7 @@ def main() -> None:
     cfg["corpus"] = corpus
 
     method_cfg = dict(cfg.get("method") or {})
-    base_method = validate_encoder_name(method_cfg.get("base_method") or "softtriple")
+    base_method = validate_encoder_name(method_cfg.get("base_method") or "scgm_text")
     checkpoints_block = cfg.get("checkpoints") or {}
     checkpoint = resolve_tpn_checkpoint(
         base_method,

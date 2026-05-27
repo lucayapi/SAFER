@@ -19,10 +19,9 @@ target:
   pred_ok_col: pred_ok
 
 method:
-  name: tpn_full_softtriple
-  base_method: softtriple
-  checkpoint: output/softtriple/checkpoints/best_model
-  contrastive_config: configs/methods/softtriple.yaml
+  name: tpn_full_scgm_text
+  base_method: scgm_text
+  checkpoint: output/scgm_text/checkpoints/best_model.pt
   backbone_name: Qwen/Qwen3-Embedding-0.6B
 
 encoding:
