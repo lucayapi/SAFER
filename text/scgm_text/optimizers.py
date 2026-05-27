@@ -1,4 +1,4 @@
-"""Optimizer factory for SCGM strict-fidelity training (SGD, 3 param groups)."""
+"""Optimizer factory for SCGM end-to-end training (AdamW, 3 param groups)."""
 
 from __future__ import annotations
 
@@ -39,19 +39,22 @@ def _log_param_group(name: str, params: List[torch.nn.Parameter], lr: float | No
 
 
 def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimizer:
-    name = str(getattr(config, "optimizer", "sgd")).strip().lower()
-    if name != "sgd":
+    legacy = str(getattr(config, "optimizer", "adamw")).strip().lower()
+    if legacy == "sgd":
         raise ValueError(
-            f"SCGM training only supports optimizer=sgd (got {name!r}). "
-            "Adam/AdamW have been removed."
+            "optimizer=sgd n'est plus supporté. SCGM utilise uniquement AdamW."
+        )
+    if legacy not in ("adamw", ""):
+        raise ValueError(
+            f"SCGM training only supports optimizer=adamw (got {legacy!r})."
         )
 
-    lr_backbone = _lr(config, "lr_backbone", "backbone_lr", 1e-5)
-    lr_projector = _lr(config, "lr_projector", "head_lr", 0.01)
-    lr_head = _lr(config, "lr_head", "head_lr", 0.03)
+    lr_backbone = _lr(config, "lr_backbone", "backbone_lr", 5e-6)
+    lr_projector = _lr(config, "lr_projector", "projector_lr", 5e-4)
+    lr_head = _lr(config, "lr_head", "head_lr", 1e-3)
 
     wd_backbone = _wd(config, "weight_decay_backbone", "backbone_weight_decay", 1e-4)
-    wd_projector = _wd(config, "weight_decay_projector", "head_weight_decay", 1e-4)
+    wd_projector = _wd(config, "weight_decay_projector", "projector_weight_decay", 1e-4)
     wd_head = _wd(config, "weight_decay_head", "head_weight_decay", 1e-4)
 
     param_groups: List[Dict[str, Any]] = []
@@ -95,5 +98,15 @@ def build_optimizer(model: torch.nn.Module, config: Any) -> torch.optim.Optimize
     if not param_groups:
         raise ValueError("Aucun paramètre entraînable pour l'optimiseur.")
 
-    momentum = float(getattr(config, "momentum", 0.9))
-    return torch.optim.SGD(param_groups, momentum=momentum)
+    adam_beta1 = float(getattr(config, "adam_beta1", 0.9))
+    adam_beta2 = float(getattr(config, "adam_beta2", 0.999))
+    adam_eps = float(getattr(config, "adam_eps", 1e-8))
+    print(
+        f"[SCGM Optimizer] optimizer=adamw betas=({adam_beta1}, {adam_beta2}) eps={adam_eps}",
+        flush=True,
+    )
+    return torch.optim.AdamW(
+        param_groups,
+        betas=(adam_beta1, adam_beta2),
+        eps=adam_eps,
+    )

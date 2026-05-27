@@ -92,7 +92,7 @@ def test_full_encoder_smoke_cpu(tmp_path: Path):
             "prototype_mode": "batch",
             "seed": 42,
         },
-        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "preserve": 0.0},
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "reg": 0.0},
         label_col="pred_label",
         target_label_col="pred_label",
         pred_ok_col_target="pred_ok",

@@ -8,7 +8,7 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -65,8 +65,41 @@ class _TextDataset(Dataset):
         return item
 
 
+def _macro_batch_quotas(batch_size: int, n_macros: int, min_per_macro: int) -> List[int]:
+    """Répartition stable du batch entre macros (reste distribué par rotation)."""
+    if batch_size <= 0:
+        raise ValueError(f"batch_size doit être > 0, reçu {batch_size}")
+    if min_per_macro * n_macros > batch_size:
+        raise ValueError(
+            f"min_per_macro={min_per_macro} * n_macros={n_macros} "
+            f"excède batch_size={batch_size}"
+        )
+    quotas = [int(min_per_macro)] * n_macros
+    remaining = batch_size - sum(quotas)
+    idx = 0
+    while remaining > 0:
+        quotas[idx % n_macros] += 1
+        remaining -= 1
+        idx += 1
+    return quotas
+
+
+def _source_macro_counts(labels: Sequence[int]) -> Dict[str, int]:
+    arr = np.asarray(labels, dtype=np.int64)
+    return {name: int((arr == mid).sum()) for mid, name in enumerate(MACRO_NAMES)}
+
+
+def _validate_source_macros_present(labels: Sequence[int], *, n_macros: int = 4) -> None:
+    missing = [MACRO_NAMES[m] for m in range(n_macros) if not np.any(np.asarray(labels) == m)]
+    if missing:
+        raise ValueError(
+            "Macros absentes du dataset source filtré: "
+            f"{missing}. Impossible d'entraîner TPN full encoder sans toutes les macros."
+        )
+
+
 class _BalancedMacroBatchSampler(Sampler[List[int]]):
-    """Batch source équilibré A0/A1/B/C autant que possible."""
+    """Batch source équilibré A0/A1/B/C avec remplacement optionnel."""
 
     def __init__(
         self,
@@ -74,16 +107,24 @@ class _BalancedMacroBatchSampler(Sampler[List[int]]):
         batch_size: int,
         drop_last: bool,
         seed: int = 42,
+        *,
+        min_per_macro: int = 1,
+        with_replacement: bool = True,
+        n_macros: int = 4,
     ) -> None:
         self.labels = np.asarray(labels, dtype=np.int64)
         self.batch_size = int(batch_size)
         self.drop_last = bool(drop_last)
         self.seed = int(seed)
-        self.n_macros = len(MACRO_NAMES)
+        self.min_per_macro = int(min_per_macro)
+        self.with_replacement = bool(with_replacement)
+        self.n_macros = int(n_macros)
+        _validate_source_macros_present(self.labels, n_macros=self.n_macros)
         self._per_macro = {
             m: np.where(self.labels == m)[0].tolist()
             for m in range(self.n_macros)
         }
+        self.macro_counts = _source_macro_counts(self.labels)
         self._len = self._estimate_len()
 
     def _estimate_len(self) -> int:
@@ -95,6 +136,28 @@ class _BalancedMacroBatchSampler(Sampler[List[int]]):
     def __len__(self) -> int:
         return self._len
 
+    def _draw_from_macro(
+        self,
+        rng: np.random.Generator,
+        macro_id: int,
+        count: int,
+        buckets: Dict[int, List[int]],
+        ptr: Dict[int, int],
+    ) -> List[int]:
+        if count <= 0:
+            return []
+        bucket = buckets[macro_id]
+        if self.with_replacement:
+            if not bucket:
+                return []
+            chosen = rng.choice(bucket, size=count, replace=True)
+            return [int(x) for x in chosen.tolist()]
+        picked: List[int] = []
+        while len(picked) < count and ptr[macro_id] < len(bucket):
+            picked.append(int(bucket[ptr[macro_id]]))
+            ptr[macro_id] += 1
+        return picked
+
     def __iter__(self) -> Iterable[List[int]]:
         rng = np.random.default_rng(self.seed)
         buckets = {}
@@ -103,23 +166,18 @@ class _BalancedMacroBatchSampler(Sampler[List[int]]):
             rng.shuffle(arr2)
             buckets[m] = arr2
         ptr = {m: 0 for m in range(self.n_macros)}
+        quotas_template = _macro_batch_quotas(
+            self.batch_size,
+            self.n_macros,
+            self.min_per_macro,
+        )
 
-        macro_order = list(range(self.n_macros))
         for _ in range(self._len):
             batch: List[int] = []
-            # Répartition primaire équilibrée
-            per_macro_quota = max(1, self.batch_size // self.n_macros)
-            for m in macro_order:
-                for _q in range(per_macro_quota):
-                    if len(batch) >= self.batch_size:
-                        break
-                    if ptr[m] >= len(buckets[m]):
-                        continue
-                    batch.append(int(buckets[m][ptr[m]]))
-                    ptr[m] += 1
-            # Complément avec ce qui reste
-            if len(batch) < self.batch_size:
-                for m in macro_order:
+            for m, quota in enumerate(quotas_template):
+                batch.extend(self._draw_from_macro(rng, m, quota, buckets, ptr))
+            if len(batch) < self.batch_size and not self.with_replacement:
+                for m in range(self.n_macros):
                     while len(batch) < self.batch_size and ptr[m] < len(buckets[m]):
                         batch.append(int(buckets[m][ptr[m]]))
                         ptr[m] += 1
@@ -127,7 +185,8 @@ class _BalancedMacroBatchSampler(Sampler[List[int]]):
                 continue
             if not batch:
                 break
-            yield batch
+            rng.shuffle(batch)
+            yield batch[: self.batch_size]
 
 
 @dataclass
@@ -289,43 +348,168 @@ def _macro_mass(q: torch.Tensor) -> List[float]:
     return [float(v.item()) for v in q.mean(dim=0)]
 
 
-def _select_target_by_threshold(
-    h_t: torch.Tensor,
+def _parse_threshold_per_macro(
+    threshold_cfg: Optional[Dict[str, Any]],
+    n_macros: int,
+    default_threshold: float,
+) -> List[float]:
+    thresholds = [float(default_threshold)] * n_macros
+    if not threshold_cfg:
+        return thresholds
+    for key, val in threshold_cfg.items():
+        key_s = str(key)
+        if key_s in LABEL2ID:
+            thresholds[LABEL2ID[key_s]] = float(val)
+        elif key_s.isdigit():
+            idx = int(key_s)
+            if 0 <= idx < n_macros:
+                thresholds[idx] = float(val)
+    return thresholds
+
+
+def build_target_pseudo_mask(
     q: torch.Tensor,
-    threshold: Optional[float],
-) -> Tuple[torch.Tensor, torch.Tensor, float, float]:
-    if threshold is None:
-        conf = q.max(dim=1).values
-        return h_t, q, 1.0, float(conf.mean().item() if len(conf) else 0.0)
-    conf, _ = q.max(dim=1)
-    mask = conf >= float(threshold)
-    if bool(mask.any()):
-        h_sel = h_t[mask]
-        q_sel = q[mask]
-    else:
-        # fallback propre: aucune cible confiante -> tensors vides
-        h_sel = h_t[:0]
-        q_sel = q[:0]
-    coverage = float(mask.float().mean().item()) if len(mask) else 0.0
-    conf_mean = float(conf.mean().item() if len(conf) else 0.0)
-    return h_sel, q_sel, coverage, conf_mean
-
-
-def _compute_mu_t_with_fallback(
-    h_t_sel: torch.Tensor,
-    q_sel: torch.Tensor,
-    mu_s: torch.Tensor,
     *,
-    eps: float = EPS,
+    strategy: str = "global_threshold",
+    assignment_mode: str = "soft",
+    global_threshold: Optional[float] = None,
+    threshold_per_macro: Optional[Sequence[float]] = None,
+    min_per_macro: int = 8,
+    min_confidence: float = 0.25,
 ) -> torch.Tensor:
-    if len(h_t_sel) == 0:
-        return mu_s
-    mu_t = compute_target_prototypes_soft_torch(h_t_sel, q_sel, eps=eps)
-    mass = q_sel.sum(dim=0)
-    for m in range(mu_t.shape[0]):
-        if float(mass[m].item()) < eps:
-            mu_t[m] = mu_s[m]
-    return F.normalize(mu_t, p=2, dim=-1, eps=eps)
+    """
+    Retourne un masque M [N_t, n_class] indiquant quelles paires (exemple, macro)
+    contribuent aux prototypes cible.
+    """
+    if q.ndim != 2:
+        raise ValueError(f"q doit être 2D, reçu shape={tuple(q.shape)}")
+    n_t, n_class = q.shape
+    device = q.device
+    dtype = q.dtype
+    strategy_norm = str(strategy).strip().lower()
+    mode = str(assignment_mode).strip().lower()
+    mask = torch.zeros((n_t, n_class), device=device, dtype=dtype)
+
+    if strategy_norm == "global_threshold":
+        conf, top = q.max(dim=1)
+        if global_threshold is None:
+            keep = torch.ones(n_t, device=device, dtype=torch.bool)
+        else:
+            keep = conf >= float(global_threshold)
+        if mode == "hard":
+            rows = torch.arange(n_t, device=device)
+            mask[rows[keep], top[keep]] = 1.0
+        else:
+            mask = q * keep.to(dtype).unsqueeze(1)
+        return mask
+
+    per_macro_thr = list(threshold_per_macro or [global_threshold or 0.6] * n_class)
+
+    if strategy_norm == "per_class_threshold":
+        if mode == "hard":
+            top = q.argmax(dim=1)
+            rows = torch.arange(n_t, device=device)
+            for j in range(n_t):
+                m_star = int(top[j].item())
+                if float(q[j, m_star].item()) >= float(per_macro_thr[m_star]):
+                    mask[j, m_star] = 1.0
+        else:
+            thr = torch.as_tensor(per_macro_thr, device=device, dtype=dtype).view(1, -1)
+            mask = (q >= thr).to(dtype)
+        return mask
+
+    if strategy_norm == "per_class_topk":
+        k_default = max(1, int(min_per_macro))
+        min_conf = float(min_confidence)
+        selected_any = torch.zeros(n_t, device=device, dtype=torch.bool)
+        per_macro_selected: List[torch.Tensor] = []
+        for m in range(n_class):
+            k = min(k_default, n_t)
+            if k <= 0:
+                per_macro_selected.append(torch.zeros(0, dtype=torch.long, device=device))
+                continue
+            vals, idx = torch.topk(q[:, m], k=k, largest=True)
+            ok = vals >= min_conf
+            idx_ok = idx[ok]
+            per_macro_selected.append(idx_ok)
+            if idx_ok.numel():
+                selected_any[idx_ok] = True
+
+        if mode == "hard":
+            top = q.argmax(dim=1)
+            rows = torch.arange(n_t, device=device)
+            for m in range(n_class):
+                idx_ok = per_macro_selected[m]
+                if idx_ok.numel() == 0:
+                    continue
+                same_top = top[idx_ok] == m
+                chosen = idx_ok[same_top]
+                if chosen.numel():
+                    mask[chosen, m] = 1.0
+            # Si aucun hard match, fallback: top-1 parmi les exemples sélectionnés
+            if mask.sum() == 0 and bool(selected_any.any()):
+                sel_rows = rows[selected_any]
+                mask[sel_rows, top[selected_any]] = 1.0
+        else:
+            for m in range(n_class):
+                idx_ok = per_macro_selected[m]
+                if idx_ok.numel():
+                    mask[idx_ok, m] = 1.0
+        return mask
+
+    raise ValueError(f"pseudo_label_strategy inconnu: {strategy}")
+
+
+def _macro_mass_from_q_masked(q_masked: torch.Tensor) -> List[float]:
+    if q_masked.numel() == 0:
+        return [0.0 for _ in MACRO_NAMES]
+    return [float(v.item()) for v in q_masked.sum(dim=0)]
+
+
+def _pseudo_coverage_by_macro(mask: torch.Tensor) -> List[float]:
+    if mask.numel() == 0:
+        return [0.0 for _ in MACRO_NAMES]
+    n_t = mask.shape[0]
+    return [float((mask[:, m] > 0).float().mean().item()) for m in range(mask.shape[1])]
+
+
+def _pseudo_conf_mean_by_macro(q: torch.Tensor, mask: torch.Tensor) -> List[float]:
+    out: List[float] = []
+    for m in range(q.shape[1]):
+        active = mask[:, m] > 0
+        if not bool(active.any()):
+            out.append(0.0)
+            continue
+        out.append(float(q[active, m].mean().item()))
+    return out
+
+
+def _prototype_validity_source(y_ids: torch.Tensor, n_macros: int, *, eps: float = EPS) -> List[bool]:
+    valid: List[bool] = []
+    for m in range(n_macros):
+        valid.append(bool((y_ids == m).any().item()))
+    return valid
+
+
+def _prototype_validity_target(q_masked: torch.Tensor, *, eps: float = EPS) -> List[bool]:
+    if q_masked.numel() == 0:
+        return [False for _ in MACRO_NAMES]
+    mass = q_masked.sum(dim=0)
+    return [float(mass[m].item()) >= eps for m in range(q_masked.shape[1])]
+
+
+def _format_macro_metrics(prefix: str, values: Sequence[float]) -> str:
+    parts = [f"{MACRO_NAMES[i]}={values[i]:.4f}" for i in range(min(len(values), len(MACRO_NAMES)))]
+    return f"{prefix}: " + " ".join(parts)
+
+
+def _format_macro_bool(prefix: str, values: Sequence[bool]) -> str:
+    parts = [f"{MACRO_NAMES[i]}={'True' if values[i] else 'False'}" for i in range(min(len(values), len(MACRO_NAMES)))]
+    return f"{prefix}: " + " ".join(parts)
+
+
+def _source_batch_counts(y_ids: torch.Tensor) -> List[int]:
+    return [int((y_ids == m).sum().item()) for m in range(len(MACRO_NAMES))]
 
 
 def compute_tpn_full_encoder_losses(
@@ -348,8 +532,16 @@ def compute_tpn_full_encoder_losses(
     metric = str(tpn_cfg.get("distance_metric", "euclidean"))
     rho = float(tpn_cfg.get("target_weight_st", 1.0))
     assignment_mode = str(tpn_cfg.get("assignment_mode", "soft"))
-    threshold = tpn_cfg.get("pseudo_label_threshold", None)
-    threshold_f = float(threshold) if threshold is not None else None
+    pseudo_strategy = str(tpn_cfg.get("pseudo_label_strategy", "global_threshold"))
+    global_threshold = tpn_cfg.get("pseudo_label_threshold", None)
+    global_threshold_f = float(global_threshold) if global_threshold is not None else None
+    min_confidence = float(tpn_cfg.get("pseudo_label_min_confidence", 0.25))
+    min_per_macro_pseudo = int(tpn_cfg.get("pseudo_label_min_per_macro", 8))
+    threshold_per_macro = _parse_threshold_per_macro(
+        tpn_cfg.get("pseudo_label_threshold_per_macro"),
+        n_macros,
+        global_threshold_f if global_threshold_f is not None else 0.6,
+    )
 
     h_s = model.encode_texts_batch(batch_source.texts)
     h_t = model.encode_texts_batch(batch_target.texts)
@@ -361,17 +553,40 @@ def compute_tpn_full_encoder_losses(
 
     logits_q = prototype_logits_torch(h_t, mu_s, tau=tau, metric=metric)  # type: ignore[arg-type]
     q = soft_assignments_torch(logits_q, assignment_mode=assignment_mode)  # type: ignore[arg-type]
-    h_t_sel, q_sel, pseudo_cov, pseudo_conf_mean = _select_target_by_threshold(h_t, q, threshold_f)
+    pseudo_mask = build_target_pseudo_mask(
+        q,
+        strategy=pseudo_strategy,
+        assignment_mode=assignment_mode,
+        global_threshold=global_threshold_f,
+        threshold_per_macro=threshold_per_macro,
+        min_per_macro=min_per_macro_pseudo,
+        min_confidence=min_confidence,
+    )
+    q_masked = q * pseudo_mask
+    pseudo_cov_by_macro = _pseudo_coverage_by_macro(pseudo_mask)
+    pseudo_cov = float(np.mean(pseudo_cov_by_macro)) if pseudo_cov_by_macro else 0.0
+    pseudo_conf_by_macro = _pseudo_conf_mean_by_macro(q, pseudo_mask)
+    pseudo_conf_mean = float(np.mean(pseudo_conf_by_macro)) if pseudo_conf_by_macro else 0.0
+    target_mass_by_macro = _macro_mass_from_q_masked(q_masked)
+    source_counts = _source_batch_counts(y_ids)
+    source_proto_valid = _prototype_validity_source(y_ids, n_macros, eps=EPS)
+    target_proto_valid = _prototype_validity_target(q_masked, eps=EPS)
 
-    mu_t = _compute_mu_t_with_fallback(h_t_sel, q_sel, mu_s, eps=EPS)
-    if len(h_t_sel) == 0:
+    mu_t = compute_target_prototypes_soft_torch(h_t, q_masked, eps=EPS)
+    mass_t = q_masked.sum(dim=0)
+    for m in range(mu_t.shape[0]):
+        if float(mass_t[m].item()) < EPS:
+            mu_t[m] = mu_s[m]
+    mu_t = F.normalize(mu_t, p=2, dim=-1, eps=EPS)
+
+    if float(q_masked.sum().item()) <= EPS:
         mu_st = mu_s
     else:
         mu_st = compute_source_target_prototypes_torch(
             h_s,
             y_ids,
-            h_t_sel,
-            q_sel,
+            h_t,
+            q_masked,
             n_macros,
             rho=rho,
             eps=EPS,
@@ -404,16 +619,17 @@ def compute_tpn_full_encoder_losses(
     loss_ent = -(p_clamped * torch.log(p_clamped)).sum(dim=1).mean()
     p_bar = p_st_t.mean(dim=0)
     loss_div = (p_bar * torch.log(p_bar + EPS)).sum()
-    loss_pres = ((h_s - h_s.detach()) ** 2).sum() * 0.0  # optionnel en full_encoder
+    loss_reg = ((h_s - h_s.detach()) ** 2).sum() * 0.0  # placeholder optionnel
 
     w = loss_weights
+    w_reg = float(w.get("reg", w.get("preserve", 0.0)))
     loss_total = (
         float(w.get("src", 1.0)) * loss_src
         + float(w.get("proto", 1.0)) * loss_proto
         + float(w.get("kl", 1.0)) * loss_kl
         + float(w.get("ent", 0.01)) * loss_ent
         + float(w.get("div", 0.01)) * loss_div
-        + float(w.get("preserve", 0.0)) * loss_pres
+        + w_reg * loss_reg
     )
     return {
         "loss_total": loss_total,
@@ -422,10 +638,17 @@ def compute_tpn_full_encoder_losses(
         "loss_kl": loss_kl,
         "loss_ent": loss_ent,
         "loss_div": loss_div,
-        "loss_pres": loss_pres,
+        "loss_reg": loss_reg,
+        "loss_pres": loss_reg,
         "pseudo_coverage": pseudo_cov,
         "pseudo_conf_mean": pseudo_conf_mean,
-        "macro_mass_target": _macro_mass(p_st_t.detach()),
+        "macro_mass_target": target_mass_by_macro,
+        "source_batch_counts": source_counts,
+        "target_mass_by_macro": target_mass_by_macro,
+        "pseudo_coverage_by_macro": pseudo_cov_by_macro,
+        "pseudo_conf_mean_by_macro": pseudo_conf_by_macro,
+        "source_proto_valid": source_proto_valid,
+        "target_proto_valid": target_proto_valid,
         "mu_s": mu_s.detach(),
         "mu_t": mu_t.detach(),
         "mu_st": mu_st.detach(),
@@ -567,10 +790,34 @@ def train_tpn_full_encoder(
     target_bs = int(full_cfg.get("target_batch_size", 16))
     drop_last = bool(full_cfg.get("drop_last", True))
     balanced = bool(full_cfg.get("balanced_source_batches", True))
+    with_replacement = bool(full_cfg.get("source_batch_with_replacement", True))
+    min_per_macro = int(full_cfg.get("min_per_macro", 1))
     seed = int(full_cfg.get("seed", 42))
+    progress_every = int(full_cfg.get("progress_every", 25))
+
+    _validate_source_macros_present(y_ids, n_macros=len(MACRO_NAMES))
+    source_counts_global = _source_macro_counts(y_ids)
+    logger.info("Source distribution (filtered): %s", source_counts_global)
 
     if balanced:
-        batch_sampler = _BalancedMacroBatchSampler(y_ids, source_bs, drop_last=drop_last, seed=seed)
+        batch_sampler = _BalancedMacroBatchSampler(
+            y_ids,
+            source_bs,
+            drop_last=drop_last,
+            seed=seed,
+            min_per_macro=min_per_macro,
+            with_replacement=with_replacement,
+            n_macros=len(MACRO_NAMES),
+        )
+        logger.info(
+            "Balanced source sampler: batch_size=%d min_per_macro=%d with_replacement=%s "
+            "estimated_batches=%d drop_last=%s",
+            source_bs,
+            min_per_macro,
+            with_replacement,
+            len(batch_sampler),
+            drop_last,
+        )
         src_loader = DataLoader(src_dataset, batch_sampler=batch_sampler, collate_fn=_collate_text_batch)
     else:
         src_loader = DataLoader(
@@ -611,6 +858,7 @@ def train_tpn_full_encoder(
     best_metric = float("-inf")
     log_rows: List[Dict[str, Any]] = []
     ema_mu_s: Optional[torch.Tensor] = None
+    warned_missing_source_macro = False
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -623,6 +871,11 @@ def train_tpn_full_encoder(
         cov_sum = 0.0
         conf_sum = 0.0
         grad_norm_last = 0.0
+        diag_source_counts = np.zeros(len(MACRO_NAMES), dtype=np.float64)
+        diag_target_mass = np.zeros(len(MACRO_NAMES), dtype=np.float64)
+        diag_pseudo_cov = np.zeros(len(MACRO_NAMES), dtype=np.float64)
+        diag_pseudo_conf = np.zeros(len(MACRO_NAMES), dtype=np.float64)
+        diag_steps = 0
 
         optimizer.zero_grad(set_to_none=True)
         for step in range(n_steps):
@@ -671,6 +924,61 @@ def train_tpn_full_encoder(
             if prototype_mode == "ema_global":
                 cur = losses["mu_s"].detach()
                 ema_mu_s = cur if ema_mu_s is None else (ema_momentum * ema_mu_s + (1.0 - ema_momentum) * cur)
+
+            src_counts = losses.get("source_batch_counts", [])
+            if src_counts:
+                diag_source_counts += np.asarray(src_counts, dtype=np.float64)
+            diag_target_mass += np.asarray(losses.get("target_mass_by_macro", [0.0] * len(MACRO_NAMES)), dtype=np.float64)
+            diag_pseudo_cov += np.asarray(losses.get("pseudo_coverage_by_macro", [0.0] * len(MACRO_NAMES)), dtype=np.float64)
+            diag_pseudo_conf += np.asarray(
+                losses.get("pseudo_conf_mean_by_macro", [0.0] * len(MACRO_NAMES)),
+                dtype=np.float64,
+            )
+            diag_steps += 1
+
+            if balanced and with_replacement and src_counts:
+                missing_in_batch = [
+                    MACRO_NAMES[i]
+                    for i, c in enumerate(src_counts)
+                    if int(c) < min_per_macro
+                ]
+                if missing_in_batch and not warned_missing_source_macro:
+                    logger.warning(
+                        "Batch source sans min_per_macro=%d pour macros %s malgré with_replacement=true "
+                        "(epoch=%d step=%d counts=%s)",
+                        min_per_macro,
+                        missing_in_batch,
+                        epoch,
+                        step + 1,
+                        {MACRO_NAMES[i]: int(src_counts[i]) for i in range(len(src_counts))},
+                    )
+                    warned_missing_source_macro = True
+
+            if progress_every > 0 and ((step + 1) % progress_every == 0 or step == 0 or step + 1 == n_steps):
+                logger.info(
+                    "TPN full diag epoch=%d step=%d/%d | %s | %s | %s | %s | %s | %s",
+                    epoch,
+                    step + 1,
+                    n_steps,
+                    _format_macro_metrics(
+                        "source_batch_counts",
+                        (diag_source_counts / max(1, diag_steps)).tolist(),
+                    ),
+                    _format_macro_metrics(
+                        "target_mass_by_macro",
+                        (diag_target_mass / max(1, diag_steps)).tolist(),
+                    ),
+                    _format_macro_metrics(
+                        "pseudo_coverage_by_macro",
+                        (diag_pseudo_cov / max(1, diag_steps)).tolist(),
+                    ),
+                    _format_macro_metrics(
+                        "pseudo_conf_mean_by_macro",
+                        (diag_pseudo_conf / max(1, diag_steps)).tolist(),
+                    ),
+                    _format_macro_bool("source_proto_valid", losses.get("source_proto_valid", [])),
+                    _format_macro_bool("target_proto_valid", losses.get("target_proto_valid", [])),
+                )
 
         # Evaluation epoch-level (source/target entiers)
         z_source = encode_texts_corpus(model, source_df[src_text_col].astype(str).tolist(), batch_size=source_bs)

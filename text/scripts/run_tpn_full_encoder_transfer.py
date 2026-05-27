@@ -148,8 +148,10 @@ def main() -> None:
     full_cfg = dict(cfg.get("full_encoder") or {})
     tpn_cfg = dict(cfg.get("tpn") or {})
     loss_weights = dict(cfg.get("loss_weights") or {})
-    if "preserve" not in loss_weights:
-        loss_weights["preserve"] = 0.0
+    if "reg" not in loss_weights and "preserve" in loss_weights:
+        loss_weights["reg"] = loss_weights["preserve"]
+    if "reg" not in loss_weights:
+        loss_weights["reg"] = 0.0
 
     model = FullEncoderTPNModel(
         base_method=base_method,

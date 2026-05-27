@@ -33,7 +33,7 @@ encoding:
 full_encoder:
   freeze_backbone: false
   source_batch_size: 16
-  target_batch_size: 16
+  target_batch_size: 32
   gradient_accumulation_steps: 2
   epochs: 5
   learning_rate: 2.0e-5
@@ -43,15 +43,26 @@ full_encoder:
   fp16: true
   bf16: false
   balanced_source_batches: true
+  source_batch_with_replacement: true
+  min_per_macro: 1
   drop_last: true
   prototype_mode: batch
   ema_momentum: 0.95
+  progress_every: 25
 
 tpn:
   tau: 0.3
   distance_metric: euclidean
-  assignment_mode: hard
+  assignment_mode: soft
+  pseudo_label_strategy: per_class_topk
   pseudo_label_threshold: 0.6
+  pseudo_label_min_confidence: 0.25
+  pseudo_label_min_per_macro: 8
+  pseudo_label_threshold_per_macro:
+    A0: 0.6
+    A1: 0.6
+    B: 0.35
+    C: 0.6
   target_weight_st: 1.0
   src_classifier_prototypes: source
 
@@ -59,9 +70,9 @@ loss_weights:
   src: 1.0
   proto: 1.0
   kl: 1.0
-  ent: 0.01
-  div: 0.01
-  preserve: 0.0
+  ent: 0.005
+  div: 0.005
+  reg: 0.0
 
 gating:
   confidence_threshold: 0.35

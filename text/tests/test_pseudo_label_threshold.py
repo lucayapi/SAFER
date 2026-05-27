@@ -36,7 +36,7 @@ def test_pseudo_label_threshold_filters_target():
             "pseudo_label_threshold": 0.99,
             "target_weight_st": 1.0,
         },
-        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "preserve": 0.0},
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "reg": 0.0},
         n_macros=4,
     )
     assert losses["pseudo_coverage"] < 1.0

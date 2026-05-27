@@ -43,7 +43,7 @@ def test_tpn_full_loss_has_grad():
             "target_weight_st": 1.0,
             "src_classifier_prototypes": "source",
         },
-        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "preserve": 0.0},
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 0.01, "div": 0.01, "reg": 0.0},
         n_macros=4,
     )
     assert losses["loss_total"].requires_grad

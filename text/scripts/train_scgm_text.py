@@ -179,9 +179,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--lr", type=float, default=None, help="Alias legacy → lr_head si lr_head absent.")
-    parser.add_argument("--momentum", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--optimizer", type=str, default="sgd", choices=["sgd"])
     parser.add_argument(
         "--scheduler",
         type=str,
@@ -316,7 +314,19 @@ def finalize_args(args: argparse.Namespace) -> None:
         args.lr_head = float(args.lr)
         args.head_lr = float(args.lr)
     elif getattr(args, "head_lr", None) is None:
-        args.head_lr = float(getattr(args, "lr_head", 0.03))
+        args.head_lr = float(getattr(args, "lr_head", 1e-3))
+
+    legacy_optimizer = str(getattr(args, "optimizer", "adamw")).strip().lower()
+    if legacy_optimizer == "sgd":
+        raise ValueError(
+            "optimizer=sgd n'est plus supporté dans configs/scgm_text.yaml. "
+            "Utilisez optimizer: adamw."
+        )
+    if legacy_optimizer not in ("adamw", ""):
+        raise ValueError(
+            f"Optimiseur SCGM non supporté: {legacy_optimizer!r}. Seul adamw est disponible."
+        )
+    args.optimizer = "adamw"
     if args.weight_decay_backbone is not None:
         args.backbone_weight_decay = float(args.weight_decay_backbone)
     if args.weight_decay_projector is not None:
@@ -329,8 +339,6 @@ def finalize_args(args: argparse.Namespace) -> None:
             args.backbone_weight_decay = wd
         if args.head_weight_decay is None:
             args.head_weight_decay = wd
-
-    args.optimizer = "sgd"
 
     args.backbone_trainable, args.train_last_n_layers = normalize_backbone_trainability(
         bool(getattr(args, "backbone_trainable", True)),

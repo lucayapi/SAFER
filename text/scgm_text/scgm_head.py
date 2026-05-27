@@ -4,7 +4,7 @@ Official-like SCGM objective:
   L = L_CE + gamma * L_SCGM
 where L_SCGM is optimized through an EM procedure:
   E-step: infer q(z_i | v_i, y_i) with Sinkhorn
-  M-step: update theta, psi, phi using SGD
+  M-step: update theta, psi, phi using AdamW
   v_i = normalize(E_psi(f_theta(x_i)))
 theta, psi and phi must all be trainable.
 """

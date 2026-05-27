@@ -1,4 +1,4 @@
-"""SCGM strict-fidelity training (end2end text, SGD + cosine)."""
+"""SCGM strict-fidelity training (end2end text, AdamW + cosine)."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ _IGNORED_CONFIG_KEYS = frozenset(
         "teacher_mode",
         "kd_t",
         "with_mlp",
+        "momentum",
     }
 )
 
@@ -25,11 +26,18 @@ def _set(ns: Namespace, key: str, value: Any) -> None:
     setattr(ns, key, value)
 
 
+def _set_default(ns: Namespace, key: str, value: Any) -> None:
+    if getattr(ns, key, None) is None:
+        setattr(ns, key, value)
+
+
 def apply_scgm_strict_defaults(args: Namespace) -> None:
     """Valeurs par défaut si absentes (ne remplace pas une config YAML explicite)."""
     _set(args, "fidelity_mode", getattr(args, "fidelity_mode", "strict_fidelity"))
-    _set(args, "optimizer", "sgd")
-    _set(args, "momentum", getattr(args, "momentum", 0.9))
+    _set_default(args, "optimizer", "adamw")
+    _set_default(args, "lr_backbone", 5e-6)
+    _set_default(args, "lr_projector", 5e-4)
+    _set_default(args, "lr_head", 1e-3)
     _set(args, "scheduler", getattr(args, "scheduler", "cosine"))
     _set(args, "projection", getattr(args, "projection", "mlp"))
     _set(args, "pooling", getattr(args, "pooling", "mean"))

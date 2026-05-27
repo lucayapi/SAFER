@@ -52,8 +52,7 @@ def _run_mode(
     print_end2end_startup(model)
 
     cfg = Namespace(
-        optimizer="sgd",
-        momentum=0.9,
+        optimizer="adamw",
         lr_backbone=1e-5,
         lr_projector=1e-2,
         lr_head=1e-2,

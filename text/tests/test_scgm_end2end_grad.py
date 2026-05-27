@@ -20,8 +20,7 @@ def _batch(n: int = 4) -> dict:
 
 def _cfg() -> Namespace:
     return Namespace(
-        optimizer="sgd",
-        momentum=0.9,
+        optimizer="adamw",
         lr_backbone=1e-5,
         lr_projector=1e-4,
         lr_head=1e-3,

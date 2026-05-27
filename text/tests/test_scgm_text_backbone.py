@@ -14,8 +14,7 @@ from scgm_text.training_diagnostics import (
 
 def _cfg(**kwargs):
     base = dict(
-        optimizer="sgd",
-        momentum=0.9,
+        optimizer="adamw",
         lr_backbone=2e-5,
         lr_projector=1e-4,
         lr_head=1e-3,
