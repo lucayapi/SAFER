@@ -25,7 +25,7 @@ def evaluate_transfer_classification(
     m_hat_col: str = "m_hat",
 ) -> Dict[str, Any]:
     """Métriques de classification macro + matrice de confusion."""
-    from scgm_text.dataset_text_embeddings import parse_bool_column
+    from scgm_text.utils_io import parse_bool_column
 
     mask = _valid_label_mask(meta[label_col])
     if pred_ok_col and pred_ok_col in meta.columns:

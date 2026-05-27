@@ -44,6 +44,9 @@ encoding:
   # scgm_infer_batch_size: 512  # uniquement si mode precomputed (source/method.emb_csv)
   log_every_batches: 1
   normalize_embeddings: true
+  # Reprendre phase 1 si source_projected.npy + target_projected.npy existent (mêmes tailles)
+  reuse_projected_embeddings: true
+  force_reencode: false
 
 tpn:
   seed: 42

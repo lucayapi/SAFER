@@ -73,6 +73,11 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--encode-batch-size", type=int, default=None)
+    p.add_argument(
+        "--force-reencode",
+        action="store_true",
+        help="Ignore les .npy projetés en cache et ré-encoder source/cible",
+    )
     return p.parse_args()
 
 
@@ -165,6 +170,10 @@ def main() -> None:
     if args.device:
         enc = dict(raw.get("encoding") or {})
         enc["device"] = args.device
+        raw["encoding"] = enc
+    if args.force_reencode:
+        enc = dict(raw.get("encoding") or {})
+        enc["force_reencode"] = True
         raw["encoding"] = enc
 
     grid_macros = None

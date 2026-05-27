@@ -27,7 +27,7 @@ def evaluate_tpn_transfer(
     pred_ok_col: Optional[str] = "pred_ok",
     m_hat_col: str = "m_hat",
 ) -> Dict[str, Any]:
-    from scgm_text.dataset_text_embeddings import parse_bool_column
+    from scgm_text.utils_io import parse_bool_column
 
     mask = _valid_label_mask(meta[label_col])
     if pred_ok_col and pred_ok_col in meta.columns:
@@ -105,7 +105,7 @@ def compute_coverage_by_threshold(
     confidence_thresholds: Optional[List[float]] = None,
     margin_thresholds: Optional[List[float]] = None,
 ) -> pd.DataFrame:
-    from scgm_text.dataset_text_embeddings import parse_bool_column
+    from scgm_text.utils_io import parse_bool_column
 
     confidence_thresholds = confidence_thresholds or CONFIDENCE_THRESHOLDS
     margin_thresholds = margin_thresholds or MARGIN_THRESHOLDS

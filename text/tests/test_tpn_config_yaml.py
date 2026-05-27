@@ -21,6 +21,8 @@ def test_tpn_config_yaml_parses(cfg_path: Path) -> None:
     assert "encode_batch_size" in enc
     assert "log_every_batches" in enc
     assert enc.get("scgm_text_batch_size") == 64
+    assert enc.get("reuse_projected_embeddings") is True
+    assert enc.get("force_reencode") is False
     assert "normalize_embeddings" in enc
     assert data.get("method", {}).get("base_method") == "scgm_text"
     # Re-parse brut pour détecter les ':' manquants (erreur utilisateur courante).

@@ -58,6 +58,75 @@ logger = logging.getLogger(__name__)
 METHOD_NAME = "tpn_scgm_text"
 EXPORT_COLS_BASE = ("sentence", "accident_id", "fact_id", "pred_label", "pred_ok", "doc_id")
 
+SOURCE_PROJECTED_NAME = "source_projected.npy"
+TARGET_PROJECTED_NAME = "target_projected.npy"
+
+
+def _projected_embedding_paths(emb_dir: Path) -> tuple[Path, Path]:
+    emb = Path(emb_dir)
+    return emb / SOURCE_PROJECTED_NAME, emb / TARGET_PROJECTED_NAME
+
+
+def try_load_cached_projected_embeddings(
+    emb_dir: Path,
+    *,
+    n_source: int,
+    n_target: int,
+    reuse: bool = True,
+    force_reencode: bool = False,
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray], bool]:
+    """
+    Charge source/target projetés si présents et cohérents avec les tailles attendues.
+
+    Returns (h_s, h_t, skipped_encode). skipped_encode=True si les deux matrices sont chargées.
+    """
+    if force_reencode or not reuse:
+        return None, None, False
+
+    src_path, tgt_path = _projected_embedding_paths(emb_dir)
+    if not src_path.is_file() or not tgt_path.is_file():
+        if src_path.is_file() or tgt_path.is_file():
+            logger.warning(
+                "Embeddings projetés partiels dans %s — ré-encodage complet",
+                emb_dir,
+            )
+        return None, None, False
+
+    h_s = np.load(src_path)
+    h_t = np.load(tgt_path)
+    if h_s.ndim != 2 or h_t.ndim != 2:
+        logger.warning(
+            "Forme invalide (attendu 2D) : %s %s — ré-encodage",
+            h_s.shape,
+            h_t.shape,
+        )
+        return None, None, False
+    if h_s.shape[0] != n_source or h_t.shape[0] != n_target:
+        logger.warning(
+            "Cache embeddings incohérent : source %s vs %d, cible %s vs %d — ré-encodage",
+            h_s.shape,
+            n_source,
+            h_t.shape,
+            n_target,
+        )
+        return None, None, False
+    if h_s.shape[1] != h_t.shape[1]:
+        logger.warning(
+            "Dimensions projetées différentes source/cible (%d vs %d) — ré-encodage",
+            h_s.shape[1],
+            h_t.shape[1],
+        )
+        return None, None, False
+
+    logger.info(
+        "Phase 1/5 : réutilisation %s et %s (source=%s cible=%s)",
+        src_path.name,
+        tgt_path.name,
+        h_s.shape,
+        h_t.shape,
+    )
+    return np.asarray(h_s, dtype=np.float64), np.asarray(h_t, dtype=np.float64), True
+
 
 def _select_export_columns(meta: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c in EXPORT_COLS_BASE if c in meta.columns]
@@ -441,71 +510,92 @@ def run_tpn_macro_transfer_discovery(
         "group_col": group_col_t,
     }
 
-    logger.info(
-        "=== Phase 1/5 : encodage %s — source=%d cible=%d (batch=%d device=%s "
-        "log_every_batches=%d) ===",
-        base_method,
-        len(texts_s),
-        len(texts_t),
-        enc_bs,
-        enc_device,
-        encode_log_every_batches,
-    )
-    if base_method == "scgm_text":
-        logger.info("--- Encodage SOURCE (BTP) ---")
-        h_s = encode_corpus_for_tpn(
-            base_method,
-            texts_s,
-            checkpoint,
-            data_csv=source_data_csv,
-            emb_csv=scgm_emb_source,
-            filter_pred_ok=True,
-            log_label="source_btp",
-            **encode_kw_source,
-        )
-        logger.info("--- Encodage CIBLE (test) ---")
-        h_t = encode_corpus_for_tpn(
-            base_method,
-            texts_t,
-            checkpoint,
-            data_csv=target_data_csv,
-            emb_csv=scgm_emb_target,
-            filter_pred_ok=False,
-            log_label=f"target_{corpus_id or 'test'}",
-            **encode_kw_target,
-        )
-    else:
-        logger.info("--- Encodage SOURCE (BTP) ---")
-        h_s = encode_corpus_for_tpn(
-            base_method,
-            texts_s,
-            checkpoint,
-            filter_pred_ok=True,
-            log_label="source_btp",
-            **encode_kw_source,
-        )
-        logger.info("--- Encodage CIBLE (test) ---")
-        h_t = encode_corpus_for_tpn(
-            base_method,
-            texts_t,
-            checkpoint,
-            filter_pred_ok=False,
-            log_label=f"target_{corpus_id or 'test'}",
-            **encode_kw_target,
-        )
-    logger.info(
-        "=== Phase 1 terminée : embeddings projetés source=%s cible=%s ===",
-        getattr(h_s, "shape", None),
-        getattr(h_t, "shape", None),
-    )
-
-    if bool(encoding_cfg.get("normalize_embeddings", True)):
-        h_s = l2_normalize_np(h_s)
-        h_t = l2_normalize_np(h_t)
-
     emb_dir.mkdir(parents=True, exist_ok=True)
-    np.save(emb_dir / "source_projected.npy", h_s)
-    np.save(emb_dir / "target_projected.npy", h_t)
+    n_source = len(texts_s)
+    n_target = len(texts_t)
+    reuse_projected = bool(encoding_cfg.get("reuse_projected_embeddings", True))
+    force_reencode = bool(encoding_cfg.get("force_reencode", False))
+
+    h_s, h_t, encode_skipped = try_load_cached_projected_embeddings(
+        emb_dir,
+        n_source=n_source,
+        n_target=n_target,
+        reuse=reuse_projected,
+        force_reencode=force_reencode,
+    )
+
+    if not encode_skipped:
+        logger.info(
+            "=== Phase 1/5 : encodage %s — source=%d cible=%d (batch=%d device=%s "
+            "log_every_batches=%d) ===",
+            base_method,
+            n_source,
+            n_target,
+            enc_bs,
+            enc_device,
+            encode_log_every_batches,
+        )
+        if base_method == "scgm_text":
+            logger.info("--- Encodage SOURCE (BTP) ---")
+            h_s = encode_corpus_for_tpn(
+                base_method,
+                texts_s,
+                checkpoint,
+                data_csv=source_data_csv,
+                emb_csv=scgm_emb_source,
+                filter_pred_ok=True,
+                log_label="source_btp",
+                **encode_kw_source,
+            )
+            logger.info("--- Encodage CIBLE (test) ---")
+            h_t = encode_corpus_for_tpn(
+                base_method,
+                texts_t,
+                checkpoint,
+                data_csv=target_data_csv,
+                emb_csv=scgm_emb_target,
+                filter_pred_ok=False,
+                log_label=f"target_{corpus_id or 'test'}",
+                **encode_kw_target,
+            )
+        else:
+            logger.info("--- Encodage SOURCE (BTP) ---")
+            h_s = encode_corpus_for_tpn(
+                base_method,
+                texts_s,
+                checkpoint,
+                filter_pred_ok=True,
+                log_label="source_btp",
+                **encode_kw_source,
+            )
+            logger.info("--- Encodage CIBLE (test) ---")
+            h_t = encode_corpus_for_tpn(
+                base_method,
+                texts_t,
+                checkpoint,
+                filter_pred_ok=False,
+                log_label=f"target_{corpus_id or 'test'}",
+                **encode_kw_target,
+            )
+        logger.info(
+            "=== Phase 1 terminée : embeddings projetés source=%s cible=%s ===",
+            getattr(h_s, "shape", None),
+            getattr(h_t, "shape", None),
+        )
+
+        if bool(encoding_cfg.get("normalize_embeddings", True)):
+            h_s = l2_normalize_np(h_s)
+            h_t = l2_normalize_np(h_t)
+
+        src_path, tgt_path = _projected_embedding_paths(emb_dir)
+        np.save(src_path, h_s)
+        np.save(tgt_path, h_t)
+    else:
+        logger.info(
+            "=== Phase 1/5 sautée (cache) : source=%s cible=%s ===",
+            h_s.shape if h_s is not None else None,
+            h_t.shape if h_t is not None else None,
+        )
 
     proto_dir = out / "prototypes"
     proto_dir.mkdir(parents=True, exist_ok=True)
@@ -726,6 +816,7 @@ def run_tpn_macro_transfer_discovery(
         "source_data_csv": str(source_data_csv),
         "target_data_csv": str(target_data_csv),
         "output_dir": str(out),
+        "encode_skipped": encode_skipped,
         "n_source": int(len(meta_s)),
         "n_target": int(len(meta_t)),
         "embedding_paths": emb_paths,

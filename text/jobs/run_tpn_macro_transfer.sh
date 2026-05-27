@@ -15,6 +15,7 @@
 #   TOPIC_ALPHA=0.25
 #   RUN_BERTOPIC_GRID=0
 #   BERTOPIC_ONLY=0
+#   FORCE_REENCODE=1   # ignore source/target_projected.npy existants
 #
 # Exemples :
 #   BASE_METHOD=softtriple bash jobs/run_tpn_macro_transfer.sh
@@ -71,6 +72,9 @@ if [[ "${RUN_BERTOPIC_GRID:-0}" == "1" ]]; then
 fi
 if [[ "${BERTOPIC_ONLY:-0}" == "1" ]]; then
   extra+=(--bertopic-only)
+fi
+if [[ "${FORCE_REENCODE:-0}" == "1" ]]; then
+  extra+=(--force-reencode)
 fi
 
 echo "[tpn_macro_transfer] CORPUS=${CORPUS} BASE_METHOD=${BASE_METHOD} $(date -Iseconds)"
