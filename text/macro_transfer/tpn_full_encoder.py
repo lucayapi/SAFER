@@ -240,17 +240,25 @@ class FullEncoderTPNModel(nn.Module):
             return_tensors="pt",
         )
         enc = {k: v.to(self.device_obj) for k, v in enc.items()}
-        outputs = self.encoder(
-            input_ids=enc["input_ids"],
-            attention_mask=enc["attention_mask"],
-            return_dict=True,
-        )
-        if hasattr(outputs, "last_hidden_state") and outputs.last_hidden_state is not None:
-            h = self._mean_pool(outputs.last_hidden_state, enc["attention_mask"])
-        elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            h = outputs.pooler_output
+        # SCGM TextBackbone.forward(input_ids, attention_mask) retourne déjà un tenseur poolé
+        # et n'accepte pas return_dict.
+        if self.kind == "scgm":
+            h = self.encoder(
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+            )
         else:
-            raise ValueError("Backbone ne retourne ni last_hidden_state ni pooler_output.")
+            outputs = self.encoder(
+                input_ids=enc["input_ids"],
+                attention_mask=enc["attention_mask"],
+                return_dict=True,
+            )
+            if hasattr(outputs, "last_hidden_state") and outputs.last_hidden_state is not None:
+                h = self._mean_pool(outputs.last_hidden_state, enc["attention_mask"])
+            elif hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
+                h = outputs.pooler_output
+            else:
+                raise ValueError("Backbone ne retourne ni last_hidden_state ni pooler_output.")
         if self.projector is not None:
             h = self.projector(h)
         return F.normalize(h, p=2, dim=-1, eps=EPS)
