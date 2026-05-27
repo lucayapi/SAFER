@@ -4,6 +4,7 @@
 # Empêche numpy 2.x, fsspec trop récent, et le downgrade de transformers (qwen3).
 
 numpy==1.26.4
+
 scipy==1.13.1
 pandas==2.2.3
 scikit-learn==1.5.2
