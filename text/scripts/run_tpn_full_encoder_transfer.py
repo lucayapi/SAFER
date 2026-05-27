@@ -168,11 +168,13 @@ def main() -> None:
         model,
         source_df[text_col_s].astype(str).tolist(),
         batch_size=int(full_cfg.get("source_batch_size", 16)),
+        log_label="source_initial",
     )
     target_init = encode_texts_corpus(
         model,
         target_df[text_col_t].astype(str).tolist(),
         batch_size=int(full_cfg.get("target_batch_size", 16)),
+        log_label="target_initial",
     )
     np.save(init_dir / "source_projected.npy", source_init)
     np.save(init_dir / "target_projected.npy", target_init)

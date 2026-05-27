@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -159,6 +160,14 @@ class FullEncoderTPNModel(nn.Module):
         self.device_obj = _to_device(device)
         self.kind = "hf_auto"
         self.scgm_model = None
+        t0 = time.monotonic()
+        logger.info(
+            "TPN full model init: base_method=%s checkpoint=%s backbone_name=%s freeze_backbone=%s",
+            self.base_method,
+            checkpoint,
+            backbone_name,
+            self.freeze_backbone,
+        )
 
         if self.base_method == "scgm_text":
             if not checkpoint:
@@ -224,6 +233,16 @@ class FullEncoderTPNModel(nn.Module):
                 for p in self.projector.parameters():
                     p.requires_grad = False
         self.to(self.device_obj)
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        all_params = sum(p.numel() for p in self.parameters())
+        logger.info(
+            "TPN full model ready: kind=%s device=%s params_trainable=%d/%d elapsed=%.1fs",
+            self.kind,
+            self.device_obj,
+            trainable_params,
+            all_params,
+            time.monotonic() - t0,
+        )
 
     def _mean_pool(self, last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         mask = attention_mask.unsqueeze(-1).expand_as(last_hidden_state).float()
@@ -435,16 +454,50 @@ def encode_texts_corpus(
     texts: Sequence[str],
     *,
     batch_size: int = 32,
+    log_label: str = "corpus",
 ) -> np.ndarray:
     model.eval()
+    total = len(texts)
+    n_batches = (total + int(batch_size) - 1) // int(batch_size) if total else 0
+    t0 = time.monotonic()
+    logger.info(
+        "TPN encode start [%s]: n_texts=%d batch_size=%d n_batches=%d",
+        log_label,
+        total,
+        int(batch_size),
+        n_batches,
+    )
     out: List[np.ndarray] = []
-    for start in range(0, len(texts), int(batch_size)):
+    for bi, start in enumerate(range(0, len(texts), int(batch_size)), start=1):
         chunk = texts[start : start + int(batch_size)]
         z = model.encode_texts_batch(chunk)
         out.append(z.detach().cpu().numpy())
+        done = min(start + int(batch_size), total)
+        if bi == 1 or bi == n_batches or bi % max(1, n_batches // 10 or 1) == 0:
+            elapsed = max(1e-6, time.monotonic() - t0)
+            rate = done / elapsed
+            eta = (total - done) / rate if rate > 0 else 0.0
+            logger.info(
+                "TPN encode [%s] batch %d/%d | %d/%d (%.1f%%) elapsed=%.0fs eta=%.0fs",
+                log_label,
+                bi,
+                n_batches,
+                done,
+                total,
+                (100.0 * done / total) if total else 100.0,
+                elapsed,
+                eta,
+            )
     if not out:
         return np.zeros((0, 1), dtype=np.float64)
-    return np.asarray(np.vstack(out), dtype=np.float64)
+    arr = np.asarray(np.vstack(out), dtype=np.float64)
+    logger.info(
+        "TPN encode done [%s]: shape=%s elapsed=%.1fs",
+        log_label,
+        tuple(arr.shape),
+        time.monotonic() - t0,
+    )
+    return arr
 
 
 def _compute_global_mu_s(
