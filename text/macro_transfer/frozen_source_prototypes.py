@@ -190,6 +190,31 @@ def _validate_no_nan_inf(name: str, x: np.ndarray) -> None:
         raise ValueError(f"{name} contient NaN/Inf")
 
 
+def _load_cached_embeddings_if_valid(
+    path: Path,
+    *,
+    expected_rows: int,
+    name: str,
+) -> np.ndarray | None:
+    if not path.is_file():
+        return None
+    arr = np.load(path)
+    if arr.ndim != 2:
+        logger.warning("Cache %s ignoré (array non-2D): %s shape=%s", name, path, arr.shape)
+        return None
+    if arr.shape[0] != expected_rows:
+        logger.warning(
+            "Cache %s ignoré (n_rows mismatch): %s expected=%d got=%d",
+            name,
+            path,
+            expected_rows,
+            arr.shape[0],
+        )
+        return None
+    logger.info("Cache %s réutilisé: %s", name, path)
+    return np.asarray(arr, dtype=np.float64)
+
+
 def _resolve_output_dir(cfg: dict[str, Any], corpus: str, anchor: Path) -> Path:
     out_cfg = cfg.get("output_dir")
     if out_cfg:
@@ -259,6 +284,13 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     source_df = source_df[source_df[source_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
     target_df = target_df[target_df[target_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
 
+    out_dir = _resolve_output_dir(cfg, corpus, anchor)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    transfer_dir = out_dir / "transfer"
+    emb_dir = out_dir / "embeddings"
+    transfer_dir.mkdir(parents=True, exist_ok=True)
+    emb_dir.mkdir(parents=True, exist_ok=True)
+
     checkpoint_cfg = model_cfg.get("checkpoint_path")
     checkpoint = (
         str(resolve_repo_path(checkpoint_cfg, repo_root=anchor))
@@ -275,30 +307,51 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     max_seq_length = int(model_cfg.get("max_seq_length", 256))
     batch_size = int(model_cfg.get("encode_batch_size", 32))
     device = str(model_cfg.get("device", "cuda"))
+    reuse_cached_embeddings = bool(model_cfg.get("reuse_cached_embeddings", True))
+    force_reencode = bool(model_cfg.get("force_reencode", False))
 
-    model = FullEncoderTPNModel(
-        base_method=base_method,
-        checkpoint=checkpoint,
-        backbone_name=backbone_name,
-        max_seq_length=max_seq_length,
-        pooling="mean",
-        freeze_backbone=True,
-        device=device,
-    )
-    model.eval()
+    source_cache_path = emb_dir / "source_embeddings.npy"
+    target_cache_path = emb_dir / "target_embeddings.npy"
+    z_source = None
+    z_target = None
+    if reuse_cached_embeddings and not force_reencode:
+        z_source = _load_cached_embeddings_if_valid(
+            source_cache_path,
+            expected_rows=len(source_df),
+            name="source_embeddings",
+        )
+        z_target = _load_cached_embeddings_if_valid(
+            target_cache_path,
+            expected_rows=len(target_df),
+            name="target_embeddings",
+        )
 
-    z_source = encode_texts_corpus(
-        model,
-        source_df[source_text_col].astype(str).tolist(),
-        batch_size=batch_size,
-        log_label="source_frozen",
-    )
-    z_target = encode_texts_corpus(
-        model,
-        target_df[target_text_col].astype(str).tolist(),
-        batch_size=batch_size,
-        log_label="target_frozen",
-    )
+    if z_source is None or z_target is None:
+        model = FullEncoderTPNModel(
+            base_method=base_method,
+            checkpoint=checkpoint,
+            backbone_name=backbone_name,
+            max_seq_length=max_seq_length,
+            pooling="mean",
+            freeze_backbone=True,
+            device=device,
+        )
+        model.eval()
+        if z_source is None:
+            z_source = encode_texts_corpus(
+                model,
+                source_df[source_text_col].astype(str).tolist(),
+                batch_size=batch_size,
+                log_label="source_frozen",
+            )
+        if z_target is None:
+            z_target = encode_texts_corpus(
+                model,
+                target_df[target_text_col].astype(str).tolist(),
+                batch_size=batch_size,
+                log_label="target_frozen",
+            )
+
     if normalize_embeddings:
         z_source = l2_normalize(z_source, eps=eps)
         z_target = l2_normalize(z_target, eps=eps)
@@ -328,13 +381,6 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     row_sums = probs.sum(axis=1)
     if not np.allclose(row_sums, np.ones_like(row_sums), atol=1e-6):
         raise ValueError("Certaines lignes de probs ne somment pas à 1.")
-
-    out_dir = _resolve_output_dir(cfg, corpus, anchor)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    transfer_dir = out_dir / "transfer"
-    emb_dir = out_dir / "embeddings"
-    transfer_dir.mkdir(parents=True, exist_ok=True)
-    emb_dir.mkdir(parents=True, exist_ok=True)
 
     preds = pd.DataFrame(
         {

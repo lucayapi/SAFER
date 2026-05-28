@@ -22,6 +22,8 @@ model:
   backbone_name: Qwen/Qwen3-Embedding-0.6B
   max_seq_length: 256
   encode_batch_size: 32
+  reuse_cached_embeddings: true
+  force_reencode: false
   device: cuda
 
 prototype_transfer:
