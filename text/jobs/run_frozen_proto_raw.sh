@@ -34,14 +34,18 @@ OUTPUT_DIR="${OUTPUT_DIR:-output_test/${CORPUS}/macro_transfer/frozen_source_pro
 SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 
 echo "[fsp_raw] CORPUS=${CORPUS} DEVICE=${DEVICE} $(date -Iseconds)"
-extra=()
 if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
-  extra+=(--skip-bertopic)
+  python -u scripts/run_frozen_source_prototypes.py \
+    --config "${CONFIG}" \
+    --corpus "${CORPUS}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --method-display-name "Embedding brut + prototypes source" \
+    --skip-bertopic
+else
+  python -u scripts/run_frozen_source_prototypes.py \
+    --config "${CONFIG}" \
+    --corpus "${CORPUS}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --method-display-name "Embedding brut + prototypes source"
 fi
-python -u scripts/run_frozen_source_prototypes.py \
-  --config "${CONFIG}" \
-  --corpus "${CORPUS}" \
-  --output-dir "${OUTPUT_DIR}" \
-  --method-display-name "Embedding brut + prototypes source" \
-  "${extra[@]}"
 echo "[fsp_raw] terminé $(date -Iseconds)"

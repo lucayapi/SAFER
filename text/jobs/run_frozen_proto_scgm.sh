@@ -34,14 +34,18 @@ OUTPUT_DIR="${OUTPUT_DIR:-output_test/${CORPUS}/macro_transfer/frozen_source_pro
 SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 
 echo "[fsp_scgm] CORPUS=${CORPUS} DEVICE=${DEVICE} $(date -Iseconds)"
-extra=()
 if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
-  extra+=(--skip-bertopic)
+  python -u scripts/run_frozen_source_prototypes.py \
+    --config "${CONFIG}" \
+    --corpus "${CORPUS}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --method-display-name "SCGM + prototypes source gelés" \
+    --skip-bertopic
+else
+  python -u scripts/run_frozen_source_prototypes.py \
+    --config "${CONFIG}" \
+    --corpus "${CORPUS}" \
+    --output-dir "${OUTPUT_DIR}" \
+    --method-display-name "SCGM + prototypes source gelés"
 fi
-python -u scripts/run_frozen_source_prototypes.py \
-  --config "${CONFIG}" \
-  --corpus "${CORPUS}" \
-  --output-dir "${OUTPUT_DIR}" \
-  --method-display-name "SCGM + prototypes source gelés" \
-  "${extra[@]}"
 echo "[fsp_scgm] terminé $(date -Iseconds)"
