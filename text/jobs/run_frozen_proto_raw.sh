@@ -9,6 +9,7 @@
 #   CONFIG=configs/frozen_source_prototypes_raw.yaml
 #   DEVICE=cuda
 #   OUTPUT_DIR=output_test/metallurgie/macro_transfer/frozen_source_prototypes/raw
+#   SKIP_BERTOPIC=0   # 1 pour désactiver BERTopic/OpenAI
 
 #SBATCH --job-name=fsp_raw
 #SBATCH --partition=gpu
@@ -30,11 +31,17 @@ CONFIG="${CONFIG:-configs/frozen_source_prototypes_raw.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
 DEVICE="${DEVICE:-cuda}"
 OUTPUT_DIR="${OUTPUT_DIR:-output_test/${CORPUS}/macro_transfer/frozen_source_prototypes/raw}"
+SKIP_BERTOPIC="${SKIP_BERTOPIC:-0}"
 
 echo "[fsp_raw] CORPUS=${CORPUS} DEVICE=${DEVICE} $(date -Iseconds)"
+extra=()
+if [[ "${SKIP_BERTOPIC}" == "1" ]]; then
+  extra+=(--skip-bertopic)
+fi
 python -u scripts/run_frozen_source_prototypes.py \
   --config "${CONFIG}" \
   --corpus "${CORPUS}" \
   --output-dir "${OUTPUT_DIR}" \
-  --method-display-name "Embedding brut + prototypes source"
+  --method-display-name "Embedding brut + prototypes source" \
+  "${extra[@]}"
 echo "[fsp_raw] terminé $(date -Iseconds)"

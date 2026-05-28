@@ -36,3 +36,9 @@ def test_builder_08_references_fsp_and_not_tpn_training():
     assert "training_log.csv" not in src
     assert "metadata_with_initial_macro_probs.csv" not in src
     assert "transfer_metrics_adapted" not in src
+
+
+def test_builder_04_defaults_to_fsp_scgm():
+    src = _read(TEXT_ROOT / "scripts" / "build_notebook_04_bn_macro_transfer.py")
+    assert "frozen_source_prototypes/scgm" in src
+    assert "run_frozen_proto_scgm.sh" in src

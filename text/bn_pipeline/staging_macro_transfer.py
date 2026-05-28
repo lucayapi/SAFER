@@ -18,12 +18,16 @@ TOPICS_SUBDIR = "topics_bertopic"
 
 # Fichier métadonnées transfert par méthode (sous transfer/).
 _TPN_METADATA = "metadata_with_tpn_macro_probs.csv"
+_FSP_METADATA = "target_macro_predictions.csv"
 
 METADATA_BY_METHOD: dict[str, str] = {
     "tpn_full_softtriple": _TPN_METADATA,
     "tpn_full_supcon": _TPN_METADATA,
     "tpn_full_batch_triplet": _TPN_METADATA,
     "tpn_full_scgm_text": _TPN_METADATA,
+    "frozen_source_prototypes": _FSP_METADATA,
+    "frozen_source_prototypes/scgm": _FSP_METADATA,
+    "frozen_source_prototypes/raw": _FSP_METADATA,
 }
 
 # Sous-dossier bn_staging par défaut (évite d'écraser scgm/softtriple).
@@ -32,6 +36,9 @@ BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
     "tpn_full_supcon": "tpn_full_supcon",
     "tpn_full_batch_triplet": "tpn_full_batch_triplet",
     "tpn_full_scgm_text": "tpn_full_scgm_text",
+    "frozen_source_prototypes": "frozen_source_prototypes",
+    "frozen_source_prototypes/scgm": "frozen_source_prototypes_scgm",
+    "frozen_source_prototypes/raw": "frozen_source_prototypes_raw",
 }
 
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
@@ -100,6 +107,21 @@ def write_bn_compat_arrays(exports: Path, meta: pd.DataFrame) -> None:
     zdf.to_csv(exports / "z_assignments_target.csv", index=False)
 
 
+def _normalize_fsp_metadata_for_bn(meta: pd.DataFrame) -> pd.DataFrame:
+    """Normalise schéma FSP vers schéma BN attendu (m_hat, q_conf, p_*)."""
+    out = meta.copy()
+    if "m_hat" not in out.columns and "pred_macro" in out.columns:
+        out["m_hat"] = out["pred_macro"].astype(str)
+    if "q_conf" not in out.columns and "confidence" in out.columns:
+        out["q_conf"] = pd.to_numeric(out["confidence"], errors="coerce")
+    for m in MACRO_NAMES:
+        src = f"prob_{m}"
+        dst = f"p_{m}"
+        if dst not in out.columns and src in out.columns:
+            out[dst] = pd.to_numeric(out[src], errors="coerce")
+    return out
+
+
 def resolve_transfer_metadata_path(mt: Path, method: str) -> Path:
     """Chemin CSV métadonnées macro pour une méthode macro_transfer."""
     name = METADATA_BY_METHOD.get(method, _TPN_METADATA)
@@ -138,7 +160,9 @@ def stage_bn_exports_from_macro_transfer(
     transfer_meta = mt / "transfer" / meta_name
     if not transfer_meta.is_file():
         raise FileNotFoundError(f"{meta_name} manquant : {transfer_meta}")
-    shutil.copy2(transfer_meta, exports / "metadata_with_predictions.csv")
+    meta_src_df = pd.read_csv(transfer_meta, low_memory=False)
+    meta_src_df = _normalize_fsp_metadata_for_bn(meta_src_df)
+    meta_src_df.to_csv(exports / "metadata_with_predictions.csv", index=False)
     topics_dir = mt / topics_subdir()
     assign_src = topics_dir / "assignments.csv"
     themes_src = topics_dir / "themes_by_macro.csv"

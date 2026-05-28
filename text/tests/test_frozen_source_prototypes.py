@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from macro_transfer.frozen_source_prototypes import (
+    _build_gating_from_predictions,
     assign_macros_from_source_prototypes,
     compute_source_prototypes,
     evaluate_macro_predictions,
@@ -93,4 +94,24 @@ def test_evaluate_macro_predictions_without_mapped_labels():
     assert np.isnan(metrics["balanced_accuracy"])
     assert np.isnan(metrics["macro_f1"])
     assert np.asarray(metrics["confusion_matrix"]).shape == (2, 2)
+
+
+def test_build_gating_from_predictions_schema():
+    import pandas as pd
+
+    preds = pd.DataFrame(
+        {
+            "pred_macro": ["A0", "C"],
+            "confidence": [0.8, 0.7],
+            "prob_A0": [0.8, 0.1],
+            "prob_A1": [0.1, 0.1],
+            "prob_B": [0.05, 0.1],
+            "prob_C": [0.05, 0.7],
+        }
+    )
+    g = _build_gating_from_predictions(preds, ["A0", "A1", "B", "C"])
+    assert list(g["m_hat"]) == ["A0", "C"]
+    assert "q_conf" in g.columns
+    assert "ambiguous" in g.columns
+    assert bool(g["ambiguous"].sum()) is False
 

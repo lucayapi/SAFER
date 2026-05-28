@@ -44,6 +44,7 @@ Notebook orienté baseline **Frozen Source Prototypes** :
 - prototypes source : `transfer/source_prototypes.csv`
 - métriques : `transfer/metrics.json` (si labels cible)
 - BERTopic inputs : `transfer/bertopic_input_all.csv` et `transfer/bertopic_input_<macro>.csv`
+- BERTopic sorties : `topics_bertopic/assignments.csv`, `topics_bertopic/themes_by_macro.csv`, `summary/topics_summary.csv`
 
 **Prérequis** : exécuter `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml`.
 """
@@ -176,6 +177,38 @@ for macro in ("A0", "A1", "B", "C"):
         print(f"{p.name}: absent")
 """
         ),
+        md("## § Sorties BERTopic (topics + labels)"),
+        py(
+            r"""
+topics_dir = OUT_DIR / "topics_bertopic"
+assign_path = topics_dir / "assignments.csv"
+themes_path = topics_dir / "themes_by_macro.csv"
+summary_path = OUT_DIR / "summary" / "topics_summary.csv"
+
+if summary_path.is_file():
+    print("topics_summary.csv")
+    display(pd.read_csv(summary_path))
+else:
+    print("topics_summary.csv absent.")
+
+if themes_path.is_file():
+    th = pd.read_csv(themes_path)
+    print("themes_by_macro.csv :", len(th), "lignes")
+    show_cols = [c for c in ["macro", "topic_id", "n_units", "theme_label", "top_words"] if c in th.columns]
+    display(th[show_cols].head(20))
+    if "theme_label" not in th.columns:
+        print("theme_label absent (fallback top_words).")
+else:
+    print("themes_by_macro.csv absent.")
+
+if assign_path.is_file():
+    ass = pd.read_csv(assign_path)
+    print("assignments.csv :", len(ass), "lignes")
+    display(ass.head())
+else:
+    print("assignments.csv absent.")
+"""
+        ),
         md("## § Fichiers attendus / robustesse"),
         py(
             r"""
@@ -184,6 +217,8 @@ expected = [
     OUT_DIR / "transfer" / "source_prototypes.csv",
     OUT_DIR / "transfer" / "metrics.json",
     OUT_DIR / "transfer" / "bertopic_input_all.csv",
+    OUT_DIR / "topics_bertopic" / "assignments.csv",
+    OUT_DIR / "topics_bertopic" / "themes_by_macro.csv",
 ]
 for p in expected:
     print(("OK " if p.is_file() else "MISSING "), p)

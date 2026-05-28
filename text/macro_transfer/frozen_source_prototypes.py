@@ -19,6 +19,7 @@ from sklearn.metrics import (
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.encode import load_target_metadata
 from macro_transfer.tpn_full_encoder import FullEncoderTPNModel, encode_texts_corpus
+from macro_transfer.tpn_topics_phase import run_bertopic_phase
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import default_test_corpus_id, resolve_test_paths_from_config
@@ -225,6 +226,21 @@ def _resolve_output_dir(cfg: dict[str, Any], corpus: str, anchor: Path) -> Path:
     )
 
 
+def _build_gating_from_predictions(preds: pd.DataFrame, macros: Sequence[str]) -> pd.DataFrame:
+    """Construit un DataFrame gating compatible BERTopic intra-macro."""
+    out = pd.DataFrame(index=preds.index.copy())
+    out["m_hat"] = preds["pred_macro"].astype(str)
+    out["ambiguous"] = False
+    out["q_conf"] = pd.to_numeric(preds.get("confidence"), errors="coerce")
+    for m in macros:
+        pcol = f"prob_{m}"
+        if pcol in preds.columns:
+            out[pcol] = pd.to_numeric(preds[pcol], errors="coerce")
+        else:
+            out[pcol] = 0.0
+    return out
+
+
 def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     cfg_path = Path(config_path)
     cfg = load_yaml(cfg_path)
@@ -236,6 +252,9 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     model_cfg = dict(cfg.get("model") or {})
     tr_cfg = dict(cfg.get("prototype_transfer") or {})
     exp_cfg = dict(cfg.get("exports") or {})
+    bertopic_cfg = dict(cfg.get("bertopic") or {})
+    topics_export_cfg = dict(cfg.get("topics_export") or {})
+    skip_bertopic = bool(cfg.get("skip_bertopic", False))
 
     macros = [str(m) for m in tr_cfg.get("macros", list(MACRO_NAMES))]
     if macros != list(MACRO_NAMES):
@@ -450,6 +469,30 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     for m in macros:
         bertopic_df[bertopic_df["pred_macro"] == m].to_csv(transfer_dir / f"bertopic_input_{m}.csv", index=False)
 
+    bertopic_summary: Dict[str, Any] = {}
+    if not skip_bertopic:
+        gating_adapted = _build_gating_from_predictions(preds, macros)
+        meta_t = target_df.copy()
+        meta_t["m_hat"] = preds["pred_macro"].astype(str).to_numpy()
+        bertopic_summary = run_bertopic_phase(
+            out=out_dir,
+            meta_t=meta_t,
+            gating_adapted=gating_adapted,
+            h_t=z_target,
+            h_t_adapted=z_target,
+            method_name=method_display_name,
+            bertopic_cfg=bertopic_cfg,
+            topics_export_cfg=topics_export_cfg,
+            text_col_t=target_text_col,
+            repo_anchor=anchor,
+            corpus_id=corpus,
+            topic_embedding_mode=None,
+            topic_alpha=None,
+            run_bertopic_grid=False,
+            grid_macros=None,
+            skip_compression_diagnostics=True,
+        )
+
     if exp_cfg.get("save_target_embeddings", True):
         np.save(emb_dir / "target_embeddings.npy", z_target)
         target_df[[c for c in [target_group_col, "fact_id", target_text_col] if c in target_df.columns]].to_csv(
@@ -471,5 +514,6 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
         "transfer_dir": str(transfer_dir),
         "metrics_path": str(transfer_dir / "metrics.json"),
         "predictions_path": str(transfer_dir / "target_macro_predictions.csv"),
+        "bertopic_summary": bertopic_summary,
     }
 

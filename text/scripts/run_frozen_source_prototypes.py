@@ -24,6 +24,7 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument("--output-dir", type=str, default=None)
     p.add_argument("--corpus", type=str, default=None)
     p.add_argument("--method-display-name", type=str, default=None)
+    p.add_argument("--skip-bertopic", action="store_true")
     return p.parse_args()
 
 
@@ -43,6 +44,8 @@ def main() -> None:
         cfg["corpus"] = args.corpus
     if args.method_display_name:
         cfg["method_display_name"] = args.method_display_name
+    if args.skip_bertopic:
+        cfg["skip_bertopic"] = True
 
     tmp_cfg = TEXT_ROOT / ".tmp_frozen_source_prototypes.runtime.yaml"
     tmp_cfg.write_text(json.dumps(cfg, ensure_ascii=False), encoding="utf-8")

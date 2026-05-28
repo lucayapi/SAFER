@@ -260,6 +260,33 @@ for macro in ("A0", "A1", "B", "C"):
         print(f"{macro}: fichier absent")
 """
         ),
+        md("## § BERTopic thèmes / labels"),
+        py(
+            r"""
+themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
+assign_path = OUT_DIR / "topics_bertopic" / "assignments.csv"
+summary_path = OUT_DIR / "summary" / "topics_summary.csv"
+
+if summary_path.is_file():
+    display(pd.read_csv(summary_path))
+else:
+    print("topics_summary.csv absent.")
+
+if themes_path.is_file():
+    themes = pd.read_csv(themes_path)
+    cols = [c for c in ["macro", "topic_id", "n_units", "theme_label", "top_words"] if c in themes.columns]
+    display(themes[cols].head(20))
+    if "theme_label" not in themes.columns:
+        print("theme_label absent (fallback top_words).")
+else:
+    print("themes_by_macro.csv absent.")
+
+if assign_path.is_file():
+    display(pd.read_csv(assign_path).head())
+else:
+    print("assignments.csv absent.")
+"""
+        ),
     ]
 
     nb = {

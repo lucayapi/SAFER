@@ -2,6 +2,7 @@ method_name: frozen_source_prototypes
 method_display_name: "Embedding brut + prototypes source"
 corpus: metallurgie
 output_dir: output_test/metallurgie/macro_transfer/frozen_source_prototypes/raw
+skip_bertopic: false
 
 source:
   dataset_path: dataset/data_btp.csv
@@ -40,3 +41,13 @@ exports:
   save_prototypes: true
   save_probabilities: true
   save_bertopic_inputs: true
+
+bertopic:
+  enabled: true
+  random_state: 42
+  min_topic_size: 10
+  include_ambiguous: false
+
+topics_export:
+  top_k_words: 12
+  top_k_sentences: 5
