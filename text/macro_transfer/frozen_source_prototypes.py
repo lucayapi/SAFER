@@ -234,10 +234,14 @@ def _build_gating_from_predictions(preds: pd.DataFrame, macros: Sequence[str]) -
     out["q_conf"] = pd.to_numeric(preds.get("confidence"), errors="coerce")
     for m in macros:
         pcol = f"prob_{m}"
+        pcol_legacy = f"p_{m}"
         if pcol in preds.columns:
-            out[pcol] = pd.to_numeric(preds[pcol], errors="coerce")
+            vals = pd.to_numeric(preds[pcol], errors="coerce")
+            out[pcol] = vals
+            out[pcol_legacy] = vals
         else:
             out[pcol] = 0.0
+            out[pcol_legacy] = 0.0
     return out
 
 
@@ -425,9 +429,14 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     preds.to_csv(transfer_dir / "target_macro_predictions.csv", index=False)
 
     if exp_cfg.get("save_prototypes", True):
-        proto_export = proto_df.copy()
-        for j in range(prototypes.shape[1]):
-            proto_export[f"dim_{j:04d}"] = prototypes[:, j]
+        dim_cols = pd.DataFrame(
+            prototypes,
+            columns=[f"dim_{j:04d}" for j in range(prototypes.shape[1])],
+        )
+        proto_export = pd.concat(
+            [proto_df.reset_index(drop=True), dim_cols.reset_index(drop=True)],
+            axis=1,
+        )
         proto_export.to_csv(transfer_dir / "source_prototypes.csv", index=False)
 
     metrics_out: dict[str, Any] = {
