@@ -342,12 +342,6 @@ class FullEncoderTPNModel(nn.Module):
         return F.normalize(h, p=2, dim=-1, eps=EPS)
 
 
-def _macro_mass(q: torch.Tensor) -> List[float]:
-    if q.numel() == 0:
-        return [0.0 for _ in MACRO_NAMES]
-    return [float(v.item()) for v in q.mean(dim=0)]
-
-
 def _parse_threshold_per_macro(
     threshold_cfg: Optional[Dict[str, Any]],
     n_macros: int,
@@ -400,7 +394,7 @@ def build_target_pseudo_mask(
             rows = torch.arange(n_t, device=device)
             mask[rows[keep], top[keep]] = 1.0
         else:
-            mask = q * keep.to(dtype).unsqueeze(1)
+            mask = keep.to(dtype).unsqueeze(1).expand(n_t, n_class)
         return mask
 
     per_macro_thr = list(threshold_per_macro or [global_threshold or 0.6] * n_class)
@@ -484,20 +478,6 @@ def _pseudo_conf_mean_by_macro(q: torch.Tensor, mask: torch.Tensor) -> List[floa
     return out
 
 
-def _prototype_validity_source(y_ids: torch.Tensor, n_macros: int, *, eps: float = EPS) -> List[bool]:
-    valid: List[bool] = []
-    for m in range(n_macros):
-        valid.append(bool((y_ids == m).any().item()))
-    return valid
-
-
-def _prototype_validity_target(q_masked: torch.Tensor, *, eps: float = EPS) -> List[bool]:
-    if q_masked.numel() == 0:
-        return [False for _ in MACRO_NAMES]
-    mass = q_masked.sum(dim=0)
-    return [float(mass[m].item()) >= eps for m in range(q_masked.shape[1])]
-
-
 def _format_macro_metrics(prefix: str, values: Sequence[float]) -> str:
     parts = [f"{MACRO_NAMES[i]}={values[i]:.4f}" for i in range(min(len(values), len(MACRO_NAMES)))]
     return f"{prefix}: " + " ".join(parts)
@@ -510,6 +490,26 @@ def _format_macro_bool(prefix: str, values: Sequence[bool]) -> str:
 
 def _source_batch_counts(y_ids: torch.Tensor) -> List[int]:
     return [int((y_ids == m).sum().item()) for m in range(len(MACRO_NAMES))]
+
+
+def _kl_on_valid_macros(
+    x: torch.Tensor,
+    mu_a: torch.Tensor,
+    valid_a: torch.Tensor,
+    mu_b: torch.Tensor,
+    valid_b: torch.Tensor,
+    *,
+    tau: float,
+    metric: str,
+) -> tuple[torch.Tensor, float]:
+    valid = valid_a & valid_b
+    n_valid = int(valid.sum().item())
+    if n_valid <= 0:
+        zero = x.new_zeros(())
+        return zero, 0.0
+    probs_a = distribution_from_prototypes_torch(x, mu_a[valid], tau=tau, metric=metric)  # type: ignore[arg-type]
+    probs_b = distribution_from_prototypes_torch(x, mu_b[valid], tau=tau, metric=metric)  # type: ignore[arg-type]
+    return symmetric_kl_torch(probs_a, probs_b, eps=EPS).mean(), float(n_valid) / float(len(valid))
 
 
 def compute_tpn_full_encoder_losses(
@@ -528,6 +528,9 @@ def compute_tpn_full_encoder_losses(
     if batch_source.labels is None:
         raise ValueError("batch_source.labels requis")
 
+    objective = str(tpn_cfg.get("objective", "standard_tpn")).strip().lower()
+    if objective != "standard_tpn":
+        raise ValueError(f"Objective non supporté dans cette baseline: {objective}")
     tau = float(tpn_cfg.get("tau", 0.3))
     metric = str(tpn_cfg.get("distance_metric", "euclidean"))
     rho = float(tpn_cfg.get("target_weight_st", 1.0))
@@ -547,10 +550,9 @@ def compute_tpn_full_encoder_losses(
     h_t = model.encode_texts_batch(batch_target.texts)
     y_ids = batch_source.labels.to(model.device_obj)
 
-    mu_s = compute_source_prototypes_torch(h_s, y_ids, n_macros, eps=EPS)
+    mu_s, source_valid, source_counts_t = compute_source_prototypes_torch(h_s, y_ids, n_macros, eps=EPS)
     if prototype_mode == "ema_global" and ema_source_prototypes is not None:
-        mu_s = F.normalize(0.5 * mu_s + 0.5 * ema_source_prototypes.to(mu_s.device), p=2, dim=-1, eps=EPS)
-
+        logger.debug("EMA ignoré pour objective=standard_tpn (baseline batch).")
     logits_q = prototype_logits_torch(h_t, mu_s, tau=tau, metric=metric)  # type: ignore[arg-type]
     q = soft_assignments_torch(logits_q, assignment_mode=assignment_mode)  # type: ignore[arg-type]
     pseudo_mask = build_target_pseudo_mask(
@@ -568,78 +570,75 @@ def compute_tpn_full_encoder_losses(
     pseudo_conf_by_macro = _pseudo_conf_mean_by_macro(q, pseudo_mask)
     pseudo_conf_mean = float(np.mean(pseudo_conf_by_macro)) if pseudo_conf_by_macro else 0.0
     target_mass_by_macro = _macro_mass_from_q_masked(q_masked)
-    source_counts = _source_batch_counts(y_ids)
-    source_proto_valid = _prototype_validity_source(y_ids, n_macros, eps=EPS)
-    target_proto_valid = _prototype_validity_target(q_masked, eps=EPS)
+    source_counts = [int(v.item()) for v in source_counts_t]
 
-    mu_t = compute_target_prototypes_soft_torch(h_t, q_masked, eps=EPS)
-    mass_t = q_masked.sum(dim=0)
-    for m in range(mu_t.shape[0]):
-        if float(mass_t[m].item()) < EPS:
-            mu_t[m] = mu_s[m]
-    mu_t = F.normalize(mu_t, p=2, dim=-1, eps=EPS)
+    mu_t_raw, target_valid_raw, target_mass = compute_target_prototypes_soft_torch(h_t, q_masked, eps=EPS)
+    mu_t = mu_t_raw.clone()
+    target_valid = target_valid_raw.clone()
+    target_fallback_mask = (~target_valid_raw) & source_valid
+    if bool(target_fallback_mask.any()):
+        mu_t[target_fallback_mask] = mu_s[target_fallback_mask]
+    target_valid = target_valid | target_fallback_mask
 
-    if float(q_masked.sum().item()) <= EPS:
-        mu_st = mu_s
-    else:
-        mu_st = compute_source_target_prototypes_torch(
-            h_s,
-            y_ids,
-            h_t,
-            q_masked,
-            n_macros,
-            rho=rho,
-            eps=EPS,
-        )
+    mu_st_raw, st_valid_raw, st_mass = compute_source_target_prototypes_torch(
+        h_s,
+        y_ids,
+        h_t,
+        q_masked,
+        n_macros,
+        rho=rho,
+        eps=EPS,
+    )
+    mu_st = mu_st_raw.clone()
+    st_fallback_mask = (~st_valid_raw) & source_valid
+    if bool(st_fallback_mask.any()):
+        mu_st[st_fallback_mask] = mu_s[st_fallback_mask]
+    st_valid = st_valid_raw | st_fallback_mask
 
     src_proto_mode = str(src_classifier_prototypes).strip().lower()
     src_protos = mu_s if src_proto_mode == "source" else mu_st
     logits_src = prototype_logits_torch(h_s, src_protos, tau=tau, metric=metric)  # type: ignore[arg-type]
     loss_src = F.cross_entropy(logits_src, y_ids)
 
-    proto_terms = []
+    proto_terms: List[torch.Tensor] = []
+    proto_valid_terms = 0
     for m in range(n_macros):
-        proto_terms.append(prototype_distance_torch(mu_s[m], mu_t[m], metric=metric))  # type: ignore[arg-type]
-        proto_terms.append(prototype_distance_torch(mu_s[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
-        proto_terms.append(prototype_distance_torch(mu_t[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
-    loss_proto = torch.stack(proto_terms).mean()
+        if bool(source_valid[m] and target_valid[m]):
+            proto_terms.append(prototype_distance_torch(mu_s[m], mu_t[m], metric=metric))  # type: ignore[arg-type]
+            proto_valid_terms += 1
+        if bool(source_valid[m] and st_valid[m]):
+            proto_terms.append(prototype_distance_torch(mu_s[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
+            proto_valid_terms += 1
+        if bool(target_valid[m] and st_valid[m]):
+            proto_terms.append(prototype_distance_torch(mu_t[m], mu_st[m], metric=metric))  # type: ignore[arg-type]
+            proto_valid_terms += 1
+    if proto_terms:
+        loss_proto = torch.stack(proto_terms).mean()
+    else:
+        loss_proto = h_s.new_zeros(())
 
     combined = torch.cat([h_s, h_t], dim=0)
-    p_s = distribution_from_prototypes_torch(combined, mu_s, tau=tau, metric=metric)  # type: ignore[arg-type]
-    p_t = distribution_from_prototypes_torch(combined, mu_t, tau=tau, metric=metric)  # type: ignore[arg-type]
-    p_st = distribution_from_prototypes_torch(combined, mu_st, tau=tau, metric=metric)  # type: ignore[arg-type]
-    loss_kl = (
-        symmetric_kl_torch(p_s, p_t, eps=EPS)
-        + symmetric_kl_torch(p_s, p_st, eps=EPS)
-        + symmetric_kl_torch(p_t, p_st, eps=EPS)
-    ).mean()
-
-    p_st_t = distribution_from_prototypes_torch(h_t, mu_st, tau=tau, metric=metric)  # type: ignore[arg-type]
-    p_clamped = p_st_t.clamp(min=EPS)
-    loss_ent = -(p_clamped * torch.log(p_clamped)).sum(dim=1).mean()
-    p_bar = p_st_t.mean(dim=0)
-    loss_div = (p_bar * torch.log(p_bar + EPS)).sum()
-    loss_reg = ((h_s - h_s.detach()) ** 2).sum() * 0.0  # placeholder optionnel
+    skl_st, ratio_st = _kl_on_valid_macros(combined, mu_s, source_valid, mu_t, target_valid, tau=tau, metric=metric)
+    skl_sst, ratio_sst = _kl_on_valid_macros(combined, mu_s, source_valid, mu_st, st_valid, tau=tau, metric=metric)
+    skl_tst, ratio_tst = _kl_on_valid_macros(combined, mu_t, target_valid, mu_st, st_valid, tau=tau, metric=metric)
+    kl_terms = [t for t, r in ((skl_st, ratio_st), (skl_sst, ratio_sst), (skl_tst, ratio_tst)) if r > 0.0 and torch.isfinite(t)]
+    if kl_terms:
+        loss_kl = torch.stack(kl_terms).mean()
+    else:
+        loss_kl = h_s.new_zeros(())
+    kl_valid_ratio = float(np.mean([ratio_st, ratio_sst, ratio_tst]))
 
     w = loss_weights
-    w_reg = float(w.get("reg", w.get("preserve", 0.0)))
     loss_total = (
         float(w.get("src", 1.0)) * loss_src
         + float(w.get("proto", 1.0)) * loss_proto
         + float(w.get("kl", 1.0)) * loss_kl
-        + float(w.get("ent", 0.01)) * loss_ent
-        + float(w.get("div", 0.01)) * loss_div
-        + w_reg * loss_reg
     )
     return {
         "loss_total": loss_total,
         "loss_src": loss_src,
         "loss_proto": loss_proto,
         "loss_kl": loss_kl,
-        "loss_ent": loss_ent,
-        "loss_div": loss_div,
-        "loss_reg": loss_reg,
-        "loss_pres": loss_reg,
         "pseudo_coverage": pseudo_cov,
         "pseudo_conf_mean": pseudo_conf_mean,
         "macro_mass_target": target_mass_by_macro,
@@ -647,8 +646,14 @@ def compute_tpn_full_encoder_losses(
         "target_mass_by_macro": target_mass_by_macro,
         "pseudo_coverage_by_macro": pseudo_cov_by_macro,
         "pseudo_conf_mean_by_macro": pseudo_conf_by_macro,
-        "source_proto_valid": source_proto_valid,
-        "target_proto_valid": target_proto_valid,
+        "source_proto_valid": [bool(v.item()) for v in source_valid],
+        "target_proto_valid": [bool(v.item()) for v in target_valid],
+        "st_proto_valid": [bool(v.item()) for v in st_valid],
+        "proto_valid_terms": proto_valid_terms,
+        "kl_valid_ratio": kl_valid_ratio,
+        "source_counts": source_counts,
+        "target_mass": [float(v.item()) for v in target_mass],
+        "st_mass": [float(v.item()) for v in st_mass],
         "mu_s": mu_s.detach(),
         "mu_t": mu_t.detach(),
         "mu_st": mu_st.detach(),
@@ -729,7 +734,7 @@ def _compute_global_mu_s(
 ) -> np.ndarray:
     h_s = torch.as_tensor(z_source, dtype=torch.float32)
     y = torch.as_tensor(y_source_ids, dtype=torch.long)
-    mu_s = compute_source_prototypes_torch(h_s, y, len(MACRO_NAMES), eps=EPS)
+    mu_s, _valid, _counts = compute_source_prototypes_torch(h_s, y, len(MACRO_NAMES), eps=EPS)
     return np.asarray(mu_s.cpu().numpy(), dtype=np.float64)
 
 
@@ -867,7 +872,7 @@ def train_tpn_full_encoder(
         n_steps = min(len(src_loader), len(tgt_loader))
         if n_steps <= 0:
             raise ValueError("DataLoader vide (source/cible).")
-        running = {k: 0.0 for k in ("loss_total", "loss_src", "loss_proto", "loss_kl", "loss_ent", "loss_div")}
+        running = {k: 0.0 for k in ("loss_total", "loss_src", "loss_proto", "loss_kl")}
         cov_sum = 0.0
         conf_sum = 0.0
         grad_norm_last = 0.0
@@ -876,6 +881,8 @@ def train_tpn_full_encoder(
         diag_pseudo_cov = np.zeros(len(MACRO_NAMES), dtype=np.float64)
         diag_pseudo_conf = np.zeros(len(MACRO_NAMES), dtype=np.float64)
         diag_steps = 0
+        proto_valid_terms_sum = 0.0
+        kl_valid_ratio_sum = 0.0
 
         optimizer.zero_grad(set_to_none=True)
         for step in range(n_steps):
@@ -934,6 +941,8 @@ def train_tpn_full_encoder(
                 losses.get("pseudo_conf_mean_by_macro", [0.0] * len(MACRO_NAMES)),
                 dtype=np.float64,
             )
+            proto_valid_terms_sum += float(losses.get("proto_valid_terms", 0.0))
+            kl_valid_ratio_sum += float(losses.get("kl_valid_ratio", 0.0))
             diag_steps += 1
 
             if balanced and with_replacement and src_counts:
@@ -956,7 +965,7 @@ def train_tpn_full_encoder(
 
             if progress_every > 0 and ((step + 1) % progress_every == 0 or step == 0 or step + 1 == n_steps):
                 logger.info(
-                    "TPN full diag epoch=%d step=%d/%d | %s | %s | %s | %s | %s | %s",
+                    "TPN full diag epoch=%d step=%d/%d | %s | %s | %s | %s | %s | %s | %s | kl_valid_ratio=%.3f proto_valid_terms=%.2f",
                     epoch,
                     step + 1,
                     n_steps,
@@ -978,6 +987,9 @@ def train_tpn_full_encoder(
                     ),
                     _format_macro_bool("source_proto_valid", losses.get("source_proto_valid", [])),
                     _format_macro_bool("target_proto_valid", losses.get("target_proto_valid", [])),
+                    _format_macro_bool("st_proto_valid", losses.get("st_proto_valid", [])),
+                    kl_valid_ratio_sum / max(1, diag_steps),
+                    proto_valid_terms_sum / max(1, diag_steps),
                 )
 
         # Evaluation epoch-level (source/target entiers)
@@ -1026,10 +1038,10 @@ def train_tpn_full_encoder(
             "loss_src": running["loss_src"] / n_steps,
             "loss_proto": running["loss_proto"] / n_steps,
             "loss_kl": running["loss_kl"] / n_steps,
-            "loss_ent": running["loss_ent"] / n_steps,
-            "loss_div": running["loss_div"] / n_steps,
             "pseudo_coverage": cov_sum / n_steps,
             "pseudo_conf_mean": conf_sum / n_steps,
+            "kl_valid_ratio": kl_valid_ratio_sum / n_steps,
+            "proto_valid_terms": proto_valid_terms_sum / n_steps,
             "grad_norm": grad_norm_last,
             "macro_f1_eval": float(metrics.get("macro_f1", float("nan"))),
             "balanced_accuracy_eval": float(metrics.get("balanced_accuracy", float("nan"))),

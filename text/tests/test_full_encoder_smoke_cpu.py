@@ -67,6 +67,7 @@ def test_full_encoder_smoke_cpu(tmp_path: Path):
         target_df=target_df,
         out_dir=tmp_path / "run",
         tpn_cfg={
+            "objective": "standard_tpn",
             "tau": 0.3,
             "distance_metric": "euclidean",
             "assignment_mode": "soft",

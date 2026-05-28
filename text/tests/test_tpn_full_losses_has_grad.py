@@ -36,6 +36,7 @@ def test_tpn_full_loss_has_grad():
         src,
         tgt,
         tpn_cfg={
+            "objective": "standard_tpn",
             "tau": 0.3,
             "distance_metric": "euclidean",
             "assignment_mode": "soft",

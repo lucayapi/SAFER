@@ -30,6 +30,7 @@ def test_pseudo_label_threshold_filters_target():
         src,
         tgt,
         tpn_cfg={
+            "objective": "standard_tpn",
             "tau": 0.3,
             "distance_metric": "euclidean",
             "assignment_mode": "soft",

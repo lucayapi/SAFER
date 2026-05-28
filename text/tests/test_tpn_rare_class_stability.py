@@ -88,6 +88,31 @@ def test_per_class_topk_gives_nonzero_mass_to_rare_macro():
     assert mass_b > 0.0
 
 
+def test_global_threshold_soft_mask_is_binary():
+    q = torch.tensor(
+        [
+            [0.6, 0.2, 0.1, 0.1],
+            [0.3, 0.3, 0.2, 0.2],
+        ],
+        dtype=torch.float32,
+    )
+    mask = build_target_pseudo_mask(
+        q,
+        strategy="global_threshold",
+        assignment_mode="soft",
+        global_threshold=0.5,
+        min_per_macro=1,
+        min_confidence=0.25,
+    )
+    uniq = set(torch.unique(mask).tolist())
+    assert uniq.issubset({0.0, 1.0})
+    q_masked = q * mask
+    keep = torch.tensor([1.0, 0.0], dtype=torch.float32).unsqueeze(1)
+    expected = q * keep
+    assert torch.allclose(q_masked, expected)
+    assert not torch.allclose(q_masked, (q * q) * keep)
+
+
 def test_global_threshold_can_drop_rare_macro():
     q = _q_with_rare_b_never_top1()
     mask = build_target_pseudo_mask(
@@ -132,6 +157,7 @@ def test_full_encoder_loss_still_has_grad():
         src,
         tgt,
         tpn_cfg={
+            "objective": "standard_tpn",
             "tau": 0.3,
             "distance_metric": "euclidean",
             "assignment_mode": "soft",
@@ -151,3 +177,76 @@ def test_full_encoder_loss_still_has_grad():
         if p.grad is not None:
             grad_sum += float(p.grad.detach().abs().sum().item())
     assert grad_sum > 0.0
+
+
+def test_standard_tpn_loss_only_uses_src_proto_kl():
+    model = _DummyModel()
+    src = TPNBatch(texts=["a0 txt", "a1 txt", "b txt", "c txt"], labels=torch.tensor([0, 1, 2, 3]))
+    tgt = TPNBatch(texts=[f"target {i}" for i in range(8)])
+    losses = compute_tpn_full_encoder_losses(
+        model,
+        src,
+        tgt,
+        tpn_cfg={
+            "objective": "standard_tpn",
+            "tau": 0.3,
+            "distance_metric": "euclidean",
+            "assignment_mode": "soft",
+            "pseudo_label_strategy": "per_class_topk",
+            "pseudo_label_min_confidence": 0.25,
+            "pseudo_label_min_per_macro": 2,
+            "target_weight_st": 1.0,
+            "src_classifier_prototypes": "source",
+        },
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0, "ent": 999.0, "div": 999.0, "reg": 999.0},
+        n_macros=4,
+    )
+    expected = losses["loss_src"] + losses["loss_proto"] + losses["loss_kl"]
+    assert torch.allclose(losses["loss_total"], expected, atol=1e-6, rtol=1e-6)
+
+
+def test_invalid_prototypes_excluded_from_proto_loss():
+    model = _DummyModel()
+    src = TPNBatch(texts=["a0 txt", "a1 txt", "b txt", "c txt"], labels=torch.tensor([0, 1, 2, 3]))
+    tgt = TPNBatch(texts=[f"target {i}" for i in range(8)])
+    losses = compute_tpn_full_encoder_losses(
+        model,
+        src,
+        tgt,
+        tpn_cfg={
+            "objective": "standard_tpn",
+            "tau": 0.3,
+            "distance_metric": "euclidean",
+            "assignment_mode": "soft",
+            "pseudo_label_strategy": "global_threshold",
+            "pseudo_label_threshold": 2.0,
+            "target_weight_st": 1.0,
+        },
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0},
+        n_macros=4,
+    )
+    assert losses["proto_valid_terms"] >= 0
+    assert torch.isfinite(losses["loss_proto"])
+
+
+def test_no_zero_prototype_in_kl_softmax():
+    model = _DummyModel()
+    src = TPNBatch(texts=["a0 txt", "a1 txt", "b txt", "c txt"], labels=torch.tensor([0, 1, 2, 3]))
+    tgt = TPNBatch(texts=[f"target {i}" for i in range(8)])
+    losses = compute_tpn_full_encoder_losses(
+        model,
+        src,
+        tgt,
+        tpn_cfg={
+            "objective": "standard_tpn",
+            "tau": 0.3,
+            "distance_metric": "euclidean",
+            "assignment_mode": "soft",
+            "pseudo_label_strategy": "global_threshold",
+            "pseudo_label_threshold": 2.0,
+            "target_weight_st": 1.0,
+        },
+        loss_weights={"src": 1.0, "proto": 1.0, "kl": 1.0},
+        n_macros=4,
+    )
+    assert torch.isfinite(losses["loss_kl"])

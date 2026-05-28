@@ -250,7 +250,7 @@ def compute_source_prototypes_torch(
     *,
     eps: float = EPS,
 ):
-    """μ_m^s = mean des h~ avec y=m, puis L2-normalise (différentiable)."""
+    """μ_m^s + validité et counts source (différentiable)."""
     import torch
     import torch.nn.functional as F
 
@@ -258,17 +258,20 @@ def compute_source_prototypes_torch(
     device = htilde_s.device
     dtype = htilde_s.dtype
     protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    valid = torch.zeros((n_macros,), device=device, dtype=torch.bool)
+    counts = torch.zeros((n_macros,), device=device, dtype=torch.long)
     for m in range(n_macros):
         mask = y_ids == m
+        counts[m] = mask.sum()
         if not mask.any():
-            logger.warning("Aucun exemple source pour la macro index %d", m)
             continue
+        valid[m] = True
         protos[m] = htilde_s[mask].mean(dim=0)
-    return F.normalize(protos, p=2, dim=-1, eps=eps)
+    return F.normalize(protos, p=2, dim=-1, eps=eps), valid, counts
 
 
 def compute_target_prototypes_soft_torch(htilde_t, q, *, eps: float = EPS):
-    """μ_m^t = sum_j q_jm h_j / (sum_j q_jm + eps), puis L2."""
+    """μ_m^t + validité et masses cibles."""
     import torch
     import torch.nn.functional as F
 
@@ -277,17 +280,17 @@ def compute_target_prototypes_soft_torch(htilde_t, q, *, eps: float = EPS):
     device = htilde_t.device
     dtype = htilde_t.dtype
     protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    valid = torch.zeros((n_macros,), device=device, dtype=torch.bool)
+    masses = torch.zeros((n_macros,), device=device, dtype=dtype)
     for mi in range(n_macros):
         mass = q[:, mi].sum()
+        masses[mi] = mass
         if mass < eps:
-            logger.warning(
-                "Masse cible quasi nulle pour macro index %d (mass=%.2e)",
-                mi,
-                float(mass.detach().item() if hasattr(mass, "detach") else mass),
-            )
+            continue
+        valid[mi] = True
         w = q[:, mi : mi + 1]
         protos[mi] = (w * htilde_t).sum(dim=0) / (mass + eps)
-    return F.normalize(protos, p=2, dim=-1, eps=eps)
+    return F.normalize(protos, p=2, dim=-1, eps=eps), valid, masses
 
 
 def compute_source_target_prototypes_torch(
@@ -300,7 +303,7 @@ def compute_source_target_prototypes_torch(
     rho: float = 1.0,
     eps: float = EPS,
 ):
-    """μ_m^st = (sum_src + ρ sum_tgt q) / (N_m^s + ρ mass_t + eps), puis L2."""
+    """μ_m^st + validité et masses cible pour le terme source-target."""
     import torch
     import torch.nn.functional as F
 
@@ -308,15 +311,20 @@ def compute_source_target_prototypes_torch(
     device = htilde_s.device
     dtype = htilde_s.dtype
     protos = torch.zeros((n_macros, dim), device=device, dtype=dtype)
+    valid = torch.zeros((n_macros,), device=device, dtype=torch.bool)
+    masses = torch.zeros((n_macros,), device=device, dtype=dtype)
     for m in range(n_macros):
         src_mask = y_ids == m
         n_s = int(src_mask.sum().item())
         sum_src = htilde_s[src_mask].sum(dim=0) if n_s > 0 else torch.zeros(dim, device=device, dtype=dtype)
         mass_t = q[:, m].sum()
+        masses[m] = mass_t
         sum_tgt = (q[:, m : m + 1] * htilde_t).sum(dim=0)
         denom = n_s + rho * mass_t + eps
         protos[m] = (sum_src + rho * sum_tgt) / denom
-    return F.normalize(protos, p=2, dim=-1, eps=eps)
+        if (n_s > 0) or float(mass_t.item()) >= eps:
+            valid[m] = True
+    return F.normalize(protos, p=2, dim=-1, eps=eps), valid, masses
 
 
 def symmetric_kl_torch(p, q, *, eps: float = EPS):
