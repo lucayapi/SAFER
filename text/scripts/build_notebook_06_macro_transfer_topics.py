@@ -74,7 +74,7 @@ TEST_CORPUS = "metallurgie"
 TOP_ERRORS_K = 20
 
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes", _spec.id, anchor=TEXT_ROOT)
+OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes/scgm", _spec.id, anchor=TEXT_ROOT)
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_fsp_macro_{_spec.id}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -223,6 +223,44 @@ expected = [
 for p in expected:
     print(("OK " if p.is_file() else "MISSING "), p)
 print("Figures :", FIG_DIR)
+"""
+        ),
+        md("## § Tableau macro topics (format article / LaTeX)"),
+        py(
+            r"""
+stats_path = OUT_DIR / "summary" / "macro_topic_stats.csv"
+if not stats_path.is_file():
+    print("macro_topic_stats.csv absent.")
+else:
+    df_stats = pd.read_csv(stats_path)
+    required = {"macro", "n_units", "n_topics", "bruit_pct", "plus_gros_topic_pct"}
+    missing = sorted(required.difference(df_stats.columns))
+    if missing:
+        print(f"Colonnes manquantes pour tableau macro topics: {missing}")
+    else:
+        table_macro = pd.DataFrame(
+            {
+                "Macro": df_stats["macro"].astype(str),
+                "Unités": pd.to_numeric(df_stats["n_units"], errors="coerce").fillna(0).astype(int),
+                "Topics": pd.to_numeric(df_stats["n_topics"], errors="coerce").fillna(0).astype(int),
+                "Bruit": pd.to_numeric(df_stats["bruit_pct"], errors="coerce").map(
+                    lambda x: f"{x:.1f}\\%" if pd.notna(x) else "--"
+                ),
+                "Plus gros topic": pd.to_numeric(df_stats["plus_gros_topic_pct"], errors="coerce").map(
+                    lambda x: f"{x:.1f}\\%" if pd.notna(x) else "--"
+                ),
+            }
+        )
+        display(table_macro)
+        latex_macro = table_macro.to_latex(
+            index=False,
+            escape=False,
+            column_format="lcccc",
+        )
+        print(latex_macro)
+        tex_out = OUT_DIR / "summary" / "macro_topic_stats_table.tex"
+        tex_out.write_text(latex_macro, encoding="utf-8")
+        print("LaTeX écrit :", tex_out)
 """
         ),
     ]

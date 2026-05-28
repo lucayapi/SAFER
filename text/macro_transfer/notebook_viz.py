@@ -92,6 +92,14 @@ def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
     """Charge les sorties baseline Frozen Source Prototypes."""
     root = Path(out_dir).resolve()
     transfer = root / "transfer"
+    if not transfer.is_dir():
+        # Compat: certains runs FSP sont stockés sous .../frozen_source_prototypes/{scgm,raw}/transfer
+        for variant in ("scgm", "raw"):
+            cand = root / variant / "transfer"
+            if cand.is_dir():
+                root = root / variant
+                transfer = cand
+                break
     preds_path = transfer / "target_macro_predictions.csv"
     protos_path = transfer / "source_prototypes.csv"
     if not preds_path.is_file():
@@ -196,6 +204,19 @@ def plot_fsp_confusion_heatmap(
     cm = confusion_df.copy()
     if "true_macro" in cm.columns:
         cm = cm.set_index("true_macro")
+    elif "Unnamed: 0" in cm.columns:
+        cm = cm.set_index("Unnamed: 0")
+    elif cm.columns.size > 0:
+        # Cas fréquent: première colonne texte issue de l'index CSV.
+        first_col = str(cm.columns[0])
+        if not pd.api.types.is_numeric_dtype(cm[first_col]):
+            cm = cm.set_index(first_col)
+    # Garder uniquement des colonnes numériques pour seaborn.
+    cm = cm.apply(pd.to_numeric, errors="coerce")
+    cm = cm.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if cm.empty:
+        print("Matrice de confusion vide après conversion numérique.")
+        return
     import seaborn as sns
 
     fig, ax = plt.subplots(figsize=(6, 5))
