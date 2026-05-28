@@ -189,9 +189,9 @@ Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yam
 | Encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
 | CLI | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus <id>` |
 | Skip BERTopic | `SKIP_BERTOPIC=1` (par défaut dans le YAML) |
-| Notebook 06 | comparaison `tpn_full_scgm_text` vs `tpn_full_softtriple` |
+| Notebook 06 | diagnostics Frozen Source Prototypes + BERTopic inputs |
 | Notebook 07 | run local TPN + viz 2D |
-| Notebook 08 | diagnostics TPN (initial vs adapté) |
+| Notebook 08 | diagnostics Frozen Source Prototypes (probas/distances/confusion) |
 
 **Sorties** : `output_test/<corpus_id>/macro_transfer/tpn_full_<encodeur>/`
 
@@ -207,6 +207,26 @@ Commandes :
 | Full encoder complet | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie` |
 
 Sorties : `output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/` avec notamment `transfer/metadata_with_tpn_full_macro_probs.csv`, `transfer/metrics_tpn_full.json`, `embeddings/source_full_embeddings.npy`, `embeddings/target_full_embeddings.npy`.
+
+### Baseline Frozen Source Prototypes (sans adaptation)
+
+Méthode de référence sans adaptation de domaine :
+- encodeur source déjà entraîné, utilisé **figé** (inférence uniquement),
+- prototypes calculés uniquement sur la source,
+- assignation cible par softmax des distances aux prototypes source,
+- aucun entraînement cible, aucune loss TPN/adaptateur.
+
+Commande :
+
+```bash
+python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml
+```
+
+Sorties principales :
+- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/source_prototypes.csv`
+- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/target_macro_predictions.csv`
+- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/metrics.json` (si labels cible)
+- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/bertopic_input_*.csv`
 
 ## Réseaux bayésiens
 
@@ -227,9 +247,9 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
-| `06_macro_transfer_topics.ipynb` | **Lecture seule** — comparaison TPN SCGM vs SoftTriple + topics BERTopic |
+| `06_macro_transfer_topics.ipynb` | **Lecture seule** — baseline Frozen Source Prototypes (probas/distances macro, BERTopic inputs, calibration/erreurs) |
 | `07_macro_transfer_interactive.ipynb` | **Run local** TPN (`BASE_METHOD`) + viz 2D ; `RUN_PIPELINE=False` pour reviz sans refit |
-| `08_tpn_macro_transfer_results.ipynb` | **Lecture seule** — métriques initial/adapté, gating, PCA, courbe d’entraînement |
+| `08_tpn_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics Frozen Source Prototypes (confusion/report, confidence/margin/entropy, distances, BERTopic inputs) |
 
 `01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
 
@@ -245,6 +265,7 @@ python scripts/build_notebook_02_scgm_results.py  # 02_scgm_text_results
 python scripts/build_notebook_04_bn_macro_transfer.py
 python scripts/build_notebook_06_macro_transfer_topics.py
 python scripts/build_notebook_07_macro_transfer_interactive.py
+python scripts/build_notebook_08_tpn_macro_transfer.py
 ```
 
 ## Métriques principales

@@ -1,0 +1,40 @@
+method_name: frozen_source_prototypes
+method_display_name: "Embedding brut + prototypes source"
+corpus: metallurgie
+output_dir: output_test/metallurgie/macro_transfer/frozen_source_prototypes/raw
+
+source:
+  dataset_path: dataset/data_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+  filter_pred_ok: true
+
+target:
+  dataset_path: dataset/test/data_metallurgie.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+
+model:
+  base_method: raw_embedding
+  checkpoint_path:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  max_seq_length: 256
+  encode_batch_size: 32
+  device: cuda
+
+prototype_transfer:
+  macros: ["A0", "A1", "B", "C"]
+  distance_metric: cosine
+  normalize_embeddings: true
+  tau: 0.07
+  eps: 1.0e-12
+
+exports:
+  save_source_embeddings: false
+  save_target_embeddings: true
+  save_prototypes: true
+  save_probabilities: true
+  save_bertopic_inputs: true

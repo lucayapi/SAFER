@@ -47,6 +47,8 @@ full_encoder:
   min_per_macro: 1
   drop_last: true
   prototype_mode: batch
+  reuse_initial_embeddings: true
+  force_reencode_initial: false
   ema_momentum: 0.95
   progress_every: 25
 

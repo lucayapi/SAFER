@@ -10,9 +10,13 @@ import pandas as pd
 import pytest
 
 from macro_transfer.notebook_viz import (
+    FSPRunArtifacts,
     RunArtifacts,
     _confusion_matrix_from_metrics,
     build_topics_display_dataframe,
+    compute_fsp_confidence_calibration,
+    get_fsp_top_confident_errors,
+    load_fsp_run_artifacts,
     load_run_artifacts,
     merge_assignments,
     pick_accident_id_for_colored_text,
@@ -204,3 +208,55 @@ def test_render_colored_accident_html(tmp_path: Path):
     )
     assert "#1f77b4" in html_macro
     assert "Macros" in html_macro
+
+
+def test_load_fsp_run_artifacts_and_helpers(tmp_path: Path):
+    root = tmp_path / "fsp_run"
+    transfer = root / "transfer"
+    transfer.mkdir(parents=True)
+    pd.DataFrame(
+        {
+            "macro": ["A0", "A1", "B", "C"],
+            "n_source": [10, 10, 5, 8],
+            "prototype_norm": [1.0, 1.0, 1.0, 1.0],
+        }
+    ).to_csv(transfer / "source_prototypes.csv", index=False)
+    pred = pd.DataFrame(
+        {
+            "sentence": [f"s{i}" for i in range(6)],
+            "pred_macro": ["A0", "A1", "B", "C", "A0", "A1"],
+            "true_macro": ["A0", "A1", "C", "C", "B", "A1"],
+            "confidence": [0.9, 0.8, 0.7, 0.95, 0.88, 0.76],
+            "margin": [0.2, 0.1, 0.08, 0.3, 0.25, 0.11],
+            "entropy": [0.4, 0.6, 0.8, 0.2, 0.5, 0.7],
+            "prob_A0": [0.9, 0.1, 0.1, 0.1, 0.88, 0.2],
+            "prob_A1": [0.03, 0.8, 0.2, 0.1, 0.04, 0.76],
+            "prob_B": [0.03, 0.05, 0.7, 0.1, 0.04, 0.02],
+            "prob_C": [0.04, 0.05, 0.0, 0.7, 0.04, 0.02],
+            "dist_A0": [0.1, 1.2, 1.1, 1.4, 0.2, 1.0],
+            "dist_A1": [1.1, 0.2, 0.9, 1.3, 1.0, 0.3],
+            "dist_B": [1.2, 1.1, 0.3, 1.2, 1.3, 1.2],
+            "dist_C": [1.3, 1.2, 1.1, 0.2, 1.1, 1.1],
+        }
+    )
+    pred.to_csv(transfer / "target_macro_predictions.csv", index=False)
+    with open(transfer / "metrics.json", "w", encoding="utf-8") as f:
+        json.dump({"accuracy": 0.5, "macro_f1": 0.5}, f)
+    pd.DataFrame(
+        {
+            "true_macro": ["A0", "A1", "B", "C"],
+            "A0": [1, 0, 1, 0],
+            "A1": [0, 2, 0, 0],
+            "B": [0, 0, 0, 0],
+            "C": [0, 0, 1, 1],
+        }
+    ).to_csv(transfer / "confusion_matrix.csv", index=False)
+
+    art = load_fsp_run_artifacts(root)
+    assert isinstance(art, FSPRunArtifacts)
+    assert len(art.predictions) == 6
+    assert len(art.prototypes) == 4
+    cal = compute_fsp_confidence_calibration(art.predictions)
+    assert cal is not None and not cal.empty
+    top_err = get_fsp_top_confident_errors(art.predictions, top_k=2)
+    assert len(top_err) == 2

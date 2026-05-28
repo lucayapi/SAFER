@@ -1,4 +1,4 @@
-"""Génère notebooks/08_tpn_macro_transfer_results.ipynb (lecture seule TPN)."""
+"""Génère notebooks/08_tpn_macro_transfer_results.ipynb (diagnostics FSP)."""
 
 from __future__ import annotations
 
@@ -37,13 +37,11 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 08 — Résultats transfert macro TPN
+# 08 — Diagnostics Frozen Source Prototypes
 
-Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/tpn_<encodeur>/`.
+Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/frozen_source_prototypes/transfer/`.
 
-**Variables** : `TEST_CORPUS`, `BASE_METHOD` (`softtriple`, `supcon`, `batch_triplet`, `scgm_text`).
-
-**Prérequis** : `bash jobs/run_tpn_macro_transfer.sh`
+**Prérequis** : `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml`
 """
         ),
         py(
@@ -58,366 +56,208 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from macro_transfer.tpn_encode import tpn_method_name
 from safer_core.test_corpus import macro_transfer_output_dir
+from macro_transfer.notebook_viz import (
+    load_fsp_run_artifacts,
+    plot_fsp_distribution_histograms,
+    plot_fsp_pred_macro_distribution,
+    plot_fsp_distance_boxplot,
+    plot_fsp_confusion_heatmap,
+    compute_fsp_confidence_calibration,
+    get_fsp_top_confident_errors,
+)
 
 TEST_CORPUS = os.environ.get("TEST_CORPUS", "metallurgie")
-BASE_METHOD = os.environ.get("BASE_METHOD", "scgm_text")
-OUT_DIR = macro_transfer_output_dir(tpn_method_name(BASE_METHOD), TEST_CORPUS, anchor=TEXT_ROOT)
-FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"08_tpn_{TEST_CORPUS}_{OUT_DIR.name}"
+OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes", TEST_CORPUS, anchor=TEXT_ROOT)
+FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"08_fsp_{TEST_CORPUS}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
-from macro_transfer.constants import MACRO_NAMES
-def _macro_prob_columns():
-    return [f"p_{m}" for m in MACRO_NAMES]
-
-def enrich_gating_meta(df: pd.DataFrame) -> pd.DataFrame:
-    # margin / entropy dérivées des p_* si absentes (colonnes optionnelles).
-    out = df.copy()
-    prob_cols = [c for c in _macro_prob_columns() if c in out.columns]
-    if not prob_cols:
-        return out
-    p = out[prob_cols].to_numpy(dtype=np.float64)
-    rs = p.sum(axis=1, keepdims=True)
-    rs = np.where(rs > 1e-12, rs, 1.0)
-    p = p / rs
-    sp = np.sort(p, axis=1)
-    if "margin" not in out.columns:
-        out["margin"] = sp[:, -1] - sp[:, -2]
-    if "entropy" not in out.columns:
-        out["entropy"] = -np.sum(p * np.log(p + 1e-12), axis=1)
-    return out
-
 print("Corpus test :", TEST_CORPUS)
-print("BASE_METHOD :", BASE_METHOD)
 print("OUT_DIR :", OUT_DIR)
+print("Predictions file :", OUT_DIR / "transfer" / "target_macro_predictions.csv")
 sns.set_theme(style="whitegrid")
 """
         ),
-        md("## § Manifeste et résumé"),
+        md("## § Chargement et résumé"),
         py(
             r"""
-manifest_path = OUT_DIR / "run_manifest.json"
-summary_path = OUT_DIR / "summary" / "tpn_summary.json"
-if manifest_path.is_file():
-    with open(manifest_path, encoding="utf-8") as f:
-        manifest = json.load(f)
-    print("run_manifest.json :")
-    for k in ("method", "base_encoder", "checkpoint", "n_source", "n_target", "skip_bertopic"):
-        print(f"  {k}: {manifest.get(k)}")
-if summary_path.is_file():
-    with open(summary_path, encoding="utf-8") as f:
-        summary = json.load(f)
-    display(pd.DataFrame([summary.get("metrics_initial", {}), summary.get("metrics_adapted", {})],
-                         index=["initial", "adapted"]))
-elif manifest_path.is_file() and manifest.get("bertopic_summary"):
-    print("bertopic_summary :", manifest.get("bertopic_summary"))
+ART = load_fsp_run_artifacts(OUT_DIR)
+pred = ART.predictions.copy()
+protos = ART.prototypes.copy()
+metrics = ART.metrics or {}
+display(protos.head())
+if metrics:
+    display(pd.DataFrame([metrics]))
+else:
+    print("metrics.json absent.")
 """
         ),
-        md("## § Métriques initial vs adapté"),
+        md("## § Comparaison transfert direct (raw vs méthode source)"),
         py(
             r"""
-from macro_transfer.report_tables import (
-    encoder_display_name,
-    format_transfer_metrics_table,
-    load_transfer_metrics_pair,
-)
+from pathlib import Path
+import math
 
-def load_metrics(prefix):
-    p = OUT_DIR / "transfer" / f"transfer_metrics_{prefix}.json"
-    return json.load(open(p, encoding="utf-8")) if p.is_file() else {}
+ROOT_FSP = OUT_DIR.parent
+RAW_METRICS = ROOT_FSP / "raw" / "transfer" / "metrics.json"
+SCGM_METRICS = ROOT_FSP / "scgm" / "transfer" / "metrics.json"
+TABLE_CSV = ROOT_FSP / "table_transfer_direct.csv"
+TABLE_TEX = ROOT_FSP / "table_transfer_direct.tex"
+ROOT_FSP.mkdir(parents=True, exist_ok=True)
 
-m_init, m_adapt = load_transfer_metrics_pair(OUT_DIR)
-cmp_csv = OUT_DIR / "summary" / "transfer_metrics_comparison.csv"
-if cmp_csv.is_file():
-    print("=== Tableau métriques (CSV pipeline) ===")
-    display(pd.read_csv(cmp_csv))
+def _load_metrics(path: Path):
+    if not path.is_file():
+        print(f"[WARN] metrics.json absent: {path}")
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+def _to_float(v):
+    try:
+        x = float(v)
+        if math.isnan(x):
+            return np.nan
+        return x
+    except Exception:
+        return np.nan
+
+raw_m = _load_metrics(RAW_METRICS) or {}
+scgm_m = _load_metrics(SCGM_METRICS) or {}
+
+row_raw = {
+    "Méthode": "Embedding brut + prototypes source",
+    "Bal. Acc.": _to_float(raw_m.get("balanced_accuracy", np.nan)),
+    "Macro-F1": _to_float(raw_m.get("macro_f1", np.nan)),
+    "Confiance moy.": _to_float(raw_m.get("mean_confidence", np.nan)),
+    "Entropie moy.": _to_float(raw_m.get("mean_entropy", np.nan)),
+}
+scgm_method = scgm_m.get("method", "SCGM + prototypes source gelés")
+row_scgm = {
+    "Méthode": str(scgm_method),
+    "Bal. Acc.": _to_float(scgm_m.get("balanced_accuracy", np.nan)),
+    "Macro-F1": _to_float(scgm_m.get("macro_f1", np.nan)),
+    "Confiance moy.": _to_float(scgm_m.get("mean_confidence", np.nan)),
+    "Entropie moy.": _to_float(scgm_m.get("mean_entropy", np.nan)),
+}
+
+table_df = pd.DataFrame([row_raw, row_scgm])
+display(table_df)
+table_df.to_csv(TABLE_CSV, index=False)
+
+def _winner_indices(values, mode="max"):
+    s = pd.Series(values, dtype="float64")
+    if s.notna().sum() == 0:
+        return set()
+    best = s.max() if mode == "max" else s.min()
+    return set(s.index[s == best].tolist())
+
+def _fmt(v, bold=False):
+    if pd.isna(v):
+        return "--"
+    txt = f"{float(v):.4f}"
+    return f"\\textbf{{{txt}}}" if bold else txt
+
+best_bal = _winner_indices(table_df["Bal. Acc."], mode="max")
+best_f1 = _winner_indices(table_df["Macro-F1"], mode="max")
+best_conf = _winner_indices(table_df["Confiance moy."], mode="max")
+best_ent = _winner_indices(table_df["Entropie moy."], mode="min")
+
+lines = []
+lines.append("\\begin{tabular}{lcccc}")
+lines.append("\\toprule")
+lines.append("\\textbf{Méthode} & \\textbf{Bal. Acc.} & \\textbf{Macro-F1} & \\textbf{Confiance moy.} & \\textbf{Entropie moy.} \\\\")
+lines.append("\\midrule")
+for i, row in table_df.iterrows():
+    lines.append(
+        f"{row['Méthode']} & "
+        f"{_fmt(row['Bal. Acc.'], i in best_bal)} & "
+        f"{_fmt(row['Macro-F1'], i in best_f1)} & "
+        f"{_fmt(row['Confiance moy.'], i in best_conf)} & "
+        f"{_fmt(row['Entropie moy.'], i in best_ent)} \\\\"
+    )
+lines.append("\\bottomrule")
+lines.append("\\end{tabular}")
+latex_table = "\n".join(lines)
+print(latex_table)
+TABLE_TEX.write_text(latex_table + "\n", encoding="utf-8")
+print("CSV :", TABLE_CSV)
+print("TEX :", TABLE_TEX)
+"""
+        ),
+        md("## § Distribution macro et scores"),
+        py(
+            r"""
+plot_fsp_pred_macro_distribution(pred, fig_dir=FIG_DIR)
+plot_fsp_distribution_histograms(pred, fig_dir=FIG_DIR)
+plot_fsp_distance_boxplot(pred, fig_dir=FIG_DIR)
+"""
+        ),
+        md("## § Probabilités et distances"),
+        py(
+            r"""
+prob_cols = [c for c in pred.columns if c.startswith("prob_")]
+dist_cols = [c for c in pred.columns if c.startswith("dist_")]
+print("Colonnes prob_* :", prob_cols)
+print("Colonnes dist_* :", dist_cols)
+display(pred[[c for c in ["pred_macro", "confidence", "margin", "entropy"] + prob_cols[:4] + dist_cols[:4] if c in pred.columns]].head())
+"""
+        ),
+        md("## § Confusion, report, calibration"),
+        py(
+            r"""
+if ART.confusion is not None and not ART.confusion.empty:
+    display(ART.confusion)
+    plot_fsp_confusion_heatmap(ART.confusion, fig_dir=FIG_DIR)
 else:
-    metrics_table = format_transfer_metrics_table(m_init, m_adapt, BASE_METHOD)
-    print(f"=== Tableau Modèle — {encoder_display_name(BASE_METHOD)} ({TEST_CORPUS}) ===")
-    display(metrics_table)
+    print("confusion_matrix.csv absent.")
 
-rows = []
-for label, m in (("initial", m_init), ("adapted", m_adapt)):
-    if not m:
-        continue
-    rows.append({
-        "phase": label,
-        "n_eval": m.get("n_eval"),
-        "accuracy": m.get("accuracy"),
-        "macro_f1": m.get("macro_f1"),
-        "balanced_accuracy": m.get("balanced_accuracy"),
-        "mean_q_conf": m.get("mean_q_conf"),
-        "mean_margin": m.get("mean_margin"),
-        "mean_entropy": m.get("mean_entropy"),
-    })
-metrics_df = pd.DataFrame(rows)
-if len(metrics_df):
-    display(metrics_df)
+if ART.classification_report is not None and not ART.classification_report.empty:
+    display(ART.classification_report)
+else:
+    print("classification_report.csv absent.")
 
-if len(metrics_df) >= 1:
-    fig, ax = plt.subplots(figsize=(8, 4))
-    x = np.arange(3)
-    phases = metrics_df["phase"].tolist()
-    w = 0.8 / max(len(phases), 1)
-    for pi, phase in enumerate(phases):
-        sub = metrics_df.loc[metrics_df["phase"] == phase]
-        if sub.empty:
-            continue
-        off = (pi - (len(phases) - 1) / 2) * w
-        for i, col in enumerate(["accuracy", "macro_f1", "balanced_accuracy"]):
-            if col in sub.columns:
-                ax.bar(i + off, float(sub[col].iloc[0]), w * 0.9, label=phase if i == 0 else "")
-    ax.set_xticks(x)
-    ax.set_xticklabels(["accuracy", "macro_f1", "balanced_accuracy"])
-    ax.set_title(f"Métriques — {OUT_DIR.name} ({TEST_CORPUS})")
-    ax.legend()
-    fig.savefig(FIG_DIR / "metrics_compare.png", dpi=120, bbox_inches="tight")
+cal = compute_fsp_confidence_calibration(pred)
+if cal is not None and not cal.empty:
+    display(cal)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(cal["mean_confidence"], cal["accuracy"], "o-")
+    ax.plot([0, 1], [0, 1], "--", color="gray")
+    ax.set_title("Calibration confiance")
+    ax.set_xlabel("confidence moyenne")
+    ax.set_ylabel("accuracy")
+    fig.savefig(FIG_DIR / "calibration.png", dpi=120, bbox_inches="tight")
     plt.show()
 else:
-    print("Aucune métrique transfer_metrics*.json trouvée.")
+    print("Calibration non disponible.")
 """
         ),
-        md("## § Distributions q_conf, margin, entropy"),
+        md("## § Erreurs à forte confiance"),
         py(
             r"""
-p_init = OUT_DIR / "transfer" / "metadata_with_initial_macro_probs.csv"
-p_adapt = OUT_DIR / "transfer" / "metadata_with_tpn_macro_probs.csv"
-if not p_init.is_file() or not p_adapt.is_file():
-    raise FileNotFoundError(
-        f"Métadonnées TPN manquantes sous {OUT_DIR / 'transfer'}. "
-        "Lancer : bash jobs/run_tpn_macro_transfer.sh"
-    )
-meta_init = enrich_gating_meta(pd.read_csv(p_init))
-meta_adapt = enrich_gating_meta(pd.read_csv(p_adapt))
-print("Colonnes gating init :", [c for c in ("q_conf", "margin", "entropy") if c in meta_init.columns])
-print("Colonnes gating adapt :", [c for c in ("q_conf", "margin", "entropy") if c in meta_adapt.columns])
+top_err = get_fsp_top_confident_errors(pred, top_k=30)
+if top_err.empty:
+    print("Aucune erreur exploitable (ou true_macro absent).")
+else:
+    cols = [c for c in ["sentence", "true_macro", "pred_macro", "confidence", "margin", "entropy"] if c in top_err.columns]
+    display(top_err[cols])
+"""
+        ),
+        md("## § Inputs BERTopic"),
+        py(
+            r"""
+all_path = OUT_DIR / "transfer" / "bertopic_input_all.csv"
+if all_path.is_file():
+    all_df = pd.read_csv(all_path)
+    print("bertopic_input_all.csv:", len(all_df))
+    display(all_df.head())
+else:
+    print("bertopic_input_all.csv absent.")
 
-for col, title in [("q_conf", "Confiance"), ("margin", "Marge top1-top2"), ("entropy", "Entropie")]:
-    if col not in meta_init.columns and col not in meta_adapt.columns:
-        print(f"Skip {title} : colonne absente")
-        continue
-    ncols = 2
-    fig, axes = plt.subplots(1, ncols, figsize=(5 * ncols, 3.5))
-    if ncols == 1:
-        axes = [axes]
-    if col in meta_init.columns:
-        axes[0].hist(meta_init[col].dropna(), bins=40, color="steelblue", edgecolor="white")
-        axes[0].set_title(f"{title} — initial")
-    if col in meta_adapt.columns:
-        axes[1].hist(meta_adapt[col].dropna(), bins=40, color="darkorange", edgecolor="white")
-        axes[1].set_title(f"{title} — adapté")
-    fig.suptitle(f"{title} ({TEST_CORPUS})")
-    fig.tight_layout()
-    fig.savefig(FIG_DIR / f"hist_{col}.png", dpi=120, bbox_inches="tight")
-    plt.show()
-"""
-        ),
-        md("## § Matrices de confusion (si labels disponibles)"),
-        py(
-            r"""
-from macro_transfer.notebook_viz import plot_confusion_from_metrics
-
-enc_slug = BASE_METHOD.replace("_", "")
-if m_init:
-    plot_confusion_from_metrics(
-        m_init,
-        f"Confusion — {encoder_display_name(BASE_METHOD)} initial",
-        FIG_DIR / f"confusion_{enc_slug}_initial_meta.png",
-    )
-if m_adapt:
-    plot_confusion_from_metrics(
-        m_adapt,
-        f"Confusion — {encoder_display_name(BASE_METHOD)} adapté",
-        FIG_DIR / f"confusion_{enc_slug}_adapted_meta.png",
-    )
-"""
-        ),
-        md("## § Distances entre prototypes"),
-        py(
-            r"""
-for phase in ("initial", "final"):
-    p = OUT_DIR / "prototypes" / f"prototype_distances_{phase}.csv"
+for macro in ("A0", "A1", "B", "C"):
+    p = OUT_DIR / "transfer" / f"bertopic_input_{macro}.csv"
     if p.is_file():
-        print(f"=== Prototypes {phase} ===")
-        display(pd.read_csv(p))
-"""
-        ),
-        md("## § Couverture / performance par seuil"),
-        py(
-            r"""
-gating_stats_path = OUT_DIR / "transfer" / "gating_stats.json"
-if gating_stats_path.is_file():
-    with open(gating_stats_path, encoding="utf-8") as f:
-        gs = json.load(f)
-    print("gating_stats.json :", gs)
-
-cov_path = OUT_DIR / "transfer" / "coverage_by_threshold.csv"
-if cov_path.is_file():
-    cov = pd.read_csv(cov_path)
-    display(cov.head(20))
-    for thr_type in cov["threshold_type"].unique():
-        sub = cov[cov["threshold_type"] == thr_type]
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.plot(sub["threshold"], sub["coverage"], "o-", label="coverage")
-        ax2 = ax.twinx()
-        ax2.plot(sub["threshold"], sub["macro_f1"], "s--", color="crimson", label="macro_f1")
-        ax.set_title(f"Couverture & F1 — {thr_type} ({TEST_CORPUS})")
-        ax.set_xlabel("seuil")
-        fig.savefig(FIG_DIR / f"coverage_{thr_type}.png", dpi=120, bbox_inches="tight")
-        plt.show()
-else:
-    print("coverage_by_threshold.csv absent")
-"""
-        ),
-        md("## § Diagnostics BERTopic / compression (si présents)"),
-        py(
-            r"""
-for rel in (
-    "macro_compression_diagnostics.csv",
-    "bertopic_warnings.txt",
-    "bertopic_grid_A0_A1.csv",
-    "bertopic_grid_A0_A1_best.csv",
-):
-    p = OUT_DIR / rel
-    if p.is_file():
-        print(f"=== {rel} ===")
-        if rel.endswith(".csv"):
-            display(pd.read_csv(p).head(15))
-        else:
-            print(p.read_text(encoding="utf-8")[:2000])
-comp_path = OUT_DIR / "macro_compression_diagnostics.csv"
-if comp_path.is_file():
-    comp = pd.read_csv(comp_path)
-    if "compression_ratio" in comp.columns:
-        fig, ax = plt.subplots(figsize=(6, 3))
-        ax.bar(comp["macro"].astype(str), comp["compression_ratio"].astype(float))
-        ax.axhline(1.0, color="gray", ls="--")
-        ax.set_title("Compression ratio adapt/init")
-        plt.show()
-"""
-        ),
-        md("## § t-SNE domaines source (BTP) vs test — initial vs adapté"),
-        py(
-            r"""
-from macro_transfer.notebook_viz import plot_domain_tsne_side_by_side
-
-plot_domain_tsne_side_by_side(
-    OUT_DIR,
-    FIG_DIR,
-    max_points=4000,
-    seed=42,
-    source_label="Source BTP",
-    target_label=f"Test {TEST_CORPUS}",
-    test_corpus_name=TEST_CORPUS,
-)
-"""
-        ),
-        md("## § Topics BERTopic"),
-        py(
-            r"""
-from macro_transfer.report_tables import load_macro_topic_stats
-from macro_transfer.topics_export import format_macro_topic_stats_display
-
-topic_stats = load_macro_topic_stats(OUT_DIR)
-if not topic_stats.empty:
-    print("=== Tableau récapitulatif par macro ===")
-    display(format_macro_topic_stats_display(topic_stats))
-
-themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
-summary_path = OUT_DIR / "summary" / "topics_summary.csv"
-if summary_path.is_file():
-    display(pd.read_csv(summary_path))
-if themes_path.is_file():
-    th = pd.read_csv(themes_path)
-    cols = ["macro", "topic_id", "n_units", "top_words", "theme_label", "top_sentences"]
-    display(th[[c for c in cols if c in th.columns]])
-else:
-    print("themes_by_macro.csv absent (BERTopic non exécuté ou échec)")
-"""
-        ),
-        md(
-            "## § Lecture d'un récit (texte coloré par thème / macro)\n"
-            "\n"
-            "Phrases surlignées selon le topic BERTopic intra-macro (`color_by='topic'`) "
-            "ou la macro TPN (`color_by='macro'`). Modifier `ACCIDENT_ID` ou "
-            "`os.environ['ACCIDENT_ID']` pour changer de récit."
-        ),
-        py(
-            r"""
-from macro_transfer.notebook_viz import (
-    build_topics_display_dataframe,
-    load_run_artifacts,
-    pick_accident_id_for_colored_text,
-    show_colored_text_inline,
-)
-
-_assign_path = OUT_DIR / "topics_bertopic" / "assignments.csv"
-if not _assign_path.is_file():
-    print(
-        "assignments.csv absent — relancer le pipeline TPN avec BERTopic "
-        f"(attendu : {_assign_path})"
-    )
-elif "accident_id" not in meta_adapt.columns:
-    print("Colonne accident_id absente des métadonnées TPN.")
-else:
-    artifacts = load_run_artifacts(OUT_DIR)
-    _df_topics = build_topics_display_dataframe(artifacts, confidence_threshold=0.0)
-    _counts = _df_topics.groupby("accident_id").size().sort_values(ascending=False)
-    print("Top accidents (nb phrases / unités) :")
-    display(_counts.head(10).to_frame("n_units"))
-
-    _acc_env = os.environ.get("ACCIDENT_ID", "").strip()
-    if _acc_env:
-        _candidates = _df_topics["accident_id"].dropna().unique()
-        _dtype = type(_candidates[0]) if len(_candidates) else str
-        try:
-            _prefer = _dtype(_acc_env)
-        except (TypeError, ValueError):
-            _prefer = _acc_env
+        print(f"{macro}: {len(pd.read_csv(p))} lignes")
     else:
-        _prefer = None
-
-    ACCIDENT_ID = pick_accident_id_for_colored_text(
-        _df_topics, min_units=5, prefer_id=_prefer
-    )
-    _n_units = int(_counts.get(ACCIDENT_ID, 0))
-    print(f"Récit affiché : accident_id={ACCIDENT_ID} ({_n_units} unités textuelles)")
-
-    show_colored_text_inline(
-        _df_topics,
-        ACCIDENT_ID,
-        min_prob=0.0,
-        font_size_px=10,
-        legend_font_size_px=9,
-        legend_title="Thèmes",
-        show_prob=False,
-        color_by="topic",
-        highlight_style="border",
-        keep_outliers_plain=True,
-    )
-"""
-        ),
-        md("## § Courbe d'entraînement"),
-        py(
-            r"""
-log_path = OUT_DIR / "training" / "training_log.csv"
-if log_path.is_file():
-    log_df = pd.read_csv(log_path)
-    display(log_df.tail(10))
-    if "loss_total" in log_df.columns:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(log_df["epoch"], log_df["loss_total"], label="loss_total")
-        for c in ["loss_src", "loss_proto", "loss_kl", "loss_ent", "loss_div", "loss_pres"]:
-            if c in log_df.columns:
-                ax.plot(log_df["epoch"], log_df[c], alpha=0.7, label=c)
-        ax.set_xlabel("epoch")
-        ax.set_title("Losses entraînement adaptateur TPN")
-        ax.legend(fontsize=8)
-        fig.savefig(FIG_DIR / "training_losses.png", dpi=120, bbox_inches="tight")
-        plt.show()
-else:
-    print("training/training_log.csv absent — relancer jobs/run_tpn_macro_transfer.sh")
+        print(f"{macro}: fichier absent")
 """
         ),
     ]

@@ -53,6 +53,57 @@ def _resolve_output_dir(base_method: str, corpus: str, output_dir: Optional[str]
     )
 
 
+def _load_or_encode_initial_embeddings(
+    model: FullEncoderTPNModel,
+    *,
+    texts_source: Sequence[str],
+    texts_target: Sequence[str],
+    batch_size_source: int,
+    batch_size_target: int,
+    init_dir: Path,
+    reuse_initial_embeddings: bool,
+    force_reencode_initial: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    source_path = init_dir / "source_projected.npy"
+    target_path = init_dir / "target_projected.npy"
+    can_reuse = (
+        reuse_initial_embeddings
+        and not force_reencode_initial
+        and source_path.is_file()
+        and target_path.is_file()
+    )
+    if can_reuse:
+        logging.getLogger(__name__).info(
+            "TPN init cache hit: loading %s and %s",
+            source_path,
+            target_path,
+        )
+        return np.load(source_path), np.load(target_path)
+
+    if force_reencode_initial:
+        logging.getLogger(__name__).info("TPN init cache bypass: force_reencode_initial=true")
+    elif not reuse_initial_embeddings:
+        logging.getLogger(__name__).info("TPN init cache disabled: reuse_initial_embeddings=false")
+    else:
+        logging.getLogger(__name__).info("TPN init cache miss: projected embeddings not found")
+
+    source_init = encode_texts_corpus(
+        model,
+        list(texts_source),
+        batch_size=batch_size_source,
+        log_label="source_initial",
+    )
+    target_init = encode_texts_corpus(
+        model,
+        list(texts_target),
+        batch_size=batch_size_target,
+        log_label="target_initial",
+    )
+    np.save(source_path, source_init)
+    np.save(target_path, target_init)
+    return source_init, target_init
+
+
 def _apply_cli_overrides(cfg: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
     out = dict(cfg)
     method = dict(out.get("method") or {})
@@ -166,20 +217,18 @@ def main() -> None:
     # Embeddings init pour analyses/BERTopic mixed initial vs adapted
     init_dir = out_dir / "embeddings"
     init_dir.mkdir(parents=True, exist_ok=True)
-    source_init = encode_texts_corpus(
+    reuse_initial_embeddings = bool(full_cfg.get("reuse_initial_embeddings", True))
+    force_reencode_initial = bool(full_cfg.get("force_reencode_initial", False))
+    source_init, target_init = _load_or_encode_initial_embeddings(
         model,
-        source_df[text_col_s].astype(str).tolist(),
-        batch_size=int(full_cfg.get("source_batch_size", 16)),
-        log_label="source_initial",
+        texts_source=source_df[text_col_s].astype(str).tolist(),
+        texts_target=target_df[text_col_t].astype(str).tolist(),
+        batch_size_source=int(full_cfg.get("source_batch_size", 16)),
+        batch_size_target=int(full_cfg.get("target_batch_size", 16)),
+        init_dir=init_dir,
+        reuse_initial_embeddings=reuse_initial_embeddings,
+        force_reencode_initial=force_reencode_initial,
     )
-    target_init = encode_texts_corpus(
-        model,
-        target_df[text_col_t].astype(str).tolist(),
-        batch_size=int(full_cfg.get("target_batch_size", 16)),
-        log_label="target_initial",
-    )
-    np.save(init_dir / "source_projected.npy", source_init)
-    np.save(init_dir / "target_projected.npy", target_init)
 
     result = train_tpn_full_encoder(
         model=model,
@@ -240,6 +289,8 @@ def main() -> None:
         "source_data_csv": source_data_csv,
         "target_data_csv": target_data_csv,
         "skip_bertopic": skip_bertopic,
+        "reuse_initial_embeddings": reuse_initial_embeddings,
+        "force_reencode_initial": force_reencode_initial,
         "bertopic_summary": bertopic_summary,
         "train_result": result,
     }

@@ -1,4 +1,4 @@
-"""Génère notebooks/06_macro_transfer_topics.ipynb (lecture seule, corpus test configurable)."""
+"""Génère notebooks/06_macro_transfer_topics.ipynb (baseline Frozen Source Prototypes)."""
 
 from __future__ import annotations
 
@@ -37,14 +37,15 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 06 — Transfert macro TPN + topics intra-macro (corpus test)
+# 06 — Frozen Source Prototypes + topics intra-macro
 
-Comparaison **TPN-SCGM** vs **TPN-SoftTriple** (`output_test/<corpus>/macro_transfer/tpn_<encodeur>/`) :
-- Gating macro adapté (`transfer/metadata_with_tpn_macro_probs.csv`, `transfer_metrics_adapted.json`)
-- Topics **BERTopic** par macro + libellés OpenAI (`theme_label`)
-- Cartes **UMAP + DataMapPlot** (embeddings `target_adapted.npy`)
+Notebook orienté baseline **Frozen Source Prototypes** :
+- prédictions macro : `transfer/target_macro_predictions.csv`
+- prototypes source : `transfer/source_prototypes.csv`
+- métriques : `transfer/metrics.json` (si labels cible)
+- BERTopic inputs : `transfer/bertopic_input_all.csv` et `transfer/bertopic_input_<macro>.csv`
 
-**Prérequis** : lancer les deux encodeurs, ex. `BASE_METHOD=scgm_text` puis `BASE_METHOD=softtriple` via `jobs/run_tpn_macro_transfer.sh`.
+**Prérequis** : exécuter `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml`.
 """
         ),
         py(
@@ -57,259 +58,135 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 
 from safer_core.test_corpus import resolve_test_corpus, macro_transfer_output_dir
+from macro_transfer.notebook_viz import (
+    load_fsp_run_artifacts,
+    plot_fsp_distribution_histograms,
+    plot_fsp_pred_macro_distribution,
+    plot_fsp_distance_boxplot,
+    plot_fsp_confusion_heatmap,
+    compute_fsp_confidence_calibration,
+    get_fsp_top_confident_errors,
+)
 
 # --- Parameters (modifier ici ou via papermill) ---
 TEST_CORPUS = "metallurgie"
-CONFIDENCE_THRESHOLD = 0.5  # filtre q_conf pour cartes topics
-UMAP_MAX_POINTS = 8000
-TOPIC_UMAP_MAX_POINTS = 4000
-USE_DATAMAP = True
-PLOT_MACROS = None  # None → toutes (A0, A1, B, C) ; ou liste ex. ["A1", "B"]
-RUN_PCA_TSNE_PER_MACRO = True
+TOP_ERRORS_K = 20
 
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-SCGM_DIR = macro_transfer_output_dir("tpn_scgm_text", _spec.id, anchor=TEXT_ROOT)
-SOFT_DIR = macro_transfer_output_dir("tpn_softtriple", _spec.id, anchor=TEXT_ROOT)
-FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_tpn_macro_{_spec.id}"
+OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes", _spec.id, anchor=TEXT_ROOT)
+FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_fsp_macro_{_spec.id}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 print(f"Corpus test : {_spec.display_name} ({_spec.id})")
-print("TPN-SCGM :", SCGM_DIR)
-print("TPN-SoftTriple :", SOFT_DIR)
+print("Frozen Source Prototypes :", OUT_DIR)
 
 sns.set_theme(style="whitegrid")
 """
         ),
-        md("## § Transfert macro"),
+        md("## § Chargement artefacts"),
         py(
             r"""
-def load_transfer(root: Path, label: str):
-    tdir = root / "transfer"
-    metrics_path = tdir / "transfer_metrics_adapted.json"
-    meta_path = tdir / "metadata_with_tpn_macro_probs.csv"
-    if not metrics_path.is_file():
-        print(f"[{label}] absent:", metrics_path)
-        return None, None
-    with open(metrics_path, encoding="utf-8") as f:
-        metrics = json.load(f)
-    meta = pd.read_csv(meta_path) if meta_path.is_file() else None
-    return metrics, meta
-
-rows = []
-for label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    m, _ = load_transfer(root, label)
-    if m:
-        rows.append({
-            "method": label,
-            "n_eval": m.get("n_eval"),
-            "accuracy": m.get("accuracy"),
-            "macro_f1": m.get("macro_f1"),
-            "balanced_accuracy": m.get("balanced_accuracy"),
-            "mean_q_conf": m.get("mean_q_conf"),
-        })
-transfer_df = pd.DataFrame(rows)
-display(transfer_df)
+ART = load_fsp_run_artifacts(OUT_DIR)
+pred = ART.predictions.copy()
+protos = ART.prototypes.copy()
+metrics = ART.metrics or {}
+print("n target:", len(pred))
+print("n prototypes:", len(protos))
+display(protos.head())
+if metrics:
+    display(pd.DataFrame([metrics]))
+else:
+    print("metrics.json absent (normal si labels cible indisponibles).")
 """
         ),
         py(
             r"""
-for label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    m, meta = load_transfer(root, label)
-    if meta is None or "pred_label" not in meta.columns:
-        continue
+required = {"pred_macro", "confidence"}
+missing = sorted(required.difference(pred.columns))
+if missing:
+    raise KeyError(f"Colonnes manquantes dans target_macro_predictions.csv: {missing}")
+display(pred.head(5))
+"""
+        ),
+        md("## § Graphes FSP principaux"),
+        py(
+            r"""
+plot_fsp_pred_macro_distribution(pred, fig_dir=FIG_DIR)
+plot_fsp_distribution_histograms(pred, fig_dir=FIG_DIR)
+plot_fsp_distance_boxplot(pred, fig_dir=FIG_DIR)
+"""
+        ),
+        md("## § Calibration confiance et erreurs"),
+        py(
+            r"""
+calib = compute_fsp_confidence_calibration(pred)
+if calib is not None and not calib.empty:
+    display(calib)
     fig, ax = plt.subplots(figsize=(6, 4))
-    ax.hist(meta["q_conf"].dropna(), bins=30, color="steelblue", edgecolor="white")
-    ax.axvline(0.5, color="crimson", ls="--", label="seuil 0.5")
-    ax.set_title(f"Confiance macro — {label} ({TEST_CORPUS})")
-    ax.set_xlabel("q_conf = max_m p(m|u)")
-    ax.legend()
-    fig.savefig(FIG_DIR / f"hist_q_conf_{label.lower()}.png", dpi=120, bbox_inches="tight")
+    ax.plot(calib["mean_confidence"], calib["accuracy"], "o-")
+    ax.plot([0, 1], [0, 1], "--", color="gray")
+    ax.set_xlabel("confidence moyenne (bin)")
+    ax.set_ylabel("accuracy (bin)")
+    ax.set_title("Calibration confiance (quantiles)")
+    fig.savefig(FIG_DIR / "calibration_confidence_vs_accuracy.png", dpi=120, bbox_inches="tight")
     plt.show()
+else:
+    print("Calibration non disponible (true_macro absent).")
+
+err = get_fsp_top_confident_errors(pred, top_k=TOP_ERRORS_K)
+if err.empty:
+    print("Pas d'erreurs confiantes (ou true_macro absent).")
+else:
+    cols = [c for c in ["sentence", "true_macro", "pred_macro", "confidence", "margin", "entropy"] if c in err.columns]
+    display(err[cols])
 """
         ),
-        md("## § Tableau récapitulatif topics (corpus test)"),
+        md("## § Matrice de confusion / report classification"),
         py(
             r"""
-from macro_transfer.report_tables import load_macro_topic_stats
-from macro_transfer.topics_export import format_macro_topic_stats_display
+if ART.confusion is not None and not ART.confusion.empty:
+    display(ART.confusion)
+    plot_fsp_confusion_heatmap(ART.confusion, fig_dir=FIG_DIR)
+else:
+    print("confusion_matrix.csv absent.")
 
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    stats = load_macro_topic_stats(root)
-    if stats.empty:
-        print(f"[{method_label}] macro_topic_stats absent — relancer jobs/run_tpn_macro_transfer.sh")
-        continue
-    print(f"\n=== {method_label} — topics par macro ({TEST_CORPUS}) ===")
-    display(format_macro_topic_stats_display(stats))
+if ART.classification_report is not None and not ART.classification_report.empty:
+    display(ART.classification_report)
+else:
+    print("classification_report.csv absent.")
 """
         ),
-        md("## § Topics BERTopic"),
+        md("## § Inputs BERTopic (fichiers transfer/)"),
         py(
             r"""
-def load_topics(root: Path):
-    p = root / "topics_bertopic" / "themes_by_macro.csv"
-    return pd.read_csv(p) if p.is_file() else pd.DataFrame()
+bertopic_all = OUT_DIR / "transfer" / "bertopic_input_all.csv"
+if bertopic_all.is_file():
+    df_all = pd.read_csv(bertopic_all)
+    print("bertopic_input_all.csv:", len(df_all), "lignes")
+    display(df_all.head())
+else:
+    print("bertopic_input_all.csv absent.")
 
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    summary_path = root / "summary" / "topics_summary.csv"
-    if summary_path.is_file():
-        print("===", method_label, "— résumé topics ===")
-        display(pd.read_csv(summary_path))
-    th = load_topics(root)
-    if len(th):
-        print(method_label, "BERTopic — effectifs par macro")
-        display(th.groupby("macro")["n_units"].sum().reset_index())
+for macro in ("A0", "A1", "B", "C"):
+    p = OUT_DIR / "transfer" / f"bertopic_input_{macro}.csv"
+    if p.is_file():
+        d = pd.read_csv(p)
+        print(f"{p.name}: {len(d)} lignes")
+    else:
+        print(f"{p.name}: absent")
 """
         ),
+        md("## § Fichiers attendus / robustesse"),
         py(
             r"""
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    th = load_topics(root)
-    if len(th) and "theme_label" in th.columns:
-        print(f"\n{method_label} — libellés (bertopic.representation.OpenAI)")
-        cols = ["macro", "topic_id", "n_units", "theme_label", "top_words"]
-        display(th[[c for c in cols if c in th.columns]].head(12))
-    elif len(th) and "top_words" in th.columns:
-        print(f"\n{method_label} — top_words (sans theme_label)")
-        cols = ["macro", "topic_id", "n_units", "top_words"]
-        display(th[[c for c in cols if c in th.columns]].head(12))
-"""
-        ),
-        md("## § Qualité (support, topics vides)"),
-        py(
-            r"""
-quality_rows = []
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    th = load_topics(root)
-    if not len(th):
-        continue
-    quality_rows.append({
-        "method": method_label,
-        "n_topics": th["topic_id"].nunique(),
-        "n_empty": int((th["n_units"] == 0).sum()),
-        "min_support": int(th["n_units"].min()),
-        "median_support": float(th["n_units"].median()),
-    })
-display(pd.DataFrame(quality_rows))
-"""
-        ),
-        md(
-            r"""
-## § Cartes 2D — topics avec libellés (`theme_label`)
-
-Embeddings : `embeddings/target_adapted.npy`. Assignations : `topics_bertopic/assignments.csv` + `themes_by_macro.csv`.
-
-**Important** : la carte « macro seule » (A0, A1, B, C) ne montre **pas** les libellés de topics. Les cellules ci-dessous utilisent **`theme_label`** (colonne OpenAI / BERTopic) sur **chaque topic** — format `A1·T5: Absence de protection…`.
-
-- **Globale topics** : tous les topics assignés (TPN-SCGM puis TPN-SoftTriple)
-- **Comparaison** : panneau 1×2 TPN-SCGM vs TPN-SoftTriple (scatter + centroïdes annotés)
-- **Par macro** : zoom intra-macro (optionnel, section suivante)
-- **Macro seule** (`m_hat`) : section optionnelle en fin de notebook
-"""
-        ),
-        py(
-            r"""
-from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.notebook_viz import (
-    load_run_artifacts,
-    plot_global_embedding_map,
-    plot_global_topics_compare_methods,
-    plot_global_topics_datamap,
-    plot_topics_per_macro,
-)
-
-_macros = list(MACRO_NAMES) if PLOT_MACROS is None else list(PLOT_MACROS)
-
-
-def _load_artifacts_or_none(method_label: str, root: Path):
-    try:
-        art = load_run_artifacts(root)
-        print(f"[{method_label}] OK — {len(art.z)} vecteurs, {root}")
-        return art
-    except FileNotFoundError as exc:
-        print(f"[{method_label}] carte 2D ignorée : {exc}")
-        return None
-
-
-ARTIFACTS = {}
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    ARTIFACTS[method_label] = _load_artifacts_or_none(method_label, root)
-"""
-        ),
-        py(
-            r"""
-# Libellés topics (theme_label) — une carte DataMapPlot par méthode
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    art = ARTIFACTS.get(method_label)
-    if art is None:
-        continue
-    method_fig = FIG_DIR / method_label.lower()
-    method_fig.mkdir(parents=True, exist_ok=True)
-    print(f"\n=== Topics + theme_label — {method_label} ===")
-    plot_global_topics_datamap(
-        art,
-        algo_tag=method_label,
-        confidence_threshold=CONFIDENCE_THRESHOLD,
-        max_points=UMAP_MAX_POINTS,
-        fig_dir=method_fig,
-        use_datamap=USE_DATAMAP,
-        label_font_size=7,
-    )
-"""
-        ),
-        py(
-            r"""
-# TPN-SCGM vs TPN-SoftTriple côte à côte (même seuil q_conf)
-_compare = {k: v for k, v in ARTIFACTS.items() if v is not None}
-if _compare:
-    plot_global_topics_compare_methods(
-        _compare,
-        confidence_threshold=CONFIDENCE_THRESHOLD,
-        max_points=UMAP_MAX_POINTS,
-        seed=42,
-        fig_dir=FIG_DIR,
-        use_datamap=USE_DATAMAP,
-    )
-"""
-        ),
-        md("### Option — carte macro seule (`m_hat`, sans libellés topics)"),
-        py(
-            r"""
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    art = ARTIFACTS.get(method_label)
-    if art is None:
-        continue
-    method_fig = FIG_DIR / method_label.lower()
-    print(f"\n=== Macro m_hat seule — {method_label} ===")
-    plot_global_embedding_map(
-        art,
-        max_points=UMAP_MAX_POINTS,
-        confidence_threshold=CONFIDENCE_THRESHOLD,
-        fig_dir=method_fig,
-        use_datamap=USE_DATAMAP,
-    )
-"""
-        ),
-        py(
-            r"""
-for method_label, root in (("TPN-SCGM", SCGM_DIR), ("TPN-SoftTriple", SOFT_DIR)):
-    art = ARTIFACTS.get(method_label)
-    if art is None:
-        continue
-    method_fig = FIG_DIR / method_label.lower()
-    print(f"\n=== Topics intra-macro — {method_label} ===")
-    for macro in _macros:
-        print(f"--- {method_label} / {macro} ---")
-        plot_topics_per_macro(
-            art,
-            topic_subdir="topics_bertopic",
-            algo_tag=method_label,
-            macro=macro,
-            confidence_threshold=CONFIDENCE_THRESHOLD,
-            max_points=TOPIC_UMAP_MAX_POINTS,
-            fig_dir=method_fig,
-            use_datamap=USE_DATAMAP,
-            run_pca_tsne=RUN_PCA_TSNE_PER_MACRO,
-        )
+expected = [
+    OUT_DIR / "transfer" / "target_macro_predictions.csv",
+    OUT_DIR / "transfer" / "source_prototypes.csv",
+    OUT_DIR / "transfer" / "metrics.json",
+    OUT_DIR / "transfer" / "bertopic_input_all.csv",
+]
+for p in expected:
+    print(("OK " if p.is_file() else "MISSING "), p)
 print("Figures :", FIG_DIR)
 """
         ),

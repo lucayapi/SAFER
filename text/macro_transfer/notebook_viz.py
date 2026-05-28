@@ -34,6 +34,19 @@ class RunArtifacts:
     topics_bertopic_dir: Path
 
 
+@dataclass
+class FSPRunArtifacts:
+    """Artefacts d'un run Frozen Source Prototypes."""
+
+    out_dir: Path
+    transfer_dir: Path
+    predictions: pd.DataFrame
+    prototypes: pd.DataFrame
+    metrics: Dict[str, Any]
+    confusion: Optional[pd.DataFrame]
+    classification_report: Optional[pd.DataFrame]
+
+
 def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
     """Charge embeddings TPN adaptés, metadata gating et métriques adaptées."""
     root = Path(out_dir).resolve()
@@ -67,6 +80,219 @@ def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
         transfer_metrics=metrics,
         topics_bertopic_dir=root / "topics_bertopic",
     )
+
+
+def _read_optional_csv(path: Path) -> Optional[pd.DataFrame]:
+    if not path.is_file():
+        return None
+    return pd.read_csv(path)
+
+
+def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
+    """Charge les sorties baseline Frozen Source Prototypes."""
+    root = Path(out_dir).resolve()
+    transfer = root / "transfer"
+    preds_path = transfer / "target_macro_predictions.csv"
+    protos_path = transfer / "source_prototypes.csv"
+    if not preds_path.is_file():
+        raise FileNotFoundError(f"Prédictions FSP manquantes : {preds_path}")
+    if not protos_path.is_file():
+        raise FileNotFoundError(f"Prototypes FSP manquants : {protos_path}")
+    metrics: Dict[str, Any] = {}
+    metrics_path = transfer / "metrics.json"
+    if metrics_path.is_file():
+        with open(metrics_path, encoding="utf-8") as f:
+            metrics = json.load(f)
+    return FSPRunArtifacts(
+        out_dir=root,
+        transfer_dir=transfer,
+        predictions=pd.read_csv(preds_path),
+        prototypes=pd.read_csv(protos_path),
+        metrics=metrics,
+        confusion=_read_optional_csv(transfer / "confusion_matrix.csv"),
+        classification_report=_read_optional_csv(transfer / "classification_report.csv"),
+    )
+
+
+def get_fsp_macro_columns(predictions: pd.DataFrame) -> tuple[List[str], List[str]]:
+    """Retourne colonnes prob_* et dist_* présentes."""
+    prob_cols = sorted([c for c in predictions.columns if c.startswith("prob_")])
+    dist_cols = sorted([c for c in predictions.columns if c.startswith("dist_")])
+    return prob_cols, dist_cols
+
+
+def ensure_fsp_required_columns(predictions: pd.DataFrame, required: List[str]) -> None:
+    """Valide la présence de colonnes attendues pour visualisation."""
+    missing = [c for c in required if c not in predictions.columns]
+    if missing:
+        raise KeyError(f"Colonnes FSP manquantes: {missing}")
+
+
+def plot_fsp_distribution_histograms(
+    predictions: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+) -> None:
+    """Histogrammes confidence/margin/entropy si colonnes disponibles."""
+    fig_dir = Path(fig_dir) if fig_dir else None
+    for col, title in (
+        ("confidence", "Distribution de confidence"),
+        ("margin", "Distribution de margin"),
+        ("entropy", "Distribution de entropy"),
+    ):
+        if col not in predictions.columns:
+            print(f"(absent) {col}")
+            continue
+        fig, ax = plt.subplots(figsize=(7, 4))
+        ax.hist(
+            pd.to_numeric(predictions[col], errors="coerce").dropna(),
+            bins=40,
+            color="steelblue",
+            edgecolor="white",
+        )
+        ax.set_title(title)
+        ax.set_xlabel(col)
+        plt.tight_layout()
+        if fig_dir:
+            fig.savefig(fig_dir / f"hist_{col}.png", dpi=140, bbox_inches="tight")
+        plt.show()
+        plt.close(fig)
+
+
+def plot_fsp_pred_macro_distribution(
+    predictions: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+) -> None:
+    """Barplot de la répartition des macros prédites."""
+    if "pred_macro" not in predictions.columns:
+        print("(absent) pred_macro")
+        return
+    counts = predictions["pred_macro"].astype(str).value_counts().sort_index()
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.bar(counts.index, counts.values, color="#4c78a8")
+    ax.set_title("Répartition des macros prédites")
+    ax.set_xlabel("pred_macro")
+    ax.set_ylabel("n")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / "pred_macro_distribution.png", dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_fsp_confusion_heatmap(
+    confusion_df: pd.DataFrame,
+    *,
+    title: str = "Matrice de confusion",
+    fig_dir: Optional[Path] = None,
+) -> None:
+    """Heatmap confusion_matrix.csv si disponible."""
+    if confusion_df is None or confusion_df.empty:
+        print("Matrice de confusion absente.")
+        return
+    cm = confusion_df.copy()
+    if "true_macro" in cm.columns:
+        cm = cm.set_index("true_macro")
+    import seaborn as sns
+
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt=".0f", cmap="Blues", ax=ax)
+    ax.set_title(title)
+    ax.set_xlabel("Prédit")
+    ax.set_ylabel("Vrai")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / "confusion_heatmap.png", dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_fsp_distance_boxplot(
+    predictions: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+) -> None:
+    """Boxplot des distances par macro prédite."""
+    if "pred_macro" not in predictions.columns:
+        print("(absent) pred_macro")
+        return
+    _, dist_cols = get_fsp_macro_columns(predictions)
+    if not dist_cols:
+        print("(absent) colonnes dist_*")
+        return
+    long_df = predictions.melt(
+        id_vars=["pred_macro"],
+        value_vars=dist_cols,
+        var_name="dist_macro",
+        value_name="distance",
+    )
+    import seaborn as sns
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.boxplot(data=long_df, x="pred_macro", y="distance", hue="dist_macro", ax=ax)
+    ax.set_title("Distances aux prototypes par macro prédite")
+    ax.legend(title="distance")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / "distance_boxplot_by_pred_macro.png", dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def compute_fsp_confidence_calibration(
+    predictions: pd.DataFrame,
+    *,
+    true_col: str = "true_macro",
+    pred_col: str = "pred_macro",
+    conf_col: str = "confidence",
+    n_bins: int = 10,
+) -> Optional[pd.DataFrame]:
+    """Calibration simple: accuracy par quantile de confidence."""
+    if true_col not in predictions.columns or pred_col not in predictions.columns or conf_col not in predictions.columns:
+        return None
+    df = predictions[[true_col, pred_col, conf_col]].copy()
+    df = df.dropna()
+    if df.empty:
+        return None
+    df["is_correct"] = (df[true_col].astype(str) == df[pred_col].astype(str)).astype(float)
+    df["bin"] = pd.qcut(df[conf_col].astype(float), q=min(n_bins, len(df)), duplicates="drop")
+    out = (
+        df.groupby("bin", observed=True)
+        .agg(
+            n=("is_correct", "size"),
+            mean_confidence=(conf_col, "mean"),
+            accuracy=("is_correct", "mean"),
+        )
+        .reset_index()
+    )
+    return out
+
+
+def get_fsp_top_confident_errors(
+    predictions: pd.DataFrame,
+    *,
+    true_col: str = "true_macro",
+    pred_col: str = "pred_macro",
+    conf_col: str = "confidence",
+    top_k: int = 20,
+) -> pd.DataFrame:
+    """Erreurs les plus confiantes (diagnostic)."""
+    if true_col not in predictions.columns or pred_col not in predictions.columns:
+        return pd.DataFrame()
+    out = predictions.copy()
+    out = out.loc[out[true_col].astype(str) != out[pred_col].astype(str)]
+    if out.empty:
+        return out
+    if conf_col in out.columns:
+        out = out.sort_values(conf_col, ascending=False)
+    return out.head(top_k)
 
 
 def _theme_label_map(themes: pd.DataFrame, *, max_chars: int = 52) -> Dict[Tuple[str, int], str]:
