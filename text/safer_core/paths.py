@@ -33,7 +33,7 @@ _LEGACY_OUTPUTS_PREFIX = "outputs/"
 _LEGACY_TO_OUTPUT: Dict[str, str] = {
     "runs/scgm_text_qwen06": "output/scgm_text",
     "runs/scgm_text_qwen06_notebook": "output/scgm_text",
-    "outputs/bn_btp_from_scgm": "output/scgm_text/bn_staging",
+    "outputs/bn_btp_from_scgm": "output/scgm_text/bn_results",
     "outputs/topic_comparison": "output/comparisons/topics_legacy",
     "resultats/scgm_text": "output/scgm_text",
     "resultats/raw_embedding": "output/raw_embedding",

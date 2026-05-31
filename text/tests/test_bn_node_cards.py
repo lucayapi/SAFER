@@ -8,6 +8,8 @@ from pathlib import Path
 import pandas as pd
 
 from bn_pipeline.bn_visualization import (
+    _draw_cpd_node_box,
+    _wrap_node_title,
     build_node_short_title,
     build_node_summary_label,
     cpd_binary_marginal,
@@ -29,9 +31,11 @@ def test_format_node_card():
     card = format_node_card("A1_Defaut_protection", [(0, 0.332), (1, 0.668)])
     lines = card.splitlines()
     assert lines[0] == "A1_Defaut_protection"
-    assert lines[1].startswith("0  ")
-    assert lines[2].startswith("1  ")
+    assert lines[1].startswith("█") or lines[1].startswith("░")
+    assert "33.2%" in lines[1]
+    assert lines[2].startswith("█") or lines[2].startswith("░")
     assert "66.8%" in lines[2]
+    assert not any(line.startswith(("0  ", "1  ", "Absent", "Présent")) for line in lines[1:])
 
 
 def test_build_node_short_title_with_themes():
@@ -105,3 +109,23 @@ def test_cpd_binary_marginal_root():
     assert len(probs) == 2
     assert abs(probs[0][1] + probs[1][1] - 1.0) < 1e-6
     assert abs(probs[0][1] - 0.7) < 1e-6
+
+
+def test_wrap_node_title():
+    wrapped = _wrap_node_title("Intervention de maintenance sur une ligne de production métallique", width=22)
+    lines = wrapped.splitlines()
+    assert len(lines) >= 2
+    assert all(len(line) <= 22 for line in lines)
+
+
+def test_draw_cpd_node_box_title_only():
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(2, 1.5))
+    long_title = "Intervention de maintenance sur une ligne de production métallique"
+    _draw_cpd_node_box(ax, (0.0, 0.0, 1.8, 1.0), long_title, macro="A0", wrap_width=22)
+    assert len(fig.axes) == 1
+    text_obj = ax.texts[0]
+    assert "\n" in text_obj.get_text()
+    assert "maintenance" in text_obj.get_text()
+    plt.close(fig)

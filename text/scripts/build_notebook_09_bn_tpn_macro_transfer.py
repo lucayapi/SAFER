@@ -44,7 +44,7 @@ def main() -> None:
 
 ## 1 — Objectif
 
-Ce notebook construit un **réseau bayésien** à partir des exports **TPN** (`output_test/<TEST_CORPUS>/macro_transfer/tpn_<encodeur>/`). Le staging copie les métadonnées **adaptées** (`metadata_with_tpn_macro_probs.csv`), assignations **BERTopic** intra-macro et thèmes vers `output_test/<TEST_CORPUS>/bn_staging/tpn_<encodeur>/`.
+Ce notebook construit un **réseau bayésien** à partir des exports **TPN** (`output_test/<TEST_CORPUS>/macro_transfer/tpn_<encodeur>/`). Le staging copie les métadonnées **adaptées** (`metadata_with_tpn_macro_probs.csv`), assignations **BERTopic** intra-macro et thèmes vers `output_test/<TEST_CORPUS>/bn_results/tpn_<encodeur>/`.
 
 **Encodeur** : `BASE_METHOD` (`softtriple`, `supcon`, `batch_triplet`, `scgm_text`) — défaut `softtriple`.
 
@@ -99,7 +99,7 @@ Proportion d’arcs présents parmi les couples ordonnés de nœuds (hors boucle
 TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
 BASE_METHOD = "softtriple"  # softtriple | supcon | batch_triplet | scgm_text
 MACRO_TRANSFER_METHOD = ""  # vide → tpn_<BASE_METHOD>
-OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_staging/tpn_<encodeur>/
+OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_results/tpn_<encodeur>/
 MACRO_CONF_THRESHOLD = 0.50
 TOPIC_GAMMA_THRESHOLD = 0.50
 MIN_TOPIC_ACCIDENT_SUPPORT = 20
@@ -146,7 +146,7 @@ import seaborn as sns
 
 from macro_transfer.tpn_encode import tpn_method_name
 from safer_core.paths import resolve_repo_path
-from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
+from safer_core.test_corpus import bn_results_dir, macro_transfer_output_dir
 
 REPO = TEXT_ROOT
 
@@ -157,7 +157,7 @@ _out = str(OUTPUT_DIR).strip()
 if _out:
     OUT_ROOT = resolve_repo_path(_out, REPO)
 else:
-    OUT_ROOT = bn_staging_dir(TEST_CORPUS, anchor=REPO) / _staging_subdir
+    OUT_ROOT = bn_results_dir(TEST_CORPUS, anchor=REPO) / _staging_subdir
 TABLES = OUT_ROOT / "tables"
 FIGURES_STATIC = OUT_ROOT / "figures" / "static"
 FIGURES_INTERACTIVE = OUT_ROOT / "figures" / "interactive"
@@ -201,6 +201,7 @@ from bn_pipeline.bn_structure import (
     learn_macro_constrained_structure,
     learn_unconstrained_structure,
     macro_chain_model,
+    macro_edges_for_export,
 )
 from bn_pipeline.bn_learning import (
     drop_constant_columns,
@@ -354,14 +355,12 @@ from pgmpy.models import BayesianNetwork
 macro_var_map = {f"M_{m}": m for m in ("A0", "A1", "B", "C")}
 if INCLUDE_SEVERITY and "Severity_high" in acc_df.columns:
     macro_var_map["Severity_high"] = "Severity"
-    macro_tpl, macro_edges_tpl = macro_chain_model("Severity_high")
-else:
-    macro_tpl, macro_edges_tpl = macro_chain_model(severity_node=None)
 
-macro_node_list = [n for n in macro_tpl.nodes() if n in acc_df.columns]
+macro_edges_sub = macro_edges_for_export(acc_df, include_severity=bool(INCLUDE_SEVERITY))
+macro_node_list = sorted({n for u, v in macro_edges_sub for n in (u, v)})
 macro_data = acc_df[macro_node_list].copy()
 macro_data, macro_used = drop_constant_columns(macro_data, list(macro_data.columns))
-macro_edges_sub = [(u, v) for (u, v) in macro_tpl.edges() if u in macro_used and v in macro_used]
+macro_edges_sub = [(u, v) for (u, v) in macro_edges_sub if u in macro_used and v in macro_used]
 macro_model = BayesianNetwork(macro_edges_sub)
 macro_edges_export = list(macro_edges_sub)
 macro_model = fit_bn_parameters(
@@ -379,6 +378,12 @@ print("Macro BN — nœuds:", list(macro_model.nodes()))
         md("## 8 — Apprentissage : BN **topics** sous contraintes (HillClimb + BIC)"),
         py(
             r"""
+if "macro_edges_export" not in globals():
+    try:
+        macro_edges_export = list(macro_model.edges())
+    except NameError:
+        macro_edges_export = macro_edges_for_export(acc_df, include_severity=bool(INCLUDE_SEVERITY))
+
 topic_var_map = {str(r["variable"]): str(r["macro"]) for _, r in sel.iterrows()}
 if INCLUDE_SEVERITY and "Severity_high" in acc_df.columns:
     topic_var_map["Severity_high"] = "Severity"

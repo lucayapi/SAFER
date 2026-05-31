@@ -175,10 +175,15 @@ def macro_transfer_output_dir(method: str, corpus_id: Optional[str] = None, *, a
     return (output_test_root(anchor=anchor) / cid / "macro_transfer" / method).resolve()
 
 
-def bn_staging_dir(corpus_id: Optional[str] = None, *, anchor: Optional[Path] = None) -> Path:
-    """Staging BN sur corpus test : ``output_test/<corpus>/bn_staging/``."""
+def bn_results_dir(corpus_id: Optional[str] = None, *, anchor: Optional[Path] = None) -> Path:
+    """Sorties BN sur corpus test : ``output_test/<corpus>/bn_results/``."""
     cid = corpus_id or os.environ.get("TEST_CORPUS") or default_test_corpus_id()
-    return (output_test_root(anchor=anchor) / cid / "bn_staging").resolve()
+    return (output_test_root(anchor=anchor) / cid / "bn_results").resolve()
+
+
+def bn_staging_dir(corpus_id: Optional[str] = None, *, anchor: Optional[Path] = None) -> Path:
+    """Alias rétrocompat → :func:`bn_results_dir`."""
+    return bn_results_dir(corpus_id, anchor=anchor)
 
 
 def target_discovery_dir(method: str, corpus_id: str, *, anchor: Optional[Path] = None) -> Path:

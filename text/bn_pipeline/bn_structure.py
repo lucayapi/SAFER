@@ -270,6 +270,25 @@ def macro_chain_model(severity_node: Optional[str] = "Severity_high") -> Tuple[o
     return BayesianNetwork(edges), edges
 
 
+def macro_edges_for_export(
+    acc_df: pd.DataFrame,
+    *,
+    include_severity: bool,
+) -> List[Tuple[str, str]]:
+    """Arcs du BN macro agrégé (nœuds M_* présents et non constants dans acc_df)."""
+    from bn_pipeline.bn_learning import drop_constant_columns
+
+    if include_severity and "Severity_high" in acc_df.columns:
+        macro_tpl, _ = macro_chain_model("Severity_high")
+    else:
+        macro_tpl, _ = macro_chain_model(severity_node=None)
+    macro_node_list = [n for n in macro_tpl.nodes() if n in acc_df.columns]
+    if not macro_node_list:
+        return []
+    _, macro_used = drop_constant_columns(acc_df[macro_node_list].copy(), list(macro_node_list))
+    return [(u, v) for (u, v) in macro_tpl.edges() if u in macro_used and v in macro_used]
+
+
 def export_edge_tables(
     macro_edges: List[Tuple[str, str]],
     topic_edges: List[Tuple[str, str]],

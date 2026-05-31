@@ -348,8 +348,8 @@ def cpd_binary_marginal(model: Any, node: str) -> List[Tuple[int, float]]:
 
 def format_node_card(title: str, probs: List[Tuple[int, float]], bar_width: int = 10) -> str:
     lines = [title]
-    for state, p in probs:
-        lines.append(f"{state}  {format_prob_bar(p, width=bar_width)}")
+    for _state, p in probs:
+        lines.append(format_prob_bar(p, width=bar_width))
     return "\n".join(lines)
 
 
@@ -448,6 +448,26 @@ _MACRO_COL_X: Dict[str, float] = {
 _MACRO_STACK_ORDER = ("A0", "A1", "B", "C", "Severity")
 
 
+def _wrap_node_title(title: str, width: int = 22) -> str:
+    """Retour à la ligne pour affichage à l'intérieur d'un nœud BN."""
+    clean = re.sub(r"\s+", " ", str(title).strip())
+    if not clean:
+        return ""
+    return textwrap.fill(clean, width=width, break_long_words=False, break_on_hyphens=False)
+
+
+def _node_box_height_for_title(
+    title: str,
+    *,
+    wrap_width: int = 22,
+    line_height: float = 0.22,
+    pad: float = 0.28,
+    min_height: float = 0.72,
+) -> float:
+    n_lines = max(1, len(_wrap_node_title(title, wrap_width).splitlines()))
+    return max(min_height, pad + n_lines * line_height)
+
+
 def _layout_bn_columns_lr(
     nodes: list[str],
     variable_macro_map: Dict[str, str],
@@ -456,6 +476,7 @@ def _layout_bn_columns_lr(
     row_gap: float = 1.4,
     box_width: float = 1.05,
     box_height: float = 0.92,
+    box_heights: Optional[Dict[str, float]] = None,
 ) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, BBox]]:
     """
     Disposition par colonnes macro (A0, A1 | B | C), empilement vertical par topic.
@@ -475,13 +496,16 @@ def _layout_bn_columns_lr(
         if not group:
             continue
         cx = _MACRO_COL_X.get(macro, 2.0) * col_gap
-        n = len(group)
-        for i, node in enumerate(group):
-            cy = (i - (n - 1) / 2.0) * row_gap
+        heights = [float((box_heights or {}).get(node, box_height)) for node in group]
+        total_h = sum(heights) + row_gap * max(0, len(group) - 1)
+        y_cursor = total_h / 2.0
+        for node, h in zip(group, heights):
+            cy = y_cursor - h / 2.0
             x0 = cx - box_width / 2.0
-            y0 = cy - box_height / 2.0
+            y0 = cy - h / 2.0
             pos[node] = (cx, cy)
-            bboxes[node] = (x0, y0, box_width, box_height)
+            bboxes[node] = (x0, y0, box_width, h)
+            y_cursor = y0 - row_gap
 
     return pos, bboxes
 
@@ -501,14 +525,12 @@ def _draw_cpd_node_box(
     ax: plt.Axes,
     bbox: BBox,
     title: str,
-    probs: List[Tuple[Union[int, str], float]],
     *,
     macro: str = "A0",
-    state_labels: Optional[List[str]] = None,
+    wrap_width: int = 22,
 ) -> None:
-    """Boîte blanche + barres horizontales P(état) — style figure article."""
+    """Boîte de nœud BN avec titre centré (retour à la ligne si besoin)."""
     from matplotlib.patches import FancyBboxPatch
-    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
     x0, y0, w, h = bbox
     edge_color = MACRO_COLOR.get(macro, "#888888")
@@ -524,46 +546,19 @@ def _draw_cpd_node_box(
     )
     ax.add_patch(patch)
 
-    title_short = title if len(title) <= 52 else title[:49] + "..."
+    wrapped = _wrap_node_title(title, width=wrap_width)
     ax.text(
         x0 + w / 2.0,
-        y0 + h * 0.94,
-        title_short,
+        y0 + h / 2.0,
+        wrapped,
         ha="center",
-        va="top",
-        fontsize=7.5,
+        va="center",
+        fontsize=7.2,
         fontweight="bold",
         color="#222222",
         zorder=6,
-        wrap=True,
+        linespacing=1.15,
     )
-
-    labels = state_labels or ["0", "1"]
-    if len(labels) < len(probs):
-        labels = [str(s) for s, _ in probs]
-
-    iax = inset_axes(
-        ax,
-        width="88%",
-        height="58%",
-        loc="lower center",
-        bbox_to_anchor=(x0, y0, w, h * 0.78),
-        bbox_transform=ax.transData,
-        borderpad=0.4,
-    )
-    iax.set_facecolor("white")
-    y_pos = np.arange(len(probs))
-    vals = [float(p) for _, p in probs]
-    bar_color = edge_color
-    iax.barh(y_pos, vals, color=bar_color, alpha=0.85, height=0.55)
-    iax.set_xlim(0, 1.0)
-    iax.set_yticks(y_pos)
-    iax.set_yticklabels(labels[: len(probs)], fontsize=7)
-    iax.set_xlabel("P", fontsize=6)
-    iax.tick_params(axis="x", labelsize=6)
-    for spine in iax.spines.values():
-        spine.set_visible(False)
-    iax.grid(axis="x", alpha=0.25, linestyle="--", linewidth=0.5)
 
 
 def _draw_macro_column_bands_lr(
@@ -615,12 +610,12 @@ def plot_bn_graph_cpd_boxes(
     *,
     col_gap: float = 2.4,
     row_gap: float = 1.4,
-    box_width: float = 1.05,
+    box_width: float = 1.75,
     box_height: float = 0.92,
-    state_labels_fr: bool = True,
+    title_wrap_width: int = 22,
 ) -> None:
     """
-    Graphe BN style article : boîtes CPD séparées, colonnes A0/A1 → B → C, flèches bord à bord.
+    Graphe BN style article : nœuds boîtes avec titre, colonnes A0/A1 → B → C, flèches bord à bord.
     """
     from matplotlib.patches import FancyArrowPatch
 
@@ -633,6 +628,17 @@ def plot_bn_graph_cpd_boxes(
     if not nodes:
         return
 
+    if short_title_map is None:
+        short_title_map = build_short_title_map(nodes, themes_df, variable_macro_map)
+
+    box_heights = {
+        n: _node_box_height_for_title(
+            short_title_map.get(str(n), str(n)),
+            wrap_width=title_wrap_width,
+        )
+        for n in nodes
+    }
+
     pos, bboxes = _layout_bn_columns_lr(
         nodes,
         variable_macro_map,
@@ -640,22 +646,24 @@ def plot_bn_graph_cpd_boxes(
         row_gap=row_gap,
         box_width=box_width,
         box_height=box_height,
+        box_heights=box_heights,
     )
-
-    if short_title_map is None:
-        short_title_map = build_short_title_map(nodes, themes_df, variable_macro_map)
-
-    labels = ["Absent", "Présent"] if state_labels_fr else ["0", "1"]
 
     from collections import defaultdict
 
-    by_macro: Dict[str, int] = defaultdict(int)
+    by_macro: Dict[str, list[str]] = defaultdict(list)
     for n in nodes:
-        by_macro[_macro_of_node(n, variable_macro_map)] += 1
-    max_stack = max(by_macro.values()) if by_macro else 1
-    n_cols = sum(1 for m in _MACRO_STACK_ORDER if by_macro.get(m, 0) > 0)
-    fig_w = max(14.0, 2.5 + n_cols * 3.2)
-    fig_h = max(6.0, 1.2 + max_stack * row_gap * 0.95)
+        by_macro[_macro_of_node(n, variable_macro_map)].append(n)
+
+    max_col_h = box_height
+    for group in by_macro.values():
+        heights = [box_heights.get(node, box_height) for node in group]
+        total = sum(heights) + row_gap * max(0, len(heights) - 1)
+        max_col_h = max(max_col_h, total)
+
+    n_cols = sum(1 for m in _MACRO_STACK_ORDER if by_macro.get(m))
+    fig_w = max(14.0, 2.5 + n_cols * 3.5)
+    fig_h = max(6.0, 1.4 + max_col_h * 1.05)
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), facecolor="white")
     ax.set_facecolor("white")
@@ -666,8 +674,7 @@ def plot_bn_graph_cpd_boxes(
     for n in nodes:
         macro = _macro_of_node(n, variable_macro_map)
         title_n = short_title_map.get(str(n), str(n))
-        probs = cpd_binary_marginal(model, str(n))
-        _draw_cpd_node_box(ax, bboxes[n], title_n, probs, macro=macro, state_labels=labels)
+        _draw_cpd_node_box(ax, bboxes[n], title_n, macro=macro, wrap_width=title_wrap_width)
 
     for u, v in g.edges():
         if u not in bboxes or v not in bboxes:
@@ -698,7 +705,7 @@ def plot_bn_graph_cpd_boxes(
     xs = [pos[n][0] for n in nodes]
     ys = [pos[n][1] for n in nodes]
     pad_x = box_width + col_gap * 0.35
-    pad_y = box_height + row_gap * 0.45
+    pad_y = max(box_heights.values(), default=box_height) + row_gap * 0.45
     ax.set_xlim(min(xs) - pad_x, max(xs) + pad_x)
     ax.set_ylim(min(ys) - pad_y, max(ys) + pad_y)
     ax.axis("off")

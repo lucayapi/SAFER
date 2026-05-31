@@ -50,7 +50,7 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 
 | Chemin | Contenu |
 |--------|---------|
-| `output/scgm_text/` | `checkpoints/`, `embeddings/`, `assignments/`, `topics/`, `metrics/`, `figures/`, `bn_staging/` |
+| `output/scgm_text/` | `checkpoints/`, `embeddings/`, `assignments/`, `topics/`, `metrics/`, `figures/`, `bn_results/` |
 | `output/raw_embedding/`, `batch_triplet/`, `softtriple/`, `supcon/` | Méthodes comparées |
 | `output/comparisons/` | Tableaux et figures agrégés (`collect_results.py`) |
 
@@ -169,7 +169,7 @@ Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 01 
 | `output_test/<corpus>/<method>/` | Métriques / projections **test** (`metrics_geometry_test.csv`, …) |
 | `output_test/<corpus>/raw_embedding/` | Embedding brut test |
 | `output_test/<corpus>/macro_transfer/<method>/` | Transfert macro + topics BERTopic (`theme_label` via `bertopic.representation` par défaut) |
-| `output_test/<corpus>/bn_staging/` | Sorties notebook 04 (BN) |
+| `output_test/<corpus>/bn_results/` | Sorties notebook 04 (BN) |
 
 Les anciens dossiers `resultats/` et `resultats_test/` peuvent être renommés en `output/` et `output_test/` (ou relancer les jobs). Les chemins legacy `resultats/...` sont redirigés vers `output/...` si `SAFER_LEGACY_PATHS=1`.
 
@@ -230,7 +230,7 @@ Sorties principales :
 
 ## Réseaux bayésiens
 
-- `notebooks/04_bayesian_network_macro_transfer.ipynb` — staging depuis **macro_transfer** (corpus test), sortie `output_test/<TEST_CORPUS>/bn_staging/`
+- `notebooks/04_bayesian_network_macro_transfer.ipynb` — staging depuis **macro_transfer** (corpus test), sortie `output_test/<TEST_CORPUS>/bn_results/` : graphe BN statique (`figures/static/bn_network.png`), interactif Plotly (`figures/interactive/bn_network.html`), scénarios récurrents (`tables/recurring_scenarios.csv`)
 
 Dépendances : `numpy<2`, `pgmpy>=0.1.23,<1.0`. Utiliser le même interpréteur Python que le noyau Jupyter (`import sys; print(sys.executable)`).
 
@@ -243,7 +243,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — BTP **K-fold (μ±σ)**, BTP fit final, test métallurgie ; η² / RankMe |
 | `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_tpn_macro_transfer.sh`. |
-| `04_bayesian_network_macro_transfer.ipynb` | BN sur corpus test (staging **macro_transfer** → `output_test/<TEST_CORPUS>/bn_staging/`) |
+| `04_bayesian_network_macro_transfer.ipynb` | BN sur corpus test — graphe statique/interactif + tableau scénarios récurrents (A0→…→C) |
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |

@@ -42,3 +42,14 @@ def test_builder_04_defaults_to_fsp_scgm():
     src = _read(TEXT_ROOT / "scripts" / "build_notebook_04_bn_macro_transfer.py")
     assert "frozen_source_prototypes/scgm" in src
     assert "run_frozen_proto_scgm.sh" in src
+    assert "bn_network.png" in src
+    assert "bn_network.html" in src
+    assert "recurring_scenarios.csv" in src
+    assert "enrich_scenarios_table" in src
+    assert "run_bn_queries" not in src
+    assert "export_node_cards_png" not in src
+    assert "try_pyvis_bn_graph" not in src
+    assert "write_bn_report" not in src
+    assert "LEARN_UNCONSTRAINED_TOPIC" not in src
+    assert "Inférence (VariableElimination)" not in src
+    assert "Configurations typiques de co-présence" not in src

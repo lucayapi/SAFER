@@ -12,7 +12,7 @@ import pandas as pd
 
 from macro_transfer.constants import MACRO_NAMES
 from safer_core.paths import find_repo_root, resolve_repo_path
-from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
+from safer_core.test_corpus import bn_results_dir, macro_transfer_output_dir
 
 TOPICS_SUBDIR = "topics_bertopic"
 
@@ -30,7 +30,7 @@ METADATA_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/raw": _FSP_METADATA,
 }
 
-# Sous-dossier bn_staging par défaut (évite d'écraser scgm/softtriple).
+# Sous-dossier bn_results par défaut (évite d'écraser scgm/softtriple).
 BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
     "tpn_full_softtriple": "tpn_full_softtriple",
     "tpn_full_supcon": "tpn_full_supcon",
@@ -137,7 +137,7 @@ def stage_bn_exports_from_macro_transfer(
     repo_root: Optional[Path] = None,
 ) -> Path:
     """
-    Copie les artefacts macro_transfer vers ``bn_staging/staging/bn_exports/``.
+    Copie les artefacts macro_transfer vers ``bn_results/staging/bn_exports/``.
 
     Entrées attendues sous ``output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/`` :
     ``transfer/metadata_with_tpn_macro_probs.csv``, ``topics_bertopic/assignments.csv``,
@@ -149,7 +149,7 @@ def stage_bn_exports_from_macro_transfer(
     if output_dir is not None:
         out_root = resolve_repo_path(output_dir, root)
     else:
-        out_root = bn_staging_dir(corpus_id, anchor=root)
+        out_root = bn_results_dir(corpus_id, anchor=root)
         sub = BN_STAGING_SUBDIR_BY_METHOD.get(method)
         if sub:
             out_root = out_root / sub

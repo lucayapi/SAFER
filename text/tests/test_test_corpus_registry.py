@@ -36,11 +36,18 @@ def test_unknown_corpus_raises():
         resolve_test_corpus("nonexistent_corpus_xyz", anchor=TEXT_ROOT)
 
 
-def test_bn_staging_dir():
-    from safer_core.test_corpus import bn_staging_dir
+def test_bn_results_dir():
+    from safer_core.test_corpus import bn_results_dir
+
+    p = bn_results_dir("metallurgie", anchor=TEXT_ROOT)
+    assert p.parts[-2:] == ("metallurgie", "bn_results")
+
+
+def test_bn_staging_dir_alias():
+    from safer_core.test_corpus import bn_results_dir, bn_staging_dir
 
     p = bn_staging_dir("metallurgie", anchor=TEXT_ROOT)
-    assert p.parts[-2:] == ("metallurgie", "bn_staging")
+    assert p == bn_results_dir("metallurgie", anchor=TEXT_ROOT)
 
 
 def test_output_test_layout():

@@ -12,6 +12,7 @@ import pandas as pd
 
 from bn_pipeline.aggregate_bn_variables import _macro_topic_column_name
 from bn_pipeline.bn_visualization import _macro_topic_from_node, _macro_topic_to_theme_summary
+from bn_pipeline.scenario_mining import sort_topics_by_macro_order
 
 _SCENARIO_SYSTEM = (
     "Tu es expert en prévention des risques professionnels (accidents du travail, BTP, industrie). "
@@ -42,6 +43,7 @@ def _topics_present_to_chain(
     if not raw:
         return ""
     tokens = [t.strip() for t in re.split(r"\s*\+\s*", raw) if t.strip()]
+    tokens = list(sort_topics_by_macro_order(tokens))
     labels: List[str] = []
     for tok in tokens:
         if tok in label_map:

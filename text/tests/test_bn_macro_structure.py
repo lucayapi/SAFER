@@ -15,6 +15,7 @@ _spec.loader.exec_module(_mod)
 
 build_blacklist = _mod.build_blacklist
 macro_chain_edge_list = _mod.macro_chain_edge_list
+macro_edges_for_export = _mod.macro_edges_for_export
 STANDARD_ALLOWED_MACRO_EDGES = _mod.STANDARD_ALLOWED_MACRO_EDGES
 
 
@@ -52,6 +53,26 @@ def test_blacklist_allows_required_edges():
 
 def test_macro_chain_model_edges():
     edges = macro_chain_edge_list(severity_node=None)
+    assert set(edges) == {
+        ("M_A0", "M_A1"),
+        ("M_A0", "M_B"),
+        ("M_A1", "M_B"),
+        ("M_B", "M_C"),
+    }
+
+
+def test_macro_edges_for_export():
+    import pandas as pd
+
+    acc_df = pd.DataFrame(
+        {
+            "M_A0": [0, 1, 0, 1],
+            "M_A1": [1, 0, 1, 0],
+            "M_B": [0, 0, 1, 1],
+            "M_C": [1, 1, 0, 0],
+        }
+    )
+    edges = macro_edges_for_export(acc_df, include_severity=False)
     assert set(edges) == {
         ("M_A0", "M_A1"),
         ("M_A0", "M_B"),

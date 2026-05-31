@@ -19,5 +19,5 @@ methods:
 output_test_root: output_test
 method_test_pattern: "output_test/{corpus_id}/{method}/"
 macro_transfer_pattern: "output_test/{corpus_id}/macro_transfer/{method}/"
-bn_staging_pattern: "output_test/{corpus_id}/bn_staging/"
+bn_results_pattern: "output_test/{corpus_id}/bn_results/"
 raw_embedding_test_pattern: "output_test/{corpus_id}/raw_embedding/"

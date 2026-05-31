@@ -196,7 +196,6 @@ def ensure_output_dirs(root: Path) -> None:
         "models",
         "figures/static",
         "figures/interactive",
-        "figures/nodes",
         "reports",
     ):
         (root / sub).mkdir(parents=True, exist_ok=True)

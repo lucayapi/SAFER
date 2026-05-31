@@ -47,7 +47,7 @@ CORPUS=metallurgie bash jobs/run_tpn_macro_transfer.sh
 - SCGM / contrastifs : `<method>/metrics/metrics_geometry_test.csv`
 - Raw embedding : `raw_embedding/metrics/metrics_geometry.csv`
 - Transfert macro + topics : `macro_transfer/<method>/` (BERTopic + `theme_label` via `bertopic.representation` par défaut)
-- BN (notebook 04) : `bn_staging/`
+- BN (notebook 04) : `bn_results/`
 
 Voir aussi la section **Arborescence** dans [`README.md`](../../README.md).
 

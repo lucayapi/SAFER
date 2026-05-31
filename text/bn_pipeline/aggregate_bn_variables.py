@@ -219,6 +219,8 @@ def create_accident_matrix_from_macro_transfer(
         how="inner",
     )
     merged = merged.loc[merged["_macro_ok"] & merged["_topic_ok"]]
+    # Exclut explicitement le bruit BERTopic (topic_id = -1) du pipeline BN.
+    merged = merged.loc[pd.to_numeric(merged[topic_id_col], errors="coerce").fillna(-1).astype(int) >= 0]
     unique_pairs = sorted(
         {
             (str(m), int(t))

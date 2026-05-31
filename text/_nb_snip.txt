@@ -62,12 +62,12 @@ import seaborn as sns
 
 
 from safer_core.paths import resolve_repo_path
-from safer_core.test_corpus import bn_staging_dir, macro_transfer_output_dir
+from safer_core.test_corpus import bn_results_dir, macro_transfer_output_dir
 
 REPO = TEXT_ROOT
 
 _out = str(OUTPUT_DIR).strip()
-OUT_ROOT = resolve_repo_path(_out, REPO) if _out else bn_staging_dir(TEST_CORPUS, anchor=REPO)
+OUT_ROOT = resolve_repo_path(_out, REPO) if _out else bn_results_dir(TEST_CORPUS, anchor=REPO)
 TABLES = OUT_ROOT / "tables"
 FIGURES_STATIC = OUT_ROOT / "figures" / "static"
 FIGURES_INTERACTIVE = OUT_ROOT / "figures" / "interactive"

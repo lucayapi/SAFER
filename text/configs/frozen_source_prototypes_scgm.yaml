@@ -58,6 +58,16 @@ bertopic:
       min_cluster_size: 8
       min_samples: 2
       min_topic_size: 8
+    B:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    C:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
 
 topics_export:
   top_k_words: 12
