@@ -128,4 +128,7 @@ def test_draw_cpd_node_box_title_only():
     text_obj = ax.texts[0]
     assert "\n" in text_obj.get_text()
     assert "maintenance" in text_obj.get_text()
+    assert text_obj.get_color() == "#2E6F9E"
+    patch = ax.patches[0]
+    assert patch.get_edgecolor()[:3] != patch.get_facecolor()[:3]
     plt.close(fig)

@@ -12,9 +12,16 @@ import pandas as pd
 MACRO_ORDER_MAP = {"A0": 0, "A1": 1, "B": 2, "C": 3, "Severity": 4, "Severity_high": 4, "SEVERITY": 4}
 
 # Graphe causal accidentologique imposé (pas de saut A0/A1 → C).
+# Niveau topics : A0→A1, A0→B (saut A1 possible), A1→B, B→C.
 STANDARD_ALLOWED_MACRO_EDGES: Set[Tuple[str, str]] = {
     ("A0", "A1"),
     ("A0", "B"),
+    ("A1", "B"),
+    ("B", "C"),
+}
+# Niveau nœuds macro agrégés M_* : M_A0 ne pointe que vers M_A1 (pas M_B direct).
+MACRO_AGGREGATE_ALLOWED_EDGES: Set[Tuple[str, str]] = {
+    ("A0", "A1"),
     ("A1", "B"),
     ("B", "C"),
 }
@@ -62,10 +69,14 @@ def macro_rank(node: str, variable_macro_map: Dict[str, str]) -> int:
 def allowed_macro_edges_for_nodes(
     nodes: Sequence[str],
     variable_macro_map: Dict[str, str],
+    *,
+    disallow_a0_to_b_direct: bool = False,
 ) -> Set[Tuple[str, str]]:
     """Arcs autorisés entre macros présentes dans le graphe."""
     macros = {macro_label_of_node(n, variable_macro_map) for n in nodes}
     allowed = {e for e in STANDARD_ALLOWED_MACRO_EDGES if e[0] in macros and e[1] in macros}
+    if disallow_a0_to_b_direct:
+        allowed = {e for e in allowed if e != ("A0", "B")}
     if "Severity" in macros or any(str(n).startswith("Severity") for n in nodes):
         allowed |= {e for e in SEVERITY_ALLOWED_MACRO_EDGES if e[0] in macros and e[1] in macros}
     return allowed
@@ -89,6 +100,8 @@ def standard_macro_edge_templates(include_severity: bool = False) -> List[Tuple[
 def build_blacklist(
     nodes: Sequence[str],
     variable_macro_map: Dict[str, str],
+    *,
+    disallow_a0_to_b_direct: bool = False,
 ) -> List[Tuple[str, str]]:
     """
     Blacklist = tous les arcs (parent, enfant) sauf ceux conformes au DAG :
@@ -96,9 +109,16 @@ def build_blacklist(
     A0→A1, A0→B, A1→B, B→C (et optionnellement C→Severity).
 
     Interdit notamment : A0→C, A1→C (saut de B), retours C→B, B→A*, etc.
+
+    Si ``disallow_a0_to_b_direct`` est True, A0→B est aussi interdit (A0 ne peut atteindre B que via A1).
+    Sinon A0→B direct est autorisé (contexte → événement sans facteur A1 identifié).
     """
     nodes = list(nodes)
-    allowed_macro = allowed_macro_edges_for_nodes(nodes, variable_macro_map)
+    allowed_macro = allowed_macro_edges_for_nodes(
+        nodes,
+        variable_macro_map,
+        disallow_a0_to_b_direct=disallow_a0_to_b_direct,
+    )
     bl: Set[Tuple[str, str]] = set()
     for u in nodes:
         for v in nodes:
@@ -140,6 +160,56 @@ def break_cycles(edges: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
     return edges
 
 
+def _cooccurrence_score(data: pd.DataFrame, parent: str, child: str) -> int:
+    if parent not in data.columns or child not in data.columns:
+        return 0
+    pu = pd.to_numeric(data[parent], errors="coerce").fillna(0).astype(int)
+    cv = pd.to_numeric(data[child], errors="coerce").fillna(0).astype(int)
+    return int(((pu == 1) & (cv == 1)).sum())
+
+
+def ensure_inter_macro_chain_edges(
+    edges: List[Tuple[str, str]],
+    nodes: Sequence[str],
+    variable_macro_map: Dict[str, str],
+    data: pd.DataFrame,
+    blacklist: Set[Tuple[str, str]],
+    *,
+    tier_pairs: Sequence[Tuple[str, str]] = (("A0", "A1"), ("A1", "B"), ("B", "C")),
+) -> List[Tuple[str, str]]:
+    """
+    Garantit au moins un arc appris par transition macro (ex. A0→A1, A1→B, B→C).
+
+    Ajoute l'arc candidat avec la plus forte co-occurrence accident si la transition
+    est absente après HillClimb.
+    """
+    edge_set = set(edges)
+    node_list = list(nodes)
+    for mu, mv in tier_pairs:
+        has_tier_edge = any(
+            macro_label_of_node(u, variable_macro_map) == mu
+            and macro_label_of_node(v, variable_macro_map) == mv
+            for u, v in edge_set
+        )
+        if has_tier_edge:
+            continue
+        candidates = [
+            (u, v)
+            for u in node_list
+            for v in node_list
+            if u != v
+            and macro_label_of_node(u, variable_macro_map) == mu
+            and macro_label_of_node(v, variable_macro_map) == mv
+            and (u, v) not in blacklist
+        ]
+        if not candidates:
+            continue
+        best = max(candidates, key=lambda e: _cooccurrence_score(data, e[0], e[1]))
+        if _cooccurrence_score(data, best[0], best[1]) > 0:
+            edge_set.add(best)
+    return break_cycles(list(edge_set))
+
+
 def _bic_score_class():
     """pgmpy 0.1.x : ``BicScore`` ; pgmpy 1.x : parfois ``BICScore``."""
     try:
@@ -169,9 +239,15 @@ def learn_macro_constrained_structure(
     scoring_method: str = "bic",
     max_indegree: int = 3,
     seed: int = 42,
+    *,
+    disallow_a0_to_b_direct: bool = False,
+    ensure_macro_chain_backbone: bool = False,
 ) -> Tuple[object, List[Tuple[str, str]]]:
     """
     Retourne (BayesianNetwork pgmpy, liste d'arcs après application des contraintes).
+
+    ``disallow_a0_to_b_direct`` : si True, interdit A0→B (A0 ne lie qu'à A1 pour atteindre B).
+    ``ensure_macro_chain_backbone`` : ajoute au moins un arc A0→A1, A1→B, B→C si absent.
     """
     del macro_order, scoring_method, seed  # réservés API / extensions
     try:
@@ -184,7 +260,13 @@ def learn_macro_constrained_structure(
     for c in df.columns:
         df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
 
-    blacklist = set(build_blacklist(nodes, variable_macro_map))
+    blacklist = set(
+        build_blacklist(
+            nodes,
+            variable_macro_map,
+            disallow_a0_to_b_direct=disallow_a0_to_b_direct,
+        )
+    )
     Scorer = _bic_score_class()
     score = Scorer(df)
     hc = _hill_climb_search(df, score)
@@ -212,6 +294,14 @@ def learn_macro_constrained_structure(
                 model = hc.estimate()
 
     edges = prune_forbidden_edges(list(model.edges()), blacklist)
+    if ensure_macro_chain_backbone:
+        edges = ensure_inter_macro_chain_edges(
+            edges,
+            nodes,
+            variable_macro_map,
+            df,
+            blacklist,
+        )
     edges = break_cycles(edges)
     model = BayesianNetwork(edges)
     return model, edges
@@ -248,10 +338,9 @@ def learn_unconstrained_structure(
 
 
 def macro_chain_edge_list(severity_node: Optional[str] = "Severity_high") -> List[Tuple[str, str]]:
-    """Liste d'arcs du DAG macro agrégé M_*."""
+    """Liste d'arcs du DAG macro agrégé M_* (M_A0→M_A1 seulement, pas M_A0→M_B)."""
     edges = [
         ("M_A0", "M_A1"),
-        ("M_A0", "M_B"),
         ("M_A1", "M_B"),
         ("M_B", "M_C"),
     ]
@@ -262,7 +351,9 @@ def macro_chain_edge_list(severity_node: Optional[str] = "Severity_high") -> Lis
 
 def macro_chain_model(severity_node: Optional[str] = "Severity_high") -> Tuple[object, List[Tuple[str, str]]]:
     """
-    DAG macro agrégé : M_A0→M_A1, M_A0→M_B, M_A1→M_B, M_B→M_C [, M_C→gravité].
+    DAG macro agrégé : M_A0→M_A1, M_A1→M_B, M_B→M_C [, M_C→gravité].
+
+    Au niveau topics, A0→B direct reste possible via ``STANDARD_ALLOWED_MACRO_EDGES``.
     """
     from pgmpy.models import BayesianNetwork
 

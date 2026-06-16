@@ -14,8 +14,8 @@ from safer_core.kfold_eval import aggregate_fold_rows, group_kfold_splits
 
 def test_aggregate_fold_rows_mean_std():
     rows = [
-        {"fold_id": 0, "eta2_macro_balanced_perc": 10.0, "rankme_global": 5.0},
-        {"fold_id": 1, "eta2_macro_balanced_perc": 20.0, "rankme_global": 7.0},
+        {"fold_id": 0, "eta2_macro_balanced_perc": 10.0, "eta2_weighted": 0.1},
+        {"fold_id": 1, "eta2_macro_balanced_perc": 20.0, "eta2_weighted": 0.2},
     ]
     agg = aggregate_fold_rows(rows)
     assert agg["n_folds"] == 2

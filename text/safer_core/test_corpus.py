@@ -100,7 +100,7 @@ def resolve_test_corpus(
     if not data_rel:
         raise ValueError(f"corpus {cid} : data_csv manquant dans le registre")
     data_csv = resolve_repo_path(data_rel, repo_root=root)
-    emb_csv = resolve_repo_path(emb_rel, repo_root=root) if emb_rel else data_csv.parent / "missing_emb.csv"
+    emb_csv = _resolve_test_emb_csv(emb_rel, cid, anchor=root)
     display = str(entry.get("display_name") or cid)
     if require_files:
         if not data_csv.is_file():
@@ -111,12 +111,42 @@ def resolve_test_corpus(
 
 
 def conventional_test_paths(corpus_id: str, *, anchor: Optional[Path] = None) -> tuple[str, str]:
-    """Chemins relatifs par convention ``data_<id>`` / ``Qwen3-Embedding-0.6B_<id>``."""
+    """Chemins relatifs par convention ``data_<id>`` / ``Qwen3-Embedding-0.6B__<id>``."""
     cid = str(corpus_id)
     return (
         f"dataset/test/data_{cid}.csv",
-        f"embeddings/test/Qwen3-Embedding-0.6B_{cid}.csv",
+        f"embeddings/test/Qwen3-Embedding-0.6B__{cid}.csv",
     )
+
+
+def _resolve_test_emb_csv(
+    emb_rel: Optional[str],
+    corpus_id: str,
+    *,
+    anchor: Path,
+) -> Path:
+    """Résout le CSV d'embeddings test (double ou simple underscore avant l'id)."""
+    cid = str(corpus_id)
+    rel_candidates = []
+    if emb_rel:
+        rel_candidates.append(str(emb_rel))
+    rel_candidates.extend(
+        [
+            f"embeddings/test/Qwen3-Embedding-0.6B__{cid}.csv",
+            f"embeddings/test/Qwen3-Embedding-0.6B_{cid}.csv",
+        ]
+    )
+    seen: set[Path] = set()
+    ordered: List[Path] = []
+    for rel in rel_candidates:
+        p = resolve_repo_path(rel, repo_root=anchor).resolve()
+        if p not in seen:
+            seen.add(p)
+            ordered.append(p)
+    for p in ordered:
+        if p.is_file():
+            return p
+    return ordered[0] if ordered else anchor / "embeddings" / "test" / f"missing_{cid}.csv"
 
 
 def output_test_root(*, anchor: Optional[Path] = None) -> Path:

@@ -38,3 +38,7 @@ softtriple:
   tau: 0.01
   center_max_similarity: 0.5
   center_min_distance: 0.3
+  center_regularization_type: diversity
+  export_effective_centers: true
+  effective_center_distance_threshold: 0.05
+  effective_center_similarity_threshold: 0.995

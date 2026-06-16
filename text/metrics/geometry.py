@@ -1,4 +1,4 @@
-"""Ligne de tableau géométrique (eta² + RankMe + C1/C10)."""
+"""Ligne de tableau géométrique (η² macro, δ, IPR, etc.)."""
 
 from __future__ import annotations
 

@@ -14,6 +14,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+from macro_transfer.notebook_viz import (
+    RAW_TEST_EMBEDDING_SECTION_MD,
+    notebook_raw_test_embedding_source,
+)
 
 
 def md(text: str) -> dict:
@@ -39,24 +43,25 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 04 — Réseau bayésien (corpus test, macro_transfer)
+# 04 — Réseau bayésien (corpus test)
 
 ## 1 — Objectif
 
-Ce notebook construit un **réseau bayésien** à partir des exports **macro_transfer** (FSP-SCGM par défaut) sur le corpus test. Les variables binaires décrivent la **co-présence de topics intra-macro** (`macro_topic_*`) au niveau accident.
+Ce notebook construit un **réseau bayésien** à partir des exports FSP-SCGM sur le corpus test. Les variables binaires décrivent la **co-présence de topics par étape** de la chaîne accidentelle (`macro_topic_*`) au niveau accident.
 
-**Prérequis** : `CORPUS=<id> bash jobs/run_frozen_proto_scgm.sh`
+**Prérequis** : `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh`
 
-**Interprétation** : \(X_{i,k}=0\) signifie que le motif \(k\) n’est pas identifié dans le récit (pas une preuve d’absence physique). Les **arcs** encodent des dépendances conditionnelles apprises sous contraintes macro (A0→A1→B→C), pas une causalité démontrée.
+**Interprétation structurelle** : au niveau **topics**, A0→B direct est autorisé (contexte → événement sans A1 identifié). Au niveau **macro agrégé** (`M_*`), M_A0 ne pointe que vers M_A1. Paramètres : `BN_DISALLOW_A0_TO_B`, `BN_ENSURE_MACRO_CHAIN`.
 
-**Sorties principales** : graphe statique + interactif, tableau des scénarios récurrents (A0 → … → C) avec probabilités.
+**Sorties principales** : graphe statique + interactif, tableau des scénarios (chemins du BN, ≥ 2 étapes), graphe slide LaTeX.
 """
         ),
         py(
             r"""
 # --- Paramètres (papermill : `papermill ... -p KEY valeur`) ---
 TEST_CORPUS = "metallurgie"  # configs/test_corpora.yaml
-MACRO_TRANSFER_METHOD = "frozen_source_prototypes/scgm"  # défaut BN basé FSP-SCGM
+FSP_BASE_METHOD = "scgm_text"  # encodeur FSP (softtriple, supcon, batch_triplet, raw_embedding, …)
+MACRO_TRANSFER_METHOD = f"frozen_source_prototypes/{FSP_BASE_METHOD}"
 OUTPUT_DIR = ""  # vide → output_test/<TEST_CORPUS>/bn_results/
 MACRO_CONF_THRESHOLD = 0.50
 TOPIC_GAMMA_THRESHOLD = 0.50
@@ -65,15 +70,22 @@ MAX_TOPICS_PER_MACRO = 6
 INCLUDE_MACRO_NODES = True
 INCLUDE_SEVERITY = False
 MAX_INDEGREE = 3
+BN_DISALLOW_A0_TO_B = False  # False : A0→B direct autorisé (saut A1) ; True : A0 ne lie qu'à A1
+BN_ENSURE_MACRO_CHAIN = True  # squelette topics A0→A1, A1→B, B→C ; agrégé M_A0→M_A1 seulement
 EQUIVALENT_SAMPLE_SIZE = 5
 RANDOM_SEED = 42
 WARN_MAX_BINARY_NODES = 30
 ENABLE_OPENAI_SCENARIOS = True
 OPENAI_SCENARIO_MAX_ROWS = 12
-SCENARIO_MIN_SUPPORT = 5
+SCENARIO_MIN_SUPPORT = 3
 SCENARIO_TOP_N = 30
-SCENARIO_REQUIRE_FULL_MACRO_PATH = True
-SCENARIO_EXCLUDE_EMPTY = True
+SCENARIO_MIN_MACROS = 2
+SCENARIO_FULL_MIN_MACROS = 3  # export CSV liste complète (≥ N étapes macro)
+SCENARIO_FULL_TOP_N = 500
+SCENARIO_PATH_MAX_LEN = 8
+SLIDE_SCENARIO_RANK = 0
+SLIDE_FIG_WIDTH = 10.0
+SLIDE_FIG_HEIGHT = 4.0
 """,
             tags=["parameters"],
         ),
@@ -103,6 +115,7 @@ import pandas as pd
 
 from IPython.display import HTML, Image, display as ipy_display
 
+from safer_core.display_labels import rename_display_columns
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import bn_results_dir, macro_transfer_output_dir
 
@@ -152,11 +165,12 @@ from bn_pipeline.bn_learning import (
 from bn_pipeline.bn_visualization import (
     build_short_title_map,
     build_topic_node_label_map,
+    extract_subgraph_for_slide,
     join_theme_summary_to_selected_variables,
     plot_bn_graph_cpd_boxes,
     try_plotly_interactive,
 )
-from bn_pipeline.scenario_mining import extract_typical_scenarios
+from bn_pipeline.bn_paths import extract_bn_path_scenarios
 from bn_pipeline.scenario_interpretation import (
     enrich_scenarios_table,
     export_scenario_interpretations,
@@ -260,6 +274,8 @@ topic_model, topic_edges = learn_macro_constrained_structure(
     topic_data,
     topic_var_map_f,
     max_indegree=int(MAX_INDEGREE),
+    disallow_a0_to_b_direct=bool(BN_DISALLOW_A0_TO_B),
+    ensure_macro_chain_backbone=bool(BN_ENSURE_MACRO_CHAIN),
 )
 topic_model = fit_bn_parameters(
     topic_model,
@@ -271,7 +287,11 @@ save_bn_pickle(topic_model, MODELS / "bn_topic_constrained.pkl")
 export_cpds_to_dir(topic_model, TABLES / "cpds_topic", prefix="topic")
 try_write_bif(topic_model, MODELS / "bn_topic_constrained.bif")
 
-bl_topic = build_blacklist(list(topic_used), topic_var_map_f)
+bl_topic = build_blacklist(
+    list(topic_used),
+    topic_var_map_f,
+    disallow_a0_to_b_direct=bool(BN_DISALLOW_A0_TO_B),
+)
 allowed_hint = sorted(
     set(topic_edges)
     | set(macro_edges_export)
@@ -286,6 +306,12 @@ print(
     len(topic_edges),
     "arcs",
     f"(variables agrégées : {len(topic_used)}, dont sans arc dans le graphe affiché)",
+)
+print(
+    "Structure : A0→B direct =",
+    "non" if bool(BN_DISALLOW_A0_TO_B) else "oui",
+    "| squelette chaîne A0→A1→B→C =",
+    "oui" if bool(BN_ENSURE_MACRO_CHAIN) else "non",
 )
 """
         ),
@@ -322,7 +348,7 @@ plot_bn_graph_cpd_boxes(
     topic_model,
     topic_var_map_f,
     _static_png,
-    title="Réseau bayésien — topics intra-macro",
+    title="Réseau bayésien — topics par étape (chaîne accidentelle)",
     short_title_map=short_title_map,
     themes_df=themes_df,
 )
@@ -337,38 +363,45 @@ _ok_plotly = try_plotly_interactive(
     short_title_map=short_title_map,
     variable_macro_map=topic_var_map_f,
     themes_df=themes_df,
-    title="Réseau bayésien — exploration interactive",
+    title="Réseau bayésien — exploration interactive (chaîne accidentelle)",
 )
 print("Graphe interactif :", _interactive_html, "| OK :", _ok_plotly)
 if _ok_plotly and _interactive_html.is_file():
     ipy_display(HTML(_interactive_html.read_text(encoding="utf-8")))
 """
         ),
-        md("## 5 — Scénarios récurrents (chemins complets A0 → A1 → B → C)"),
+        md("## 5 — Scénarios récurrents (chemins du BN, ≥ 2 étapes)"),
         py(
             r"""
-_sev_col = None
-if bool(INCLUDE_SEVERITY):
-    if "Severity_high" in acc_df.columns:
-        _sev_col = "Severity_high"
-    elif "Severity_ord" in acc_df.columns:
-        _sev_col = "Severity_ord"
+n_accidents_bn = int(acc_df["accident_id"].nunique()) if "accident_id" in acc_df.columns else len(acc_df)
 
-freq_df, _high_df = extract_typical_scenarios(
+freq_df, _path_diag = extract_bn_path_scenarios(
     acc_df,
     topic_model,
     topic_cols,
+    topic_var_map_f,
     accident_id_col="accident_id",
-    severity_high_col=_sev_col,
     min_support=int(SCENARIO_MIN_SUPPORT),
     top_n=int(SCENARIO_TOP_N),
     metadata_unit=meta,
     text_col="sentence" if "sentence" in meta.columns else "accident_summary",
-    exclude_empty=bool(SCENARIO_EXCLUDE_EMPTY),
-    require_full_macro_path=bool(SCENARIO_REQUIRE_FULL_MACRO_PATH),
+    min_macros=int(SCENARIO_MIN_MACROS),
+    max_path_len=int(SCENARIO_PATH_MAX_LEN),
 )
-
-n_accidents_bn = int(acc_df["accident_id"].nunique()) if "accident_id" in acc_df.columns else len(acc_df)
+print(
+    "Diagnostics scénarios BN :",
+    f"chemins DAG={_path_diag.get('n_paths_dag', 0)}",
+    f"| support≥1={_path_diag.get('n_paths_support_ge_1', 0)}",
+    f"| min étapes={_path_diag.get('min_macros', SCENARIO_MIN_MACROS)}",
+    f"| accidents ≥{SCENARIO_MIN_MACROS} étapes={_path_diag.get('n_accidents_min_macros_cooc', 0)}",
+    f"| accidents 4 étapes={_path_diag.get('n_accidents_full_macro_cooc', 0)}",
+    f"| seuil={_path_diag.get('min_support_applied', SCENARIO_MIN_SUPPORT)}",
+)
+if _path_diag.get("support_fallback"):
+    print(
+        "Note : seuil abaissé pour afficher des scénarios "
+        f"(demandé={SCENARIO_MIN_SUPPORT}, appliqué={_path_diag.get('min_support_applied')})."
+    )
 
 if len(freq_df):
     scenario_df = enrich_scenarios_table(
@@ -379,24 +412,116 @@ if len(freq_df):
         max_rows=int(OPENAI_SCENARIO_MAX_ROWS),
         cache_path=TABLES / "scenario_interpretations.csv",
     )
-    export_scenario_interpretations(scenario_df, TABLES / "recurring_scenarios.csv")
+    export_scenario_interpretations(scenario_df, TABLES / "bn_path_scenarios.csv")
     _show_cols = [
         c
         for c in (
             "configuration_probable",
             "macro_path",
+            "path_nodes",
             "prob",
             "support",
             "interpretation",
         )
         if c in scenario_df.columns
     ]
-    display(scenario_df[_show_cols])
-    print("Export :", TABLES / "recurring_scenarios.csv")
+    display(rename_display_columns(scenario_df[_show_cols]))
+    print("Export :", TABLES / "bn_path_scenarios.csv")
+
+    freq_full, _path_diag_full = extract_bn_path_scenarios(
+        acc_df,
+        topic_model,
+        topic_cols,
+        topic_var_map_f,
+        accident_id_col="accident_id",
+        min_support=int(SCENARIO_MIN_SUPPORT),
+        top_n=int(SCENARIO_FULL_TOP_N),
+        metadata_unit=meta,
+        text_col="sentence" if "sentence" in meta.columns else "accident_summary",
+        min_macros=int(SCENARIO_FULL_MIN_MACROS),
+        max_path_len=int(SCENARIO_PATH_MAX_LEN),
+    )
+    _full_csv = TABLES / f"bn_path_scenarios_min{int(SCENARIO_FULL_MIN_MACROS)}_macros.csv"
+    if len(freq_full):
+        scenario_full = enrich_scenarios_table(
+            freq_full,
+            n_accidents_bn,
+            themes_df,
+            enable_openai=False,
+            max_rows=None,
+        )
+        export_scenario_interpretations(scenario_full, _full_csv)
+        print(
+            f"Export complet (≥ {int(SCENARIO_FULL_MIN_MACROS)} étapes macro) :",
+            len(scenario_full),
+            "lignes →",
+            _full_csv,
+        )
+        display(rename_display_columns(scenario_full.head(25)))
+    else:
+        print(
+            f"Aucun chemin BN avec ≥ {int(SCENARIO_FULL_MIN_MACROS)} étapes "
+            f"et support ≥ {_path_diag_full.get('min_support_applied', SCENARIO_MIN_SUPPORT)}."
+        )
 else:
-    print("Aucun scénario récurrent (augmenter le support ou le nombre de topics retenus).")
+    print(
+        "Aucun scénario trouvé. Ajuster SCENARIO_MIN_SUPPORT, SCENARIO_MIN_MACROS "
+        "ou MAX_TOPICS_PER_MACRO (nombre de topics par étape)."
+    )
 """
         ),
+        md(
+            """## 6 — Graphe slide (meilleur scénario)
+
+Sous-graphe compact pour inclusion LaTeX : `figures/static/bn_network_slide.png`.
+"""
+        ),
+        py(
+            r"""
+if "scenario_df" in dir() and len(scenario_df):
+    _rank = max(0, min(int(SLIDE_SCENARIO_RANK), len(scenario_df) - 1))
+    _path_row = scenario_df.iloc[_rank]
+    _path_nodes = [
+        p.strip()
+        for p in str(_path_row.get("path_nodes", "")).split(" -> ")
+        if p.strip()
+    ]
+    if not _path_nodes and "topics_present" in _path_row:
+        _path_nodes = [
+            t.strip()
+            for t in str(_path_row["topics_present"]).split("+")
+            if t.strip()
+        ]
+    if _path_nodes:
+        _nodes_sub, _edges_sub = extract_subgraph_for_slide(
+            topic_model, _path_nodes, topic_var_map_f
+        )
+        _slide_png = FIGURES_STATIC / "bn_network_slide.png"
+        plot_bn_graph_cpd_boxes(
+            topic_model,
+            topic_var_map_f,
+            _slide_png,
+            title="Scénario typique — chemin causal",
+            short_title_map=short_title_map,
+            themes_df=themes_df,
+            nodes_subset=_nodes_sub,
+            edges_subset=_edges_sub,
+            figsize=(float(SLIDE_FIG_WIDTH), float(SLIDE_FIG_HEIGHT)),
+            col_gap=1.8,
+            row_gap=1.0,
+            box_width=1.5,
+            title_wrap_width=18,
+        )
+        print("Graphe slide :", _slide_png)
+        ipy_display(Image(filename=str(_slide_png)))
+    else:
+        print("Pas de path_nodes pour le graphe slide (scénario sans chemin explicite).")
+else:
+    print("Pas de scénario — graphe slide non généré.")
+"""
+        ),
+        md(RAW_TEST_EMBEDDING_SECTION_MD),
+        py(notebook_raw_test_embedding_source("FIGURES_STATIC")),
     ]
 
     nb = {

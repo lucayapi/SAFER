@@ -21,24 +21,31 @@ except ImportError:  # tests / environnements minimaux
     sns = None  # type: ignore[assignment]
 
 from bn_pipeline.bn_structure import MACRO_ONTOLOGY_FR
+from safer_core.display_labels import CHAIN_CAUSAL_STRUCTURE, CHAIN_LEGEND
 
-MACRO_COLOR = {
-    "A0": "#4C78A8",
-    "A1": "#F58518",
-    "B": "#54A24B",
-    "C": "#E45756",
-    "Severity": "#B279A2",
-    "Severity_high": "#B279A2",
-    "SEVERITY": "#B279A2",
+MACRO_FILL = {
+    "A0": "#D6EAF8",
+    "A1": "#FFF2CC",
+    "B": "#FAD7A0",
+    "C": "#F5B7B1",
+    "Severity": "#E8DAEF",
+    "Severity_high": "#E8DAEF",
+    "SEVERITY": "#E8DAEF",
 }
 
-MACRO_LAYER_FILL = {
-    "A0": "#E8EEF7",
-    "A1": "#FDEBDD",
-    "B": "#E8F4E8",
-    "C": "#FCE8E8",
-    "Severity": "#F3E8F2",
+MACRO_DRAW = {
+    "A0": "#2E6F9E",
+    "A1": "#B9770E",
+    "B": "#D35400",
+    "C": "#922B21",
+    "Severity": "#6C3483",
+    "Severity_high": "#6C3483",
+    "SEVERITY": "#6C3483",
 }
+
+# Alias rétrocompat (légendes, marqueurs, graphes cercles)
+MACRO_COLOR = dict(MACRO_DRAW)
+MACRO_LAYER_FILL = dict(MACRO_FILL)
 
 # Ancres (x, y) pour le DAG accidentologique — article / lecture gauche→droite, haut→bas.
 _MACRO_LAYOUT_ANCHOR: Dict[str, Tuple[float, float]] = {
@@ -248,7 +255,7 @@ def build_node_summary_label(
     n = str(node)
     macro = _macro_from_node(n, variable_macro_map)
     if n.startswith("M_"):
-        return f"Macro {macro} (agrégat)"[:max_len]
+        return f"{macro} — agrégat (chaîne)"[:max_len]
     if "Severity" in n:
         return "Gravité élevée"[:max_len]
 
@@ -533,15 +540,16 @@ def _draw_cpd_node_box(
     from matplotlib.patches import FancyBboxPatch
 
     x0, y0, w, h = bbox
-    edge_color = MACRO_COLOR.get(macro, "#888888")
+    fill_color = MACRO_FILL.get(macro, "#E5E5E5")
+    draw_color = MACRO_DRAW.get(macro, "#444444")
     patch = FancyBboxPatch(
         (x0, y0),
         w,
         h,
         boxstyle="round,pad=0.02,rounding_size=0.06",
-        facecolor="white",
-        edgecolor=edge_color,
-        linewidth=1.2,
+        facecolor=fill_color,
+        edgecolor=draw_color,
+        linewidth=1.4,
         zorder=5,
     )
     ax.add_patch(patch)
@@ -555,7 +563,7 @@ def _draw_cpd_node_box(
         va="center",
         fontsize=7.2,
         fontweight="bold",
-        color="#222222",
+        color=draw_color,
         zorder=6,
         linespacing=1.15,
     )
@@ -600,6 +608,29 @@ def _draw_macro_column_bands_lr(
         ax.add_patch(rect)
 
 
+def extract_subgraph_for_slide(
+    model: Any,
+    path_nodes: Sequence[str],
+    variable_macro_map: Dict[str, str],
+    *,
+    mode: str = "scenario_path",
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """Sous-graphe compact pour slide : nœuds du chemin et arcs consécutifs."""
+    del variable_macro_map, mode
+    nodes = [str(n) for n in path_nodes if str(n)]
+    if not nodes:
+        return [], []
+
+    model_edges = {tuple(map(str, edge)) for edge in model.edges()}
+    edges: list[tuple[str, str]] = []
+    for left, right in zip(nodes, nodes[1:]):
+        if (left, right) in model_edges:
+            edges.append((left, right))
+        else:
+            edges.append((left, right))
+    return nodes, edges
+
+
 def plot_bn_graph_cpd_boxes(
     model: Any,
     variable_macro_map: Dict[str, str],
@@ -608,6 +639,9 @@ def plot_bn_graph_cpd_boxes(
     short_title_map: Optional[Dict[str, str]] = None,
     themes_df: Optional[pd.DataFrame] = None,
     *,
+    nodes_subset: Optional[Sequence[str]] = None,
+    edges_subset: Optional[Sequence[tuple[str, str]]] = None,
+    figsize: Optional[tuple[float, float]] = None,
     col_gap: float = 2.4,
     row_gap: float = 1.4,
     box_width: float = 1.75,
@@ -623,8 +657,21 @@ def plot_bn_graph_cpd_boxes(
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     g = nx.DiGraph()
-    g.add_edges_from(model.edges())
-    nodes = list(g.nodes())
+    if nodes_subset is not None:
+        nodes = [str(n) for n in nodes_subset]
+        if edges_subset is not None:
+            g.add_edges_from(edges_subset)
+        else:
+            node_set = set(nodes)
+            g.add_edges_from(
+                (u, v) for u, v in model.edges() if str(u) in node_set and str(v) in node_set
+            )
+        for node in nodes:
+            if node not in g:
+                g.add_node(node)
+    else:
+        g.add_edges_from(model.edges())
+        nodes = list(g.nodes())
     if not nodes:
         return
 
@@ -664,12 +711,11 @@ def plot_bn_graph_cpd_boxes(
     n_cols = sum(1 for m in _MACRO_STACK_ORDER if by_macro.get(m))
     fig_w = max(14.0, 2.5 + n_cols * 3.5)
     fig_h = max(6.0, 1.4 + max_col_h * 1.05)
+    if figsize is not None:
+        fig_w, fig_h = figsize
 
     fig, ax = plt.subplots(figsize=(fig_w, fig_h), facecolor="white")
     ax.set_facecolor("white")
-    _draw_macro_column_bands_lr(
-        ax, variable_macro_map, nodes, col_gap=col_gap, row_gap=row_gap, box_width=box_width
-    )
 
     for n in nodes:
         macro = _macro_of_node(n, variable_macro_map)
@@ -779,7 +825,7 @@ def plot_macro_causality_schematic(
     output_path: Path,
     *,
     include_severity: bool = False,
-    title: str = "Structure causale des macros (réseau bayésien)",
+    title: str = CHAIN_CAUSAL_STRUCTURE,
 ) -> None:
     """
     Schéma fixe A0→A1, A0→B, A1→B, B→C — flux gauche→droite (cohérent avec boîtes CPD topics).
@@ -981,7 +1027,7 @@ def plot_bn_graph(
             ncol=2,
             frameon=True,
             fontsize=8,
-            title="Couches macro",
+            title=CHAIN_LEGEND,
             title_fontsize=9,
         )
 

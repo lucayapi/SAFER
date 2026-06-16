@@ -63,12 +63,12 @@ def test_near_zero_total_inertia_warns():
     assert any("near zero" in str(w.message).lower() for w in caught)
 
 
-def test_build_geometry_metrics_row_has_rankme():
+def test_build_geometry_metrics_row_has_eta2():
     z = np.random.default_rng(3).normal(size=(30, 8))
     labels = ["A0"] * 10 + ["A1"] * 10 + ["B"] * 5 + ["C"] * 5
     row = build_geometry_metrics_row(z, labels, method="SCGM")
     assert row["method"] == "SCGM"
-    assert "rankme_global" in row
+    assert "rankme_global" not in row
     assert "eta2_macro_balanced" in row
     assert "eta2_macro_balanced_perc" in row
 
@@ -79,23 +79,3 @@ def test_eta2_macro_balanced_perc_is_100_times_eta2():
     row = build_geometry_metrics_row(z, labels, method="test")
     eta2 = row["eta2_macro_balanced"]
     assert abs(row["eta2_macro_balanced_perc"] - 100.0 * eta2) < 1e-6
-
-
-def test_rankme_over_d_uses_embedding_dim():
-    z = np.random.default_rng(5).normal(size=(50, 8))
-    labels = ["A0"] * 25 + ["A1"] * 25
-    row = build_geometry_metrics_row(z, labels, method="test", embedding_dim=128)
-    assert row["embedding_dim"] == 128
-    assert abs(row["rankme_over_d"] - row["rankme_global"] / 128.0) < 1e-9
-
-
-def test_rankme_over_d_qwen_dim():
-    z = np.random.default_rng(6).normal(size=(50, 1024))
-    labels = ["A0"] * 25 + ["A1"] * 25
-    from metrics.embedding_dims import QWEN3_EMBEDDING_06B_DIM
-
-    row = build_geometry_metrics_row(
-        z, labels, method="contrastive", embedding_dim=QWEN3_EMBEDDING_06B_DIM
-    )
-    assert row["embedding_dim"] == 1024
-    assert row["rankme_over_d"] < row["rankme_global"]

@@ -1,4 +1,4 @@
-"""Évalue eta² + RankMe + C1/C10 sur des embeddings et labels."""
+"""Évalue eta² sur des embeddings et labels."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from safer_core.paths import layout_method_output, resolve_output_dir
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Geometry metrics (eta2, RankMe, C1, C10).")
+    p = argparse.ArgumentParser(description="Geometry metrics (eta2 macro).")
     p.add_argument("--embeddings_npy", type=str, default=None)
     p.add_argument("--embeddings_csv", type=str, default=None)
     p.add_argument("--metadata_csv", type=str, required=True)

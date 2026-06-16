@@ -1,7 +1,22 @@
 method_name: frozen_source_prototypes
 corpus: metallurgie
-output_dir: output_test/metallurgie/macro_transfer/frozen_source_prototypes
-skip_bertopic: false
+
+method:
+  base_method: scgm_text
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  max_seq_length: 256
+  encode_batch_size: 32
+  device: cuda
+
+checkpoints:
+  scgm_text: output/scgm_text/checkpoints/best_model.pt
+  softtriple: output/softtriple/checkpoints/best_model
+  supcon: output/supcon/checkpoints/best_model
+  batch_triplet: output/batch_triplet/checkpoints/best_model
+  raw_embedding: null
+
+# output_dir dérivé automatiquement si absent :
+# output_test/<corpus>/macro_transfer/frozen_source_prototypes/<base_method>
 
 source:
   dataset_path: dataset/data_btp.csv
@@ -10,6 +25,7 @@ source:
   group_col: accident_id
   filter_pred_ok: true
   pred_ok_col: pred_ok
+  source_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 target:
   dataset_path: dataset/test/data_metallurgie.csv
@@ -18,14 +34,8 @@ target:
   group_col: accident_id
 
 model:
-  base_method: scgm_text
-  checkpoint_path: output/scgm_text/checkpoints/best_model.pt
-  backbone_name: Qwen/Qwen3-Embedding-0.6B
-  max_seq_length: 256
-  encode_batch_size: 32
   reuse_cached_embeddings: true
   force_reencode: false
-  device: cuda
 
 prototype_transfer:
   macros: ["A0", "A1", "B", "C"]
@@ -46,6 +56,27 @@ bertopic:
   random_state: 42
   min_topic_size: 10
   include_ambiguous: false
+  macro_params:
+    A0:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    A1:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    B:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    C:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
 
 topics_export:
   top_k_words: 12

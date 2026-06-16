@@ -16,14 +16,21 @@ from sklearn.metrics import (
     f1_score,
 )
 
+from contrastive_methods.eval_geometry import DEFAULT_BTP_RAW_EMB_CSV
+from macro_transfer.bertopic_phase import run_bertopic_phase
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.encode import load_target_metadata
-from macro_transfer.tpn_full_encoder import FullEncoderTPNModel, encode_texts_corpus
-from macro_transfer.tpn_topics_phase import run_bertopic_phase
+from macro_transfer.encoder_runtime import FrozenEncoderModel, encode_texts_corpus
+from macro_transfer.fsp_config import (
+    FSP_METHOD_ALIASES,
+    fsp_output_method_key,
+    normalize_fsp_base_method,
+    validate_fsp_base_method,
+)
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import default_test_corpus_id, resolve_test_paths_from_config
-from scgm_text.dataset_text_embeddings import load_filtered_metadata
+from scgm_text.dataset_text_embeddings import load_filtered_metadata, merge_metadata_with_embeddings
 
 logger = logging.getLogger(__name__)
 
@@ -216,14 +223,19 @@ def _load_cached_embeddings_if_valid(
     return np.asarray(arr, dtype=np.float64)
 
 
-def _resolve_output_dir(cfg: dict[str, Any], corpus: str, anchor: Path) -> Path:
-    out_cfg = cfg.get("output_dir")
-    if out_cfg:
-        return resolve_repo_path(str(out_cfg), repo_root=anchor)
-    return resolve_repo_path(
-        Path("output_test") / corpus / "macro_transfer" / "frozen_source_prototypes",
-        repo_root=anchor,
-    )
+def _load_raw_embeddings_from_csv(
+    metadata: pd.DataFrame,
+    emb_csv: str,
+    *,
+    name: str,
+) -> np.ndarray:
+    slim = metadata.drop(columns=[c for c in metadata.columns if c.startswith("dim_")], errors="ignore")
+    merged, dim_columns = merge_metadata_with_embeddings(slim, emb_csv)
+    if len(merged) != len(metadata):
+        raise ValueError(
+            f"Alignement embeddings {name} : metadata={len(metadata)}, merged={len(merged)}"
+        )
+    return merged[dim_columns].to_numpy(dtype=np.float64)
 
 
 def _build_gating_from_predictions(preds: pd.DataFrame, macros: Sequence[str]) -> pd.DataFrame:
@@ -258,7 +270,8 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     exp_cfg = dict(cfg.get("exports") or {})
     bertopic_cfg = dict(cfg.get("bertopic") or {})
     topics_export_cfg = dict(cfg.get("topics_export") or {})
-    skip_bertopic = bool(cfg.get("skip_bertopic", False))
+    bertopic_enabled = bool(bertopic_cfg.get("enabled", True))
+    skip_bertopic = bool(cfg.get("skip_bertopic", False)) and not bertopic_enabled
 
     macros = [str(m) for m in tr_cfg.get("macros", list(MACRO_NAMES))]
     if macros != list(MACRO_NAMES):
@@ -272,13 +285,24 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     if tau <= 0:
         raise ValueError(f"tau doit être > 0, reçu {tau}")
 
+    method_block = dict(cfg.get("method") or {})
+    checkpoints_block = dict(cfg.get("checkpoints") or {})
+
     source_data_csv = resolve_repo_path(source_cfg.get("dataset_path", "dataset/data_btp.csv"), repo_root=anchor)
-    _spec, target_csv_auto, _emb = resolve_test_paths_from_config(
+    _spec, target_csv_auto, target_emb_auto = resolve_test_paths_from_config(
         {"corpus": corpus, "target": {}},
         corpus_id=corpus,
         anchor=anchor,
     )
     target_data_csv = resolve_repo_path(target_cfg.get("dataset_path", str(target_csv_auto)), repo_root=anchor)
+    source_emb_csv = resolve_repo_path(
+        source_cfg.get("source_emb_csv") or DEFAULT_BTP_RAW_EMB_CSV,
+        repo_root=anchor,
+    )
+    target_emb_csv = resolve_repo_path(
+        target_cfg.get("emb_csv") or str(target_emb_auto),
+        repo_root=anchor,
+    )
 
     source_text_col = str(source_cfg.get("text_col", "sentence"))
     source_label_col = str(source_cfg.get("label_col", "pred_label"))
@@ -307,26 +331,37 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     source_df = source_df[source_df[source_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
     target_df = target_df[target_df[target_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
 
-    out_dir = _resolve_output_dir(cfg, corpus, anchor)
+    base_method = validate_fsp_base_method(
+        model_cfg.get("base_method") or method_block.get("base_method") or "scgm_text"
+    )
+    out_dir = resolve_fsp_output_dir(
+        corpus,
+        base_method,
+        anchor=anchor,
+        output_dir=str(cfg["output_dir"]) if cfg.get("output_dir") else None,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     transfer_dir = out_dir / "transfer"
     emb_dir = out_dir / "embeddings"
     transfer_dir.mkdir(parents=True, exist_ok=True)
     emb_dir.mkdir(parents=True, exist_ok=True)
 
-    checkpoint_cfg = model_cfg.get("checkpoint_path")
+    checkpoint_raw = resolve_fsp_checkpoint(base_method, model_cfg, checkpoints_block)
     checkpoint = (
-        str(resolve_repo_path(checkpoint_cfg, repo_root=anchor))
-        if checkpoint_cfg
+        str(resolve_repo_path(checkpoint_raw, repo_root=anchor))
+        if checkpoint_raw
         else None
     )
-    base_method = str(model_cfg.get("base_method", "scgm_text"))
-    method_display_name = str(
-        cfg.get("method_display_name")
-        or model_cfg.get("method_display_name")
-        or ("SCGM + prototypes source gelés" if base_method == "scgm_text" else f"{base_method} + prototypes source gelés")
+    method_display_name = resolve_fsp_method_display_name(
+        base_method,
+        cfg_display=cfg.get("method_display_name"),
+        model_display=model_cfg.get("method_display_name"),
     )
-    backbone_name = str(model_cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B"))
+    backbone_name = str(
+        model_cfg.get("backbone_name")
+        or method_block.get("backbone_name")
+        or "Qwen/Qwen3-Embedding-0.6B"
+    )
     max_seq_length = int(model_cfg.get("max_seq_length", 256))
     batch_size = int(model_cfg.get("encode_batch_size", 32))
     device = str(model_cfg.get("device", "cuda"))
@@ -350,30 +385,52 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
         )
 
     if z_source is None or z_target is None:
-        model = FullEncoderTPNModel(
-            base_method=base_method,
-            checkpoint=checkpoint,
-            backbone_name=backbone_name,
-            max_seq_length=max_seq_length,
-            pooling="mean",
-            freeze_backbone=True,
-            device=device,
-        )
-        model.eval()
-        if z_source is None:
-            z_source = encode_texts_corpus(
-                model,
-                source_df[source_text_col].astype(str).tolist(),
-                batch_size=batch_size,
-                log_label="source_frozen",
+        if base_method == "raw_embedding":
+            if z_source is None:
+                if not source_emb_csv.is_file():
+                    raise FileNotFoundError(
+                        f"Embeddings source BTP manquants pour raw_embedding : {source_emb_csv}"
+                    )
+                z_source = _load_raw_embeddings_from_csv(
+                    source_df,
+                    str(source_emb_csv),
+                    name="source",
+                )
+            if z_target is None:
+                if not target_emb_csv.is_file():
+                    raise FileNotFoundError(
+                        f"Embeddings test manquants pour raw_embedding : {target_emb_csv}"
+                    )
+                z_target = _load_raw_embeddings_from_csv(
+                    target_df,
+                    str(target_emb_csv),
+                    name="target",
+                )
+        else:
+            model = FrozenEncoderModel(
+                base_method=base_method,
+                checkpoint=checkpoint,
+                backbone_name=backbone_name,
+                max_seq_length=max_seq_length,
+                pooling="mean",
+                freeze_backbone=True,
+                device=device,
             )
-        if z_target is None:
-            z_target = encode_texts_corpus(
-                model,
-                target_df[target_text_col].astype(str).tolist(),
-                batch_size=batch_size,
-                log_label="target_frozen",
-            )
+            model.eval()
+            if z_source is None:
+                z_source = encode_texts_corpus(
+                    model,
+                    source_df[source_text_col].astype(str).tolist(),
+                    batch_size=batch_size,
+                    log_label="source_frozen",
+                )
+            if z_target is None:
+                z_target = encode_texts_corpus(
+                    model,
+                    target_df[target_text_col].astype(str).tolist(),
+                    batch_size=batch_size,
+                    log_label="target_frozen",
+                )
 
     if normalize_embeddings:
         z_source = l2_normalize(z_source, eps=eps)
@@ -479,7 +536,7 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
         bertopic_df[bertopic_df["pred_macro"] == m].to_csv(transfer_dir / f"bertopic_input_{m}.csv", index=False)
 
     bertopic_summary: Dict[str, Any] = {}
-    if not skip_bertopic:
+    if bertopic_enabled and not skip_bertopic:
         gating_adapted = _build_gating_from_predictions(preds, macros)
         meta_t = target_df.copy()
         meta_t["m_hat"] = preds["pred_macro"].astype(str).to_numpy()

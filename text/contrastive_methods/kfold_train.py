@@ -13,8 +13,9 @@ from contrastive_methods.config import (
     load_contrastive_config_from_dict,
     merge_config_dict,
 )
-from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset
+from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset, train_val_metadata
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
+from contrastive_methods.eval_geometry import compute_fold_ipr
 from contrastive_methods.results import TrainingResult
 from safer_core.kfold_eval import (
     KFOLD_AGGREGATE_METRIC_KEYS,
@@ -81,7 +82,9 @@ def run_kfold_loop(
 
         print(f"[{log_prefix}] fold {fold_id} → {fold_out}", flush=True)
         result = runner(fold_cfg)
+        _, val_df = train_val_metadata(dataset, train_idx, val_idx)
         row: Dict[str, Any] = {"fold_id": fold_id, **(result.val_geometry or {})}
+        row.update(compute_fold_ipr(val_df, cfg.label_col, result.val_geometry or {}))
         row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
         row["train_wall_time_sec"] = float(result.train_wall_time_sec)
         fold_rows.append(row)

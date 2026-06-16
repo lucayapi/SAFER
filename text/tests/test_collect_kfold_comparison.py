@@ -15,6 +15,7 @@ from metrics.compare_display import (
     collect_kfold_btp_comparison,
     format_mean_std,
     kfold_geometry_display_table,
+    kfold_ipr_display_table,
 )
 
 
@@ -36,8 +37,6 @@ def test_collect_kfold_btp_comparison(tmp_path):
                 "std_eta2_macro_balanced": 0.01,
                 "mean_eta2_macro_balanced_perc": 12.0,
                 "std_eta2_macro_balanced_perc": 1.0,
-                "mean_rankme_global": 1024.0,
-                "std_rankme_global": 10.0,
             }
         ]
     ).to_csv(triplet / "kfold_summary.csv", index=False)
@@ -49,3 +48,25 @@ def test_collect_kfold_btp_comparison(tmp_path):
 
     disp = kfold_geometry_display_table(df)
     assert "12.00 ± 1.00" in disp.iloc[0]["eta2_macro_balanced_perc"]
+
+
+def test_collect_kfold_btp_comparison_ipr(tmp_path):
+    root = tmp_path / "output"
+    triplet = root / "softtriple" / "metrics"
+    triplet.mkdir(parents=True)
+    pd.DataFrame(
+        [
+            {
+                "n_folds": 3,
+                "mean_IPR_mean": 1.0,
+                "std_IPR_mean": 0.05,
+                "mean_IPR_A0": 1.2,
+                "std_IPR_A0": 0.1,
+            }
+        ]
+    ).to_csv(triplet / "kfold_summary.csv", index=False)
+
+    df = collect_kfold_btp_comparison(root)
+    assert df.iloc[0]["mean_IPR_mean"] == 1.0
+    disp = kfold_ipr_display_table(df)
+    assert "1.000 ± 0.050" in disp.iloc[0]["IPR_mean"]

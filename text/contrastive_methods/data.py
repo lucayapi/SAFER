@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig
-from scgm_text.dataset_text_raw import TextRawDataset, split_raw_by_group
+from scgm_text.dataset_text_raw import TextRawDataset, split_by_group
 
 
 def prepare_text_dataset(cfg: ContrastiveConfig) -> TextRawDataset:
@@ -47,7 +47,7 @@ def split_train_val(
         n = len(dataset)
         all_idx = np.arange(n, dtype=np.int64)
         return all_idx, np.array([], dtype=np.int64)
-    return split_raw_by_group(dataset, val_ratio=cfg.val_ratio, seed=cfg.seed)
+    return split_by_group(dataset, val_ratio=cfg.val_ratio, seed=cfg.seed)
 
 
 def get_group_kfold_splits(dataset: TextRawDataset, cfg: ContrastiveConfig):

@@ -240,7 +240,7 @@ def load_contrastive_config(
             float(pick("tau", default=0.01, sources=(softtriple,))),
         ),
         export_effective_centers=bool(
-            pick("export_effective_centers", default=False, sources=(softtriple,))
+            pick("export_effective_centers", default=True, sources=(softtriple,))
         ),
         effective_center_distance_threshold=float(
             pick("effective_center_distance_threshold", default=0.05, sources=(softtriple,))

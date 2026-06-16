@@ -1,8 +1,7 @@
-"""Helpers BERTopic pour le pipeline TPN full encoder."""
+"""Phase BERTopic pour le pipeline Frozen Source Prototypes."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence
 

@@ -1,2 +1,70 @@
-# Référence méthode SCGM — config unique d'entraînement.
-config: configs/scgm_text.yaml
+# SCGM-text end2end — config unique (data / model / training).
+# Modifier les hyperparamètres ici ; pas d'autre YAML SCGM pour l'entraînement principal.
+#
+# Modes backbone (model.backbone_trainable + model.train_last_n_layers) :
+#   A gelé     : backbone_trainable: false, train_last_n_layers: null
+#                → seuls projecteur (ψ) et tête SCGM (φ) ; Qwen en no_grad
+#   B partiel  : backbone_trainable: true,  train_last_n_layers: 2  (ou 4)
+#   C complet  : backbone_trainable: true,  train_last_n_layers: null
+#
+# Sinkhorn E-step (model.sinkhorn_sample_prior) : uniform | macro_balanced
+
+method_name: scgm_text
+use_prompt: false
+output_dir: output/scgm_text
+test_corpus: metallurgie
+
+data:
+  data_csv: dataset/data_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+  val_ratio: 0.1
+
+model:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  backbone_trainable: true
+  train_last_n_layers: null
+  max_seq_length: 256
+  pooling: mean
+  projection: mlp
+  hiddim: 128
+  n_class: 4
+  n_subclass: 32
+  tau: 0.1
+  alpha: 0.5
+  lmd: 25.0
+  lmd_start: 5.0
+  lmd_warmup_epochs: 5
+  n_iter_estep: 5
+  sinkhorn_sample_prior: uniform
+  sinkhorn_max_iter: 500
+  sinkhorn_tol: 1.0e-4
+  sinkhorn_tol_mode: mean
+  sinkhorn_check_every: 10
+  sinkhorn_eps: 1.0e-12
+  sinkhorn_normalize_input: true
+  # debug rapide: lmd: 10.0, lmd_start: null, lmd_warmup_epochs: 0
+
+training:
+  n_folds: 5
+  optimizer: adamw
+  lr_backbone: 5.0e-6
+  lr_projector: 5.0e-4
+  lr_head: 1.0e-3
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-8
+  weight_decay_backbone: 0.0001
+  weight_decay_projector: 0.0001
+  weight_decay_head: 0.0001
+  scheduler: cosine
+  num_cycles: 10
+  epochs: 50
+  batch_size: 16
+  gradient_accumulation_steps: 4
+  gradient_checkpointing: true
+  beta: 1.0
+  num_workers: 2
+  progress_every: 50

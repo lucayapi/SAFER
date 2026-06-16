@@ -17,6 +17,6 @@ def test_apply_config_n_folds_maps_to_kfold():
     with patch.object(sys, "argv", ["train_scgm_text.py"]):
         args = parse_args()
     args.kfold = 0
-    raw_path = TEXT_ROOT / "configs/scgm_text.yaml"
+    raw_path = TEXT_ROOT / "configs/methods/scgm_text.yaml"
     apply_config(args, str(raw_path))
     assert args.kfold == 5

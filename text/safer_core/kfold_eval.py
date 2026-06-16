@@ -9,9 +9,10 @@ import pandas as pd
 from sklearn.model_selection import GroupKFold
 
 from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
+from metrics.intra_role_preservation import IPR_COLUMNS
 
 TRAINING_TIMING_KEYS: Tuple[str, ...] = ("train_wall_time_sec",)
-KFOLD_AGGREGATE_METRIC_KEYS: Tuple[str, ...] = GEOMETRY_METRIC_KEYS + TRAINING_TIMING_KEYS
+KFOLD_AGGREGATE_METRIC_KEYS: Tuple[str, ...] = GEOMETRY_METRIC_KEYS + IPR_COLUMNS + TRAINING_TIMING_KEYS
 
 
 def group_kfold_splits(

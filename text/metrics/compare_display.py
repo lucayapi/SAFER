@@ -10,8 +10,14 @@ import numpy as np
 import pandas as pd
 
 from metrics.geometry import GEOMETRY_METRIC_KEYS
-
-from metrics.embedding_dims import embedding_dim_for_display_label
+from metrics.embedding_geometry_separation import MACRO_NAMES
+from metrics.intra_role_preservation import (
+    DEFAULT_BASELINE_LABEL,
+    IPR_COLUMNS,
+    IPR_MEAN_COLUMN,
+    compute_ipr_columns,
+    ipr_display_table,
+)
 
 EMBEDDING_COMPARE_METHODS: tuple[str, ...] = (
     "raw_embedding",
@@ -39,20 +45,16 @@ GEOM_DISPLAY_COLS: tuple[str, ...] = (
     "eta2_macro_balanced",
     "eta2_macro_balanced_perc",
     "eta2_weighted",
-    "rankme_over_d",
     "embedding_dim",
-    "c1_global",
-    "c10_global",
 )
+
+KFOLD_IPR_METRICS: tuple[str, ...] = IPR_COLUMNS
 
 # Métriques val K-fold agrégées (μ±σ) pour le tableau BTP du notebook 01
 KFOLD_SLIM_METRICS: tuple[str, ...] = (
     "eta2_macro_balanced",
     "eta2_macro_balanced_perc",
     "eta2_weighted",
-    "rankme_global",
-    "c1_global",
-    "c10_global",
 )
 
 
@@ -92,40 +94,6 @@ def fill_eta2_macro_balanced_perc(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def default_embedding_dims_series(df: pd.DataFrame) -> pd.Series:
-    """d par libellé méthode (1024 Qwen / contrastifs, 128 SCGM)."""
-    if df.empty or "method" not in df.columns:
-        return pd.Series(dtype=float)
-    return pd.Series(
-        [float(embedding_dim_for_display_label(m)) for m in df["method"].astype(str)],
-        index=df.index,
-        dtype=float,
-    )
-
-
-def fill_rankme_over_d(df: pd.DataFrame) -> pd.DataFrame:
-    """rankme_over_d = rankme_global / d (1024 Qwen, 128 SCGM) si absent des CSV."""
-    if df.empty or "rankme_global" not in df.columns:
-        return df
-    out = df.copy()
-    rankme = pd.to_numeric(out["rankme_global"], errors="coerce")
-    defaults = default_embedding_dims_series(out)
-    if "embedding_dim" in out.columns:
-        d = pd.to_numeric(out["embedding_dim"], errors="coerce")
-        d = d.where(d.notna() & (d > 0), defaults)
-    else:
-        d = defaults
-    out["embedding_dim"] = d
-    d = d.replace(0, np.nan)
-    computed = rankme / d
-    if "rankme_over_d" not in out.columns:
-        out["rankme_over_d"] = computed
-    else:
-        over = pd.to_numeric(out["rankme_over_d"], errors="coerce")
-        out["rankme_over_d"] = over.where(over.notna(), computed)
-    return out
-
-
 def order_methods(
     df: pd.DataFrame,
     keys: Sequence[str] = EMBEDDING_COMPARE_METHODS,
@@ -144,7 +112,7 @@ def order_methods(
 
 
 def slim_geometry_table(df: pd.DataFrame) -> pd.DataFrame:
-    slim = fill_rankme_over_d(fill_eta2_macro_balanced_perc(df))
+    slim = fill_eta2_macro_balanced_perc(df)
     cols = [c for c in GEOM_DISPLAY_COLS if c in slim.columns]
     if not cols:
         return slim
@@ -179,27 +147,6 @@ def _load_kfold_summary_row(method_dir: Path) -> Optional[dict]:
     return df.iloc[0].to_dict()
 
 
-def _enrich_kfold_rankme_over_d(df: pd.DataFrame) -> pd.DataFrame:
-    """Dérive mean/std rankme_over_d à partir de rankme_global et d par méthode."""
-    if df.empty or "mean_rankme_global" not in df.columns:
-        return df
-    out = df.copy()
-    defaults = default_embedding_dims_series(out)
-    if "embedding_dim" in out.columns:
-        d = pd.to_numeric(out["embedding_dim"], errors="coerce")
-        d = d.where(d.notna() & (d > 0), defaults)
-    else:
-        d = defaults
-    out["embedding_dim"] = d
-    d_safe = d.replace(0, np.nan)
-    mean_rm = pd.to_numeric(out["mean_rankme_global"], errors="coerce")
-    out["mean_rankme_over_d"] = mean_rm / d_safe
-    if "std_rankme_global" in out.columns:
-        std_rm = pd.to_numeric(out["std_rankme_global"], errors="coerce")
-        out["std_rankme_over_d"] = std_rm / d_safe
-    return out
-
-
 def collect_kfold_btp_comparison(
     root: Path,
     method_keys: Sequence[str] = EMBEDDING_COMPARE_METHODS,
@@ -228,6 +175,13 @@ def collect_kfold_btp_comparison(
                 entry[mean_col] = raw[mean_col]
             if std_col in raw:
                 entry[std_col] = raw[std_col]
+        for metric in IPR_COLUMNS:
+            mean_col = f"mean_{metric}"
+            std_col = f"std_{metric}"
+            if mean_col in raw:
+                entry[mean_col] = raw[mean_col]
+            if std_col in raw:
+                entry[std_col] = raw[std_col]
         rows.append(entry)
     if not rows:
         return pd.DataFrame()
@@ -244,13 +198,11 @@ def collect_kfold_btp_comparison(
             df["std_eta2_macro_balanced_perc"] = (
                 pd.to_numeric(df["std_eta2_macro_balanced"], errors="coerce") * 100.0
             )
-    return order_methods(_enrich_kfold_rankme_over_d(df))
+    return order_methods(df)
 
 
 def kfold_slim_metric_keys() -> tuple[str, ...]:
-    """Clés affichées (inclut rankme_over_d si dérivé)."""
-    keys = list(KFOLD_SLIM_METRICS)
-    return tuple(keys)
+    return tuple(KFOLD_SLIM_METRICS)
 
 
 def kfold_geometry_display_table(
@@ -262,12 +214,8 @@ def kfold_geometry_display_table(
     """Tableau lisible μ±σ pour le notebook (une colonne par métrique)."""
     if df_kfold.empty:
         return df_kfold
-    df = _enrich_kfold_rankme_over_d(df_kfold)
+    df = df_kfold
     display_metrics = list(metrics)
-    if "rankme_global" in display_metrics and "mean_rankme_over_d" in df.columns:
-        display_metrics = [
-            "rankme_over_d" if m == "rankme_global" else m for m in display_metrics
-        ]
     out = pd.DataFrame({"method": df["method"].astype(str)})
     if "n_folds" in df.columns:
         out["n_folds"] = df["n_folds"]
@@ -287,6 +235,19 @@ def kfold_geometry_display_table(
     return out
 
 
+def kfold_ipr_display_table(
+    df_kfold: pd.DataFrame,
+    *,
+    decimals: int = 3,
+) -> pd.DataFrame:
+    """μ±σ IPR_mean et IPR par rôle (validation K-fold)."""
+    return kfold_geometry_display_table(
+        df_kfold,
+        metrics=KFOLD_IPR_METRICS,
+        decimals=decimals,
+    )
+
+
 def kfold_barplot_frame(
     df_kfold: pd.DataFrame,
     metric: str,
@@ -294,12 +255,9 @@ def kfold_barplot_frame(
     """DataFrame method / mean / std pour barres d'erreur matplotlib."""
     if df_kfold.empty:
         return pd.DataFrame(columns=["method", "mean", "std"])
-    df = _enrich_kfold_rankme_over_d(df_kfold)
-    key = metric
-    if metric == "rankme_over_d" and f"mean_{metric}" not in df.columns:
-        key = "rankme_global"
-    mean_col = f"mean_{key}"
-    std_col = f"std_{key}"
+    df = df_kfold
+    mean_col = f"mean_{metric}"
+    std_col = f"std_{metric}"
     if mean_col not in df.columns:
         return pd.DataFrame(columns=["method", "mean", "std"])
     return pd.DataFrame(
@@ -309,3 +267,121 @@ def kfold_barplot_frame(
             "std": pd.to_numeric(df.get(std_col, 0.0), errors="coerce").fillna(0.0),
         }
     )
+
+
+def enrich_geometry_with_ipr(
+    df: pd.DataFrame,
+    *,
+    baseline_label: str | None = None,
+) -> pd.DataFrame:
+    """Ajoute IPR_* vs embedding brut et réordonne les méthodes."""
+    baseline = baseline_label or METHOD_DISPLAY.get("raw_embedding", DEFAULT_BASELINE_LABEL)
+    enriched = compute_ipr_columns(df, baseline_label=baseline)
+    return order_methods(enriched)
+
+
+def joint_eta2_ipr_table(df: pd.DataFrame, *, decimals: int = 3) -> pd.DataFrame:
+    """η² macro balancé (%) + IPR_mean pour lecture conjointe."""
+    if df.empty or "method" not in df.columns:
+        return pd.DataFrame()
+    work = enrich_geometry_with_ipr(df) if IPR_MEAN_COLUMN not in df.columns else order_methods(df)
+    work = fill_eta2_macro_balanced_perc(work)
+    cols = ["method"]
+    if "eta2_macro_balanced_perc" in work.columns:
+        cols.append("eta2_macro_balanced_perc")
+    elif "eta2_macro_balanced" in work.columns:
+        cols.append("eta2_macro_balanced")
+    if IPR_MEAN_COLUMN in work.columns:
+        cols.append(IPR_MEAN_COLUMN)
+    out = work[cols].copy()
+    if "eta2_macro_balanced_perc" in out.columns:
+        out["eta2_macro_balanced_perc"] = pd.to_numeric(
+            out["eta2_macro_balanced_perc"], errors="coerce"
+        ).round(decimals)
+    if IPR_MEAN_COLUMN in out.columns:
+        out[IPR_MEAN_COLUMN] = pd.to_numeric(out[IPR_MEAN_COLUMN], errors="coerce").round(decimals)
+    return out
+
+
+def plot_ipr_comparison(
+    df: pd.DataFrame,
+    title_prefix: str,
+    *,
+    figsize: tuple[float, float] = (10.0, 4.0),
+) -> None:
+    """Barres groupées IPR par rôle + IPR_mean ; ligne y=1 = référence brut."""
+    import matplotlib.pyplot as plt
+
+    work = enrich_geometry_with_ipr(df) if IPR_MEAN_COLUMN not in df.columns else order_methods(df)
+    if work.empty or IPR_MEAN_COLUMN not in work.columns:
+        return
+
+    methods = work["method"].astype(str).tolist()
+    series_labels = list(MACRO_NAMES) + ["moy."]
+    series_cols = [f"IPR_{r}" for r in MACRO_NAMES] + [IPR_MEAN_COLUMN]
+    n_methods = len(methods)
+    n_series = len(series_labels)
+    x = np.arange(n_methods)
+    width = 0.8 / max(n_series, 1)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    for i, (label, col) in enumerate(zip(series_labels, series_cols)):
+        if col not in work.columns:
+            continue
+        offset = (i - (n_series - 1) / 2.0) * width
+        vals = pd.to_numeric(work[col], errors="coerce").astype(float).tolist()
+        ax.bar(x + offset, vals, width=width * 0.95, label=label)
+
+    ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, label="référence brut (IPR=1)")
+    ax.set_ylabel("IPR (ρ brut / ρ méthode)")
+    ax.set_title(f"{title_prefix} — préservation intra-rôle (IPR)")
+    ax.set_xticks(x)
+    ax.set_xticklabels(methods, rotation=30, ha="right")
+    ax.legend(loc="best", fontsize=8)
+    fig.tight_layout()
+    plt.show()
+
+
+def plot_eta2_ipr_dual(
+    df: pd.DataFrame,
+    title_prefix: str,
+    *,
+    figsize: tuple[float, float] = (12.0, 4.0),
+) -> None:
+    """Deux panneaux : η² macro balancé (%) et IPR_mean."""
+    import matplotlib.pyplot as plt
+
+    work = enrich_geometry_with_ipr(df) if IPR_MEAN_COLUMN not in df.columns else order_methods(df)
+    if work.empty:
+        return
+    work = fill_eta2_macro_balanced_perc(work)
+    methods = work["method"].astype(str).tolist()
+    x = np.arange(len(methods))
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+
+    if "eta2_macro_balanced_perc" in work.columns:
+        eta2 = pd.to_numeric(work["eta2_macro_balanced_perc"], errors="coerce")
+        axes[0].bar(x, eta2.astype(float))
+        axes[0].set_ylabel("η² macro balancé (%)")
+        axes[0].set_title(f"{title_prefix} — séparation macro")
+    else:
+        axes[0].set_visible(False)
+
+    if IPR_MEAN_COLUMN in work.columns:
+        ipr = pd.to_numeric(work[IPR_MEAN_COLUMN], errors="coerce")
+        axes[1].bar(x, ipr.astype(float))
+        axes[1].axhline(1.0, color="gray", linestyle="--", linewidth=1.0)
+        axes[1].set_ylabel("IPR moyen")
+        axes[1].set_title(f"{title_prefix} — préservation intra-rôle")
+    else:
+        axes[1].set_visible(False)
+
+    for ax in axes:
+        if ax.get_visible():
+            ax.set_xticks(x)
+            ax.set_xticklabels(methods, rotation=30, ha="right")
+
+    fig.suptitle(f"{title_prefix} — η² et IPR (lecture conjointe)", y=1.02)
+    fig.tight_layout()
+    plt.show()

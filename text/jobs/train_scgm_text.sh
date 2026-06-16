@@ -58,11 +58,11 @@ export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
 
 echo "TEST_CORPUS=${TEST_CORPUS}"
 
-echo "Mode entraînement : SCGM-text (configs/scgm_text.yaml)"
+echo "Mode entraînement : SCGM-text (configs/methods/scgm_text.yaml)"
 
 python scripts/train_scgm_text.py \
 
-  --config configs/scgm_text.yaml \
+  --config configs/methods/scgm_text.yaml \
 
   --data_csv dataset/data_btp.csv \
 

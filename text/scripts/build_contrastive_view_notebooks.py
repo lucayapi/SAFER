@@ -136,9 +136,7 @@ for corpus, stem, base in (
         for col in (
             "eta2_macro_balanced_perc",
             "eta2_macro_balanced",
-            "rankme_global",
-            "c1_global",
-            "c10_global",
+            "eta2_weighted",
         ):
             if col in geom.columns and geom[col].notna().any():
                 fig, ax = plt.subplots(figsize=(6, 3))
@@ -190,6 +188,30 @@ else:
     print(p_btp)
 '''
 
+TSNE_PER_MACRO_BTP_MD = """### t-SNE par macro — BTP
+
+Grille 2×2 (A0, A1, B, C) : t-SNE recalculé **séparément** sur chaque macro pour visualiser la structure intra-rôle.
+"""
+
+TSNE_PER_MACRO_BTP_CODE = '''
+from scgm_text.notebook_viz import plot_embeddings_csv_tsne_per_macro
+
+p_btp_pm = plot_embeddings_csv_tsne_per_macro(
+    emb_btp,
+    DATASET_CSV,
+    LABEL_COL,
+    corpus_name=f"{DISPLAY_NAME} — BTP",
+    save_fig=save_fig,
+    png_name=f"{METHOD_KEY}_btp_tsne_per_macro.png",
+    max_points=8000,
+    seed=42,
+)
+if p_btp_pm is None:
+    print("(absent) t-SNE par macro BTP — mêmes prérequis que PCA/t-SNE global")
+else:
+    print(p_btp_pm)
+'''
+
 PCA_TEST_MD = """### PCA / t-SNE — Test métallurgie
 
 Carte 2D sur `output_test/<corpus>/<method>/embeddings/final_embeddings_test.csv` (pas sous `output/<method>/`).
@@ -228,6 +250,120 @@ if p_test is None:
     print(f"  Dossier test : {_test_results}")
 else:
     print(p_test)
+'''
+
+TSNE_PER_MACRO_TEST_MD = """### t-SNE par macro — Test métallurgie
+
+Grille 2×2 par étape (A0, A1, B, C) sur les embeddings fine-tunés du corpus test.
+"""
+
+TSNE_PER_MACRO_TEST_CODE = '''
+from scgm_text.notebook_viz import plot_embeddings_csv_tsne_per_macro
+
+p_test_pm = plot_embeddings_csv_tsne_per_macro(
+    emb_test,
+    DATA_TEST,
+    LABEL_COL,
+    corpus_name=f"{DISPLAY_NAME} — test métallurgie",
+    save_fig=save_fig_test,
+    png_name=f"{METHOD_KEY}_test_tsne_per_macro.png",
+    max_points=8000,
+    seed=42,
+)
+if p_test_pm is None:
+    print("(absent) t-SNE par macro test — relancer éval test")
+else:
+    print(p_test_pm)
+'''
+
+SOFTTRIPLE_CENTERS_MD = """### Centres SoftTriple effectifs
+
+Tableau des centres (`centers/softtriple_effective_centers.csv`) et projection PCA/t-SNE sur les embeddings BTP et test (losanges `A0#0`, …).
+
+Prérequis : `export_effective_centers: true` et `center_regularization_type` ≠ `none` dans la config (défaut : `diversity`).
+"""
+
+SOFTTRIPLE_CENTERS_BTP_CODE = '''
+if METHOD_KEY == "softtriple":
+    from scgm_text.notebook_viz import (
+        plot_embeddings_csv_pca_tsne_with_softtriple_centers,
+        resolve_softtriple_centers_csv,
+        softtriple_centers_summary_table,
+    )
+
+    centers_csv = resolve_softtriple_centers_csv(RESULTS)
+    if centers_csv is None:
+        print("(absent) centres SoftTriple — relancer train_softtriple.py avec export_effective_centers")
+    else:
+        print("Centres :", centers_csv.relative_to(ROOT))
+        display(softtriple_centers_summary_table(centers_csv))
+        p_centers = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+            emb_btp,
+            DATASET_CSV,
+            LABEL_COL,
+            results_dir=RESULTS,
+            corpus_name=f"{DISPLAY_NAME} — BTP (centres)",
+            save_fig=save_fig,
+            png_name="softtriple_btp_pca_tsne_centers.png",
+            max_points=8000,
+            seed=42,
+        )
+        if p_centers is not None:
+            print(p_centers)
+'''
+
+SOFTTRIPLE_CENTERS_TEST_CODE = '''
+if METHOD_KEY == "softtriple" and emb_test is not None:
+    from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne_with_softtriple_centers
+
+    p_centers_test = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+        emb_test,
+        DATA_TEST,
+        LABEL_COL,
+        results_dir=RESULTS,
+        corpus_name=f"{DISPLAY_NAME} — test métallurgie (centres)",
+        save_fig=save_fig_test,
+        png_name="softtriple_test_pca_tsne_centers.png",
+        max_points=8000,
+        seed=42,
+    )
+    if p_centers_test is not None:
+        print(p_centers_test)
+'''
+
+RAW_TEST_MD = """### Embedding brut — test métallurgie (PCA / t-SNE / UMAP)
+
+Vecteurs **encodeur Qwen** (`embeddings/test/…`), couleur = **`pred_label`** (étape chaîne accidentelle). Référence avant/après fine-tuning {display_name} — indépendant de `output/<method>/`.
+"""
+
+RAW_TEST_CODE = '''
+from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
+
+FIGURES_RAW = _test_results / "figures" / "raw_encoder"
+FIGURES_RAW.mkdir(parents=True, exist_ok=True)
+
+_raw_emb = plot_test_corpus_raw_embeddings(
+    TEST_CORPUS,
+    fig_dir=FIGURES_RAW,
+    anchor=ROOT,
+    label_col=LABEL_COL,
+    max_points=12000,
+    seed=42,
+    prefix="raw_test_embedding",
+    show=True,
+    display_metrics=True,
+)
+if _raw_emb.missing:
+    print("Embedding brut test — fichiers manquants :", ", ".join(_raw_emb.missing))
+    print("  → embeddings/test/Qwen3-Embedding-0.6B__<corpus>.csv")
+    print("  → dataset/test/data_<corpus>.csv (colonne pred_label)")
+else:
+    print(
+        "Figures embedding brut :",
+        _raw_emb.pca_tsne_path,
+        _raw_emb.tsne_per_macro_path,
+        _raw_emb.umap_png_path,
+    )
 '''
 
 
@@ -295,9 +431,28 @@ def main() -> None:
             _cell(view_code),
             _cell(PCA_BTP_MD, "markdown"),
             _cell(PCA_BTP_CODE),
-            _cell(PCA_TEST_MD, "markdown"),
-            _cell(PCA_TEST_CODE),
+            _cell(TSNE_PER_MACRO_BTP_MD, "markdown"),
+            _cell(TSNE_PER_MACRO_BTP_CODE),
         ]
+        if method_key == "softtriple":
+            cells.extend(
+                [
+                    _cell(SOFTTRIPLE_CENTERS_MD, "markdown"),
+                    _cell(SOFTTRIPLE_CENTERS_BTP_CODE),
+                ]
+            )
+        cells.extend(
+            [
+                _cell(RAW_TEST_MD.format(display_name=display_name), "markdown"),
+                _cell(RAW_TEST_CODE),
+                _cell(PCA_TEST_MD, "markdown"),
+                _cell(PCA_TEST_CODE),
+                _cell(TSNE_PER_MACRO_TEST_MD, "markdown"),
+                _cell(TSNE_PER_MACRO_TEST_CODE),
+            ]
+        )
+        if method_key == "softtriple":
+            cells.append(_cell(SOFTTRIPLE_CENTERS_TEST_CODE))
         out = NB / nb_name
         out.write_text(json.dumps(_nb(cells), indent=1), encoding="utf-8")
         print("Écrit", out)

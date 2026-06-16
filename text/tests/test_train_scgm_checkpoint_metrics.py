@@ -60,7 +60,7 @@ def test_evaluate_split_returns_eta2_keys():
     assert "val_eta2_weighted" in metrics
     assert np.isfinite(metrics["val_eta2_macro_balanced"])
     assert "val_macro_f1" not in metrics
-    assert "rankme_global" in metrics
+    assert "rankme_global" not in metrics
 
 
 def test_evaluate_split_classifier_diagnostics_optional():
@@ -79,16 +79,8 @@ def test_evaluate_split_classifier_diagnostics_optional():
 
 
 def test_checkpoint_selection_prefers_higher_eta2():
-    low = {"val_eta2_macro_balanced": 0.1, "c1_global": 0.05}
-    high = {"val_eta2_macro_balanced": 0.4, "c1_global": 0.05}
-    assert checkpoint_selection_score(high, "eta2_macro_balanced", 0.01) > checkpoint_selection_score(
-        low, "eta2_macro_balanced", 0.01
-    )
-
-
-def test_checkpoint_selection_composite_penalizes_c1():
-    a = {"val_eta2_macro_balanced": 0.3, "c1_global": 0.9}
-    b = {"val_eta2_macro_balanced": 0.3, "c1_global": 0.1}
-    assert checkpoint_selection_score(b, "composite", 0.1) > checkpoint_selection_score(
-        a, "composite", 0.1
+    low = {"val_eta2_macro_balanced": 0.1}
+    high = {"val_eta2_macro_balanced": 0.4}
+    assert checkpoint_selection_score(high, "eta2_macro_balanced") > checkpoint_selection_score(
+        low, "eta2_macro_balanced"
     )

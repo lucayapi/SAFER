@@ -1,11 +1,11 @@
-"""Staging BN : chemin metadata TPN."""
+"""Staging BN : chemin metadata FSP."""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
 
-import pytest
+import pandas as pd
 
 _staging_path = Path(__file__).resolve().parents[1] / "bn_pipeline" / "staging_macro_transfer.py"
 _spec = importlib.util.spec_from_file_location("staging_macro_transfer", _staging_path)
@@ -17,37 +17,21 @@ resolve_transfer_metadata_path = _mod.resolve_transfer_metadata_path
 _normalize_fsp_metadata_for_bn = _mod._normalize_fsp_metadata_for_bn
 
 
-@pytest.mark.parametrize(
-    "method",
-    ["tpn_full_softtriple", "tpn_full_supcon", "tpn_full_batch_triplet", "tpn_full_scgm_text"],
-)
-def test_tpn_metadata_filename(method: str):
-    assert METADATA_BY_METHOD[method] == "metadata_with_tpn_macro_probs.csv"
-
-
-@pytest.mark.parametrize(
-    "method",
-    ["tpn_full_softtriple", "tpn_full_supcon"],
-)
-def test_resolve_transfer_metadata_path(method: str):
-    mt = Path(f"output_test/metallurgie/macro_transfer/{method}")
-    p = resolve_transfer_metadata_path(mt, method)
-    assert p.name == "metadata_with_tpn_macro_probs.csv"
-    assert "transfer" in str(p)
-
-
 def test_fsp_metadata_filename_and_path():
-    method = "frozen_source_prototypes/scgm"
+    method = "frozen_source_prototypes/scgm_text"
     assert METADATA_BY_METHOD[method] == "target_macro_predictions.csv"
-    mt = Path("output_test/metallurgie/macro_transfer/frozen_source_prototypes/scgm")
+    mt = Path("output_test/metallurgie/macro_transfer/frozen_source_prototypes/scgm_text")
     p = resolve_transfer_metadata_path(mt, method)
     assert p.name == "target_macro_predictions.csv"
     assert "transfer" in str(p)
 
 
-def test_normalize_fsp_metadata_for_bn():
-    import pandas as pd
+def test_fsp_legacy_alias_metadata():
+    method = "frozen_source_prototypes/scgm"
+    assert METADATA_BY_METHOD[method] == "target_macro_predictions.csv"
 
+
+def test_normalize_fsp_metadata_for_bn():
     df = pd.DataFrame(
         {
             "pred_macro": ["A0", "B"],

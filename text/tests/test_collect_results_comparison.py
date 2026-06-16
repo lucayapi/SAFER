@@ -17,7 +17,6 @@ from metrics.compare_display import (
     EMBEDDING_COMPARE_METHODS,
     METHOD_DISPLAY,
     fill_eta2_macro_balanced_perc,
-    fill_rankme_over_d,
     normalize_method_display_name,
     order_methods,
     slim_geometry_table,
@@ -86,21 +85,6 @@ def test_fill_eta2_perc_from_balanced_when_nan():
     assert abs(out.iloc[0]["eta2_macro_balanced_perc"] - 65.124) < 0.01
 
 
-def test_fill_rankme_over_d_when_embedding_dim_column_is_nan():
-    df = pd.DataFrame(
-        {
-            "method": ["Embedding brut", "SoftTriple", "SCGM", "SupCon"],
-            "rankme_global": [649.65, 604.1, 57.9, 520.5],
-            "embedding_dim": [float("nan"), float("nan"), float("nan"), 1024.0],
-        }
-    )
-    out = fill_rankme_over_d(df)
-    assert out.loc[0, "embedding_dim"] == 1024
-    assert out.loc[2, "embedding_dim"] == 128
-    assert abs(out.loc[0, "rankme_over_d"] - 649.65 / 1024) < 0.01
-    assert abs(out.loc[2, "rankme_over_d"] - 57.9 / 128) < 0.01
-
-
 def test_normalize_method_display_name_strips_suffix():
     assert normalize_method_display_name("Batch Triplet_btp", "batch_triplet") == "Batch Triplet"
 
@@ -136,14 +120,13 @@ def test_slim_geometry_table_columns():
         {
             "method": ["SCGM"],
             "eta2_macro_balanced_perc": [10.0],
-            "rankme_global": [5.0],
             "W_A0": [1.0],
         }
     )
     slim = slim_geometry_table(df)
     assert "W_A0" not in slim.columns
     assert "eta2_macro_balanced_perc" in slim.columns
-    assert "rankme_over_d" in slim.columns
+    assert "eta2_weighted" not in slim.columns
 
 
 def test_generated_notebook_01_references_two_tables():
@@ -156,3 +139,8 @@ def test_generated_notebook_01_references_two_tables():
     assert "embedding_geometry_comparison_test.csv" in src
     assert "métallurgie" in src
     assert "slim_geometry_table" in src
+    assert "ipr_display_table" in src
+    assert "plot_ipr_comparison" in src
+    assert "plot_eta2_ipr_dual" in src
+    assert "joint_eta2_ipr_table" in src
+    assert "IPR" in src

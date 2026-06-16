@@ -25,10 +25,10 @@ def test_geometry_keys_from_row_covers_all_metric_keys():
     )
     keys = _geometry_keys_from_row(row)
     assert set(keys.keys()) == set(GEOMETRY_METRIC_KEYS)
-    assert np.isfinite(keys["rankme_global"])
+    assert np.isfinite(keys["eta2_macro_balanced"])
 
 
-def test_aggregate_fold_rows_std_rankme_from_geometry_rows():
+def test_aggregate_fold_rows_std_from_geometry_rows():
     fold_rows = []
     for i in range(3):
         row = evaluate_embeddings_geometry(
@@ -42,7 +42,7 @@ def test_aggregate_fold_rows_std_rankme_from_geometry_rows():
     for key in GEOMETRY_METRIC_KEYS:
         assert f"mean_{key}" in agg
         assert f"std_{key}" in agg
-    assert agg["std_rankme_global"] >= 0
+    assert agg["std_eta2_macro_balanced_perc"] >= 0
     assert agg["selection_score"] == agg["mean_eta2_macro_balanced_perc"]
 
 
@@ -61,6 +61,5 @@ def test_kfold_summary_row_has_std_columns_for_tuning_grid():
     summary = aggregate_fold_rows(fold_rows)
     grid_row = {"combo_id": "test", "selection_score": summary["selection_score"], **summary}
     df = pd.DataFrame([grid_row])
-    assert "std_rankme_global" in df.columns
-    assert "mean_c10_global" in df.columns
     assert "std_eta2_macro_balanced_perc" in df.columns
+    assert "mean_eta2_macro_balanced" in df.columns

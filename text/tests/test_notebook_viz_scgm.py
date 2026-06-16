@@ -21,12 +21,14 @@ from scgm_text.notebook_viz import (
     macro_counts_per_z,
     macro_centroids_2d,
     plot_embeddings_csv_pca_tsne,
+    plot_embeddings_csv_tsne_per_macro,
     plot_kfold_metrics_bars,
     plot_kfold_summary_errorbars,
     plot_kfold_val_curves,
     plot_projection_matplotlib,
     plot_topics_distribution_by_macro,
     plot_topics_n_units_by_z,
+    plot_tsne_per_macro_grid,
 )
 
 
@@ -36,9 +38,6 @@ def test_plot_kfold_metrics_bars(tmp_path):
             "fold_id": [0, 1, 2, 3, 4],
             "eta2_macro_balanced_perc": [10.0, 12.0, 11.0, 9.5, 10.5],
             "val_eta2_macro_balanced": [0.5, 0.52, 0.48, 0.51, 0.49],
-            "rankme_global": [8.0, 8.2, 7.9, 8.1, 8.0],
-            "c1_global": [0.3, 0.31, 0.29, 0.3, 0.3],
-            "c10_global": [0.6, 0.61, 0.59, 0.6, 0.6],
         }
     )
     fig_dir = tmp_path / "figures"
@@ -89,7 +88,7 @@ def test_plot_kfold_val_curves(tmp_path):
 
 def test_plot_kfold_summary_errorbars(tmp_path):
     summary = pd.DataFrame(
-        [{"mean_eta2_macro_balanced_perc": 10.0, "std_eta2_macro_balanced_perc": 1.0, "mean_rankme_global": 8.0, "std_rankme_global": 0.2}]
+        [{"mean_eta2_macro_balanced_perc": 10.0, "std_eta2_macro_balanced_perc": 1.0}]
     )
     fig_dir = tmp_path / "figures"
     fig_dir.mkdir()
@@ -232,7 +231,7 @@ def test_plot_topics_n_units_by_z_with_metadata_merge(tmp_path):
 
 @patch("scgm_text.eval_corpus.load_scgm_checkpoint")
 @patch("scgm_text.eval_corpus.project_embedding_corpus")
-@patch("scgm_text.eval_corpus.TextEmbeddingDataset")
+@patch("scgm_text.eval_corpus.TextRawDataset")
 def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, mock_load_ckpt, tmp_path):
     from scgm_text.eval_corpus import save_scgm_projected_corpus
 
@@ -252,7 +251,6 @@ def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, mock_load_ck
     paths = save_scgm_projected_corpus(
         "fake.pt",
         "data.csv",
-        "emb.csv",
         emb_dir,
         stem="test",
     )
@@ -307,3 +305,166 @@ def test_plot_embeddings_csv_pca_tsne(tmp_path):
     assert out is not None
     assert out.is_file()
     assert plot_embeddings_csv_pca_tsne(tmp_path / "missing.csv", meta_path) is None
+
+
+def test_plot_tsne_per_macro_grid(tmp_path):
+    n = 40
+    labels = np.array(["A0", "A1", "B", "C"] * (n // 4))
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((n, 8))
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    out = plot_tsne_per_macro_grid(
+        x,
+        labels,
+        corpus_name="test",
+        save_fig=_save,
+        png_name="tsne_pm.png",
+        seed=0,
+    )
+    assert out is not None
+    assert out.is_file()
+
+
+def test_plot_tsne_per_macro_grid_sparse_macro(tmp_path):
+    labels = np.array(["A0"] * 5 + ["A1"] * 40)
+    x = np.random.default_rng(1).standard_normal((45, 4))
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    out = plot_tsne_per_macro_grid(
+        x,
+        labels,
+        save_fig=_save,
+        png_name="sparse.png",
+        min_points=10,
+    )
+    assert out is not None
+
+
+def test_plot_embeddings_csv_tsne_per_macro(tmp_path):
+    n = 40
+    labels = ["A0", "A1", "B", "C"] * (n // 4)
+    meta = pd.DataFrame(
+        {
+            "doc_id": list(range(n)),
+            "accident_id": [f"a{i // 4}" for i in range(n)],
+            "pred_label": labels,
+            "pred_ok": [True] * n,
+        }
+    )
+    meta_path = tmp_path / "meta.csv"
+    meta.to_csv(meta_path, index=False)
+
+    emb = meta[["doc_id"]].copy()
+    rng = np.random.default_rng(0)
+    for j in range(8):
+        emb[f"dim_{j}"] = rng.standard_normal(n)
+    emb_path = tmp_path / "emb.csv"
+    emb.to_csv(emb_path, index=False)
+
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    out = plot_embeddings_csv_tsne_per_macro(
+        emb_path,
+        meta_path,
+        "pred_label",
+        save_fig=_save,
+        png_name="emb_tsne_pm.png",
+        max_points=n,
+        seed=0,
+    )
+    assert out is not None
+    assert out.is_file()
+
+
+def test_softtriple_centers_summary_and_projection(tmp_path):
+    from scgm_text.notebook_viz import (
+        plot_embeddings_csv_pca_tsne_with_softtriple_centers,
+        softtriple_centers_summary_table,
+    )
+
+    rng = np.random.default_rng(0)
+    d = 8
+    n = 40
+    labels = ["A0", "A1", "B", "C"] * (n // 4)
+    meta = pd.DataFrame(
+        {
+            "doc_id": range(n),
+            "accident_id": [f"a{i // 4}" for i in range(n)],
+            "pred_label": labels,
+            "pred_ok": [True] * n,
+        }
+    )
+    meta_path = tmp_path / "meta.csv"
+    meta.to_csv(meta_path, index=False)
+
+    emb = meta.copy()
+    emb[[f"dim_{i:04d}" for i in range(d)]] = rng.standard_normal((n, d))
+    emb_path = tmp_path / "emb.csv"
+    emb.to_csv(emb_path, index=False)
+
+    centers_dir = tmp_path / "results" / "centers"
+    centers_dir.mkdir(parents=True)
+    center_rows = []
+    for macro, cid in enumerate(["A0", "A1", "B", "C"]):
+        vec = rng.standard_normal(d)
+        row = {"class_id": cid, "class_name": macro, "effective_center_id": 0, "group_size": 3}
+        for i, val in enumerate(vec):
+            row[f"dim_{i:04d}"] = val
+        center_rows.append(row)
+    pd.DataFrame(center_rows).to_csv(centers_dir / "softtriple_effective_centers.csv", index=False)
+
+    summary = softtriple_centers_summary_table(centers_dir / "softtriple_effective_centers.csv")
+    assert len(summary) == 4
+    assert "l2_norm" in summary.columns
+
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    out = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+        emb_path,
+        meta_path,
+        "pred_label",
+        results_dir=tmp_path / "results",
+        save_fig=_save,
+        png_name="st_centers.png",
+        max_points=n,
+        seed=0,
+    )
+    assert out is not None
+    assert out.is_file()

@@ -14,6 +14,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+from macro_transfer.notebook_viz import (
+    RAW_TEST_EMBEDDING_SECTION_MD,
+    notebook_raw_test_embedding_source,
+)
 
 
 def md(text: str) -> dict:
@@ -37,16 +41,16 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 06 — Frozen Source Prototypes + topics intra-macro
+# 06 — Frozen Source Prototypes + topics par étape (chaîne accidentelle)
 
 Notebook orienté baseline **Frozen Source Prototypes** :
-- prédictions macro : `transfer/target_macro_predictions.csv`
+- prédictions étape (chaîne accidentelle) : `transfer/target_macro_predictions.csv`
 - prototypes source : `transfer/source_prototypes.csv`
 - métriques : `transfer/metrics.json` (si labels cible)
 - BERTopic inputs : `transfer/bertopic_input_all.csv` et `transfer/bertopic_input_<macro>.csv`
 - BERTopic sorties : `topics_bertopic/assignments.csv`, `topics_bertopic/themes_by_macro.csv`, `summary/topics_summary.csv`
 
-**Prérequis** : exécuter `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml`.
+**Prérequis** : `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh`.
 """
         ),
         py(
@@ -71,10 +75,11 @@ from macro_transfer.notebook_viz import (
 
 # --- Parameters (modifier ici ou via papermill) ---
 TEST_CORPUS = "metallurgie"
+FSP_BASE_METHOD = "scgm_text"
 TOP_ERRORS_K = 20
 
 _spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes/scgm", _spec.id, anchor=TEXT_ROOT)
+OUT_DIR = macro_transfer_output_dir(f"frozen_source_prototypes/{FSP_BASE_METHOD}", _spec.id, anchor=TEXT_ROOT)
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"06_fsp_macro_{_spec.id}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -225,7 +230,7 @@ for p in expected:
 print("Figures :", FIG_DIR)
 """
         ),
-        md("## § Tableau macro topics (format article / LaTeX)"),
+        md("## § Tableau topics par étape (format article / LaTeX)"),
         py(
             r"""
 stats_path = OUT_DIR / "summary" / "macro_topic_stats.csv"
@@ -236,11 +241,11 @@ else:
     required = {"macro", "n_units", "n_topics", "bruit_pct", "plus_gros_topic_pct"}
     missing = sorted(required.difference(df_stats.columns))
     if missing:
-        print(f"Colonnes manquantes pour tableau macro topics: {missing}")
+        print(f"Colonnes manquantes pour tableau topics par étape: {missing}")
     else:
         table_macro = pd.DataFrame(
             {
-                "Macro": df_stats["macro"].astype(str),
+                "Étape": df_stats["macro"].astype(str),
                 "Unités": pd.to_numeric(df_stats["n_units"], errors="coerce").fillna(0).astype(int),
                 "Topics": pd.to_numeric(df_stats["n_topics"], errors="coerce").fillna(0).astype(int),
                 "Bruit": pd.to_numeric(df_stats["bruit_pct"], errors="coerce").map(
@@ -263,6 +268,8 @@ else:
         print("LaTeX écrit :", tex_out)
 """
         ),
+        md(RAW_TEST_EMBEDDING_SECTION_MD),
+        py(notebook_raw_test_embedding_source("FIG_DIR")),
     ]
 
     nb = {

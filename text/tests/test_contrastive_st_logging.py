@@ -46,7 +46,7 @@ def test_build_train_log_row_val_columns():
     row = build_train_log_row(
         1,
         0.5,
-        val_geometry={"eta2_macro_balanced_perc": 10.0, "eta2_macro_balanced": 0.1, "rankme_global": 5.0},
+        val_geometry={"eta2_macro_balanced_perc": 10.0, "eta2_macro_balanced": 0.1},
     )
     assert row["epoch"] == 1
     assert row["val_eta2_macro_balanced_perc"] == 10.0
@@ -90,9 +90,7 @@ def test_contrastive_epoch_callback_writes_standard_columns(mock_eval):
     mock_eval.return_value = {
         "eta2_macro_balanced_perc": 12.0,
         "eta2_macro_balanced": 0.12,
-        "rankme_global": 8.0,
-        "c1_global": 0.3,
-        "c10_global": 0.5,
+        "eta2_weighted": 0.11,
     }
     log_rows = []
     val_df = pd.DataFrame(
@@ -155,7 +153,5 @@ def test_train_log_columns_list():
     from metrics.geometry import GEOMETRY_METRIC_KEYS
 
     assert "epoch" in TRAIN_LOG_COLUMNS
-    assert "val_c10_global" in TRAIN_LOG_COLUMNS
-    assert len([c for c in TRAIN_LOG_COLUMNS if c.startswith("val_") and c != "val_loss"]) == len(
-        GEOMETRY_METRIC_KEYS
-    )
+    assert "val_eta2_macro_balanced_perc" in TRAIN_LOG_COLUMNS
+    assert "val_rankme_global" not in TRAIN_LOG_COLUMNS

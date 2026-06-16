@@ -1,4 +1,4 @@
-"""Prototypes et responsabilités macro type TPN (numpy / torch)."""
+"""Prototypes macro et opérations d'assignation (numpy / torch)."""
 
 from __future__ import annotations
 

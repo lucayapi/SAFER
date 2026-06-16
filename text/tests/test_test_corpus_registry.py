@@ -27,7 +27,8 @@ def test_resolve_metallurgie_paths():
     spec = resolve_test_corpus("metallurgie", anchor=TEXT_ROOT)
     assert spec.id == "metallurgie"
     assert spec.data_csv.name == "data_metallurgie.csv"
-    assert "metallurgie" in spec.emb_csv.name
+    assert spec.emb_csv.name == "Qwen3-Embedding-0.6B__metallurgie.csv"
+    assert spec.emb_csv.is_file()
     assert spec.data_csv.is_absolute()
 
 

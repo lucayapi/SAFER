@@ -37,13 +37,11 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `safer_core/` | Chemins centralisés → `output/` |
 | `scgm_text/` | Modèle et entraînement SCGM-G texte |
 | `contrastive_methods/` | Batch Triplet, SoftTriple, SupCon |
-| `learn_embeddings/` | Export embeddings bruts (encodeur figé) |
 | `bn_pipeline/` | Réseaux bayésiens (pgmpy, exports SCGM) |
 | `macro_transfer/` | Transfert macro-guidé + topics intra-macro (cible test) |
 | `scripts/` | CLI entraînement, export, évaluation, agrégation |
 | `jobs/` | Scripts SLURM Mésocentre |
 | `notebooks/` | Analyse (**.ipynb gitignored**, régénération locale via `scripts/build_*.py`) |
-| `legacy/` | Code historique (anciens jobs, hors contrastif) |
 | `output/` | **Toutes les sorties** (gitignored) |
 
 ## Sorties (`output/`)
@@ -53,13 +51,6 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `output/scgm_text/` | `checkpoints/`, `embeddings/`, `assignments/`, `topics/`, `metrics/`, `figures/`, `bn_results/` |
 | `output/raw_embedding/`, `batch_triplet/`, `softtriple/`, `supcon/` | Méthodes comparées |
 | `output/comparisons/` | Tableaux et figures agrégés (`collect_results.py`) |
-
-Migration depuis d'anciens dossiers `runs/` ou `outputs/` :
-
-```bash
-python scripts/migrate_legacy_outputs.py --dry-run
-python scripts/migrate_legacy_outputs.py
-```
 
 ## Workflow principal
 
@@ -124,7 +115,7 @@ sbatch train_scgm_text.sh         # inclut eval BTP + test
 sbatch export_test_embeddings.sh  # CSV Qwen test si besoin
 sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
-CORPUS=metallurgie bash run_tpn_macro_transfer.sh
+BASE_METHOD=scgm_text CORPUS=metallurgie bash run_frozen_source_prototypes.sh
 sbatch compare_methods.sh
 ```
 
@@ -136,12 +127,12 @@ Macros observées `A0`–`C` ; latents `z` = thèmes intra-macro. Données : `da
 
 Pipeline **end2end** : texte → Qwen (`backbone_trainable` / `train_last_n_layers` dans la config) → projecteur (`linear` | `mlp`) → tête SCGM.
 
-**Config unique** : [`configs/scgm_text.yaml`](configs/scgm_text.yaml) — modes backbone documentés en tête du fichier (gelé / k dernières couches / complet).
+**Config unique** : [`configs/methods/scgm_text.yaml`](configs/methods/scgm_text.yaml) — modes backbone documentés en tête du fichier (gelé / k dernières couches / complet).
 
-**Sélection du meilleur checkpoint** (`best_model.pt`) : `val_eta2_macro_balanced` par défaut (pas F1). Option `--best_checkpoint_metric composite` avec `--best_checkpoint_lambda` (score = eta² − λ·C1). Diagnostics classifieur / subtype : `--compute_classifier_diagnostics` / `--compute_subtype_diagnostics` (désactivés par défaut).
+**Sélection du meilleur checkpoint** (`best_model.pt`) : `val_eta2_macro_balanced` par défaut (pas F1). Diagnostics classifieur / subtype : `--compute_classifier_diagnostics` / `--compute_subtype_diagnostics` (désactivés par défaut).
 
 ```bash
-python scripts/train_scgm_text.py --config configs/scgm_text.yaml
+python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 # ou
 sbatch jobs/train_scgm_text.sh
 ```
@@ -171,62 +162,37 @@ Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 01 
 | `output_test/<corpus>/macro_transfer/<method>/` | Transfert macro + topics BERTopic (`theme_label` via `bertopic.representation` par défaut) |
 | `output_test/<corpus>/bn_results/` | Sorties notebook 04 (BN) |
 
-Les anciens dossiers `resultats/` et `resultats_test/` peuvent être renommés en `output/` et `output_test/` (ou relancer les jobs). Les chemins legacy `resultats/...` sont redirigés vers `output/...` si `SAFER_LEGACY_PATHS=1`.
+Les sorties vivent sous `output/` et `output_test/` (voir `configs/paths.yaml`).
 
-## Transfert macro TPN + topics cible (corpus test)
+## Transfert macro FSP + topics cible (corpus test)
 
-Pipeline **`macro_transfer/`** (TPN full encoder) : encodeur texte entraîné end-to-end + classification prototypique (distances aux prototypes) → gating macro \(p(m|u)\) → topics **BERTopic** intra-macro (UMAP, HDBSCAN, c-TF-IDF, `stop_metier.txt`), libellés via **`bertopic.representation.OpenAI`** par défaut.
+Pipeline **`macro_transfer/`** — **Frozen Source Prototypes (FSP)** uniquement : encodeur source **figé** (SCGM, contrastif ou embedding brut Qwen) → prototypes source → assignation cible par distances → **BERTopic** intra-macro (toujours exécuté dans le job nominal).
 
-**Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`).
+**Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`, `batch_triplet`). Pour `raw_embedding`, embeddings pré-calculés : `embeddings/Qwen3-Embedding-0.6B_btp.csv` + export test (`jobs/export_test_embeddings.sh`).
 
-Paramètres : [`configs/tpn_macro_transfer.yaml`](configs/tpn_macro_transfer.yaml) (**config unique**). Encodeur choisi via `BASE_METHOD` dans `jobs/run_tpn_macro_transfer.sh`.
+Paramètres : [`configs/frozen_source_prototypes.yaml`](configs/frozen_source_prototypes.yaml) (**config unique**). Encodeur choisi via `BASE_METHOD` dans `jobs/run_frozen_source_prototypes.sh`.
 
-**Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml)) + contexte sectoriel ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml)).
-
-| Étape | Commande |
-|-------|----------|
-| Transfert TPN | `CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` (défaut `scgm_text`) |
-| Encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_tpn_macro_transfer.sh` |
-| CLI | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus <id>` |
-| Skip BERTopic | `SKIP_BERTOPIC=1` (par défaut dans le YAML) |
-| Notebook 06 | diagnostics Frozen Source Prototypes + BERTopic inputs |
-| Notebook 07 | run local TPN + viz 2D |
-| Notebook 08 | diagnostics Frozen Source Prototypes (probas/distances/confusion) |
-
-**Sorties** : `output_test/<corpus_id>/macro_transfer/tpn_full_<encodeur>/`
-
-### Mode unique full-encoder (end-to-end)
-
-Le repo utilise maintenant uniquement **TPN full encoder** : pas d'adaptateur `g_ϕ`, l'encodeur texte complet est optimisé end-to-end avec classifieur prototypique (distances aux prototypes).
-
-Commandes :
+**Libellés topics** : macros A0–C ([`configs/accident_macros.yaml`](configs/accident_macros.yaml)) + contexte sectoriel ([`configs/corpus_prompt_context.yaml`](configs/corpus_prompt_context.yaml)). Clé OpenAI requise si `bertopic.representation` utilise OpenAI.
 
 | Étape | Commande |
 |-------|----------|
-| Full encoder sans BERTopic | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie --skip-bertopic` |
-| Full encoder complet | `python scripts/run_tpn_full_encoder_transfer.py --config configs/tpn_macro_transfer.yaml --corpus metallurgie` |
+| FSP + BERTopic | `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
+| Autre encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
+| Embedding brut | `BASE_METHOD=raw_embedding CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
+| CLI | `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml --base-method softtriple --corpus <id>` |
+| Notebook 06 | topics + calibration FSP |
+| Notebook 08 | comparaison raw vs encodeur (`FSP_BASE_METHOD`) |
 
-Sorties : `output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/` avec notamment `transfer/metadata_with_tpn_full_macro_probs.csv`, `transfer/metrics_tpn_full.json`, `embeddings/source_full_embeddings.npy`, `embeddings/target_full_embeddings.npy`.
+**Sorties** : `output_test/<corpus_id>/macro_transfer/frozen_source_prototypes/<base_method>/`
 
-### Baseline Frozen Source Prototypes (sans adaptation)
-
-Méthode de référence sans adaptation de domaine :
-- encodeur source déjà entraîné, utilisé **figé** (inférence uniquement),
-- prototypes calculés uniquement sur la source,
-- assignation cible par softmax des distances aux prototypes source,
-- aucun entraînement cible, aucune loss TPN/adaptateur.
-
-Commande :
-
-```bash
-python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml
-```
+Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles (alias staging BN).
 
 Sorties principales :
-- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/source_prototypes.csv`
-- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/target_macro_predictions.csv`
-- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/metrics.json` (si labels cible)
-- `output_test/<corpus>/macro_transfer/frozen_source_prototypes/transfer/bertopic_input_*.csv`
+- `transfer/source_prototypes.csv`
+- `transfer/target_macro_predictions.csv`
+- `transfer/metrics.json` (si labels cible)
+- `transfer/bertopic_input_*.csv`
+- `topics_bertopic/assignments.csv`, `themes_by_macro.csv`
 
 ## Réseaux bayésiens
 
@@ -241,17 +207,14 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | Notebook | Rôle |
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
-| `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — BTP **K-fold (μ±σ)**, BTP fit final, test métallurgie ; η² / RankMe |
-| `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_tpn_macro_transfer.sh`. |
+| `01_compare_embedding_methods.ipynb` | Comparaison **Embedding brut + Batch Triplet / SupCon / SoftTriple / SCGM** — BTP **K-fold (μ±σ)**, BTP fit final, test métallurgie ; η² / IPR |
+| `02_scgm_text_results.ipynb` | **Lecture seule** — BTP (`output/scgm_text`) ; test (`output_test/<TEST_CORPUS>/scgm_text`). Topics : notebook 06 / `run_frozen_source_prototypes.sh`. |
 | `04_bayesian_network_macro_transfer.ipynb` | BN sur corpus test — graphe statique/interactif + tableau scénarios récurrents (A0→…→C) |
 | `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet (`output/batch_triplet/`) — métriques + **PCA/t-SNE** BTP et test (macro + centroïdes) si `embeddings/final_embeddings_*.csv` présents |
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
-| `06_macro_transfer_topics.ipynb` | **Lecture seule** — baseline Frozen Source Prototypes (probas/distances macro, BERTopic inputs, calibration/erreurs) |
-| `07_macro_transfer_interactive.ipynb` | **Run local** TPN (`BASE_METHOD`) + viz 2D ; `RUN_PIPELINE=False` pour reviz sans refit |
-| `08_tpn_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics Frozen Source Prototypes (confusion/report, confidence/margin/entropy, distances, BERTopic inputs) |
-
-`01_draft.ipynb` : brouillon obsolète — ne pas utiliser.
+| `06_macro_transfer_topics.ipynb` | **Lecture seule** — FSP (probas/distances macro, BERTopic inputs, calibration/erreurs) |
+| `08_fsp_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics FSP (raw vs encodeur, confusion/report, distances, BERTopic) |
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.
 
@@ -264,14 +227,13 @@ python scripts/build_analysis_notebooks.py        # 00, 01_compare, 05_view_*
 python scripts/build_notebook_02_scgm_results.py  # 02_scgm_text_results
 python scripts/build_notebook_04_bn_macro_transfer.py
 python scripts/build_notebook_06_macro_transfer_topics.py
-python scripts/build_notebook_07_macro_transfer_interactive.py
-python scripts/build_notebook_08_tpn_macro_transfer.py
+python scripts/build_notebook_08_fsp_macro_transfer.py
 ```
 
 ## Métriques principales
 
-- **eta2_macro_balanced**, **eta2_weighted** (`metrics/inertia.py`) — structuration des macros sur distance euclidienne
-- **rankme_global**, **c1_global**, **c10_global** — géométrie des embeddings
+- **eta2_macro_balanced**, **eta2_macro_balanced_perc**, **eta2_weighted** — structuration macro
+- **IPR_mean** — préservation intra-rôle (notebook 01)
 
 Pas d'Accuracy / F1 / NMI dans le tableau principal de comparaison des méthodes.
 
@@ -281,14 +243,14 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 ## Méthodes contrastives
 
-**Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Compléments : `rankme_global`, `c1_global`, `c10_global`. Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
+**Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
 
 **Losses d'entraînement** :
 - **Batch triplet** : [`BatchHardSoftMarginTripletLoss`](https://sbert.net/docs/sentence_transformer/loss_overview.html) (Sentence Transformers) + sampler `GROUP_BY_LABEL` ; `training.distance_metric` = euclidien par défaut.
 - **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) (`SupConLoss`, cosinus L2, 1 vue par phrase) ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
 - **SoftTriple** : loss native ; euclidien par défaut. Entraînement custom avec **AMP GPU** (bf16/fp16, aligné ST), val `loss` + géométrie en **une passe** par epoch. Console : `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` ; détail dans `metrics/train_log.csv`.
 
-Les métriques val/export (η², RankMe) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
+Les métriques val/export (η²) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
 
 ### SoftTriple — régularisation des centres et centres effectifs
 

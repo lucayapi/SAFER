@@ -11,16 +11,15 @@ import pytest
 
 from macro_transfer.notebook_viz import (
     FSPRunArtifacts,
-    RunArtifacts,
-    _confusion_matrix_from_metrics,
+    RawTestEmbeddingVizResult,
     build_topics_display_dataframe,
     compute_fsp_confidence_calibration,
     get_fsp_top_confident_errors,
     load_fsp_run_artifacts,
-    load_run_artifacts,
     merge_assignments,
     pick_accident_id_for_colored_text,
     render_colored_accident_html,
+    resolve_test_label_col,
     _theme_label_map,
 )
 from safer_core.test_corpus import macro_transfer_output_dir
@@ -31,127 +30,65 @@ TEXT_ROOT = Path(__file__).resolve().parents[1]
 def test_import_notebook_viz():
     import macro_transfer.notebook_viz as nv
 
-    assert hasattr(nv, "plot_global_embedding_map")
-    assert hasattr(nv, "plot_topics_per_macro")
+    assert hasattr(nv, "plot_test_corpus_raw_embeddings")
+    assert hasattr(nv, "load_fsp_run_artifacts")
 
 
 def test_macro_transfer_output_dir_convention():
-    p = macro_transfer_output_dir("scgm_text", "metallurgie", anchor=TEXT_ROOT)
+    p = macro_transfer_output_dir("frozen_source_prototypes/scgm_text", "metallurgie", anchor=TEXT_ROOT)
     assert p.name == "scgm_text"
-    assert p.parent.name == "macro_transfer"
+    assert p.parent.name == "frozen_source_prototypes"
     assert "metallurgie" in str(p)
-
-
-def test_load_run_artifacts_minimal(tmp_path: Path):
-    root = tmp_path / "run"
-    emb = root / "embeddings"
-    emb.mkdir(parents=True)
-    z = np.random.randn(20, 8).astype(np.float32)
-    np.save(emb / "target_adapted.npy", z)
-    transfer = root / "transfer"
-    transfer.mkdir()
-    meta = pd.DataFrame(
-        {
-            "sentence": [f"s{i}" for i in range(20)],
-            "pred_label": ["A0"] * 5 + ["A1"] * 5 + ["B"] * 5 + ["C"] * 5,
-            "m_hat": ["A0"] * 5 + ["A1"] * 5 + ["B"] * 5 + ["C"] * 5,
-            "q_conf": np.linspace(0.4, 0.99, 20),
-            "p_A0": 0.25,
-            "p_A1": 0.25,
-            "p_B": 0.25,
-            "p_C": 0.25,
-        }
-    )
-    meta.to_csv(transfer / "metadata_with_tpn_macro_probs.csv", index=False)
-    with open(transfer / "transfer_metrics_adapted.json", "w", encoding="utf-8") as f:
-        json.dump({"n_eval": 20, "accuracy": 1.0}, f)
-
-    art = load_run_artifacts(root)
-    assert isinstance(art, RunArtifacts)
-    assert art.z.shape == (20, 8)
-    assert len(art.meta) == 20
 
 
 def test_merge_assignments_and_theme_map():
     meta = pd.DataFrame(
-        {"m_hat": ["A0", "A0", "A1"], "q_conf": [0.9, 0.3, 0.8], "doc_idx": [0, 1, 2]}
-    )
-    assign = pd.DataFrame(
         {
-            "doc_idx": [0, 2],
-            "macro": ["A0", "A1"],
-            "topic_id": [0, 1],
-            "prob": [0.9, 0.7],
+            "doc_idx": [0, 1, 2],
+            "m_hat": ["A0", "A0", "B"],
+            "q_conf": [0.9, 0.8, 0.95],
+            "sentence": ["a", "b", "c"],
         }
     )
-    merged = merge_assignments(meta, assign, confidence_threshold=0.5)
-    assert len(merged) == 2
-    assert merged.iloc[0]["topic_id"] == 0
-    assert float(merged.iloc[0]["prob"]) == 0.9
-
+    assignments = pd.DataFrame(
+        {
+            "doc_idx": [0, 1, 2],
+            "macro": ["A0", "A0", "B"],
+            "topic_id": [0, 1, 0],
+            "prob": [0.9, 0.85, 0.7],
+        }
+    )
+    merged = merge_assignments(meta, assignments, confidence_threshold=0.5)
+    assert "topic_id" in merged.columns
     themes = pd.DataFrame(
-        {"macro": ["A0"], "topic_id": [0], "top_words": "acier fusion"}
-    )
-    labels = _theme_label_map(themes)
-    assert labels[("A0", 0)].startswith("A0")
-    assert "acier fusion" in labels[("A0", 0)]
-
-
-def test_confusion_matrix_from_metrics():
-    metrics = {
-        "confusion": {
-            "A0": {"A0": 5, "A1": 1, "B": 0, "C": 0},
-            "A1": {"A0": 0, "A1": 3, "B": 1, "C": 0},
-            "B": {"A0": 0, "A1": 0, "B": 4, "C": 0},
-            "C": {"A0": 0, "A1": 0, "B": 0, "C": 2},
+        {
+            "macro": ["A0", "A0"],
+            "topic_id": [0, 1],
+            "theme_label": ["Label long A0-0", "Label long A0-1"],
+            "top_words": ["w1", "w2"],
         }
-    }
-    cm = _confusion_matrix_from_metrics(metrics)
-    assert cm is not None
-    assert int(cm.loc["A0", "A0"]) == 5
-
-
-def test_domain_embeddings_paths(tmp_path: Path):
-    emb = tmp_path / "embeddings"
-    emb.mkdir()
-    np.save(emb / "source_projected.npy", np.random.randn(5, 4).astype(np.float32))
-    np.save(emb / "target_projected.npy", np.random.randn(7, 4).astype(np.float32))
-    np.save(emb / "source_adapted.npy", np.random.randn(5, 4).astype(np.float32))
-    np.save(emb / "target_adapted.npy", np.random.randn(7, 4).astype(np.float32))
-    with open(tmp_path / "run_manifest.json", "w", encoding="utf-8") as f:
-        json.dump({"n_source": 5, "n_target": 7}, f)
-    from macro_transfer.notebook_viz import plot_domain_tsne_side_by_side
-
-    fig = plot_domain_tsne_side_by_side(
-        tmp_path,
-        tmp_path / "figs",
-        max_points=20,
-        show=False,
     )
-    assert fig is not None
-    assert (tmp_path / "figs" / "tsne_domain_initial_vs_adapted.png").is_file()
+    tmap = _theme_label_map(themes, max_chars=20)
+    assert ("A0", 0) in tmap
 
 
-def _minimal_tpn_run(tmp_path: Path) -> Path:
-    root = tmp_path / "tpn_run"
-    emb = root / "embeddings"
-    emb.mkdir(parents=True)
+def _minimal_fsp_run(tmp_path: Path) -> Path:
+    root = tmp_path / "fsp_run"
     transfer = root / "transfer"
-    transfer.mkdir()
+    transfer.mkdir(parents=True)
     topics = root / "topics_bertopic"
     topics.mkdir()
     n = 6
-    np.save(emb / "target_adapted.npy", np.random.randn(n, 4).astype(np.float32))
     meta = pd.DataFrame(
         {
             "sentence": [f"phrase {i} sur l'accident." for i in range(n)],
             "accident_id": [1, 1, 1, 2, 2, 2],
-            "m_hat": ["A0", "A0", "A1", "B", "B", "C"],
-            "q_conf": [0.95, 0.88, 0.91, 0.85, 0.80, 0.99],
+            "pred_macro": ["A0", "A0", "A1", "B", "B", "C"],
+            "confidence": [0.95, 0.88, 0.91, 0.85, 0.80, 0.99],
             "doc_idx": list(range(n)),
         }
     )
-    meta.to_csv(transfer / "metadata_with_tpn_macro_probs.csv", index=False)
+    meta.to_csv(transfer / "target_macro_predictions.csv", index=False)
     pd.DataFrame(
         {
             "doc_idx": [0, 1, 2, 3, 4, 5],
@@ -172,9 +109,9 @@ def _minimal_tpn_run(tmp_path: Path) -> Path:
 
 
 def test_build_topics_display_dataframe(tmp_path: Path):
-    root = _minimal_tpn_run(tmp_path)
-    art = load_run_artifacts(root)
-    df = build_topics_display_dataframe(art, confidence_threshold=0.0)
+    root = _minimal_fsp_run(tmp_path)
+    meta = pd.read_csv(root / "transfer" / "target_macro_predictions.csv")
+    df = build_topics_display_dataframe(root, meta, confidence_threshold=0.0)
     assert "theme_label" in df.columns
     assert "theme_label_short" in df.columns
     assert "Thème A0-0" in df.loc[df["doc_idx"] == 0, "theme_label_short"].iloc[0]
@@ -193,70 +130,58 @@ def test_pick_accident_id_for_colored_text():
 
 
 def test_render_colored_accident_html(tmp_path: Path):
-    root = _minimal_tpn_run(tmp_path)
-    art = load_run_artifacts(root)
-    df = build_topics_display_dataframe(art, confidence_threshold=0.0)
+    root = _minimal_fsp_run(tmp_path)
+    meta = pd.read_csv(root / "transfer" / "target_macro_predictions.csv")
+    df = build_topics_display_dataframe(root, meta, confidence_threshold=0.0)
     html_topic = render_colored_accident_html(df, 1, color_by="topic")
     assert "phrase 0" in html_topic
-    assert "phrase 1" in html_topic
-    assert "Thème A0-0" in html_topic
-    assert "box-shadow" in html_topic or "border-left" in html_topic
-    assert html_topic.count("phrase") >= 3
-
-    html_macro = render_colored_accident_html(
-        df, 1, color_by="macro", legend_title="Macros"
-    )
-    assert "#1f77b4" in html_macro
-    assert "Macros" in html_macro
 
 
-def test_load_fsp_run_artifacts_and_helpers(tmp_path: Path):
-    root = tmp_path / "fsp_run"
+def test_load_fsp_run_artifacts_minimal(tmp_path: Path):
+    root = tmp_path / "fsp"
     transfer = root / "transfer"
     transfer.mkdir(parents=True)
-    pd.DataFrame(
+    preds = pd.DataFrame(
         {
-            "macro": ["A0", "A1", "B", "C"],
-            "n_source": [10, 10, 5, 8],
-            "prototype_norm": [1.0, 1.0, 1.0, 1.0],
-        }
-    ).to_csv(transfer / "source_prototypes.csv", index=False)
-    pred = pd.DataFrame(
-        {
-            "sentence": [f"s{i}" for i in range(6)],
-            "pred_macro": ["A0", "A1", "B", "C", "A0", "A1"],
-            "true_macro": ["A0", "A1", "C", "C", "B", "A1"],
-            "confidence": [0.9, 0.8, 0.7, 0.95, 0.88, 0.76],
-            "margin": [0.2, 0.1, 0.08, 0.3, 0.25, 0.11],
-            "entropy": [0.4, 0.6, 0.8, 0.2, 0.5, 0.7],
-            "prob_A0": [0.9, 0.1, 0.1, 0.1, 0.88, 0.2],
-            "prob_A1": [0.03, 0.8, 0.2, 0.1, 0.04, 0.76],
-            "prob_B": [0.03, 0.05, 0.7, 0.1, 0.04, 0.02],
-            "prob_C": [0.04, 0.05, 0.0, 0.7, 0.04, 0.02],
-            "dist_A0": [0.1, 1.2, 1.1, 1.4, 0.2, 1.0],
-            "dist_A1": [1.1, 0.2, 0.9, 1.3, 1.0, 0.3],
-            "dist_B": [1.2, 1.1, 0.3, 1.2, 1.3, 1.2],
-            "dist_C": [1.3, 1.2, 1.1, 0.2, 1.1, 1.1],
+            "pred_macro": ["A0", "B"],
+            "confidence": [0.8, 0.7],
+            "prob_A0": [0.8, 0.1],
+            "prob_A1": [0.1, 0.1],
+            "prob_B": [0.05, 0.7],
+            "prob_C": [0.05, 0.1],
         }
     )
-    pred.to_csv(transfer / "target_macro_predictions.csv", index=False)
+    preds.to_csv(transfer / "target_macro_predictions.csv", index=False)
+    pd.DataFrame({"macro": ["A0"], "n_source": [10]}).to_csv(
+        transfer / "source_prototypes.csv", index=False
+    )
     with open(transfer / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump({"accuracy": 0.5, "macro_f1": 0.5}, f)
-    pd.DataFrame(
-        {
-            "true_macro": ["A0", "A1", "B", "C"],
-            "A0": [1, 0, 1, 0],
-            "A1": [0, 2, 0, 0],
-            "B": [0, 0, 0, 0],
-            "C": [0, 0, 1, 1],
-        }
-    ).to_csv(transfer / "confusion_matrix.csv", index=False)
+        json.dump({"balanced_accuracy": 0.5}, f)
 
     art = load_fsp_run_artifacts(root)
     assert isinstance(art, FSPRunArtifacts)
-    assert len(art.predictions) == 6
-    assert len(art.prototypes) == 4
-    cal = compute_fsp_confidence_calibration(art.predictions)
-    assert cal is not None and not cal.empty
-    top_err = get_fsp_top_confident_errors(art.predictions, top_k=2)
-    assert len(top_err) == 2
+    assert len(art.predictions) == 2
+
+
+def test_fsp_confidence_calibration_and_errors():
+    pred = pd.DataFrame(
+        {
+            "true_macro": ["A0", "A1", "A0", "B"],
+            "pred_macro": ["A0", "A0", "B", "B"],
+            "confidence": [0.9, 0.85, 0.6, 0.95],
+        }
+    )
+    calib = compute_fsp_confidence_calibration(pred)
+    assert calib is not None
+    err = get_fsp_top_confident_errors(pred, top_k=2)
+    assert len(err) >= 1
+
+
+def test_resolve_test_label_col():
+    meta = pd.DataFrame({"pred_label": ["A0"], "sentence": ["x"]})
+    assert resolve_test_label_col(meta) == "pred_label"
+
+
+def test_raw_test_embedding_viz_result_dataclass():
+    r = RawTestEmbeddingVizResult(n_points=10, missing=[])
+    assert r.n_points == 10

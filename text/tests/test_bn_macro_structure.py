@@ -55,10 +55,10 @@ def test_macro_chain_model_edges():
     edges = macro_chain_edge_list(severity_node=None)
     assert set(edges) == {
         ("M_A0", "M_A1"),
-        ("M_A0", "M_B"),
         ("M_A1", "M_B"),
         ("M_B", "M_C"),
     }
+    assert ("M_A0", "M_B") not in edges
 
 
 def test_macro_edges_for_export():
@@ -75,7 +75,6 @@ def test_macro_edges_for_export():
     edges = macro_edges_for_export(acc_df, include_severity=False)
     assert set(edges) == {
         ("M_A0", "M_A1"),
-        ("M_A0", "M_B"),
         ("M_A1", "M_B"),
         ("M_B", "M_C"),
     }

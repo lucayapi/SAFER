@@ -44,10 +44,10 @@ def test_a0_uses_leaf_cluster_selection():
     assert p["n_neighbors"] == 10
 
 
-def test_frozen_source_prototypes_scgm_macro_params_leaf_all_macros():
+def test_frozen_source_prototypes_macro_params_leaf_all_macros():
     import yaml
 
-    cfg_path = Path(__file__).resolve().parents[1] / "configs" / "frozen_source_prototypes_scgm.yaml"
+    cfg_path = Path(__file__).resolve().parents[1] / "configs" / "frozen_source_prototypes.yaml"
     cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
     macro_params = cfg["bertopic"]["macro_params"]
     for macro in ("A0", "A1", "B", "C"):

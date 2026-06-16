@@ -1,13 +1,39 @@
 """Génère notebooks/02_scgm_text_results.ipynb (lecture seule, résultats SCGM BTP + test)."""
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
 NOTEBOOKS = Path(__file__).resolve().parents[1] / "notebooks"
-DRAFT = NOTEBOOKS / "01_draft.ipynb"
 OUT = NOTEBOOKS / "02_scgm_text_results.ipynb"
+
+OBJECTIVE_MD = """## 1. Objectif de l'expérience
+
+- Source = BTP (segments de récits d'accidents).
+- Labels macro = A0, A1, B, C (superclasses SCGM).
+- SCGM apprend des ancres macro `mu_y` et des centres latents `mu_z`.
+- Les composantes latentes servent à explorer des motifs intra-macro non observés.
+- `pred_subtype` n'est pas un label expert : diagnostic exploratoire uniquement.
+"""
+
+IMPORTS_SOURCE = """from pathlib import Path
+import json
+import os
+import sys
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import sklearn
+import torch
+import yaml
+
+from IPython.display import display
+
+sns.set_theme(style="whitegrid")
+plt.rcParams["figure.figsize"] = (10, 6)
+"""
 
 
 def cell_from_source(source: str, cell_type: str = "code", cell_id: str | None = None) -> dict:
@@ -21,15 +47,6 @@ def cell_from_source(source: str, cell_type: str = "code", cell_id: str | None =
         c["execution_count"] = None
         c["outputs"] = []
     return c
-
-
-def strip_outputs(nb: dict) -> dict:
-    out = copy.deepcopy(nb)
-    for c in out["cells"]:
-        if c["cell_type"] == "code":
-            c["execution_count"] = None
-            c["outputs"] = []
-    return out
 
 
 def get_source(cell: dict) -> str:
@@ -113,12 +130,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 os.chdir(REPO_ROOT)
 
-from scgm_text.dataset_text_embeddings import (
-    ID2LABEL,
-    LABEL2ID,
-    TextEmbeddingDataset,
-    split_by_group,
-)
 from scgm_text.utils_io import create_doc_id_if_missing, ensure_dir, get_dim_columns, load_json, save_json, set_seed
 
 _output = Path(OUTPUT_DIR)
@@ -161,9 +172,6 @@ GEOM_DISPLAY_COLS = [
     "eta2_macro_balanced",
     "eta2_macro_balanced_perc",
     "eta2_weighted",
-    "rankme_global",
-    "c1_global",
-    "c10_global",
 ]
 
 
@@ -398,6 +406,12 @@ meta_btp = _load_csv_optional(PATHS["meta_btp"])
 projected_test = _load_npy_optional(PATHS["projected_test"])
 meta_test = _load_csv_optional(PATHS["meta_test"])
 raw_embeddings = _load_npy_optional(PATHS["raw_embeddings"])
+themes_btp = _load_csv_optional((OUTPUT_PATH / "topics" / "themes_by_z.csv").resolve())
+
+
+def _meta_has_z(meta_df) -> bool:
+    return meta_df is not None and "z_hat" in meta_df.columns
+
 
 inventory_rows = [
     {"artifact": k, "path": _path_display(v), "status": _artifact_status(v)}
@@ -412,7 +426,7 @@ for hint, cond in (
     ("sbatch jobs/train_scgm_text.sh (projections BTP)", projected_btp is None),
     (f"train_scgm + TEST_CORPUS ou export_scgm_test_projections.py", projected_test is None),
     (f"sbatch jobs/export_raw_geometry.sh (métriques raw test)", metrics_raw_test is None),
-    (f"CORPUS={TEST_CORPUS} bash jobs/run_tpn_macro_transfer.sh (topics test)", False),
+    (f"BASE_METHOD=scgm_text CORPUS={TEST_CORPUS} bash jobs/run_frozen_source_prototypes.sh (topics test)", False),
 ):
     if cond:
         print("→", hint)
@@ -425,9 +439,6 @@ Validation croisée sur le **BTP** (groupes `accident_id`). Distinct du corpus *
 
 KFOLD_TABLES_SOURCE = """_kfold_mu_sigma_labels = (
     ("eta2_macro_balanced_perc", "η² macro balanced (%)"),
-    ("rankme_global", "RankMe"),
-    ("c1_global", "C1"),
-    ("c10_global", "C10"),
     ("train_wall_time_sec", "Temps entraînement fold (s)"),
 )
 
@@ -458,7 +469,7 @@ else:
 BTP_MD = """## 5. Corpus BTP (train / modèle final)
 
 Fit final **100 % BTP** après K-fold ; checkpoint `checkpoints/best_model.pt`.  
-Topics / OpenAI sur corpus test : voir `jobs/run_tpn_macro_transfer.sh` et notebook 06.
+Topics / OpenAI sur corpus test : voir `jobs/run_frozen_source_prototypes.sh` et notebook 06.
 """
 
 BTP_CONFIG_SOURCE = """if run_config:
@@ -509,46 +520,32 @@ else:
     print("  → sbatch jobs/export_raw_geometry.sh ou export_raw_embeddings.py --corpus TEST_CORPUS")
 """
 
-TEST_RAW_VIZ_MD = """### 6b bis. Embedding brut test — PCA / t-SNE
+TEST_RAW_VIZ_MD = """### 6b bis. Embedding brut test — PCA / t-SNE / UMAP
 
-PCA + t-SNE sur les vecteurs encodeur Qwen (`EMB_TEST_CSV`), couleur = macro. Centroïdes macro affichés.
+Vecteurs encodeur Qwen du corpus test, couleur = étape de la chaîne accidentelle.
 """
 
-TEST_RAW_VIZ_CODE = """from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
+TEST_RAW_VIZ_CODE = """from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
 
-from scgm_text.notebook_viz import plot_projection_matplotlib, sample_projection_indices
-
-if meta_test is None:
-    print("(absent) meta_test pour carte embedding brut test")
-elif not Path(REPO_ROOT / EMB_TEST_CSV).is_file():
-    print(f"(absent) {EMB_TEST_CSV}")
-else:
-    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
-
-    slim = meta_test.drop(columns=[c for c in meta_test.columns if c.startswith("dim_")], errors="ignore")
-    merged_test, dim_cols = merge_metadata_with_embeddings(slim, str(REPO_ROOT / EMB_TEST_CSV))
-    raw_test = merged_test[dim_cols].to_numpy(dtype=np.float64)
-    idx_rt = sample_projection_indices(
-        meta_test, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
-    )
-    sample_rt_df = meta_test.loc[idx_rt]
-    sample_rt_x = raw_test[idx_rt]
-    pca_rt = PCA(n_components=2, random_state=SEED).fit_transform(sample_rt_x)
-    tsne_rt = TSNE(n_components=2, random_state=SEED, init="pca", learning_rate="auto").fit_transform(
-        sample_rt_x
-    )
-    plot_projection_matplotlib(
-        pca_rt,
-        tsne_rt,
-        sample_rt_df,
-        LABEL_COL,
-        save_fig=save_fig,
-        png_name="10_raw_test_pca_tsne.png",
-        pca_title="PCA 2D — test embedding brut",
-        tsne_title="t-SNE 2D — test embedding brut",
-        show_macro_centroids=True,
-        show_z_centroids=False,
+_raw_emb = plot_test_corpus_raw_embeddings(
+    TEST_CORPUS,
+    fig_dir=FIGURES_DIR,
+    anchor=REPO_ROOT,
+    label_col=LABEL_COL,
+    max_points=RAW_EMBEDDING_UMAP_MAX_POINTS,
+    seed=SEED,
+    prefix="raw_test_embedding",
+    show=True,
+    display_metrics=False,
+)
+if _raw_emb.missing:
+    print("Embedding brut test — fichiers manquants :", ", ".join(_raw_emb.missing))
+elif _raw_emb.pca_tsne_path:
+    print(
+        "Figures embedding brut :",
+        _raw_emb.pca_tsne_path,
+        _raw_emb.tsne_per_macro_path,
+        _raw_emb.umap_png_path,
     )
 """
 
@@ -577,7 +574,8 @@ else:
         seed=SEED,
         png_name="10_test_scgm_pca_tsne.png",
         show_macro_centroids=True,
-        show_z_centroids=False,
+        show_z_centroids=_meta_has_z(meta_test),
+        themes_z=themes_btp,
     )
     plot_corpus_umap(
         projected_test,
@@ -630,10 +628,10 @@ val_cols = [
 if val_cols:
     logs.plot(x="epoch", y=val_cols, ax=axes[0, 1])
     axes[0, 1].set_title("Validation (η² ou classif)")
-geom_cols = [c for c in ["rankme_global", "c1_global", "c10_global"] if c in logs.columns]
-if geom_cols:
-    logs.plot(x="epoch", y=geom_cols, ax=axes[1, 0], marker="o", markersize=3)
-    axes[1, 0].set_title("RankMe / C1 / C10 (global)")
+eta_cols = [c for c in ["val_eta2_macro_balanced", "val_eta2_weighted", "val_eta2_macro_balanced_perc"] if c in logs.columns]
+if eta_cols:
+    logs.plot(x="epoch", y=eta_cols, ax=axes[1, 0], marker="o", markersize=3)
+    axes[1, 0].set_title("Eta² macro (validation)")
 axes[1, 1].axis("off")
 save_fig("04_training_curves.png")
 display_df_for_paper(logs, "training_logs.csv")
@@ -647,6 +645,7 @@ BTP_PROJECTION_MD = """### 5e. PCA / t-SNE — embeddings projetés BTP
 
 PCA + t-SNE sur un sous-échantillon (`TSNE_SAMPLE_SIZE`). Couleur = macro (`pred_label`).
 
+- Centroïdes macro (`X`) et composantes latentes `z` (`*`) si `z_hat` présent dans les métadonnées
 - Statique : `FIGURES_DIR/05_projection_macro.png`
 - Interactif Plotly : `05_projection_pca_interactive.html`, `05_projection_tsne_interactive.html`
 
@@ -680,16 +679,42 @@ else:
         pca_title="PCA 2D — BTP (SCGM projeté)",
         tsne_title="t-SNE 2D — BTP (SCGM projeté)",
         show_macro_centroids=True,
-        show_z_centroids=False,
+        show_z_centroids=_meta_has_z(meta_btp),
+        themes_z=themes_btp,
     )
     plot_projection_plotly(pca_xy, tsne_xy, sample_df, LABEL_COL, figures_dir=FIGURES_DIR)
     display_plotly_html(FIGURES_DIR / "05_projection_pca_interactive.html")
     display_plotly_html(FIGURES_DIR / "05_projection_tsne_interactive.html")
 """
 
+BTP_TSNE_PER_MACRO_MD = """### 5e bis. t-SNE par macro — BTP (SCGM projeté)
+
+Grille 2×2 : t-SNE recalculé séparément sur chaque macro (structure intra-rôle).
+"""
+
+BTP_TSNE_PER_MACRO_CODE = """from scgm_text.notebook_viz import plot_tsne_per_macro_grid, sample_projection_indices
+
+if projected_btp is None or meta_btp is None:
+    print("(absent) projections BTP pour t-SNE par macro")
+else:
+    idx = sample_projection_indices(meta_btp, LABEL_COL, max_points=TSNE_SAMPLE_SIZE, seed=SEED)
+    sample_df = meta_btp.loc[idx]
+    sample_x = projected_btp[idx]
+    p_pm = plot_tsne_per_macro_grid(
+        sample_x,
+        sample_df[LABEL_COL].astype(str).to_numpy(),
+        corpus_name="BTP (SCGM projeté)",
+        save_fig=save_fig,
+        png_name="05_btp_scgm_tsne_per_macro.png",
+        seed=SEED,
+    )
+    if p_pm is not None:
+        print(p_pm)
+"""
+
 EVAL_RAW_PROJ_MD = """### 5g. Embedding brut BTP
 
-Tableau géométrie sur les vecteurs **encodeur** (`metrics_geometry.csv` de `export_raw_embeddings.py`) : η², δ_macro, RankMe, C1, C10.
+Tableau géométrie sur les vecteurs **encodeur** (`metrics_geometry.csv` de `export_raw_embeddings.py`) : η², δ_macro.
 
 PCA + t-SNE (`RAW_EMBEDDING_UMAP_MAX_POINTS`) sur `raw_embeddings.npy` / `EMB_CSV`, couleur = macro. Figure : `09_raw_embedding_pca_tsne.png`.
 """
@@ -745,6 +770,56 @@ if raw_emb is not None:
     print(p_raw)
 """
 
+RAW_BTP_TSNE_PER_MACRO_MD = """### 5g bis. t-SNE par macro — BTP embedding brut
+"""
+
+RAW_BTP_TSNE_PER_MACRO_CODE = """from scgm_text.notebook_viz import plot_tsne_per_macro_grid, sample_projection_indices
+
+if raw_emb is not None and meta_btp is not None:
+    idx_raw = sample_projection_indices(
+        meta_btp, LABEL_COL, max_points=RAW_EMBEDDING_UMAP_MAX_POINTS, seed=SEED
+    )
+    sample_raw_df = meta_btp.loc[idx_raw]
+    sample_raw_x = raw_emb[idx_raw]
+    p_raw_pm = plot_tsne_per_macro_grid(
+        sample_raw_x,
+        sample_raw_df[LABEL_COL].astype(str).to_numpy(),
+        corpus_name="BTP embedding brut",
+        save_fig=save_fig,
+        png_name="09_raw_embedding_tsne_per_macro.png",
+        seed=SEED,
+    )
+    if p_raw_pm is not None:
+        print(p_raw_pm)
+else:
+    print("(absent) embedding brut BTP pour t-SNE par macro")
+"""
+
+TEST_TSNE_PER_MACRO_MD = """### 6b ter. t-SNE par macro — test métallurgie (SCGM projeté)
+"""
+
+TEST_TSNE_PER_MACRO_CODE = """from scgm_text.notebook_viz import plot_tsne_per_macro_grid, sample_projection_indices
+
+if projected_test is None or meta_test is None:
+    print("(absent) projections test pour t-SNE par macro")
+elif LABEL_COL not in meta_test.columns:
+    print(f"Colonne {LABEL_COL} absente de test_metadata")
+else:
+    idx = sample_projection_indices(meta_test, LABEL_COL, max_points=TSNE_SAMPLE_SIZE, seed=SEED)
+    sample_df = meta_test.loc[idx]
+    sample_x = projected_test[idx]
+    p_test_pm = plot_tsne_per_macro_grid(
+        sample_x,
+        sample_df[LABEL_COL].astype(str).to_numpy(),
+        corpus_name="Test métallurgie (SCGM projeté)",
+        save_fig=save_fig,
+        png_name="10_test_scgm_tsne_per_macro.png",
+        seed=SEED,
+    )
+    if p_test_pm is not None:
+        print(p_test_pm)
+"""
+
 SUMMARY_TABLES_CODE = """_corpus_metrics_comparison(metrics_raw, metrics_btp, "Train (BTP)")
 _corpus_metrics_comparison(metrics_raw_test, metrics_test, "Test (métallurgie)")
 
@@ -765,26 +840,22 @@ notebook_summary
 
 
 def main() -> None:
-    draft = strip_outputs(json.loads(DRAFT.read_text(encoding="utf-8")))
-    objective_md = draft["cells"][1]["source"]
-    imports_code = draft["cells"][3]["source"]
-
     cells: list[dict] = [
         cell_from_source(
             "# 02 — SCGM Text (lecture seule)\n\n"
             "Analyse des sorties sous `output/scgm_text/`. "
             "Entraînement BTP : `train_scgm_text.sh` ; raw BTP+test : `export_raw_geometry.sh`. "
-            "Test : `output_test/` ; topics : `run_tpn_macro_transfer.sh` + notebook 06.\n",
+            "Test : `output_test/` ; topics : `run_frozen_source_prototypes.sh` + notebook 06.\n",
             "markdown",
             "nb_title",
         ),
         cell_from_source(NOTEBOOK_TOC_MD, "markdown", "nb_toc"),
-        cell_from_source("".join(objective_md), "markdown"),
+        cell_from_source(OBJECTIVE_MD, "markdown"),
         cell_from_source(
             "## 2. Imports\n\nRégler `OUTPUT_DIR` dans la cellule **Parameters**.\n",
             "markdown",
         ),
-        {"cell_type": "code", "metadata": {}, "source": imports_code, "execution_count": None, "outputs": []},
+        cell_from_source(IMPORTS_SOURCE, cell_id="imports"),
         cell_from_source(PARAMS_SOURCE, cell_id="91307aa9"),
         cell_from_source(SETUP_SOURCE, cell_id="c308cd48"),
         cell_from_source(LOAD_MD, "markdown", "load_md"),
@@ -799,8 +870,12 @@ def main() -> None:
         cell_from_source(BTP_METRICS_SOURCE, cell_id="btp_metrics"),
         cell_from_source(BTP_PROJECTION_MD, "markdown"),
         cell_from_source(PROJECTION_CODE, cell_id="proj01"),
+        cell_from_source(BTP_TSNE_PER_MACRO_MD, "markdown"),
+        cell_from_source(BTP_TSNE_PER_MACRO_CODE, cell_id="btp_tsne_per_macro"),
         cell_from_source(EVAL_RAW_PROJ_MD, "markdown"),
         cell_from_source(EVAL_GEOMETRY_CODE, cell_id="eval_geom"),
+        cell_from_source(RAW_BTP_TSNE_PER_MACRO_MD, "markdown"),
+        cell_from_source(RAW_BTP_TSNE_PER_MACRO_CODE, cell_id="raw_btp_tsne_per_macro"),
         cell_from_source(TEST_MD, "markdown", "test_md"),
         cell_from_source(TEST_METRICS_SOURCE, cell_id="test_metrics"),
         cell_from_source(TEST_RAW_VIZ_MD, "markdown", "test_raw_viz_md"),
@@ -811,13 +886,21 @@ def main() -> None:
             "markdown",
         ),
         cell_from_source(TEST_VIZ_SOURCE, cell_id="test_viz"),
+        cell_from_source(TEST_TSNE_PER_MACRO_MD, "markdown"),
+        cell_from_source(TEST_TSNE_PER_MACRO_CODE, cell_id="test_tsne_per_macro"),
         cell_from_source("## Synthèse — comparaison géométrie train / test\n", "markdown"),
         cell_from_source(SUMMARY_TABLES_CODE, cell_id="summary_tables"),
     ]
     cells[5]["metadata"] = {"tags": ["parameters"]}
 
-    nb = draft
-    nb["cells"] = cells
+    nb = {
+        "nbformat": 4,
+        "nbformat_minor": 5,
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        },
+        "cells": cells,
+    }
     OUT.write_text(json.dumps(nb, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     print(f"Wrote {OUT} ({len(cells)} cells)")
 

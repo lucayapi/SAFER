@@ -11,34 +11,35 @@ import numpy as np
 import pandas as pd
 
 from macro_transfer.constants import MACRO_NAMES
+from macro_transfer.fsp_config import FSP_METHOD_ALIASES, normalize_fsp_base_method
 from safer_core.paths import find_repo_root, resolve_repo_path
 from safer_core.test_corpus import bn_results_dir, macro_transfer_output_dir
 
 TOPICS_SUBDIR = "topics_bertopic"
 
-# Fichier métadonnées transfert par méthode (sous transfer/).
-_TPN_METADATA = "metadata_with_tpn_macro_probs.csv"
+# Fichier métadonnées transfert FSP (sous transfer/).
 _FSP_METADATA = "target_macro_predictions.csv"
 
 METADATA_BY_METHOD: dict[str, str] = {
-    "tpn_full_softtriple": _TPN_METADATA,
-    "tpn_full_supcon": _TPN_METADATA,
-    "tpn_full_batch_triplet": _TPN_METADATA,
-    "tpn_full_scgm_text": _TPN_METADATA,
     "frozen_source_prototypes": _FSP_METADATA,
     "frozen_source_prototypes/scgm": _FSP_METADATA,
     "frozen_source_prototypes/raw": _FSP_METADATA,
+    "frozen_source_prototypes/scgm_text": _FSP_METADATA,
+    "frozen_source_prototypes/raw_embedding": _FSP_METADATA,
+    "frozen_source_prototypes/softtriple": _FSP_METADATA,
+    "frozen_source_prototypes/supcon": _FSP_METADATA,
+    "frozen_source_prototypes/batch_triplet": _FSP_METADATA,
 }
 
-# Sous-dossier bn_results par défaut (évite d'écraser scgm/softtriple).
 BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
-    "tpn_full_softtriple": "tpn_full_softtriple",
-    "tpn_full_supcon": "tpn_full_supcon",
-    "tpn_full_batch_triplet": "tpn_full_batch_triplet",
-    "tpn_full_scgm_text": "tpn_full_scgm_text",
     "frozen_source_prototypes": "frozen_source_prototypes",
     "frozen_source_prototypes/scgm": "frozen_source_prototypes_scgm",
     "frozen_source_prototypes/raw": "frozen_source_prototypes_raw",
+    "frozen_source_prototypes/scgm_text": "frozen_source_prototypes_scgm_text",
+    "frozen_source_prototypes/raw_embedding": "frozen_source_prototypes_raw_embedding",
+    "frozen_source_prototypes/softtriple": "frozen_source_prototypes_softtriple",
+    "frozen_source_prototypes/supcon": "frozen_source_prototypes_supcon",
+    "frozen_source_prototypes/batch_triplet": "frozen_source_prototypes_batch_triplet",
 }
 
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
@@ -122,9 +123,31 @@ def _normalize_fsp_metadata_for_bn(meta: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _normalize_staging_method(method: str) -> str:
+    m = str(method).strip()
+    if m.startswith("frozen_source_prototypes/"):
+        suffix = m.split("/", 1)[1]
+        canonical = normalize_fsp_base_method(suffix)
+        return f"frozen_source_prototypes/{canonical}"
+    return m
+
+
+def _fsp_legacy_method_keys(method: str) -> list[str]:
+    """Chemins rétrocompat pour anciens runs (scgm, raw)."""
+    if not method.startswith("frozen_source_prototypes/"):
+        return []
+    suffix = method.split("/", 1)[1]
+    legacy = {v: k for k, v in FSP_METHOD_ALIASES.items()}
+    old = legacy.get(suffix)
+    if old:
+        return [f"frozen_source_prototypes/{old}"]
+    return []
+
+
 def resolve_transfer_metadata_path(mt: Path, method: str) -> Path:
     """Chemin CSV métadonnées macro pour une méthode macro_transfer."""
-    name = METADATA_BY_METHOD.get(method, _TPN_METADATA)
+    norm = _normalize_staging_method(method)
+    name = METADATA_BY_METHOD.get(norm, METADATA_BY_METHOD.get(method, _FSP_METADATA))
     return mt / "transfer" / name
 
 
@@ -139,24 +162,30 @@ def stage_bn_exports_from_macro_transfer(
     """
     Copie les artefacts macro_transfer vers ``bn_results/staging/bn_exports/``.
 
-    Entrées attendues sous ``output_test/<corpus>/macro_transfer/tpn_full_<encodeur>/`` :
-    ``transfer/metadata_with_tpn_macro_probs.csv``, ``topics_bertopic/assignments.csv``,
-    ``topics_bertopic/themes_by_macro.csv`` (colonnes ``theme_label``, ``top_words``),
-    ``embeddings/prob_*.npy``.
+    Entrées attendues sous ``output_test/<corpus>/macro_transfer/frozen_source_prototypes/<base_method>/`` :
+    ``transfer/target_macro_predictions.csv``, ``topics_bertopic/assignments.csv``,
+    ``topics_bertopic/themes_by_macro.csv``, ``embeddings/prob_*.npy``.
     """
     root = repo_root or find_repo_root()
-    mt = macro_transfer_root(method, corpus_id, repo_root=root)
+    norm_method = _normalize_staging_method(method)
+    mt = macro_transfer_root(norm_method, corpus_id, repo_root=root)
+    if not (mt / "transfer").is_dir():
+        for legacy in _fsp_legacy_method_keys(norm_method):
+            alt = macro_transfer_root(legacy, corpus_id, repo_root=root)
+            if (alt / "transfer").is_dir():
+                mt = alt
+                break
     if output_dir is not None:
         out_root = resolve_repo_path(output_dir, root)
     else:
         out_root = bn_results_dir(corpus_id, anchor=root)
-        sub = BN_STAGING_SUBDIR_BY_METHOD.get(method)
+        sub = BN_STAGING_SUBDIR_BY_METHOD.get(norm_method) or BN_STAGING_SUBDIR_BY_METHOD.get(method)
         if sub:
             out_root = out_root / sub
     exports = out_root / "staging" / "bn_exports"
     exports.mkdir(parents=True, exist_ok=True)
 
-    meta_name = metadata_filename or METADATA_BY_METHOD.get(method, _TPN_METADATA)
+    meta_name = metadata_filename or METADATA_BY_METHOD.get(norm_method, _FSP_METADATA)
     transfer_meta = mt / "transfer" / meta_name
     if not transfer_meta.is_file():
         raise FileNotFoundError(f"{meta_name} manquant : {transfer_meta}")

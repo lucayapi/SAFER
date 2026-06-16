@@ -19,7 +19,6 @@ from metrics.compare_display import (
     RAW_TEST_RESULTS_KEY,
     collect_kfold_btp_comparison,
     fill_eta2_macro_balanced_perc,
-    fill_rankme_over_d,
     method_label,
     normalize_method_display_name,
     order_methods,
@@ -108,7 +107,6 @@ def _load_method_row_for_corpus(method_dir: Path, corpus: str) -> dict | None:
 def _normalize_comparison_df(rows: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(rows)
     df = fill_eta2_macro_balanced_perc(df)
-    df = fill_rankme_over_d(df)
     for col in METRICS_TABLE_COLUMNS:
         if col not in df.columns:
             df[col] = float("nan") if col not in ("method", "macros_ignored", "macros_valid") else ""

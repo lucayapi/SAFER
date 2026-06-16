@@ -103,9 +103,6 @@ BASE_METRIC_FIELDS = [
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
     "val_eta2_macro_balanced_perc",
-    "rankme_global",
-    "c1_global",
-    "c10_global",
 ]
 
 CLASSIFIER_METRIC_FIELDS = [
@@ -138,7 +135,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/scgm_text.yaml",
+        default="configs/methods/scgm_text.yaml",
     )
     parser.add_argument(
         "--backbone_name",
@@ -244,7 +241,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--best_checkpoint_metric",
         type=str,
         default="eta2_macro_balanced_perc",
-        choices=["eta2_macro_balanced_perc", "eta2_macro_balanced", "composite"],
+        choices=["eta2_macro_balanced_perc", "eta2_macro_balanced"],
         help="Critère de sélection du best_model.pt (géométrie, pas F1).",
     )
     parser.add_argument(
@@ -269,12 +266,6 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--test_data_csv",
         type=str,
         default=None,
-    )
-    parser.add_argument(
-        "--best_checkpoint_lambda",
-        type=float,
-        default=0.01,
-        help="λ pour composite = eta2_macro_balanced - λ * c1_global.",
     )
     parser.add_argument(
         "--compute_classifier_diagnostics",
@@ -319,7 +310,7 @@ def finalize_args(args: argparse.Namespace) -> None:
     legacy_optimizer = str(getattr(args, "optimizer", "adamw")).strip().lower()
     if legacy_optimizer == "sgd":
         raise ValueError(
-            "optimizer=sgd n'est plus supporté dans configs/scgm_text.yaml. "
+            "optimizer=sgd n'est plus supporté dans configs/methods/scgm_text.yaml. "
             "Utilisez optimizer: adamw."
         )
     if legacy_optimizer not in ("adamw", ""):
@@ -524,7 +515,7 @@ def _geometry_keys_from_row(geom: Dict[str, Any]) -> Dict[str, float]:
 def checkpoint_selection_score(
     val_metrics: Dict[str, float],
     metric_name: str,
-    lambda_c1: float,
+    lambda_c1: float = 0.0,
 ) -> float:
     if metric_name == "eta2_macro_balanced_perc":
         val = float(val_metrics.get("val_eta2_macro_balanced_perc", float("nan")))
@@ -535,12 +526,7 @@ def checkpoint_selection_score(
         return val if np.isfinite(val) else float("-inf")
     eta2 = float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
     if np.isnan(eta2):
-        eta2 = float("-inf")
-    if metric_name == "composite":
-        c1 = float(val_metrics.get("c1_global", 0.0))
-        if np.isnan(c1):
-            c1 = 0.0
-        return eta2 - float(lambda_c1) * c1
+        return float("-inf")
     return eta2
 
 
@@ -605,9 +591,6 @@ def evaluate_split(
         f"{prefix}_entropy_pz": mean_entropy(prob_z),
         f"{prefix}_entropy_py_z": mean_entropy(prob_yz),
         "n_active_z": float(count_active_clusters(z_pred_arr)),
-        "rankme_global": float(geom["rankme_global"]),
-        "c1_global": float(geom["c1_global"]),
-        "c10_global": float(geom["c10_global"]),
     }
     if compute_classifier_diagnostics:
         metrics[f"{prefix}_acc"] = accuracy(y_true_arr, y_pred_arr)
@@ -843,9 +826,6 @@ def run_training(
     "val_eta2_macro_balanced",
     "val_eta2_weighted",
     "val_eta2_macro_balanced_perc",
-                "rankme_global",
-                "c1_global",
-                "c10_global",
     ]
     if args.compute_classifier_diagnostics:
         legacy_fields.extend(["val_acc", "val_macro_f1", "val_balanced_acc"])
@@ -997,9 +977,6 @@ def run_training(
                     "val_eta2_macro_balanced": train_metrics.get("train_eta2_macro_balanced"),
                     "val_eta2_weighted": train_metrics.get("train_eta2_weighted"),
                     "val_eta2_macro_balanced_perc": train_metrics.get("train_eta2_macro_balanced_perc"),
-                    "rankme_global": train_metrics.get("rankme_global"),
-                    "c1_global": train_metrics.get("c1_global"),
-                    "c10_global": train_metrics.get("c10_global"),
                 }
                 eval_geom = train_geom
             last_eval_geom = eval_geom
@@ -1039,9 +1016,6 @@ def run_training(
                 "val_eta2_macro_balanced": row.get("val_eta2_macro_balanced"),
                 "val_eta2_weighted": row.get("val_eta2_weighted"),
                 "val_eta2_macro_balanced_perc": row.get("val_eta2_macro_balanced_perc"),
-                "rankme_global": row.get("rankme_global"),
-                "c1_global": row.get("c1_global"),
-                "c10_global": row.get("c10_global"),
             }
             if args.compute_classifier_diagnostics:
                 legacy_row["val_acc"] = row.get("val_acc")
@@ -1053,8 +1027,7 @@ def run_training(
             print(
                 f"Epoch {epoch}/{args.epochs} | lr={current_lr:.6f} | "
                 f"loss={row['train_loss']:.4f} | ls1={row['ls1']:.4f} ls2={row['ls2']:.4f} ls3={row['ls3']:.4f} | "
-                f"val_eta2={row.get('val_eta2_macro_balanced', float('nan')):.4f} | "
-                f"rankme={row.get('rankme_global', float('nan')):.2f}",
+                f"val_eta2={row.get('val_eta2_macro_balanced', float('nan')):.4f}",
                 flush=True,
             )
 
@@ -1068,7 +1041,6 @@ def run_training(
             score = checkpoint_selection_score(
                 val_metrics,
                 args.best_checkpoint_metric,
-                args.best_checkpoint_lambda,
             )
             if score > best_score:
                 best_score = score
@@ -1088,7 +1060,6 @@ def run_training(
     ensure_best_checkpoint_file(dirs["checkpoints_dir"])
 
     config_payload["best_checkpoint_metric"] = args.best_checkpoint_metric
-    config_payload["best_checkpoint_lambda"] = args.best_checkpoint_lambda
     config_payload["best_checkpoint_score"] = best_score
     config_payload["best_checkpoint_epoch"] = best_epoch
     save_config_resolved(config_payload, layout["root"])
@@ -1106,6 +1077,7 @@ def run_training(
 
 
 def run_kfold(args: argparse.Namespace) -> None:
+    from contrastive_methods.eval_geometry import compute_fold_ipr
     from safer_core.kfold_eval import group_kfold_splits, save_kfold_tables
 
     dataset = TextRawDataset(
@@ -1124,7 +1096,10 @@ def run_kfold(args: argparse.Namespace) -> None:
         fold_args.output_dir = os.path.join(base_out, "folds", f"fold_{fold_id}")
         print(f"[kfold] fold {fold_id} → {fold_args.output_dir}", flush=True)
         metrics = run_training(fold_args, train_idx_override=train_idx, val_idx_override=val_idx)
-        fold_rows.append({"fold_id": fold_id, **metrics})
+        val_meta = dataset.metadata_df.iloc[val_idx]
+        method_geom = {k: metrics[k] for k in GEOMETRY_METRIC_KEYS if k in metrics}
+        ipr = compute_fold_ipr(val_meta, args.label_col, method_geom)
+        fold_rows.append({"fold_id": fold_id, **metrics, **ipr})
     layout = layout_method_output("scgm_text", base_out)
     save_kfold_tables(fold_rows, layout["metrics"])
     print(f"[kfold] Résumé val → {layout['metrics'] / 'kfold_summary.csv'}", flush=True)

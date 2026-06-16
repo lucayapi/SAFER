@@ -49,8 +49,6 @@ def _plot_bars(df: pd.DataFrame, fig_dir: Path, corpus: str) -> None:
         ("eta2_macro_balanced_perc", f"{prefix}eta2_macro_balanced_perc_barplot.png"),
         ("eta2_macro_balanced", f"{prefix}eta2_macro_balanced_barplot.png"),
         ("eta2_weighted", f"{prefix}eta2_weighted_barplot.png"),
-        ("rankme_global", f"{prefix}rankme_barplot.png"),
-        ("rankme_over_d", f"{prefix}rankme_over_d_barplot.png"),
     ]
     for metric, fname in metrics:
         if metric not in slim.columns:
@@ -64,19 +62,6 @@ def _plot_bars(df: pd.DataFrame, fig_dir: Path, corpus: str) -> None:
         ax.set_title(f"{corpus} — {metric}")
         fig.tight_layout()
         fig.savefig(fig_dir / fname, dpi=150)
-        plt.close(fig)
-
-    x_col = "eta2_macro_balanced_perc" if "eta2_macro_balanced_perc" in slim.columns else "eta2_macro_balanced"
-    if x_col in slim.columns and "rankme_global" in slim.columns:
-        fig, ax = plt.subplots(figsize=(7, 6))
-        ax.scatter(slim[x_col], slim["rankme_global"])
-        for _, r in slim.iterrows():
-            ax.annotate(str(r["method"]), (r[x_col], r["rankme_global"]), fontsize=8)
-        ax.set_xlabel(x_col)
-        ax.set_ylabel("rankme_global")
-        ax.set_title(f"{corpus} — eta2 vs RankMe")
-        fig.tight_layout()
-        fig.savefig(fig_dir / f"{prefix}rankme_vs_eta2.png", dpi=150)
         plt.close(fig)
 
 

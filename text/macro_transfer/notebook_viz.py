@@ -12,6 +12,17 @@ import numpy as np
 import pandas as pd
 
 from macro_transfer.constants import MACRO_NAMES
+from safer_core.display_labels import (
+    CHAIN,
+    CHAIN_LEGEND,
+    CHAIN_TOPICS,
+    F1_STEPS,
+    STEP_CONFIDENCE,
+    STEP_DISTRIBUTION,
+    STEP_DISTANCE_BOX,
+    STEP_PREDICTED,
+    STEP_TRUE,
+)
 
 # Couleurs fixes par macro (lisibles sur fond pastel).
 MACRO_COLOR_HEX: Dict[str, str] = {
@@ -20,18 +31,6 @@ MACRO_COLOR_HEX: Dict[str, str] = {
     "B": "#2ca02c",
     "C": "#d62728",
 }
-
-
-@dataclass
-class RunArtifacts:
-    """Chemins et tableaux d'un run macro_transfer."""
-
-    out_dir: Path
-    z: np.ndarray
-    meta: pd.DataFrame
-    gating: pd.DataFrame
-    transfer_metrics: Dict[str, Any]
-    topics_bertopic_dir: Path
 
 
 @dataclass
@@ -45,41 +44,6 @@ class FSPRunArtifacts:
     metrics: Dict[str, Any]
     confusion: Optional[pd.DataFrame]
     classification_report: Optional[pd.DataFrame]
-
-
-def load_run_artifacts(out_dir: str | Path) -> RunArtifacts:
-    """Charge embeddings TPN adaptés, metadata gating et métriques adaptées."""
-    root = Path(out_dir).resolve()
-    emb = root / "embeddings"
-    z_path = emb / "target_adapted.npy"
-    if not z_path.is_file():
-        z_path = emb / "target_projected.npy"
-    if not z_path.is_file():
-        raise FileNotFoundError(
-            f"Embeddings TPN manquants sous {emb} "
-            "(attendu target_adapted.npy ou target_projected.npy)."
-        )
-    z = np.load(z_path)
-    transfer_dir = root / "transfer"
-    meta_path = transfer_dir / "metadata_with_tpn_macro_probs.csv"
-    if not meta_path.is_file():
-        raise FileNotFoundError(f"Métadonnées TPN manquantes : {meta_path}")
-    meta = pd.read_csv(meta_path)
-    gating_cols = [c for c in meta.columns if c.startswith("p_") or c in ("m_hat", "q_conf", "ambiguous")]
-    gating = meta[gating_cols].copy() if gating_cols else pd.DataFrame(index=meta.index)
-    metrics: Dict[str, Any] = {}
-    mpath = transfer_dir / "transfer_metrics_adapted.json"
-    if mpath.is_file():
-        with open(mpath, encoding="utf-8") as f:
-            metrics = json.load(f)
-    return RunArtifacts(
-        out_dir=root,
-        z=z,
-        meta=meta,
-        gating=gating,
-        transfer_metrics=metrics,
-        topics_bertopic_dir=root / "topics_bertopic",
-    )
 
 
 def _read_optional_csv(path: Path) -> Optional[pd.DataFrame]:
@@ -179,8 +143,8 @@ def plot_fsp_pred_macro_distribution(
     counts = predictions["pred_macro"].astype(str).value_counts().sort_index()
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.bar(counts.index, counts.values, color="#4c78a8")
-    ax.set_title("Répartition des macros prédites")
-    ax.set_xlabel("pred_macro")
+    ax.set_title(STEP_DISTRIBUTION)
+    ax.set_xlabel(STEP_PREDICTED)
     ax.set_ylabel("n")
     plt.tight_layout()
     if fig_dir:
@@ -256,7 +220,7 @@ def plot_fsp_distance_boxplot(
 
     fig, ax = plt.subplots(figsize=(10, 5))
     sns.boxplot(data=long_df, x="pred_macro", y="distance", hue="dist_macro", ax=ax)
-    ax.set_title("Distances aux prototypes par macro prédite")
+    ax.set_title(STEP_DISTANCE_BOX)
     ax.legend(title="distance")
     plt.tight_layout()
     if fig_dir:
@@ -376,67 +340,6 @@ def pick_accident_id_for_colored_text(
     raise ValueError("Aucun accident_id dans le DataFrame")
 
 
-def prepare_topic_labeled_points(
-    artifacts: RunArtifacts,
-    *,
-    topic_subdir: str = "topics_bertopic",
-    confidence_threshold: float = 0.5,
-    max_points: int = 8000,
-    seed: int = 42,
-    label_max_chars: int = 52,
-) -> Optional[Tuple[np.ndarray, np.ndarray, pd.DataFrame]]:
-    """
-    Sous-ensemble (z, libellés topic) pour cartes globales.
-
-    Ne garde que les unités avec topic_id ≥ 0 et q_conf ≥ seuil.
-    """
-    root = artifacts.out_dir / topic_subdir
-    themes_path = root / "themes_by_macro.csv"
-    assign_path = root / "assignments.csv"
-    if not themes_path.is_file() or not assign_path.is_file():
-        print(f"[topics] absent : {themes_path} ou {assign_path}")
-        return None
-
-    themes = pd.read_csv(themes_path)
-    assignments = pd.read_csv(assign_path)
-    merged = merge_assignments(
-        artifacts.meta,
-        assignments,
-        confidence_threshold=confidence_threshold,
-    )
-    merged = merged.loc[merged["topic_id"] >= 0].copy()
-    if len(merged) < 5:
-        print("[topics] trop peu de points assignés (topic_id ≥ 0)")
-        return None
-
-    if "macro" in merged.columns:
-        macro_col = "macro"
-    elif "macro_y" in merged.columns:
-        macro_col = "macro_y"
-    else:
-        macro_col = "m_hat"
-    tmap = _theme_label_map(themes, max_chars=label_max_chars)
-    idx_rows = merged["doc_idx"].astype(int).to_numpy()
-    z_sub = artifacts.z[idx_rows]
-    dm_labels = np.array(
-        [
-            tmap.get((str(row[macro_col]), int(row["topic_id"])), f"{row[macro_col]}·T{int(row['topic_id'])}")
-            for _, row in merged.iterrows()
-        ],
-        dtype=object,
-    )
-
-    n = min(max_points, len(z_sub))
-    rng = np.random.default_rng(seed)
-    if len(z_sub) > n:
-        pick = rng.choice(len(z_sub), size=n, replace=False)
-        z_sub = z_sub[pick]
-        dm_labels = dm_labels[pick]
-        merged = merged.iloc[pick].reset_index(drop=True)
-
-    return z_sub, dm_labels, merged
-
-
 def merge_assignments(
     meta: pd.DataFrame,
     assignments: pd.DataFrame,
@@ -469,650 +372,6 @@ def merge_assignments(
     return merged
 
 
-def plot_transfer_macro_overview(
-    artifacts: RunArtifacts,
-    *,
-    label_col: str = "pred_label",
-    confidence_threshold: float = 0.5,
-    fig_dir: Optional[Path] = None,
-) -> None:
-    """Histogramme q_conf + barres accuracy si labels présents."""
-    meta = artifacts.meta
-    fig_dir = Path(fig_dir) if fig_dir else None
-
-    if "q_conf" in meta.columns:
-        fig, ax = plt.subplots(figsize=(7, 4))
-        ax.hist(meta["q_conf"].astype(float).dropna(), bins=40, color="steelblue", edgecolor="white")
-        ax.axvline(confidence_threshold, color="crimson", ls="--", label=f"seuil {confidence_threshold}")
-        ax.set_title("Confiance macro (max p(m|u))")
-        ax.set_xlabel("q_conf")
-        ax.legend()
-        plt.tight_layout()
-        if fig_dir:
-            fig.savefig(fig_dir / "hist_q_conf.png", dpi=140, bbox_inches="tight")
-        plt.show()
-        plt.close(fig)
-
-    m = artifacts.transfer_metrics
-    if m:
-        print("=== Métriques transfert ===")
-        display_df = pd.DataFrame([m])
-        try:
-            from IPython.display import display
-
-            display(display_df)
-        except ImportError:
-            print(display_df.to_string())
-
-    if label_col in meta.columns and "m_hat" in meta.columns:
-        ct = pd.crosstab(meta[label_col].astype(str), meta["m_hat"].astype(str))
-        fig, ax = plt.subplots(figsize=(6, 5))
-        import seaborn as sns
-
-        sns.heatmap(ct, annot=True, fmt="d", cmap="Blues", ax=ax)
-        ax.set_title("Vérité (lignes) vs macro prédite (colonnes)")
-        plt.tight_layout()
-        if fig_dir:
-            fig.savefig(fig_dir / "confusion_pred_vs_mhat.png", dpi=140, bbox_inches="tight")
-        plt.show()
-        plt.close(fig)
-
-
-def _topic_centroids_2d(
-    coords: np.ndarray,
-    labels: np.ndarray,
-) -> Tuple[List[float], List[float], List[str]]:
-    """Centroïde 2D par libellé topic (pour annotations matplotlib)."""
-    labels = np.asarray(labels).astype(str)
-    cx, cy, names = [], [], []
-    for name in sorted(set(labels)):
-        mask = labels == name
-        if not mask.any():
-            continue
-        mu = coords[mask].mean(axis=0)
-        cx.append(float(mu[0]))
-        cy.append(float(mu[1]))
-        names.append(name)
-    return cx, cy, names
-
-
-def plot_global_topics_datamap(
-    artifacts: RunArtifacts,
-    *,
-    algo_tag: str,
-    confidence_threshold: float = 0.5,
-    max_points: int = 8000,
-    seed: int = 42,
-    fig_dir: Optional[Path] = None,
-    use_datamap: bool = True,
-    label_font_size: int = 7,
-    label_max_chars: int = 52,
-) -> None:
-    """UMAP + DataMapPlot global : une étiquette par topic (theme_label), pas seulement la macro."""
-    from scgm_text.notebook_viz import plot_umap_datamap_static
-
-    prep = prepare_topic_labeled_points(
-        artifacts,
-        confidence_threshold=confidence_threshold,
-        max_points=max_points,
-        seed=seed,
-        label_max_chars=label_max_chars,
-    )
-    if prep is None:
-        return
-    z_sub, dm_labels, _merged = prep
-    coords = _run_umap(z_sub, random_state=seed)
-    fig_dir = Path(fig_dir) if fig_dir else None
-    safe = str(algo_tag).replace(" ", "_").lower()
-
-    if use_datamap:
-        try:
-            fig, _ = plot_umap_datamap_static(
-                coords,
-                dm_labels,
-                title=f"{algo_tag} — topics BERTopic (libellés theme_label)",
-                label_font_size=label_font_size,
-                macro_centroids=None,
-            )
-            if fig_dir:
-                out = fig_dir / f"global_topics_datamap_{safe}.png"
-                fig.savefig(out, dpi=150, bbox_inches="tight")
-                print("Figure :", out)
-            plt.show()
-            plt.close(fig)
-        except Exception as exc:
-            print("DataMapPlot ignoré :", exc)
-
-    import seaborn as sns
-
-    fig, ax = plt.subplots(figsize=(12, 8))
-    uniq = sorted(set(dm_labels), key=str)
-    pal = sns.color_palette("husl", n_colors=max(len(uniq), 1))
-    for i, lab in enumerate(uniq):
-        mask = dm_labels == lab
-        ax.scatter(coords[mask, 0], coords[mask, 1], s=10, alpha=0.45, c=[pal[i]])
-    tcx, tcy, tnames = _topic_centroids_2d(coords, dm_labels)
-    for xi, yi, name in zip(tcx, tcy, tnames):
-        ax.annotate(
-            name,
-            (xi, yi),
-            xytext=(4, 4),
-            textcoords="offset points",
-            fontsize=6,
-            color="#222222",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.75, edgecolor="none"),
-        )
-    ax.set_title(f"UMAP — {algo_tag} (topics, annotations centroïdes)")
-    plt.tight_layout()
-    if fig_dir:
-        fig.savefig(fig_dir / f"global_topics_scatter_{safe}.png", dpi=140, bbox_inches="tight")
-    plt.show()
-    plt.close(fig)
-
-
-def plot_global_topics_compare_methods(
-    artifacts_by_method: Dict[str, RunArtifacts],
-    *,
-    confidence_threshold: float = 0.5,
-    max_points: int = 6000,
-    seed: int = 42,
-    fig_dir: Optional[Path] = None,
-    use_datamap: bool = True,
-    label_font_size: int = 7,
-) -> None:
-    """SCGM vs SoftTriple côte à côte (DataMapPlot + scatter annoté par topic)."""
-    from scgm_text.notebook_viz import plot_umap_datamap_static
-
-    methods = list(artifacts_by_method.items())
-    if not methods:
-        return
-    fig_dir = Path(fig_dir) if fig_dir else None
-
-    if use_datamap:
-        for tag, art in methods:
-            print(f"=== DataMapPlot topics — {tag} ===")
-            plot_global_topics_datamap(
-                art,
-                algo_tag=tag,
-                confidence_threshold=confidence_threshold,
-                max_points=max_points,
-                seed=seed,
-                fig_dir=fig_dir / tag.lower().replace(" ", "_") if fig_dir else None,
-                use_datamap=True,
-                label_font_size=label_font_size,
-            )
-
-    n = len(methods)
-    fig, axes = plt.subplots(1, n, figsize=(9 * n, 8), squeeze=False)
-    import seaborn as sns
-
-    for ax, (tag, art) in zip(axes[0], methods):
-        prep = prepare_topic_labeled_points(
-            art,
-            confidence_threshold=confidence_threshold,
-            max_points=max_points,
-            seed=seed,
-        )
-        if prep is None:
-            ax.set_title(f"{tag} — (données absentes)")
-            ax.axis("off")
-            continue
-        z_sub, dm_labels, _ = prep
-        coords = _run_umap(z_sub, random_state=seed)
-        uniq = sorted(set(dm_labels), key=str)
-        pal = sns.color_palette("husl", n_colors=max(len(uniq), 1))
-        for i, lab in enumerate(uniq):
-            mask = dm_labels == lab
-            ax.scatter(coords[mask, 0], coords[mask, 1], s=8, alpha=0.4, c=[pal[i]])
-        tcx, tcy, tnames = _topic_centroids_2d(coords, dm_labels)
-        for xi, yi, name in zip(tcx, tcy, tnames):
-            short = name if len(name) <= 40 else name[:39] + "…"
-            ax.annotate(short, (xi, yi), fontsize=5, alpha=0.9)
-        ax.set_title(f"{tag} — topics (centroïdes)")
-    plt.tight_layout()
-    if fig_dir:
-        out = fig_dir / "compare_scgm_softtriple_topics.png"
-        fig.savefig(out, dpi=150, bbox_inches="tight")
-        print("Figure comparative :", out)
-    plt.show()
-    plt.close(fig)
-
-
-def _run_umap(X: np.ndarray, *, random_state: int = 42) -> np.ndarray:
-    from umap import UMAP
-
-    n = len(X)
-    n_neighbors = min(15, max(2, n - 1))
-    reducer = UMAP(
-        n_components=2,
-        random_state=random_state,
-        n_neighbors=n_neighbors,
-        min_dist=0.1,
-        metric="cosine",
-    )
-    return reducer.fit_transform(X)
-
-
-def plot_global_embedding_map(
-    artifacts: RunArtifacts,
-    *,
-    max_points: int = 8000,
-    confidence_threshold: float = 0.5,
-    seed: int = 42,
-    fig_dir: Optional[Path] = None,
-    use_datamap: bool = True,
-) -> None:
-    """UMAP global coloré par m_hat ; option DataMapPlot + Plotly."""
-    from scgm_text.notebook_viz import (
-        display_plotly_html,
-        macro_umap_centroids,
-        plot_umap_datamap_static,
-        plot_umap_plotly,
-        sample_projection_indices,
-    )
-
-    meta = artifacts.meta
-    z = artifacts.z
-    if "m_hat" not in meta.columns:
-        print("(absent) m_hat — pas de carte globale")
-        return
-
-    label_col = "m_hat"
-    idx = sample_projection_indices(meta, label_col, max_points=max_points, seed=seed)
-    X = z[idx]
-    lab_df = meta.iloc[idx].copy()
-    coords = _run_umap(X, random_state=seed)
-    labels = lab_df[label_col].astype(str).to_numpy()
-
-    fig_dir = Path(fig_dir) if fig_dir else None
-    centroids = macro_umap_centroids(coords, labels)
-
-    if use_datamap:
-        try:
-            fig, _ = plot_umap_datamap_static(
-                coords,
-                labels,
-                title="Corpus test — macro (m_hat)",
-                label_font_size=7,
-                macro_centroids=centroids,
-            )
-            if fig_dir:
-                out = fig_dir / "global_umap_datamap_macro.png"
-                fig.savefig(out, dpi=150, bbox_inches="tight")
-                print("Figure :", out)
-            plt.show()
-            plt.close(fig)
-        except Exception as exc:
-            print("DataMapPlot ignoré :", exc)
-
-    fig_pl = plot_umap_plotly(
-        coords,
-        lab_df,
-        label_col=label_col,
-        hover_label=label_col,
-        title="UMAP global — macro (interactif)",
-        out_html=fig_dir / "global_umap_interactive.html" if fig_dir else None,
-    )
-    if fig_dir and fig_pl is not None:
-        display_plotly_html(fig_dir / "global_umap_interactive.html")
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    import seaborn as sns
-
-    pal = sns.color_palette("Set2", n_colors=len(MACRO_NAMES))
-    for i, m in enumerate(MACRO_NAMES):
-        mask = labels == m
-        if mask.any():
-            ax.scatter(coords[mask, 0], coords[mask, 1], s=8, alpha=0.5, c=[pal[i]], label=m)
-    ax.set_title("UMAP — couleur macro (m_hat)")
-    ax.legend(markerscale=2)
-    plt.tight_layout()
-    if fig_dir:
-        fig.savefig(fig_dir / "global_umap_scatter_macro.png", dpi=140, bbox_inches="tight")
-    plt.show()
-    plt.close(fig)
-
-
-def plot_topics_per_macro(
-    artifacts: RunArtifacts,
-    *,
-    topic_subdir: str,
-    algo_tag: str,
-    macro: str,
-    confidence_threshold: float = 0.5,
-    max_points: int = 4000,
-    seed: int = 42,
-    fig_dir: Optional[Path] = None,
-    use_datamap: bool = True,
-    run_pca_tsne: bool = True,
-) -> None:
-    """UMAP / DataMapPlot / PCA-t-SNE pour une macro (topics BERTopic)."""
-    from sklearn.decomposition import PCA
-    from sklearn.manifold import TSNE
-
-    from scgm_text.notebook_viz import plot_umap_datamap_static
-
-    root = artifacts.out_dir / topic_subdir
-    themes_path = root / "themes_by_macro.csv"
-    assign_path = root / "assignments.csv"
-    if not themes_path.is_file() or not assign_path.is_file():
-        print(f"[{algo_tag}] absent sous {root}")
-        return
-
-    themes = pd.read_csv(themes_path)
-    assignments = pd.read_csv(assign_path)
-    macro_assign = assignments.loc[assignments["macro"].astype(str) == macro].copy()
-    merged = merge_assignments(
-        artifacts.meta,
-        macro_assign,
-        confidence_threshold=confidence_threshold,
-    )
-    merged = merged.loc[merged["m_hat"].astype(str) == macro]
-    merged = merged.loc[merged["topic_id"] >= 0]
-    if len(merged) < 5:
-        print(f"[{algo_tag} / {macro}] trop peu de points après filtre")
-        return
-
-    idx_rows = merged["doc_idx"].astype(int).to_numpy()
-    z_sub = artifacts.z[idx_rows]
-    label_topics = merged["topic_id"].astype(str).to_numpy()
-    tmap = _theme_label_map(themes.loc[themes["macro"].astype(str) == macro], max_chars=52)
-
-    n = min(max_points, len(z_sub))
-    rng = np.random.default_rng(seed)
-    if len(z_sub) > n:
-        pick = rng.choice(len(z_sub), size=n, replace=False)
-        z_sub = z_sub[pick]
-        label_topics = label_topics[pick]
-        merged_sub = merged.iloc[pick]
-    else:
-        merged_sub = merged
-
-    coords = _run_umap(z_sub, random_state=seed)
-    dm_labels = np.array(
-        [tmap.get((macro, int(tid)), f"T{tid}") for tid in label_topics],
-        dtype=object,
-    )
-
-    fig_dir = Path(fig_dir) if fig_dir else None
-    safe = f"{algo_tag}_{macro}".replace(" ", "_")
-
-    if use_datamap:
-        try:
-            fig, _ = plot_umap_datamap_static(
-                coords,
-                dm_labels,
-                title=f"{algo_tag} — {macro} (topics intra-macro)",
-                label_font_size=6,
-            )
-            if fig_dir:
-                p = fig_dir / f"umap_datamap_{safe}.png"
-                fig.savefig(p, dpi=150, bbox_inches="tight")
-                print("Figure :", p)
-            plt.show()
-            plt.close(fig)
-        except Exception as exc:
-            print("DataMapPlot :", exc)
-
-    fig, ax = plt.subplots(figsize=(8, 6))
-    import seaborn as sns
-
-    topics_unique = sorted(set(label_topics), key=lambda x: int(x) if str(x).lstrip("-").isdigit() else 0)
-    pal = sns.color_palette("husl", n_colors=max(len(topics_unique), 1))
-    for i, tid in enumerate(topics_unique):
-        mask = label_topics == tid
-        leg = tmap.get((macro, int(tid)), f"T{tid}")
-        ax.scatter(coords[mask, 0], coords[mask, 1], s=12, alpha=0.6, c=[pal[i]], label=leg)
-    ax.set_title(f"UMAP — {algo_tag} / {macro}")
-    ax.legend(markerscale=2, fontsize=8)
-    plt.tight_layout()
-    if fig_dir:
-        fig.savefig(fig_dir / f"umap_scatter_{safe}.png", dpi=140, bbox_inches="tight")
-    plt.show()
-    plt.close(fig)
-
-    if run_pca_tsne and len(z_sub) >= 10:
-        pca_xy = PCA(n_components=2, random_state=seed).fit_transform(z_sub)
-        tsne_xy = TSNE(
-            n_components=2,
-            random_state=seed,
-            init="pca",
-            learning_rate="auto",
-        ).fit_transform(z_sub)
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-        for ax, xy, title in (
-            (axes[0], pca_xy, f"PCA — {algo_tag} {macro}"),
-            (axes[1], tsne_xy, f"t-SNE — {algo_tag} {macro}"),
-        ):
-            for i, tid in enumerate(topics_unique):
-                mask = label_topics == tid
-                leg = tmap.get((macro, int(tid)), f"T{tid}")
-                ax.scatter(xy[mask, 0], xy[mask, 1], s=10, alpha=0.6, c=[pal[i]], label=leg)
-            ax.set_title(title)
-            ax.legend(markerscale=2, fontsize=7)
-        plt.tight_layout()
-        if fig_dir:
-            fig.savefig(fig_dir / f"pca_tsne_{safe}.png", dpi=140, bbox_inches="tight")
-        plt.show()
-        plt.close(fig)
-
-
-def display_topics_tables(out_dir: Path, topic_subdir: str, algo_tag: str) -> None:
-    """Affiche themes_by_macro et effectifs."""
-    root = Path(out_dir) / topic_subdir
-    p = root / "themes_by_macro.csv"
-    if not p.is_file():
-        print(f"[{algo_tag}] absent : {p}")
-        return
-    th = pd.read_csv(p)
-    print(f"=== {algo_tag} — themes_by_macro ===")
-    try:
-        from IPython.display import display
-
-        display(th.sort_values(["macro", "n_units"], ascending=[True, False]))
-        print("Effectifs par macro :")
-        display(th.groupby("macro")["n_units"].sum().reset_index())
-    except ImportError:
-        print(th.head(20).to_string())
-
-
-def _confusion_matrix_from_metrics(metrics: Dict[str, Any]) -> Optional[pd.DataFrame]:
-    conf = metrics.get("confusion") or {}
-    if not conf:
-        return None
-    rows = []
-    for true_m in MACRO_NAMES:
-        row = {"true": true_m}
-        for pred_m in MACRO_NAMES:
-            row[pred_m] = int(conf.get(true_m, {}).get(pred_m, 0))
-        rows.append(row)
-    cm = pd.DataFrame(rows).set_index("true")
-    return cm.reindex(index=MACRO_NAMES, columns=MACRO_NAMES, fill_value=0)
-
-
-def plot_confusion_from_metrics(
-    metrics: Dict[str, Any],
-    title: str,
-    save_path: Optional[Path] = None,
-    *,
-    show: bool = True,
-) -> Optional[plt.Figure]:
-    """Heatmap matrice de confusion depuis transfer_metrics_*.json."""
-    cm = _confusion_matrix_from_metrics(metrics)
-    if cm is None or cm.values.sum() == 0:
-        print("Confusion absente ou vide —", title)
-        return None
-    import seaborn as sns
-
-    fig, ax = plt.subplots(figsize=(5.5, 4.5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", ax=ax)
-    ax.set_xlabel("Prédit (m_hat)")
-    ax.set_ylabel("Vérité (pred_label)")
-    ax.set_title(title)
-    plt.tight_layout()
-    if save_path is not None:
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_path, dpi=140, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-    return fig
-
-
-def _subsample_stratified(
-    n_source: int,
-    n_target: int,
-    max_points: int,
-    seed: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Indices source et cible sous-échantillonnés."""
-    rng = np.random.default_rng(seed)
-    half = max(2, max_points // 2)
-    n_s = min(n_source, half)
-    n_t = min(n_target, max_points - n_s)
-    idx_s = (
-        rng.choice(n_source, size=n_s, replace=False)
-        if n_source > n_s
-        else np.arange(n_source)
-    )
-    idx_t = (
-        rng.choice(n_target, size=n_t, replace=False)
-        if n_target > n_t
-        else np.arange(n_target)
-    )
-    return np.asarray(idx_s, dtype=np.int64), np.asarray(idx_t, dtype=np.int64)
-
-
-def _load_domain_embedding_pair(
-    out_dir: Path,
-    phase: str,
-) -> tuple[Optional[np.ndarray], Optional[np.ndarray]]:
-    """phase: 'projected' (initial) ou 'adapted'."""
-    emb = Path(out_dir) / "embeddings"
-    if phase == "projected":
-        p_s, p_t = emb / "source_projected.npy", emb / "target_projected.npy"
-    else:
-        p_s, p_t = emb / "source_adapted.npy", emb / "target_adapted.npy"
-    if not p_s.is_file() or not p_t.is_file():
-        return None, None
-    return np.load(p_s), np.load(p_t)
-
-
-def _tsne_2d(z: np.ndarray, seed: int) -> np.ndarray:
-    from sklearn.manifold import TSNE
-
-    n = len(z)
-    if n < 3:
-        return np.zeros((n, 2), dtype=np.float64)
-    perplexity = float(min(30, max(2, n - 1)))
-    return TSNE(
-        n_components=2,
-        perplexity=perplexity,
-        random_state=seed,
-        init="pca",
-        learning_rate="auto",
-    ).fit_transform(z)
-
-
-def _plot_domain_panel(
-    ax: plt.Axes,
-    z_source: np.ndarray,
-    z_target: np.ndarray,
-    title: str,
-    *,
-    source_label: str = "Source BTP",
-    target_label: str = "Test",
-) -> None:
-    z = np.vstack([z_source, z_target])
-    xy = _tsne_2d(z, seed=42)
-    n_s = len(z_source)
-    ax.scatter(
-        xy[:n_s, 0],
-        xy[:n_s, 1],
-        s=8,
-        alpha=0.45,
-        c="#1f77b4",
-        label=source_label,
-    )
-    ax.scatter(
-        xy[n_s:, 0],
-        xy[n_s:, 1],
-        s=8,
-        alpha=0.45,
-        c="#888888",
-        label=target_label,
-    )
-    ax.set_title(title)
-    ax.legend(markerscale=2, fontsize=8)
-
-
-def plot_domain_tsne_side_by_side(
-    out_dir: Path,
-    fig_dir: Optional[Path] = None,
-    *,
-    max_points: int = 4000,
-    seed: int = 42,
-    source_label: str = "Source BTP",
-    target_label: str = "Test",
-    test_corpus_name: Optional[str] = None,
-    show: bool = True,
-) -> Optional[plt.Figure]:
-    """
-    Figure 1×2 : t-SNE source (bleu) + cible (gris) — encodage initial (gauche) vs adapté (droite).
-    """
-    root = Path(out_dir)
-    z_s_proj, z_t_proj = _load_domain_embedding_pair(root, "projected")
-    z_s_adapt, z_t_adapt = _load_domain_embedding_pair(root, "adapted")
-    if z_s_proj is None or z_t_proj is None:
-        print(f"Embeddings domaine manquants sous {root / 'embeddings'}")
-        return None
-
-    n_source = len(z_s_proj)
-    n_target = len(z_t_proj)
-    manifest_path = root / "run_manifest.json"
-    if manifest_path.is_file():
-        with open(manifest_path, encoding="utf-8") as f:
-            man = json.load(f)
-        n_source = int(man.get("n_source", n_source))
-        n_target = int(man.get("n_target", n_target))
-
-    idx_s, idx_t = _subsample_stratified(n_source, n_target, max_points, seed)
-    tgt_name = target_label if test_corpus_name is None else f"Test {test_corpus_name}"
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
-    _plot_domain_panel(
-        axes[0],
-        z_s_proj[idx_s],
-        z_t_proj[idx_t],
-        "Encodage initial (projeté)",
-        source_label=source_label,
-        target_label=tgt_name,
-    )
-    if z_s_adapt is not None and z_t_adapt is not None:
-        _plot_domain_panel(
-            axes[1],
-            z_s_adapt[idx_s],
-            z_t_adapt[idx_t],
-            "Encodage adapté (TPN)",
-            source_label=source_label,
-            target_label=tgt_name,
-        )
-    else:
-        axes[1].set_visible(False)
-    fig.suptitle("t-SNE — domaines source vs test", y=1.02)
-    plt.tight_layout()
-    if fig_dir is not None:
-        fig_dir = Path(fig_dir)
-        fig_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(fig_dir / "tsne_domain_initial_vs_adapted.png", dpi=140, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-    return fig
-
-
 def _resolve_macro_column(df: pd.DataFrame) -> str:
     for col in ("macro", "m_hat", "macro_y", "pred_label"):
         if col in df.columns:
@@ -1121,7 +380,8 @@ def _resolve_macro_column(df: pd.DataFrame) -> str:
 
 
 def build_topics_display_dataframe(
-    artifacts: RunArtifacts,
+    out_dir: str | Path,
+    meta: pd.DataFrame,
     *,
     confidence_threshold: float = 0.0,
     filter_meta_by_confidence: bool = False,
@@ -1130,10 +390,10 @@ def build_topics_display_dataframe(
     """
     Tableau unitaire prêt pour l'affichage texte coloré (toutes les phrases du corpus test).
 
-    Joint meta TPN + ``assignments.csv`` (left join). Ajoute ``theme_label`` (long),
+    Joint meta FSP + ``assignments.csv`` (left join). Ajoute ``theme_label`` (long),
     ``theme_label_short`` (légende) et ``Probability`` (``prob`` ou ``p_mk``).
     """
-    root = artifacts.out_dir / topic_subdir
+    root = Path(out_dir).resolve() / topic_subdir
     themes_path = root / "themes_by_macro.csv"
     assign_path = root / "assignments.csv"
     if not assign_path.is_file():
@@ -1141,7 +401,7 @@ def build_topics_display_dataframe(
 
     assignments = pd.read_csv(assign_path)
     merged = merge_assignments(
-        artifacts.meta,
+        meta,
         assignments,
         confidence_threshold=confidence_threshold,
         filter_meta_by_confidence=filter_meta_by_confidence,
@@ -1274,6 +534,8 @@ def render_colored_accident_html(
     color_by_norm = str(color_by).lower().strip()
     if color_by_norm not in ("topic", "macro"):
         raise ValueError("color_by doit être 'topic' ou 'macro'")
+    if legend_title == "Thèmes" and color_by_norm == "macro":
+        legend_title = CHAIN_LEGEND
 
     pair_to_style: Dict[Tuple[str, int], int] = {}
     ordered_pairs: List[Tuple[str, int]] = []
@@ -1462,12 +724,252 @@ def show_colored_text_inline(
 
 
 def show_colored_text_for_accident(
-    artifacts: RunArtifacts,
+    out_dir: str | Path,
+    meta: pd.DataFrame,
     accident_id: Any,
     *,
     confidence_threshold: float = 0.0,
     **kwargs: Any,
 ) -> None:
-    """Charge meta+topics depuis un run TPN et affiche le récit coloré."""
-    df = build_topics_display_dataframe(artifacts, confidence_threshold=confidence_threshold)
+    """Charge meta+topics depuis un run FSP et affiche le récit coloré."""
+    df = build_topics_display_dataframe(
+        out_dir,
+        meta,
+        confidence_threshold=confidence_threshold,
+    )
     show_colored_text_inline(df, accident_id, **kwargs)
+
+
+_TEST_LABEL_COL_CANDIDATES = ("pred_label", "true_macro", "pred_macro", "m_hat", "label")
+
+
+@dataclass
+class RawTestEmbeddingVizResult:
+    """Résultat de plot_test_corpus_raw_embeddings."""
+
+    pca_tsne_path: Optional[Path] = None
+    tsne_per_macro_path: Optional[Path] = None
+    umap_png_path: Optional[Path] = None
+    umap_html_path: Optional[Path] = None
+    metrics_path: Optional[Path] = None
+    metrics_df: Optional[pd.DataFrame] = None
+    label_col: Optional[str] = None
+    n_points: int = 0
+    missing: List[str] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.missing is None:
+            self.missing = []
+
+
+def resolve_test_label_col(meta: pd.DataFrame, label_col: Optional[str] = None) -> str:
+    """Retourne la colonne étape (chaîne accidentelle) pour colorer les cartes."""
+    if label_col and label_col in meta.columns:
+        return label_col
+    for col in _TEST_LABEL_COL_CANDIDATES:
+        if col in meta.columns:
+            return col
+    raise KeyError(
+        "Aucune colonne étape trouvée "
+        f"(essayé : {', '.join(_TEST_LABEL_COL_CANDIDATES)} ; "
+        f"colonnes : {list(meta.columns)[:12]}…)"
+    )
+
+
+def _make_matplotlib_save_fig(fig_dir: Path, *, show: bool, dpi: int = 120):
+    """Fabrique un callback save_fig compatible scgm_text.notebook_viz."""
+    out = Path(fig_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    def save_fig(name: str) -> Path:
+        path = out / name
+        plt.tight_layout()
+        plt.savefig(path, dpi=dpi, bbox_inches="tight")
+        if show:
+            plt.show()
+        else:
+            plt.close()
+        return path
+
+    return save_fig
+
+
+def plot_test_corpus_raw_embeddings(
+    test_corpus: str,
+    *,
+    fig_dir: Path,
+    anchor: Optional[Path] = None,
+    label_col: Optional[str] = None,
+    max_points: int = 12000,
+    seed: int = 42,
+    prefix: str = "raw_test_embedding",
+    show: bool = True,
+    include_umap: bool = True,
+    display_metrics: bool = True,
+) -> RawTestEmbeddingVizResult:
+    """
+    PCA + t-SNE (+ UMAP) sur les embeddings encodeur Qwen du corpus test.
+
+    Utilise ``configs/test_corpora.yaml`` (``data_csv`` + ``emb_csv``).
+    """
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    from safer_core.paths import TEXT_ROOT
+    from safer_core.test_corpus import raw_embedding_test_dir, resolve_test_corpus
+    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+    from scgm_text.notebook_viz import (
+        plot_embedding_umap_by_macro,
+        plot_projection_matplotlib,
+        plot_tsne_per_macro_grid,
+        sample_projection_indices,
+    )
+    from scgm_text.utils_io import create_doc_id_if_missing
+
+    root = Path(anchor or TEXT_ROOT).resolve()
+    try:
+        spec = resolve_test_corpus(test_corpus, anchor=root)
+    except KeyError as exc:
+        result = RawTestEmbeddingVizResult()
+        result.missing.append(str(exc))
+        return result
+    result = RawTestEmbeddingVizResult()
+    fig_dir = Path(fig_dir)
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    data_path = spec.data_csv
+    emb_path = spec.emb_csv
+    if not data_path.is_file():
+        result.missing.append(str(data_path))
+        return result
+    if not emb_path.is_file():
+        result.missing.append(str(emb_path))
+        return result
+
+    meta = create_doc_id_if_missing(pd.read_csv(data_path))
+    try:
+        resolved_label = resolve_test_label_col(meta, label_col)
+    except KeyError as exc:
+        result.missing.append(str(exc))
+        return result
+
+    slim = meta.drop(columns=[c for c in meta.columns if c.startswith("dim_")], errors="ignore")
+    try:
+        merged, dim_cols = merge_metadata_with_embeddings(slim, str(emb_path))
+    except Exception as exc:
+        result.missing.append(f"merge embeddings : {exc}")
+        return result
+
+    raw = merged[dim_cols].to_numpy(dtype=np.float64)
+    idx = sample_projection_indices(meta, resolved_label, max_points=max_points, seed=seed)
+    sample_df = meta.loc[idx]
+    sample_x = raw[idx]
+
+    pca_xy = PCA(n_components=2, random_state=seed).fit_transform(sample_x)
+    tsne_xy = TSNE(
+        n_components=2,
+        random_state=seed,
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(sample_x)
+
+    save_fig = _make_matplotlib_save_fig(fig_dir, show=show)
+    corpus_label = spec.display_name
+    result.label_col = resolved_label
+    result.n_points = len(sample_df)
+    result.pca_tsne_path = plot_projection_matplotlib(
+        pca_xy,
+        tsne_xy,
+        sample_df,
+        resolved_label,
+        save_fig=save_fig,
+        png_name=f"{prefix}_pca_tsne.png",
+        pca_title=f"PCA 2D — {corpus_label} (embedding brut)",
+        tsne_title=f"t-SNE 2D — {corpus_label} (embedding brut)",
+        show_macro_centroids=True,
+        show_z_centroids=False,
+    )
+    result.tsne_per_macro_path = plot_tsne_per_macro_grid(
+        sample_x,
+        sample_df[resolved_label].astype(str).to_numpy(),
+        corpus_name=f"{corpus_label} (embedding brut)",
+        save_fig=save_fig,
+        png_name=f"{prefix}_tsne_per_macro.png",
+        seed=seed,
+        max_points_per_macro=min(2000, max(10, max_points // 4)),
+    )
+
+    if include_umap:
+        umap_paths = plot_embedding_umap_by_macro(
+            raw,
+            meta,
+            resolved_label,
+            figures_dir=fig_dir,
+            save_fig=save_fig,
+            max_points=max_points,
+            seed=seed,
+            title=f"UMAP — {corpus_label} (embedding brut, couleur = étape)",
+            png_name=f"{prefix}_umap.png",
+            html_name=f"{prefix}_umap_interactive.html",
+        )
+        for p in umap_paths:
+            if p.suffix.lower() == ".png":
+                result.umap_png_path = p
+            elif p.suffix.lower() == ".html":
+                result.umap_html_path = p
+
+    metrics_path = raw_embedding_test_dir(test_corpus, anchor=root) / "metrics" / "metrics_geometry.csv"
+    if metrics_path.is_file():
+        result.metrics_path = metrics_path
+        result.metrics_df = pd.read_csv(metrics_path)
+        if display_metrics:
+            try:
+                from IPython.display import display
+
+                print(f"=== Géométrie embedding brut — {corpus_label} ===")
+                display(result.metrics_df)
+            except ImportError:
+                print(result.metrics_df.to_string(index=False))
+
+    return result
+
+
+RAW_TEST_EMBEDDING_SECTION_MD = (
+    "## Embedding brut — corpus test (PCA / t-SNE / UMAP)\n\n"
+    "Vecteurs encodeur Qwen du registre test (`configs/test_corpora.yaml`), "
+    "couleur = **étape** de la chaîne accidentelle. "
+    "Métriques géométrie : `output_test/<corpus>/raw_embedding/metrics/metrics_geometry.csv` "
+    "(job `export_raw_geometry.sh`)."
+)
+
+
+def notebook_raw_test_embedding_source(
+    fig_dir: str = "FIG_DIR",
+    *,
+    display_metrics: bool = True,
+) -> str:
+    """Code source pour une cellule notebook (réutilisé par les builders)."""
+    metrics_flag = "True" if display_metrics else "False"
+    return f"""
+from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
+
+_raw_emb = plot_test_corpus_raw_embeddings(
+    TEST_CORPUS,
+    fig_dir={fig_dir},
+    anchor=TEXT_ROOT,
+    max_points=12000,
+    seed=42,
+    prefix="raw_test_embedding",
+    show=True,
+    display_metrics={metrics_flag},
+)
+if _raw_emb.missing:
+    print("Embedding brut test — fichiers manquants :", ", ".join(_raw_emb.missing))
+else:
+    print(
+        "Figures embedding brut :",
+        _raw_emb.pca_tsne_path,
+        _raw_emb.tsne_per_macro_path,
+        _raw_emb.umap_png_path,
+    )
+""".strip()

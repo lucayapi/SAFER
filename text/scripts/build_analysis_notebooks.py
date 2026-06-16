@@ -54,17 +54,20 @@ if str(ROOT) not in sys.path:
 from metrics.compare_display import (
     EMBEDDING_COMPARE_METHODS,
     METHOD_DISPLAY,
+    enrich_geometry_with_ipr,
+    ipr_display_table,
+    joint_eta2_ipr_table,
     kfold_barplot_frame,
     kfold_geometry_display_table,
+    kfold_ipr_display_table,
+    plot_eta2_ipr_dual,
+    plot_ipr_comparison,
     slim_geometry_table,
 )
+from metrics.intra_role_preservation import IPR_MEAN_COLUMN
 from safer_core.paths import ensure_comparisons_dirs
 
 TABLES = ensure_comparisons_dirs() / "tables"
-# Rétrocompat si anciens runs sous resultats/
-_legacy_tables = ROOT / "resultats/comparisons/tables"
-if not (TABLES / "embedding_geometry_comparison_btp.csv").is_file() and _legacy_tables.is_dir():
-    TABLES = _legacy_tables
 
 PATH_BTP = TABLES / "embedding_geometry_comparison_btp.csv"
 PATH_BTP_KFOLD = TABLES / "embedding_geometry_comparison_btp_kfold.csv"
@@ -103,6 +106,14 @@ if df_btp_kfold.empty:
     )
 else:
     display(kfold_geometry_display_table(df_btp_kfold))
+    if "mean_IPR_mean" in df_btp_kfold.columns:
+        print("\\n### K-fold — IPR (vs embedding brut sur chaque val fold)")
+        display(kfold_ipr_display_table(df_btp_kfold))
+    else:
+        print(
+            "(IPR K-fold absent) Relancer entraînement K-fold après mise à jour "
+            "(embeddings/Qwen3-Embedding-0.6B_btp.csv requis)."
+        )
 
 print("\\n## Corpus BTP — fit final 100 % (métriques sur tout le BTP)")
 display(slim_geometry_table(df_btp))
@@ -113,9 +124,41 @@ if df_test.empty:
 else:
     display(slim_geometry_table(df_test))
 
+def _show_ipr_block(df, title_prefix):
+    if df.empty:
+        return
+    enriched = enrich_geometry_with_ipr(df)
+    if enriched[IPR_MEAN_COLUMN].isna().all():
+        print(
+            f"[IPR absent] {title_prefix} — vérifier Embedding brut et colonnes "
+            "T_macro_balanced, W_A0…W_C dans metrics_geometry_*.csv"
+        )
+        return
+    print(f"\\n### {title_prefix} — IPR (vs embedding brut)")
+    display(ipr_display_table(enriched))
+    print(f"### {title_prefix} — η² macro + IPR moyen")
+    display(joint_eta2_ipr_table(enriched))
+    plot_eta2_ipr_dual(enriched, title_prefix)
+    plot_ipr_comparison(enriched, title_prefix)
+
+print("\\n## Préservation intra-rôle (IPR)")
+print(
+    "IPR_r = ρ_r(brut)/ρ_r(m) avec ρ_r = T_macro_balanced/W_r. "
+    "IPR ≈ 1 : conservé ; < 1 : compacté ; ≪ 1 : risque d'écrasement des motifs fins ; "
+    "> 1 : diversité intra-rôle augmentée. Lire avec η² : η² élevé + IPR ≪ 1 → séparation "
+    "macro forte mais motifs intra-rôle écrasés ; η² modéré + IPR ≈ 1 → compromis. "
+    "K-fold : baseline brut Qwen sur le même jeu val par fold ; fit final : tout le corpus."
+)
+_show_ipr_block(df_btp, "BTP fit final")
+_show_ipr_block(df_test, "Test métallurgie")
+
 BAR_METRICS = [
     ("eta2_macro_balanced_perc", "η² macro balancé (%)"),
-    ("rankme_over_d", "RankMe / d"),
+]
+
+KFOLD_BAR_METRICS = [
+    ("eta2_macro_balanced_perc", "η² macro balancé (%)"),
+    ("IPR_mean", "IPR moyen"),
 ]
 
 def _barplot_corpus(df, title_prefix):
@@ -135,7 +178,7 @@ def _barplot_corpus(df, title_prefix):
 def _barplot_kfold(df_kfold, title_prefix):
     if df_kfold.empty:
         return
-    for col, ylab in BAR_METRICS:
+    for col, ylab in KFOLD_BAR_METRICS:
         frame = kfold_barplot_frame(df_kfold, col)
         if frame.empty:
             continue
@@ -146,6 +189,9 @@ def _barplot_kfold(df_kfold, title_prefix):
             yerr=frame["std"].astype(float),
             capsize=4,
         )
+        if col == "IPR_mean":
+            ax.axhline(1.0, color="gray", linestyle="--", linewidth=1.0, label="référence brut")
+            ax.legend(fontsize=8)
         ax.set_ylabel(ylab)
         ax.set_title(f"{title_prefix} — {ylab}")
         plt.xticks(rotation=30, ha="right")
@@ -196,9 +242,21 @@ def main() -> None:
                         "# Comparaison des méthodes d'embedding\n\n"
                         "Cinq lignes : **Embedding brut**, **Batch Triplet**, **SupCon**, "
                         "**SoftTriple**, **SCGM** (BTP + test métallurgie).\n\n"
+                        "Métriques : **η² macro balancé**, **IPR** "
+                        "(Intra-role Preservation Ratio vs embedding brut).\n\n"
                         "Prérequis : `python scripts/collect_results.py` "
                         "(BTP fit final, **BTP K-fold μ±σ**, test). "
                         "**Pas d'entraînement** dans ce notebook.",
+                        "markdown",
+                    ),
+                    _cell(
+                        "## IPR — interprétation\n\n"
+                        "- **IPR_r ≈ 1** : dispersion intra-rôle du rôle *r* proche de l'embedding brut.\n"
+                        "- **IPR_r < 1** : intra-rôle compacté par rapport au brut.\n"
+                        "- **IPR_r ≪ 1** : risque d'écrasement des motifs fins dans ce rôle.\n"
+                        "- **IPR_r > 1** : la méthode conserve ou augmente la diversité intra-rôle.\n\n"
+                        "Lecture conjointe avec **η²** : un η² élevé avec un IPR moyen très bas "
+                        "signale une bonne séparation macro au prix d'une perte de structure intra-rôle.",
                         "markdown",
                     ),
                     _cell(COMPARE_01_SETUP),

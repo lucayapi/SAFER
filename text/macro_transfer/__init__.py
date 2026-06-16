@@ -1,11 +1,17 @@
-"""Transfert macro TPN full-encoder et utilitaires d'évaluation."""
+"""Utilitaires macro_transfer (FSP, exports topics)."""
 
-from macro_transfer.tpn_gating import build_gating_frame
-from macro_transfer.tpn_eval import evaluate_tpn_transfer
-from macro_transfer.tpn_full_encoder import train_tpn_full_encoder
+from macro_transfer.fsp_config import (
+    FSP_ENCODER_METHODS,
+    fsp_output_method_key,
+    resolve_fsp_checkpoint,
+    resolve_fsp_output_dir,
+    validate_fsp_base_method,
+)
 
 __all__ = [
-    "build_gating_frame",
-    "evaluate_tpn_transfer",
-    "train_tpn_full_encoder",
+    "FSP_ENCODER_METHODS",
+    "fsp_output_method_key",
+    "resolve_fsp_checkpoint",
+    "resolve_fsp_output_dir",
+    "validate_fsp_base_method",
 ]

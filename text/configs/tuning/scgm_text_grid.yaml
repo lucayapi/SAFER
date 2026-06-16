@@ -1,4 +1,4 @@
-base_config: configs/scgm_text.yaml
+base_config: configs/methods/scgm_text.yaml
 output_dir: output/scgm_text/tuning
 final_output_dir: output/scgm_text
 selection_metric: eta2_macro_balanced_perc
@@ -8,7 +8,7 @@ test_corpus: metallurgie
 final_fit_full_data: true
 
 # Grille : notation pointée model.* / training.* (fusionnée sur base_config).
-# Paramètres absents de la grille → valeur de configs/scgm_text.yaml.
+# Paramètres absents de la grille → valeur de configs/methods/scgm_text.yaml.
 grid:
   training.lr: [0.01, 0.03]
   training.epochs: [100, 200]

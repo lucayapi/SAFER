@@ -1,4 +1,4 @@
-"""Génère notebooks/08_tpn_macro_transfer_results.ipynb (diagnostics FSP)."""
+"""Génère notebooks/08_fsp_macro_transfer_results.ipynb (diagnostics FSP)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-NB_PATH = REPO / "notebooks" / "08_tpn_macro_transfer_results.ipynb"
+NB_PATH = REPO / "notebooks" / "08_fsp_macro_transfer_results.ipynb"
 
 import sys
 
@@ -14,6 +14,10 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+from macro_transfer.notebook_viz import (
+    RAW_TEST_EMBEDDING_SECTION_MD,
+    notebook_raw_test_embedding_source,
+)
 
 
 def md(text: str) -> dict:
@@ -39,9 +43,9 @@ def main() -> None:
             r"""
 # 08 — Diagnostics Frozen Source Prototypes
 
-Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/frozen_source_prototypes/transfer/`.
+Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/frozen_source_prototypes/<FSP_BASE_METHOD>/`.
 
-**Prérequis** : `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml`
+**Prérequis** : `BASE_METHOD=<encodeur> CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh`
 """
         ),
         py(
@@ -68,7 +72,8 @@ from macro_transfer.notebook_viz import (
 )
 
 TEST_CORPUS = os.environ.get("TEST_CORPUS", "metallurgie")
-OUT_DIR = macro_transfer_output_dir("frozen_source_prototypes/scgm", TEST_CORPUS, anchor=TEXT_ROOT)
+FSP_BASE_METHOD = "scgm_text"
+OUT_DIR = macro_transfer_output_dir(f"frozen_source_prototypes/{FSP_BASE_METHOD}", TEST_CORPUS, anchor=TEXT_ROOT)
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"08_fsp_{TEST_CORPUS}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -99,10 +104,10 @@ from pathlib import Path
 import math
 
 ROOT_FSP = OUT_DIR.parent
-RAW_METRICS = ROOT_FSP / "raw" / "transfer" / "metrics.json"
-SCGM_METRICS = ROOT_FSP / "scgm" / "transfer" / "metrics.json"
-TABLE_CSV = ROOT_FSP / "table_transfer_direct.csv"
-TABLE_TEX = ROOT_FSP / "table_transfer_direct.tex"
+RAW_METRICS = macro_transfer_output_dir("frozen_source_prototypes/raw_embedding", TEST_CORPUS, anchor=TEXT_ROOT) / "transfer" / "metrics.json"
+METHOD_METRICS = OUT_DIR / "transfer" / "metrics.json"
+TABLE_CSV = ROOT_FSP / f"table_transfer_direct_{FSP_BASE_METHOD}.csv"
+TABLE_TEX = ROOT_FSP / f"table_transfer_direct_{FSP_BASE_METHOD}.tex"
 ROOT_FSP.mkdir(parents=True, exist_ok=True)
 
 def _load_metrics(path: Path):
@@ -121,25 +126,25 @@ def _to_float(v):
         return np.nan
 
 raw_m = _load_metrics(RAW_METRICS) or {}
-scgm_m = _load_metrics(SCGM_METRICS) or {}
+method_m = _load_metrics(METHOD_METRICS) or {}
 
 row_raw = {
     "Méthode": "Embedding brut + prototypes source",
     "Bal. Acc.": _to_float(raw_m.get("balanced_accuracy", np.nan)),
-    "Macro-F1": _to_float(raw_m.get("macro_f1", np.nan)),
+    "F1 (étapes)": _to_float(raw_m.get("macro_f1", np.nan)),
     "Confiance moy.": _to_float(raw_m.get("mean_confidence", np.nan)),
     "Entropie moy.": _to_float(raw_m.get("mean_entropy", np.nan)),
 }
-scgm_method = scgm_m.get("method", "SCGM + prototypes source gelés")
-row_scgm = {
-    "Méthode": str(scgm_method),
-    "Bal. Acc.": _to_float(scgm_m.get("balanced_accuracy", np.nan)),
-    "Macro-F1": _to_float(scgm_m.get("macro_f1", np.nan)),
-    "Confiance moy.": _to_float(scgm_m.get("mean_confidence", np.nan)),
-    "Entropie moy.": _to_float(scgm_m.get("mean_entropy", np.nan)),
+method_label = method_m.get("method", f"{FSP_BASE_METHOD} + prototypes source gelés")
+row_method = {
+    "Méthode": str(method_label),
+    "Bal. Acc.": _to_float(method_m.get("balanced_accuracy", np.nan)),
+    "F1 (étapes)": _to_float(method_m.get("macro_f1", np.nan)),
+    "Confiance moy.": _to_float(method_m.get("mean_confidence", np.nan)),
+    "Entropie moy.": _to_float(method_m.get("mean_entropy", np.nan)),
 }
 
-table_df = pd.DataFrame([row_raw, row_scgm])
+table_df = pd.DataFrame([row_raw, row_method])
 display(table_df)
 table_df.to_csv(TABLE_CSV, index=False)
 
@@ -157,20 +162,20 @@ def _fmt(v, bold=False):
     return f"\\textbf{{{txt}}}" if bold else txt
 
 best_bal = _winner_indices(table_df["Bal. Acc."], mode="max")
-best_f1 = _winner_indices(table_df["Macro-F1"], mode="max")
+best_f1 = _winner_indices(table_df["F1 (étapes)"], mode="max")
 best_conf = _winner_indices(table_df["Confiance moy."], mode="max")
 best_ent = _winner_indices(table_df["Entropie moy."], mode="min")
 
 lines = []
 lines.append("\\begin{tabular}{lcccc}")
 lines.append("\\toprule")
-lines.append("\\textbf{Méthode} & \\textbf{Bal. Acc.} & \\textbf{Macro-F1} & \\textbf{Confiance moy.} & \\textbf{Entropie moy.} \\\\")
+lines.append("\\textbf{Méthode} & \\textbf{Bal. Acc.} & \\textbf{F1 (étapes)} & \\textbf{Confiance moy.} & \\textbf{Entropie moy.} \\\\")
 lines.append("\\midrule")
 for i, row in table_df.iterrows():
     lines.append(
         f"{row['Méthode']} & "
         f"{_fmt(row['Bal. Acc.'], i in best_bal)} & "
-        f"{_fmt(row['Macro-F1'], i in best_f1)} & "
+        f"{_fmt(row['F1 (étapes)'], i in best_f1)} & "
         f"{_fmt(row['Confiance moy.'], i in best_conf)} & "
         f"{_fmt(row['Entropie moy.'], i in best_ent)} \\\\"
     )
@@ -183,7 +188,7 @@ print("CSV :", TABLE_CSV)
 print("TEX :", TABLE_TEX)
 """
         ),
-        md("## § Distribution macro et scores"),
+        md("## § Distribution étapes et scores"),
         py(
             r"""
 plot_fsp_pred_macro_distribution(pred, fig_dir=FIG_DIR)
@@ -287,7 +292,7 @@ else:
     print("assignments.csv absent.")
 """
         ),
-        md("## § Tableau macro topics (format article / LaTeX)"),
+        md("## § Tableau topics par étape (format article / LaTeX)"),
         py(
             r"""
 stats_path = OUT_DIR / "summary" / "macro_topic_stats.csv"
@@ -298,11 +303,11 @@ else:
     required = {"macro", "n_units", "n_topics", "bruit_pct", "plus_gros_topic_pct"}
     missing = sorted(required.difference(df_stats.columns))
     if missing:
-        print(f"Colonnes manquantes pour tableau macro topics: {missing}")
+        print(f"Colonnes manquantes pour tableau topics par étape: {missing}")
     else:
         table_macro = pd.DataFrame(
             {
-                "Macro": df_stats["macro"].astype(str),
+                "Étape": df_stats["macro"].astype(str),
                 "Unités": pd.to_numeric(df_stats["n_units"], errors="coerce").fillna(0).astype(int),
                 "Topics": pd.to_numeric(df_stats["n_topics"], errors="coerce").fillna(0).astype(int),
                 "Bruit": pd.to_numeric(df_stats["bruit_pct"], errors="coerce").map(
@@ -325,6 +330,8 @@ else:
         print("LaTeX écrit :", tex_out)
 """
         ),
+        md(RAW_TEST_EMBEDDING_SECTION_MD),
+        py(notebook_raw_test_embedding_source("FIG_DIR")),
     ]
 
     nb = {

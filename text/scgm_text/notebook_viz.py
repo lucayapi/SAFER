@@ -116,7 +116,7 @@ def plot_umap_datamap_static(
             markerfacecolor=macro_to_color[m],
             markeredgecolor="#111111",
             markersize=11,
-            label=f"{m} — centroïde macro (moyenne UMAP)",
+            label=m,
         )
         for m in names
     ]
@@ -262,7 +262,7 @@ def overlay_projection_centroids(
                     markerfacecolor=macro_to_color[m],
                     markeredgecolor="#111111",
                     markersize=9,
-                    label=f"{m} — centroïde macro",
+                    label=m,
                 )
                 for m in names
             )
@@ -409,6 +409,324 @@ def plot_embeddings_csv_pca_tsne(
     )
 
 
+def plot_tsne_per_macro_grid(
+    X: np.ndarray,
+    macro_labels: np.ndarray,
+    *,
+    corpus_name: str = "corpus",
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: str = "tsne_per_macro.png",
+    seed: int = 42,
+    max_points_per_macro: int = 2000,
+    min_points: int = 10,
+    macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> Optional[Path]:
+    """Grille 2×2 : t-SNE recalculé séparément sur chaque macro (structure intra-rôle)."""
+    from sklearn.manifold import TSNE
+
+    import matplotlib.pyplot as plt
+
+    z = np.asarray(X, dtype=np.float64)
+    labels = np.asarray(macro_labels).astype(str)
+    if z.shape[0] != labels.shape[0]:
+        raise ValueError("X et macro_labels doivent avoir la même longueur")
+
+    macro_colors = _macro_color_map(macros_order)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+    axes_flat = axes.ravel()
+    rng = np.random.default_rng(seed)
+
+    for ax, macro in zip(axes_flat, macros_order):
+        mask = labels == macro
+        n = int(mask.sum())
+        if n < min_points:
+            ax.set_title(f"t-SNE — {macro} (n={n}, insuffisant)")
+            ax.axis("off")
+            continue
+        z_m = z[mask]
+        if n > max_points_per_macro:
+            pick = rng.choice(n, size=max_points_per_macro, replace=False)
+            z_m = z_m[pick]
+            n = max_points_per_macro
+        tsne_xy = TSNE(
+            n_components=2,
+            random_state=seed,
+            init="pca",
+            learning_rate="auto",
+            perplexity=min(30, n - 1),
+        ).fit_transform(z_m)
+        color = macro_colors.get(macro, "#888888")
+        ax.scatter(tsne_xy[:, 0], tsne_xy[:, 1], s=10, alpha=0.55, c=color)
+        ax.set_title(f"t-SNE — {macro} (n={n})")
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+    fig.suptitle(f"{corpus_name} — t-SNE par macro", y=1.02)
+    plt.tight_layout()
+
+    if save_fig is None:
+        plt.show()
+        return Path(png_name)
+
+    return save_fig(png_name)
+
+
+def plot_embeddings_csv_tsne_per_macro(
+    emb_csv: PathLike,
+    meta_csv: PathLike,
+    label_col: str = "pred_label",
+    *,
+    corpus_name: str = "BTP",
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: Optional[str] = None,
+    max_points: int = 8000,
+    max_points_per_macro: int = 2000,
+    min_points: int = 10,
+    seed: int = 42,
+    pred_ok_col: str = "pred_ok",
+    group_col: str = "accident_id",
+) -> Optional[Path]:
+    """t-SNE 2D par macro (grille 2×2) depuis un CSV d'embeddings."""
+    from scgm_text.dataset_text_embeddings import load_filtered_metadata, merge_metadata_with_embeddings
+
+    emb_path = Path(emb_csv)
+    if not emb_path.is_file():
+        return None
+
+    meta_df = load_filtered_metadata(
+        str(meta_csv),
+        label_col=label_col,
+        pred_ok_col=pred_ok_col,
+        group_col=group_col,
+    )
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
+
+    idx = sample_projection_indices(merged, label_col, max_points=max_points, seed=seed)
+    sample_df = merged.loc[idx]
+    sample_x = sample_x[idx]
+    macro_labels = sample_df[label_col].astype(str).to_numpy()
+
+    if save_fig is None:
+
+        def _show_only(name: str) -> Path:
+            import matplotlib.pyplot as plt
+
+            plt.tight_layout()
+            plt.show()
+            return Path(name)
+
+        save_fig = _show_only
+
+    return plot_tsne_per_macro_grid(
+        sample_x,
+        macro_labels,
+        corpus_name=corpus_name,
+        save_fig=save_fig,
+        png_name=png_name or "tsne_per_macro.png",
+        seed=seed,
+        max_points_per_macro=max_points_per_macro,
+        min_points=min_points,
+    )
+
+
+def resolve_softtriple_centers_csv(results_dir: PathLike) -> Optional[Path]:
+    """Cherche softtriple_effective_centers.csv (run root ou checkpoint)."""
+    root = Path(results_dir)
+    for rel in (
+        "centers/softtriple_effective_centers.csv",
+        "checkpoints/best_model/centers/softtriple_effective_centers.csv",
+    ):
+        path = root / rel
+        if path.is_file():
+            return path
+    return None
+
+
+def load_softtriple_centers_matrix(centers_csv: PathLike) -> Tuple[np.ndarray, pd.DataFrame]:
+    """Vecteurs dim_* et métadonnées (class_name, effective_center_id, …)."""
+    df = pd.read_csv(centers_csv)
+    dim_cols = sorted(
+        [c for c in df.columns if c.startswith("dim_")],
+        key=lambda name: int(name.split("_", 1)[1]),
+    )
+    if not dim_cols:
+        raise ValueError(f"Aucune colonne dim_* dans {centers_csv}")
+    vectors = df[dim_cols].to_numpy(dtype=np.float64)
+    return vectors, df
+
+
+def softtriple_centers_summary_table(centers_csv: PathLike) -> pd.DataFrame:
+    """Tableau lisible : macro, id centre effectif, taille groupe, norme L2."""
+    _, meta = load_softtriple_centers_matrix(centers_csv)
+    dim_cols = sorted(
+        [c for c in meta.columns if c.startswith("dim_")],
+        key=lambda name: int(name.split("_", 1)[1]),
+    )
+    vectors = meta[dim_cols].to_numpy(dtype=np.float64)
+    summary = meta[
+        [c for c in ("class_id", "class_name", "effective_center_id", "group_size", "fold") if c in meta.columns]
+    ].copy()
+    summary["l2_norm"] = np.linalg.norm(vectors, axis=1)
+    return summary.sort_values(
+        [c for c in ("class_name", "effective_center_id") if c in summary.columns]
+    ).reset_index(drop=True)
+
+
+def overlay_softtriple_centers(
+    ax,
+    centers_xy: np.ndarray,
+    centers_meta: pd.DataFrame,
+    *,
+    macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> None:
+    """Superpose les centres SoftTriple (losange) sur PCA/t-SNE."""
+    from matplotlib.lines import Line2D
+
+    if centers_xy is None or len(centers_meta) == 0:
+        return
+    macro_colors = _macro_color_map(macros_order)
+    xy = np.asarray(centers_xy, dtype=np.float64)
+    for i in range(min(len(centers_meta), xy.shape[0])):
+        row = centers_meta.iloc[i]
+        macro = str(row.get("class_name", ""))
+        color = macro_colors.get(macro, "#444444")
+        ax.scatter(
+            xy[i, 0],
+            xy[i, 1],
+            s=130,
+            marker="D",
+            c=[color],
+            edgecolors="#111111",
+            linewidths=1.0,
+            zorder=95,
+        )
+        eff_id = row.get("effective_center_id", i)
+        ax.annotate(
+            f"{macro}#{int(eff_id)}",
+            (xy[i, 0], xy[i, 1]),
+            xytext=(5, 5),
+            textcoords="offset points",
+            fontsize=7,
+            fontweight="bold",
+            color="#111111",
+            zorder=96,
+        )
+    ax.legend(
+        handles=[
+            Line2D(
+                [0],
+                [0],
+                linestyle="None",
+                marker="D",
+                color="w",
+                markerfacecolor="#888888",
+                markeredgecolor="#111111",
+                markersize=8,
+                label="Centre SoftTriple effectif",
+            )
+        ],
+        loc="best",
+        fontsize=7,
+        frameon=True,
+    )
+
+
+def _project_softtriple_centers_2d(
+    sample_x: np.ndarray,
+    center_vectors: np.ndarray,
+    *,
+    seed: int = 42,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """PCA + t-SNE : embeddings + centres dans le même espace 2D."""
+    from sklearn.decomposition import PCA
+    from sklearn.manifold import TSNE
+
+    pca = PCA(n_components=2, random_state=seed)
+    pca_xy = pca.fit_transform(sample_x)
+    centers_pca = pca.transform(center_vectors)
+    combined = np.vstack([sample_x, center_vectors])
+    tsne_all = TSNE(
+        n_components=2,
+        random_state=seed,
+        init="pca",
+        learning_rate="auto",
+        perplexity=min(30, max(5, combined.shape[0] // 4)),
+    ).fit_transform(combined)
+    n_emb = sample_x.shape[0]
+    return pca_xy, tsne_all[:n_emb], centers_pca, tsne_all[n_emb:]
+
+
+def plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+    emb_csv: PathLike,
+    meta_csv: PathLike,
+    label_col: str = "pred_label",
+    *,
+    results_dir: PathLike,
+    corpus_name: str = "BTP",
+    save_fig: Optional[Callable[[str], Path]] = None,
+    png_name: Optional[str] = None,
+    max_points: int = 8000,
+    seed: int = 42,
+    show_macro_centroids: bool = True,
+    pred_ok_col: str = "pred_ok",
+    group_col: str = "accident_id",
+) -> Optional[Path]:
+    """PCA/t-SNE embeddings + centres SoftTriple effectifs superposés."""
+    from scgm_text.dataset_text_embeddings import load_filtered_metadata, merge_metadata_with_embeddings
+
+    emb_path = Path(emb_csv)
+    centers_csv = resolve_softtriple_centers_csv(results_dir)
+    if not emb_path.is_file() or centers_csv is None:
+        return None
+
+    meta_df = load_filtered_metadata(
+        str(meta_csv),
+        label_col=label_col,
+        pred_ok_col=pred_ok_col,
+        group_col=group_col,
+    )
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    center_vectors, centers_meta = load_softtriple_centers_matrix(centers_csv)
+    sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
+
+    idx = sample_projection_indices(merged, label_col, max_points=max_points, seed=seed)
+    sample_df = merged.loc[idx]
+    sample_x = sample_x[idx]
+
+    pca_xy, tsne_xy, centers_pca, centers_tsne = _project_softtriple_centers_2d(
+        sample_x, center_vectors, seed=seed
+    )
+
+    if save_fig is None:
+
+        def _show_only(name: str) -> Path:
+            import matplotlib.pyplot as plt
+
+            plt.tight_layout()
+            plt.show()
+            return Path(name)
+
+        save_fig = _show_only
+
+    out_name = png_name or "pca_tsne_centers.png"
+    return plot_projection_matplotlib(
+        pca_xy,
+        tsne_xy,
+        sample_df,
+        label_col,
+        save_fig=save_fig,
+        png_name=out_name,
+        pca_title=f"PCA 2D — {corpus_name}",
+        tsne_title=f"t-SNE 2D — {corpus_name}",
+        show_macro_centroids=show_macro_centroids,
+        show_z_centroids=False,
+        softtriple_centers_pca=centers_pca,
+        softtriple_centers_tsne=centers_tsne,
+        softtriple_centers_meta=centers_meta,
+    )
+
+
 def plot_projection_matplotlib(
     pca_xy: np.ndarray,
     tsne_xy: np.ndarray,
@@ -423,6 +741,9 @@ def plot_projection_matplotlib(
     show_z_centroids: bool = False,
     z_col: str = "z_hat",
     themes_z: Optional[pd.DataFrame] = None,
+    softtriple_centers_pca: Optional[np.ndarray] = None,
+    softtriple_centers_tsne: Optional[np.ndarray] = None,
+    softtriple_centers_meta: Optional[pd.DataFrame] = None,
 ) -> Path:
     """PCA + t-SNE côte à côte (matplotlib statique)."""
     import matplotlib.pyplot as plt
@@ -459,7 +780,11 @@ def plot_projection_matplotlib(
             show_macro=show_macro_centroids,
             show_z=show_z_centroids,
         )
-    else:
+    if softtriple_centers_pca is not None and softtriple_centers_meta is not None:
+        overlay_softtriple_centers(axes[0], softtriple_centers_pca, softtriple_centers_meta)
+    if softtriple_centers_tsne is not None and softtriple_centers_meta is not None:
+        overlay_softtriple_centers(axes[1], softtriple_centers_tsne, softtriple_centers_meta)
+    if not (show_macro_centroids or show_z_centroids or softtriple_centers_pca is not None):
         axes[0].legend(fontsize=8)
         axes[1].legend(fontsize=8)
     return save_fig(png_name)
@@ -511,11 +836,20 @@ def plot_training_geometry_curves(
     *,
     save_fig: Callable[[str], Path],
 ) -> None:
-    """Courbes d'entraînement : losses, validation, géométrie (RankMe, C1, C10)."""
+    """Courbes d'entraînement : losses, validation, eta² macro."""
     import matplotlib.pyplot as plt
 
-    geom_cols = [c for c in ["rankme_global", "c1_global", "c10_global"] if c in logs.columns]
-    if not geom_cols:
+    eta_cols = [
+        c
+        for c in (
+            "val_eta2_macro_balanced",
+            "val_eta2_weighted",
+            "val_eta2_macro_balanced_perc",
+            "train_eta2_macro_balanced",
+        )
+        if c in logs.columns
+    ]
+    if not eta_cols and "train_loss" not in logs.columns:
         return
 
     fig, axes = plt.subplots(2, 2, figsize=(13, 8))
@@ -527,21 +861,23 @@ def plot_training_geometry_curves(
     if val_cols:
         logs.plot(x="epoch", y=val_cols, ax=axes[0, 1], marker="o", markersize=3)
         axes[0, 1].set_title("Validation macro")
-    logs.plot(x="epoch", y=geom_cols, ax=axes[1, 0], marker="o", markersize=3)
-    axes[1, 0].set_title("Géométrie globale (RankMe, C1, C10)")
-    for col, ax, color in zip(geom_cols, [axes[1, 1]] * len(geom_cols), ["#2ecc71", "#3498db", "#9b59b6"]):
-        logs.plot(x="epoch", y=col, ax=ax, marker="s", markersize=3, label=col, color=color)
-    axes[1, 1].set_title("Géométrie — courbes séparées")
-    axes[1, 1].legend(fontsize=8)
+    if eta_cols:
+        logs.plot(x="epoch", y=eta_cols, ax=axes[1, 0], marker="o", markersize=3)
+        axes[1, 0].set_title("Eta² macro (val/train)")
+        if len(eta_cols) == 1:
+            col = eta_cols[0]
+            logs.plot(x="epoch", y=col, ax=axes[1, 1], marker="s", markersize=3, color="#27ae60")
+            axes[1, 1].set_title(col)
+        else:
+            for col, ax, color in zip(
+                eta_cols[:3],
+                [axes[1, 1]] * min(3, len(eta_cols)),
+                ["#27ae60", "#3498db", "#9b59b6"],
+            ):
+                logs.plot(x="epoch", y=col, ax=ax, marker="s", markersize=3, label=col, color=color)
+            axes[1, 1].legend(fontsize=8)
+            axes[1, 1].set_title("Eta² — courbes séparées")
     save_fig("04b_training_geometry.png")
-
-    fig2, axes2 = plt.subplots(1, len(geom_cols), figsize=(4 * len(geom_cols), 3.5))
-    if len(geom_cols) == 1:
-        axes2 = [axes2]
-    for ax, col in zip(axes2, geom_cols):
-        logs.plot(x="epoch", y=col, ax=ax, marker="o", color="#27ae60")
-        ax.set_title(col)
-    save_fig("04c_rankme_c1_c10_epochs.png")
 
 
 def plot_evaluation_geometry_dashboard(
@@ -550,7 +886,7 @@ def plot_evaluation_geometry_dashboard(
     figures_dir: PathLike,
     save_fig: Callable[[str], Path],
 ) -> List[Path]:
-    """Dashboard eta2 macro-balanced / weighted, inertie intra-macro et RankMe / C1 / C10."""
+    """Dashboard eta2 macro-balanced / weighted et inertie intra-macro."""
     import matplotlib.pyplot as plt
     import plotly.express as px
     import plotly.graph_objects as go
@@ -624,20 +960,6 @@ def plot_evaluation_geometry_dashboard(
     axes[1, 1].set_title("Heatmap inertie intra W(c)")
     saved.append(save_fig("09_eta2_geometry_dashboard.png"))
 
-    fig2, axes2 = plt.subplots(1, 3, figsize=(15, 4))
-    for ax, col, title in zip(
-        axes2,
-        ["rankme_global", "c1_global", "c10_global"],
-        ["RankMe effectif", "C1 (énergie PCA)", "C10 (énergie PCA)"],
-    ):
-        if col in metrics_table.columns:
-            if "method" in metrics_table.columns and len(metrics_table) > 1:
-                metrics_table.plot(x="method", y=col, kind="bar", ax=ax, legend=False, rot=45)
-            else:
-                ax.bar([col], [float(metrics_table[col].iloc[0])], color="#27ae60")
-            ax.set_title(title)
-    saved.append(save_fig("09_rankme_c1_c10_global.png"))
-
     if "method" in metrics_table.columns:
         eta_long = metrics_table.melt(
             id_vars=["method"],
@@ -669,37 +991,6 @@ def plot_evaluation_geometry_dashboard(
     p_eta = figures_dir / "09_eta2_macro_interactive.html"
     fig_eta.write_html(str(p_eta), include_plotlyjs="cdn")
     saved.append(p_eta)
-
-    global_cols = [c for c in ["rankme_global", "c1_global", "c10_global"] if c in metrics_table.columns]
-    if global_cols:
-        if "method" in metrics_table.columns and len(metrics_table) > 1:
-            global_long = metrics_table.melt(
-                id_vars=["method"],
-                value_vars=global_cols,
-                var_name="metric",
-                value_name="value",
-            )
-            fig_global = px.bar(
-                global_long,
-                x="method",
-                y="value",
-                color="metric",
-                barmode="group",
-                title="Indicateurs géométriques globaux",
-                height=500,
-            )
-        else:
-            fig_global = go.Figure(
-                go.Bar(
-                    x=global_cols,
-                    y=[float(metrics_table[c].iloc[0]) for c in global_cols],
-                    marker_color=px.colors.qualitative.Set2,
-                )
-            )
-            fig_global.update_layout(title="Indicateurs géométriques globaux", height=450)
-        p_global = figures_dir / "09_rankme_c1_c10_global_interactive.html"
-        fig_global.write_html(str(p_global), include_plotlyjs="cdn")
-        saved.append(p_global)
 
     return saved
 
@@ -806,9 +1097,6 @@ def display_plotly_html(html_path: PathLike) -> None:
 _KFOLD_BAR_METRICS: Tuple[str, ...] = (
     "eta2_macro_balanced_perc",
     "eta2_macro_balanced",
-    "rankme_global",
-    "c1_global",
-    "c10_global",
 )
 
 

@@ -122,12 +122,13 @@ def enrich_scenarios_table(
     enable_openai: bool = True,
     openai_model: Optional[str] = None,
     cache_path: Optional[Path] = None,
-    max_rows: int = 15,
+    max_rows: Optional[int] = 15,
 ) -> pd.DataFrame:
     """
     Ajoute ``configuration_probable``, ``prob``, ``interpretation`` au tableau de scénarios.
 
     ``prob`` = support / n_accidents.
+    ``max_rows=None`` : conserve toutes les lignes de ``freq_df`` (export complet).
     """
     if freq_df.empty:
         return pd.DataFrame(
@@ -144,7 +145,7 @@ def enrich_scenarios_table(
     label_map = build_topic_variable_label_map(themes_df)
     n_acc = max(1, int(n_accidents))
     rows: List[Dict[str, Any]] = []
-    subset = freq_df.head(max_rows)
+    subset = freq_df if max_rows is None else freq_df.head(int(max_rows))
 
     cache: Dict[str, str] = {}
     if cache_path is not None and Path(cache_path).is_file():
@@ -194,6 +195,7 @@ def enrich_scenarios_table(
                 "prob": prob,
                 "support": support,
                 "macro_path": row.get("macro_path", ""),
+                "path_nodes": row.get("path_nodes", ""),
                 "topics_present": row.get("topics_present", ""),
                 "scenario_id": row.get("scenario_id"),
             }

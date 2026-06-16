@@ -79,7 +79,6 @@ OUTPUT_ROOT = TEXT_ROOT / "output"
 RESULTS_ROOT = OUTPUT_ROOT  # alias rétrocompat
 JOBS_DIR = TEXT_ROOT / "jobs"
 NOTEBOOKS_DIR = TEXT_ROOT / "notebooks"
-LEGACY_DIR = TEXT_ROOT / "legacy"
 
 METHOD_RESULTS_DIRS: Dict[str, Path] = {
     name: RESULTS_ROOT / name for name in METHOD_NAMES

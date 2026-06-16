@@ -1,4 +1,4 @@
-"""Construction de l'espace d'embeddings pour BERTopic intra-macro (TPN)."""
+"""Construction de l'espace d'embeddings pour BERTopic intra-macro."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import numpy as np
 
-from macro_transfer.tpn_prototypes import l2_normalize_np
+from macro_transfer.prototypes import l2_normalize_np
 
 VALID_MODES = frozenset({"initial", "adapted", "mixed"})
 

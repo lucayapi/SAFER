@@ -54,4 +54,3 @@ def test_evaluate_embeddings_geometry_deterministic():
     row_b = evaluate_embeddings_geometry(emb.copy(), labels, method="test")
     assert row_a["eta2_macro_balanced_perc"] == row_b["eta2_macro_balanced_perc"]
     assert row_a["eta2_macro_balanced"] == row_b["eta2_macro_balanced"]
-    assert row_a["rankme_global"] == row_b["rankme_global"]
