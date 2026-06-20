@@ -214,6 +214,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
 | `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
 | `06_macro_transfer_topics.ipynb` | **Lecture seule** — FSP (probas/distances macro, BERTopic inputs, calibration/erreurs) |
+| `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (GroupKFold BTP → test métallurgie → BERTopic) |
 | `08_fsp_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics FSP (raw vs encodeur, confusion/report, distances, BERTopic) |
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.
@@ -227,6 +228,7 @@ python scripts/build_analysis_notebooks.py        # 00, 01_compare, 05_view_*
 python scripts/build_notebook_02_scgm_results.py  # 02_scgm_text_results
 python scripts/build_notebook_04_bn_macro_transfer.py
 python scripts/build_notebook_06_macro_transfer_topics.py
+python scripts/build_notebook_07_supervised_macro_baseline.py
 python scripts/build_notebook_08_fsp_macro_transfer.py
 ```
 

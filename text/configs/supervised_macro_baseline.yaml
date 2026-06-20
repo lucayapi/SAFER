@@ -1,0 +1,84 @@
+method_name: supervised_macro_baseline
+corpus: metallurgie
+
+n_folds: 5
+seed: 42
+selection_metric: macro_f1
+
+# output_test/<corpus>/supervised_baseline/
+
+source:
+  dataset_path: dataset/data_btp.csv
+  emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+
+target:
+  dataset_path: dataset/test/data_metallurgie.csv
+  emb_csv: embeddings/test/Qwen3-Embedding-0.6B__metallurgie.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+
+models:
+  logistic_regression:
+    use_scaler: true
+    params:
+      C: 1.0
+      class_weight: balanced
+      max_iter: 2000
+      solver: lbfgs
+  random_forest:
+    use_scaler: false
+    params:
+      n_estimators: 300
+      max_depth: null
+      class_weight: balanced
+  xgboost:
+    use_scaler: false
+    params:
+      n_estimators: 300
+      max_depth: 6
+      learning_rate: 0.1
+      objective: multi:softprob
+      eval_metric: mlogloss
+  mlp:
+    use_scaler: true
+    params:
+      hidden_layer_sizes: [256, 128]
+      max_iter: 500
+      early_stopping: true
+      class_weight: balanced
+
+bertopic:
+  enabled: true
+  random_state: 42
+  min_topic_size: 10
+  include_ambiguous: false
+  macro_params:
+    A0:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    A1:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    B:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    C:
+      cluster_selection_method: leaf
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+
+topics_export:
+  top_k_words: 12
+  top_k_sentences: 5
