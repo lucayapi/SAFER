@@ -153,6 +153,65 @@ def test_merge_model_registry_overrides():
     assert reg["logistic_regression"]["params"]["max_iter"] == 2000
 
 
+def test_supervised_cache_roundtrip(tmp_path):
+    from macro_transfer.supervised_baseline import (
+        export_cv_results,
+        export_test_results,
+        load_cached_cv_results,
+        load_cached_fold_rows_for_model,
+        load_cached_test_results,
+        load_supervised_run_manifest,
+        save_supervised_run_manifest,
+        supervised_ml_artifacts_exist,
+    )
+
+    fold_rows = [
+        {
+            "model": "logistic_regression",
+            "fold_id": 0,
+            "accuracy": 0.5,
+            "macro_f1": 0.4,
+            "balanced_accuracy": 0.45,
+        }
+    ]
+    summary = aggregate_cv_metrics(fold_rows)
+    export_cv_results(tmp_path, fold_rows, summary)
+
+    preds = pd.DataFrame(
+        {
+            "pred_macro": ["A0", "B"],
+            "confidence": [0.9, 0.8],
+            "prob_A0": [0.9, 0.1],
+            "prob_A1": [0.05, 0.1],
+            "prob_B": [0.03, 0.7],
+            "prob_C": [0.02, 0.1],
+            "sentence": ["a", "b"],
+        }
+    )
+    metrics = {
+        "macro_f1": 0.5,
+        "_confusion_matrix": np.zeros((4, 4), dtype=np.int64),
+        "_classification_report": {"A0": {"precision": 1.0}},
+    }
+    export_test_results(tmp_path, preds, metrics, macros=MACRO_NAMES)
+    save_supervised_run_manifest(
+        tmp_path,
+        best_model="logistic_regression",
+        selection_metric="macro_f1",
+        seed=0,
+        n_folds=1,
+        test_corpus="metallurgie",
+    )
+    assert supervised_ml_artifacts_exist(tmp_path)
+    loaded_rows, loaded_summary = load_cached_cv_results(tmp_path)
+    assert len(loaded_rows) == 1
+    assert load_cached_fold_rows_for_model(tmp_path, "logistic_regression")[0]["model"] == "logistic_regression"
+    loaded_preds, loaded_metrics = load_cached_test_results(tmp_path, macros=MACRO_NAMES)
+    assert len(loaded_preds) == 2
+    assert "_confusion_matrix" in loaded_metrics
+    assert load_supervised_run_manifest(tmp_path)["best_model"] == "logistic_regression"
+
+
 def test_test_corpus_merge_requires_doc_id(tmp_path):
     """CSV test sans doc_id : create_doc_id_if_missing avant merge."""
     from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings

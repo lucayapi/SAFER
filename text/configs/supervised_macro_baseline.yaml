@@ -57,27 +57,18 @@ bertopic:
   random_state: 42
   min_topic_size: 10
   include_ambiguous: false
-  macro_params:
-    A0:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    A1:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    B:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    C:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
+  hdbscan:
+    cluster_selection_method: eom
+    metric: euclidean
+  umap:
+    enabled: true
+    n_neighbors: 15
+    n_components: 5
+    min_dist: 0.1
+    metric: cosine
+  vectorizer:
+    min_df: 1
+    ngram_range: [1, 2]
 
 topics_export:
   top_k_words: 12

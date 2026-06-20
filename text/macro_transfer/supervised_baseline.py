@@ -565,6 +565,120 @@ def export_test_results(
     return transfer_dir
 
 
+RUN_MANIFEST_NAME = "run_manifest.json"
+
+
+def supervised_run_manifest_path(out_dir: Path) -> Path:
+    return Path(out_dir) / RUN_MANIFEST_NAME
+
+
+def save_supervised_run_manifest(
+    out_dir: Path,
+    *,
+    best_model: str,
+    selection_metric: str,
+    seed: int,
+    n_folds: int,
+    test_corpus: str,
+) -> Path:
+    """Métadonnées du run (meilleur modèle, pour rechargement ``RESTIMATE=False``)."""
+    path = supervised_run_manifest_path(out_dir)
+    payload = {
+        "best_model": str(best_model),
+        "selection_metric": str(selection_metric),
+        "seed": int(seed),
+        "n_folds": int(n_folds),
+        "test_corpus": str(test_corpus),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return path
+
+
+def load_supervised_run_manifest(out_dir: Path) -> Dict[str, Any]:
+    path = supervised_run_manifest_path(out_dir)
+    if not path.is_file():
+        raise FileNotFoundError(f"Manifeste run absent : {path}")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def supervised_ml_artifacts_exist(out_dir: Path) -> bool:
+    root = Path(out_dir)
+    return all(
+        (root / rel).is_file()
+        for rel in (
+            "cv/cv_summary.csv",
+            "cv/cv_per_fold.csv",
+            "transfer/target_macro_predictions.csv",
+            "transfer/metrics.json",
+            RUN_MANIFEST_NAME,
+        )
+    )
+
+
+def supervised_bertopic_artifacts_exist(out_dir: Path) -> bool:
+    root = Path(out_dir)
+    return (root / "topics_bertopic" / "assignments.csv").is_file()
+
+
+def load_cached_cv_results(out_dir: Path) -> Tuple[List[Dict[str, Any]], pd.DataFrame]:
+    """Recharge CV depuis ``cv/``."""
+    root = Path(out_dir)
+    per_fold_path = root / "cv" / "cv_per_fold.csv"
+    summary_path = root / "cv" / "cv_summary.csv"
+    if not per_fold_path.is_file() or not summary_path.is_file():
+        raise FileNotFoundError(f"Artefacts CV manquants sous {root / 'cv'}")
+    per_fold = pd.read_csv(per_fold_path).to_dict("records")
+    summary = pd.read_csv(summary_path)
+    return per_fold, summary
+
+
+def load_cached_fold_rows_for_model(
+    out_dir: Path,
+    model_key: str,
+) -> List[Dict[str, Any]]:
+    per_fold, _ = load_cached_cv_results(out_dir)
+    return [r for r in per_fold if str(r.get("model")) == str(model_key)]
+
+
+def load_cached_test_results(
+    out_dir: Path,
+    *,
+    macros: Sequence[str],
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Recharge prédictions test + métriques (avec CM / report si présents)."""
+    transfer = Path(out_dir) / "transfer"
+    preds_path = transfer / "target_macro_predictions.csv"
+    metrics_path = transfer / "metrics.json"
+    if not preds_path.is_file() or not metrics_path.is_file():
+        raise FileNotFoundError(f"Artefacts transfer manquants sous {transfer}")
+    preds = pd.read_csv(preds_path)
+    with open(metrics_path, encoding="utf-8") as f:
+        metrics = json.load(f)
+    cm_path = transfer / "confusion_matrix.csv"
+    if cm_path.is_file():
+        metrics["_confusion_matrix"] = pd.read_csv(cm_path, index_col=0).to_numpy()
+    rep_path = transfer / "classification_report.csv"
+    if rep_path.is_file():
+        rep_df = pd.read_csv(rep_path, index_col=0)
+        metrics["_classification_report"] = rep_df.to_dict(orient="index")
+    return preds, metrics
+
+
+def require_supervised_cache(out_dir: Path, *, include_bertopic: bool = True) -> None:
+    """Lève si le cache disque est incomplet."""
+    if not supervised_ml_artifacts_exist(out_dir):
+        raise FileNotFoundError(
+            f"Cache ML incomplet sous {out_dir}. Lancez avec RESTIMATE=True."
+        )
+    if include_bertopic and not supervised_bertopic_artifacts_exist(out_dir):
+        raise FileNotFoundError(
+            f"BERTopic cache absent sous {out_dir / 'topics_bertopic'}. "
+            "Lancez avec RESTIMATE=True."
+        )
+
+
 def run_supervised_bertopic_phase(
     out_dir: Path,
     *,
