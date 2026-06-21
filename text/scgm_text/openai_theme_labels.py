@@ -299,16 +299,19 @@ def _one_row(
     if request_timeout is not None:
         create_kwargs["timeout"] = float(request_timeout)
 
-    resp = client.chat.completions.create(
-        model=model,
-        temperature=temperature,
-        response_format={"type": "json_object"},
-        messages=[
+    api_kwargs: Dict[str, Any] = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user},
         ],
         **create_kwargs,
-    )
+    }
+    from macro_transfer.openai_utils import apply_openai_chat_temperature
+
+    apply_openai_chat_temperature(api_kwargs, model=model, temperature=temperature)
+    resp = client.chat.completions.create(**api_kwargs)
     raw = resp.choices[0].message.content or "{}"
     data = _parse_json_content(raw)
     return _labels_from_api_response(

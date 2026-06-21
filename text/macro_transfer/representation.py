@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from safer_core.corpus_context import format_corpus_context_for_prompt
 from safer_core.macro_definitions import format_macro_context_for_prompt
+from macro_transfer.openai_utils import openai_chat_accepts_custom_temperature
 from scgm_text.openai_theme_labels import _get_client, load_openai_dotenv
 
 DEFAULT_FR_CHAT_PROMPT = """Contexte — accidents du travail
@@ -159,8 +160,10 @@ def build_representation_model(
     if diversity is not None:
         kwargs["diversity"] = diversity
 
-    gen_kw = rep_cfg.get("generator_kwargs")
-    if isinstance(gen_kw, dict):
+    gen_kw = dict(rep_cfg.get("generator_kwargs") or {})
+    if not openai_chat_accepts_custom_temperature(model):
+        gen_kw.pop("temperature", None)
+    if gen_kw:
         kwargs["generator_kwargs"] = gen_kw
 
     return BertopicOpenAI(**kwargs)

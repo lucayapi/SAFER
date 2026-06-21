@@ -55,7 +55,7 @@ topic_judge:
   n_representative: 30
   n_random: 5
   min_n_units: 8
-  temperature: 0.2
+  # temperature ignorée pour gpt-5* (seule la valeur par défaut 1 est acceptée par l'API)
   show_progress: true
   abort_on_openai_error: true
 

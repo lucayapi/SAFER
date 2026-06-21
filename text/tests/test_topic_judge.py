@@ -173,3 +173,5 @@ def test_run_topic_judge_evaluation_mock_openai(mock_get_client, tmp_path):
     assert scores.iloc[0]["macro"] == "A0"
     assert float(scores.iloc[0]["score_global"]) == pytest.approx(3.6667, rel=1e-3)
     mock_client.chat.completions.create.assert_called_once()
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "temperature" not in call_kwargs

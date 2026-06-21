@@ -11,7 +11,7 @@ import numpy as np
 import pandas as pd
 
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.openai_utils import is_openai_capacity_error
+from macro_transfer.openai_utils import is_openai_capacity_error, apply_openai_chat_temperature
 from scgm_text.openai_theme_labels import (
     _get_client,
     _parse_json_content,
@@ -269,10 +269,14 @@ def judge_single_topic(
     create_kwargs: Dict[str, Any] = {}
     if request_timeout is not None:
         create_kwargs["timeout"] = float(request_timeout)
+    apply_openai_chat_temperature(
+        create_kwargs,
+        model=model,
+        temperature=temperature,
+    )
 
     resp = client.chat.completions.create(
         model=model,
-        temperature=float(temperature),
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},

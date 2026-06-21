@@ -1,6 +1,32 @@
-"""Détection erreurs OpenAI (quota, rate limit)."""
+"""Détection erreurs OpenAI (quota, rate limit) + helpers appels chat."""
 
 from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+
+def openai_chat_accepts_custom_temperature(model: str) -> bool:
+    """
+    True si le modèle accepte une température autre que la valeur par défaut.
+
+    Les modèles gpt-5* / o-series renvoient 400 si ``temperature != 1``.
+    """
+    m = str(model).strip().lower()
+    if m.startswith(("gpt-5", "o1", "o3", "o4")):
+        return False
+    return True
+
+
+def apply_openai_chat_temperature(
+    kwargs: Dict[str, Any],
+    *,
+    model: str,
+    temperature: Optional[float],
+) -> Dict[str, Any]:
+    """Ajoute ``temperature`` à ``kwargs`` seulement si le modèle le supporte."""
+    if temperature is not None and openai_chat_accepts_custom_temperature(model):
+        kwargs["temperature"] = float(temperature)
+    return kwargs
 
 
 def is_openai_capacity_error(exc: BaseException) -> bool:
