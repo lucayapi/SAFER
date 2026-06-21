@@ -17,6 +17,7 @@ from macro_transfer.supervised_baseline import (
     merge_model_registry,
     run_model_group_kfold_cv,
     select_best_model,
+    summarize_all_models_test_metrics,
     _fit_pipeline,
     _resample_train_for_class_weight,
 )
@@ -244,3 +245,14 @@ def test_test_corpus_merge_requires_doc_id(tmp_path):
     merged, dim_cols = merge_metadata_with_embeddings(slim, str(emb_csv))
     assert len(merged) == 2
     assert dim_cols == ["dim_0", "dim_1"]
+
+
+def test_summarize_all_models_test_metrics():
+    summary = summarize_all_models_test_metrics(
+        {
+            "a": {"accuracy": 0.5, "macro_f1": 0.4, "balanced_accuracy": 0.45},
+            "b": {"accuracy": 0.6, "macro_f1": 0.55, "balanced_accuracy": 0.5},
+        }
+    )
+    assert list(summary["model"]) == ["a", "b"]
+    assert summary.loc[1, "macro_f1"] == pytest.approx(0.55)

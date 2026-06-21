@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -160,6 +160,7 @@ def plot_fsp_confusion_heatmap(
     *,
     title: str = "Matrice de confusion",
     fig_dir: Optional[Path] = None,
+    filename: str = "confusion_heatmap.png",
 ) -> None:
     """Heatmap confusion_matrix.csv si disponible."""
     if confusion_df is None or confusion_df.empty:
@@ -192,7 +193,7 @@ def plot_fsp_confusion_heatmap(
     if fig_dir:
         out = Path(fig_dir)
         out.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out / "confusion_heatmap.png", dpi=140, bbox_inches="tight")
+        fig.savefig(out / filename, dpi=140, bbox_inches="tight")
     plt.show()
     plt.close(fig)
 
@@ -934,6 +935,58 @@ def plot_test_corpus_raw_embeddings(
     return result
 
 
+def resolve_bertopic_datamap_path(
+    out_dir: str | Path,
+    macro: str,
+) -> Optional[Path]:
+    """Chemin PNG DataMapPlot BERTopic pour une macro (figures/ puis bertopic/)."""
+    root = Path(out_dir).resolve()
+    for candidate in (
+        root / "figures" / f"bertopic_datamap_{macro}.png",
+        root / "bertopic" / str(macro) / "datamap_topics.png",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def list_bertopic_datamap_paths(
+    out_dir: str | Path,
+    macros: Optional[Sequence[str]] = None,
+) -> Dict[str, Path]:
+    """Carte macro → PNG DataMapPlot si le fichier existe."""
+    macro_list = list(macros) if macros is not None else list(MACRO_NAMES)
+    out: Dict[str, Path] = {}
+    for macro in macro_list:
+        path = resolve_bertopic_datamap_path(out_dir, str(macro))
+        if path is not None:
+            out[str(macro)] = path
+    return out
+
+
+def show_bertopic_datamaps_inline(
+    out_dir: str | Path,
+    macros: Optional[Sequence[str]] = None,
+) -> Dict[str, Path]:
+    """Affiche les DataMapPlot BERTopic par macro dans Jupyter."""
+    paths = list_bertopic_datamap_paths(out_dir, macros=macros)
+    try:
+        from IPython.display import Image, display
+    except ImportError:
+        for macro, path in paths.items():
+            print(f"{macro}: {path}")
+        return paths
+    for macro in (macros or MACRO_NAMES):
+        macro_s = str(macro)
+        path = paths.get(macro_s)
+        if path is None:
+            print(f"DataMapPlot absent pour macro {macro_s}")
+            continue
+        print(f"Macro {macro_s} — {path.name}")
+        display(Image(filename=str(path)))
+    return paths
+
+
 RAW_TEST_EMBEDDING_SECTION_MD = (
     "## Embedding brut — corpus test (PCA / t-SNE / UMAP)\n\n"
     "Vecteurs encodeur Qwen du registre test (`configs/test_corpora.yaml`), "
@@ -972,4 +1025,449 @@ else:
         _raw_emb.tsne_per_macro_path,
         _raw_emb.umap_png_path,
     )
+""".strip()
+
+
+TOPIC_JUDGE_SECTION_MD = (
+    "## Évaluation LLM-judge des topics BERTopic\n\n"
+    "Chaque topic `(macro, topic_id)` est noté par un LLM sur **6 critères** (0–5) : "
+    "cohérence interne, homogénéité accidentologique, alignement au rôle de l'étape, "
+    "spécificité, nommabilité, utilité pour la reconstruction de scénario. "
+    "Le **`score_global`** est la moyenne Python des 6 scores (non calculée par le LLM). "
+    "Verdict : `conserver`, `fusionner`, `scinder`, `rejeter`.\n\n"
+    "Sorties : `summary/topic_judge_scores.csv`, `summary/topic_judge_macro_summary.csv`."
+)
+
+
+def load_topic_judge_artifacts(out_dir: str | Path) -> Dict[str, Any]:
+    """Charge scores judge + agrégats macro (DataFrames vides si absents)."""
+    from macro_transfer.topic_judge import (
+        load_topic_judge_macro_summary,
+        load_topic_judge_scores,
+        topic_judge_macro_summary_path,
+        topic_judge_scores_path,
+    )
+
+    root = Path(out_dir).resolve()
+    scores = load_topic_judge_scores(root)
+    macro_summary = load_topic_judge_macro_summary(root)
+    return {
+        "scores": scores,
+        "macro_summary": macro_summary,
+        "scores_path": topic_judge_scores_path(root),
+        "macro_summary_path": topic_judge_macro_summary_path(root),
+    }
+
+
+def plot_topic_judge_quality(
+    out_dir: str | Path,
+    *,
+    fig_dir: Optional[Path] = None,
+    score_threshold: float = 3.0,
+    show: bool = True,
+) -> Dict[str, Optional[Path]]:
+    """
+    Boxplot ``score_global`` par macro + barres empilées des verdicts.
+
+    Écrit ``topic_judge_score_by_macro.png`` et ``topic_judge_verdict_by_macro.png``.
+    """
+    artifacts = load_topic_judge_artifacts(out_dir)
+    scores = artifacts["scores"]
+    out_paths: Dict[str, Optional[Path]] = {
+        "score_by_macro": None,
+        "verdict_by_macro": None,
+    }
+    if scores.empty or "score_global" not in scores.columns:
+        print("topic_judge_scores.csv absent ou vide.")
+        return out_paths
+
+    df = scores.copy()
+    df["macro"] = df["macro"].astype(str)
+    df["score_global"] = pd.to_numeric(df["score_global"], errors="coerce")
+    df = df.dropna(subset=["score_global"])
+    if df.empty:
+        print("Aucun score_global exploitable.")
+        return out_paths
+
+    macro_order = [m for m in MACRO_NAMES if m in set(df["macro"])]
+    if not macro_order:
+        macro_order = sorted(df["macro"].unique())
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    data = [df.loc[df["macro"] == m, "score_global"].to_numpy() for m in macro_order]
+    ax.boxplot(data, labels=macro_order, patch_artist=True)
+    ax.axhline(score_threshold, color="#d62728", linestyle="--", linewidth=1.2, label=f"seuil {score_threshold}")
+    ax.set_title("Score global judge LLM par étape")
+    ax.set_xlabel("Étape")
+    ax.set_ylabel("score_global (0–5)")
+    ax.set_ylim(0, 5.2)
+    ax.legend(loc="lower right", fontsize=8)
+    plt.tight_layout()
+    if fig_dir:
+        fig_dir_p = Path(fig_dir)
+        fig_dir_p.mkdir(parents=True, exist_ok=True)
+        score_png = fig_dir_p / "topic_judge_score_by_macro.png"
+        fig.savefig(score_png, dpi=140, bbox_inches="tight")
+        out_paths["score_by_macro"] = score_png
+    if show:
+        plt.show()
+    plt.close(fig)
+
+    verdict_df = df.copy()
+    verdict_df["verdict"] = verdict_df["verdict"].astype(str).str.lower()
+    verdict_order = ["conserver", "fusionner", "scinder", "rejeter"]
+    verdict_colors = {
+        "conserver": "#2ca02c",
+        "fusionner": "#ff7f0e",
+        "scinder": "#9467bd",
+        "rejeter": "#d62728",
+    }
+    pct_rows: list[dict[str, Any]] = []
+    for macro in macro_order:
+        sub = verdict_df.loc[verdict_df["macro"] == macro]
+        if sub.empty:
+            continue
+        counts = sub["verdict"].value_counts()
+        total = float(len(sub))
+        row: dict[str, Any] = {"macro": macro}
+        for v in verdict_order:
+            row[v] = 100.0 * float(counts.get(v, 0)) / total
+        pct_rows.append(row)
+    if not pct_rows:
+        return out_paths
+
+    pct_df = pd.DataFrame(pct_rows).set_index("macro").reindex(macro_order).fillna(0.0)
+    fig2, ax2 = plt.subplots(figsize=(7, 4.5))
+    bottom = np.zeros(len(pct_df))
+    x = np.arange(len(pct_df))
+    for verdict in verdict_order:
+        vals = pct_df[verdict].to_numpy()
+        ax2.bar(
+            x,
+            vals,
+            bottom=bottom,
+            label=verdict,
+            color=verdict_colors.get(verdict, "#999999"),
+        )
+        bottom = bottom + vals
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(pct_df.index.tolist())
+    ax2.set_ylabel("% topics")
+    ax2.set_xlabel("Étape")
+    ax2.set_title("Verdicts judge LLM par étape")
+    ax2.legend(loc="upper right", fontsize=8, ncol=2)
+    ax2.set_ylim(0, 100)
+    plt.tight_layout()
+    if fig_dir:
+        verdict_png = Path(fig_dir) / "topic_judge_verdict_by_macro.png"
+        fig2.savefig(verdict_png, dpi=140, bbox_inches="tight")
+        out_paths["verdict_by_macro"] = verdict_png
+    if show:
+        plt.show()
+    plt.close(fig2)
+    return out_paths
+
+
+def notebook_topic_judge_section_md() -> str:
+    return TOPIC_JUDGE_SECTION_MD
+
+
+def notebook_topic_judge_source(
+    out_dir_var: str = "OUT_DIR",
+    fig_dir_var: str = "FIG_DIR",
+    *,
+    restimate_var: str | None = "RESTIMATE",
+    topic_judge_cfg_var: str | None = "TOPIC_JUDGE_CFG",
+    seed: int = 42,
+) -> str:
+    """Code source réutilisable pour une section judge dans les notebooks."""
+    restimate_expr = f"bool({restimate_var})" if restimate_var else "False"
+    if topic_judge_cfg_var:
+        cfg_expr = f"dict({topic_judge_cfg_var})"
+    else:
+        cfg_expr = (
+            "dict(load_bertopic_macro_shared(anchor=TEXT_ROOT).get('topic_judge') or {})"
+        )
+    return f"""
+from pathlib import Path
+
+from macro_transfer.bertopic_config import load_bertopic_macro_shared
+from macro_transfer.notebook_viz import load_topic_judge_artifacts, plot_topic_judge_quality
+from macro_transfer.topic_judge import run_topic_judge_evaluation
+
+_topic_judge_cfg = {cfg_expr}
+_judge_scores_path = Path({out_dir_var}) / "summary" / "topic_judge_scores.csv"
+_need_judge = {restimate_expr} or not _judge_scores_path.is_file()
+
+if _topic_judge_cfg.get("enabled", False) and _need_judge:
+    _themes_path = Path({out_dir_var}) / "topics_bertopic" / "themes_by_macro.csv"
+    _assign_path = Path({out_dir_var}) / "topics_bertopic" / "assignments.csv"
+    if not _themes_path.is_file() or not _assign_path.is_file():
+        print("BERTopic absent — judge ignoré (themes/assignments manquants).")
+    else:
+        _judge_themes = pd.read_csv(_themes_path)
+        _judge_assign = pd.read_csv(_assign_path)
+        _meta_path = Path({out_dir_var}) / "transfer" / "bertopic_input_all.csv"
+        if _meta_path.is_file():
+            _judge_meta = pd.read_csv(_meta_path)
+        else:
+            _judge_meta = pd.DataFrame()
+        _text_col = "sentence" if "sentence" in _judge_meta.columns else "text"
+        if _judge_meta.empty or _text_col not in _judge_meta.columns:
+            print("Meta texte absente — judge ignoré.")
+        else:
+            _judge_run = run_topic_judge_evaluation(
+                Path({out_dir_var}),
+                _judge_meta,
+                _judge_assign,
+                _judge_themes,
+                cfg=_topic_judge_cfg,
+                text_col=_text_col,
+                seed={seed},
+                force={restimate_expr},
+            )
+            print("LLM judge :", _judge_run)
+elif not _topic_judge_cfg.get("enabled", False):
+    print("topic_judge désactivé dans la config.")
+
+_judge_art = load_topic_judge_artifacts(Path({out_dir_var}))
+if _judge_art["scores"].empty:
+    print("topic_judge_scores.csv absent — relancer le pipeline BERTopic ou activer RESTIMATE.")
+else:
+    _show_cols = [
+        c for c in [
+            "macro", "topic_id", "n_units", "label_propose", "score_global",
+            "verdict", "probleme_principal", "justification_courte",
+        ]
+        if c in _judge_art["scores"].columns
+    ]
+    display(_judge_art["scores"][_show_cols].head(20))
+    if not _judge_art["macro_summary"].empty:
+        display(_judge_art["macro_summary"])
+
+_judge_figs = plot_topic_judge_quality(Path({out_dir_var}), fig_dir=Path({fig_dir_var}), show=True)
+if any(_judge_figs.values()):
+    print("Figures judge :", {{k: str(v) for k, v in _judge_figs.items() if v}})
+""".strip()
+
+
+TOPIC_JUDGE_SECTION_MD = (
+    "## Évaluation LLM-judge des topics BERTopic\n\n"
+    "Chaque topic `(macro, topic_id)` est noté par un LLM sur **6 critères** (0–5) : "
+    "cohérence interne, homogénéité accidentologique, alignement au rôle de l'étape, "
+    "spécificité, nommabilité, utilité pour la reconstruction de scénario. "
+    "Le **`score_global`** est la moyenne Python des 6 scores (non calculée par le LLM). "
+    "Verdict : `conserver`, `fusionner`, `scinder`, `rejeter`.\n\n"
+    "Sorties : `summary/topic_judge_scores.csv`, `summary/topic_judge_macro_summary.csv`."
+)
+
+
+def load_topic_judge_artifacts(out_dir: str | Path) -> Dict[str, Any]:
+    """Charge scores judge + agrégats macro (DataFrames vides si absents)."""
+    from macro_transfer.topic_judge import (
+        load_topic_judge_macro_summary,
+        load_topic_judge_scores,
+        topic_judge_macro_summary_path,
+        topic_judge_scores_path,
+    )
+
+    root = Path(out_dir).resolve()
+    scores = load_topic_judge_scores(root)
+    macro_summary = load_topic_judge_macro_summary(root)
+    return {
+        "scores": scores,
+        "macro_summary": macro_summary,
+        "scores_path": topic_judge_scores_path(root),
+        "macro_summary_path": topic_judge_macro_summary_path(root),
+    }
+
+
+def plot_topic_judge_quality(
+    out_dir: str | Path,
+    *,
+    fig_dir: Optional[Path] = None,
+    score_threshold: float = 3.0,
+    show: bool = True,
+) -> Dict[str, Optional[Path]]:
+    """
+    Boxplot ``score_global`` par macro + barres empilées des verdicts.
+
+    Écrit ``topic_judge_score_by_macro.png`` et ``topic_judge_verdict_by_macro.png``.
+    """
+    artifacts = load_topic_judge_artifacts(out_dir)
+    scores = artifacts["scores"]
+    out_paths: Dict[str, Optional[Path]] = {
+        "score_by_macro": None,
+        "verdict_by_macro": None,
+    }
+    if scores.empty or "score_global" not in scores.columns:
+        print("topic_judge_scores.csv absent ou vide.")
+        return out_paths
+
+    df = scores.copy()
+    df["macro"] = df["macro"].astype(str)
+    df["score_global"] = pd.to_numeric(df["score_global"], errors="coerce")
+    df = df.dropna(subset=["score_global"])
+    if df.empty:
+        print("Aucun score_global exploitable.")
+        return out_paths
+
+    macro_order = [m for m in MACRO_NAMES if m in set(df["macro"])]
+    if not macro_order:
+        macro_order = sorted(df["macro"].unique())
+
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    data = [df.loc[df["macro"] == m, "score_global"].to_numpy() for m in macro_order]
+    ax.boxplot(data, labels=macro_order, patch_artist=True)
+    ax.axhline(score_threshold, color="#d62728", linestyle="--", linewidth=1.2, label=f"seuil {score_threshold}")
+    ax.set_title("Score global judge LLM par étape")
+    ax.set_xlabel("Étape")
+    ax.set_ylabel("score_global (0–5)")
+    ax.set_ylim(0, 5.2)
+    ax.legend(loc="lower right", fontsize=8)
+    plt.tight_layout()
+    score_png = None
+    if fig_dir:
+        fig_dir_p = Path(fig_dir)
+        fig_dir_p.mkdir(parents=True, exist_ok=True)
+        score_png = fig_dir_p / "topic_judge_score_by_macro.png"
+        fig.savefig(score_png, dpi=140, bbox_inches="tight")
+        out_paths["score_by_macro"] = score_png
+    if show:
+        plt.show()
+    plt.close(fig)
+
+    verdict_df = df.copy()
+    verdict_df["verdict"] = verdict_df["verdict"].astype(str).str.lower()
+    verdict_order = ["conserver", "fusionner", "scinder", "rejeter"]
+    verdict_colors = {
+        "conserver": "#2ca02c",
+        "fusionner": "#ff7f0e",
+        "scinder": "#9467bd",
+        "rejeter": "#d62728",
+    }
+    pct_rows: list[dict[str, Any]] = []
+    for macro in macro_order:
+        sub = verdict_df.loc[verdict_df["macro"] == macro]
+        if sub.empty:
+            continue
+        counts = sub["verdict"].value_counts()
+        total = float(len(sub))
+        row: dict[str, Any] = {"macro": macro}
+        for v in verdict_order:
+            row[v] = 100.0 * float(counts.get(v, 0)) / total
+        pct_rows.append(row)
+    if not pct_rows:
+        return out_paths
+
+    pct_df = pd.DataFrame(pct_rows).set_index("macro").reindex(macro_order).fillna(0.0)
+    fig2, ax2 = plt.subplots(figsize=(7, 4.5))
+    bottom = np.zeros(len(pct_df))
+    x = np.arange(len(pct_df))
+    for verdict in verdict_order:
+        vals = pct_df[verdict].to_numpy()
+        ax2.bar(
+            x,
+            vals,
+            bottom=bottom,
+            label=verdict,
+            color=verdict_colors.get(verdict, "#999999"),
+        )
+        bottom = bottom + vals
+    ax2.set_xticks(x)
+    ax2.set_xticklabels(pct_df.index.tolist())
+    ax2.set_ylabel("% topics")
+    ax2.set_xlabel("Étape")
+    ax2.set_title("Verdicts judge LLM par étape")
+    ax2.legend(loc="upper right", fontsize=8, ncol=2)
+    ax2.set_ylim(0, 100)
+    plt.tight_layout()
+    if fig_dir:
+        verdict_png = Path(fig_dir) / "topic_judge_verdict_by_macro.png"
+        fig2.savefig(verdict_png, dpi=140, bbox_inches="tight")
+        out_paths["verdict_by_macro"] = verdict_png
+    if show:
+        plt.show()
+    plt.close(fig2)
+    return out_paths
+
+
+def notebook_topic_judge_section_md() -> str:
+    return TOPIC_JUDGE_SECTION_MD
+
+
+def notebook_topic_judge_source(
+    out_dir_var: str = "OUT_DIR",
+    fig_dir_var: str = "FIG_DIR",
+    *,
+    restimate_var: str | None = "RESTIMATE",
+    topic_judge_cfg_var: str | None = "TOPIC_JUDGE_CFG",
+    seed: int = 42,
+) -> str:
+    """Code source réutilisable pour une section judge dans les notebooks."""
+    restimate_expr = f"bool({restimate_var})" if restimate_var else "False"
+    if topic_judge_cfg_var:
+        cfg_expr = f"dict({topic_judge_cfg_var})"
+    else:
+        cfg_expr = (
+            "dict(load_bertopic_macro_shared(anchor=TEXT_ROOT).get('topic_judge') or {})"
+        )
+    return f"""
+from macro_transfer.bertopic_config import load_bertopic_macro_shared
+from macro_transfer.notebook_viz import load_topic_judge_artifacts, plot_topic_judge_quality
+from macro_transfer.topic_judge import run_topic_judge_evaluation
+
+_topic_judge_cfg = {cfg_expr}
+_judge_scores_path = Path({out_dir_var}) / "summary" / "topic_judge_scores.csv"
+_need_judge = {restimate_expr} or not _judge_scores_path.is_file()
+
+if _topic_judge_cfg.get("enabled", False) and _need_judge:
+    _themes_path = Path({out_dir_var}) / "topics_bertopic" / "themes_by_macro.csv"
+    _assign_path = Path({out_dir_var}) / "topics_bertopic" / "assignments.csv"
+    if not _themes_path.is_file() or not _assign_path.is_file():
+        print("BERTopic absent — judge ignoré (themes/assignments manquants).")
+    else:
+        _judge_themes = pd.read_csv(_themes_path)
+        _judge_assign = pd.read_csv(_assign_path)
+        _meta_path = Path({out_dir_var}) / "transfer" / "bertopic_input_all.csv"
+        if _meta_path.is_file():
+            _judge_meta = pd.read_csv(_meta_path)
+        else:
+            _judge_meta = pd.DataFrame()
+        _text_col = "sentence" if "sentence" in _judge_meta.columns else "text"
+        if _judge_meta.empty or _text_col not in _judge_meta.columns:
+            print("Meta texte absente — judge ignoré.")
+        else:
+            _judge_run = run_topic_judge_evaluation(
+                Path({out_dir_var}),
+                _judge_meta,
+                _judge_assign,
+                _judge_themes,
+                cfg=_topic_judge_cfg,
+                text_col=_text_col,
+                seed={seed},
+                force={restimate_expr},
+            )
+            print("LLM judge :", _judge_run)
+elif not _topic_judge_cfg.get("enabled", False):
+    print("topic_judge désactivé dans la config.")
+
+_judge_art = load_topic_judge_artifacts(Path({out_dir_var}))
+if _judge_art["scores"].empty:
+    print("topic_judge_scores.csv absent — relancer le pipeline BERTopic ou activer RESTIMATE.")
+else:
+    _show_cols = [
+        c for c in [
+            "macro", "topic_id", "n_units", "label_propose", "score_global",
+            "verdict", "probleme_principal", "justification_courte",
+        ]
+        if c in _judge_art["scores"].columns
+    ]
+    display(_judge_art["scores"][_show_cols].head(20))
+    if not _judge_art["macro_summary"].empty:
+        display(_judge_art["macro_summary"])
+
+_judge_figs = plot_topic_judge_quality(Path({out_dir_var}), fig_dir=Path({fig_dir_var}), show=True)
+if any(_judge_figs.values()):
+    print("Figures judge :", {{k: str(v) for k, v in _judge_figs.items() if v}})
 """.strip()

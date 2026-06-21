@@ -51,33 +51,5 @@ exports:
   save_probabilities: true
   save_bertopic_inputs: true
 
-bertopic:
-  enabled: true
-  random_state: 42
-  min_topic_size: 10
-  include_ambiguous: false
-  macro_params:
-    A0:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    A1:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    B:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-    C:
-      cluster_selection_method: leaf
-      min_cluster_size: 8
-      min_samples: 2
-      min_topic_size: 8
-
-topics_export:
-  top_k_words: 12
-  top_k_sentences: 5
+# BERTopic + topics : configs/bertopic_macro_shared.yaml (eom, OpenAI nr_docs=50)
+bertopic_shared: configs/bertopic_macro_shared.yaml

@@ -24,6 +24,7 @@ from macro_transfer.frozen_source_prototypes import (
     evaluate_macro_predictions,
 )
 from safer_core.data_loading import load_metadata_with_embeddings
+from macro_transfer.bertopic_config import enrich_run_config_bertopic
 from safer_core.io import load_yaml
 from safer_core.kfold_eval import group_kfold_splits
 from safer_core.paths import TEXT_ROOT, resolve_repo_path
@@ -565,6 +566,168 @@ def export_test_results(
     return transfer_dir
 
 
+def summarize_all_models_test_metrics(
+    metrics_by_model: Mapping[str, Mapping[str, Any]],
+) -> pd.DataFrame:
+    """Tableau comparatif des métriques test pour tous les modèles."""
+    rows: list[dict[str, Any]] = []
+    for model_key, metrics in metrics_by_model.items():
+        rows.append(
+            {
+                "model": str(model_key),
+                "accuracy": metrics.get("accuracy"),
+                "macro_f1": metrics.get("macro_f1"),
+                "balanced_accuracy": metrics.get("balanced_accuracy"),
+                "mean_confidence": metrics.get("mean_confidence"),
+                "mean_entropy": metrics.get("mean_entropy"),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _write_model_test_artifacts(
+    model_dir: Path,
+    preds: pd.DataFrame,
+    metrics: Mapping[str, Any],
+    *,
+    macros: Sequence[str],
+) -> None:
+    model_dir.mkdir(parents=True, exist_ok=True)
+    preds.to_csv(model_dir / "target_macro_predictions.csv", index=False)
+    metrics_json = {k: v for k, v in metrics.items() if not str(k).startswith("_")}
+    with open(model_dir / "metrics.json", "w", encoding="utf-8") as f:
+        json.dump(metrics_json, f, indent=2, ensure_ascii=False)
+    cm = metrics.get("_confusion_matrix")
+    if cm is not None:
+        pd.DataFrame(np.asarray(cm), index=macros, columns=macros).to_csv(
+            model_dir / "confusion_matrix.csv"
+        )
+    cls_rep = metrics.get("_classification_report")
+    if cls_rep:
+        pd.DataFrame(cls_rep).T.to_csv(model_dir / "classification_report.csv", index=True)
+
+
+def export_all_models_test_results(
+    out_dir: Path,
+    preds_by_model: Mapping[str, pd.DataFrame],
+    metrics_by_model: Mapping[str, Mapping[str, Any]],
+    *,
+    macros: Sequence[str],
+    best_model: Optional[str] = None,
+) -> pd.DataFrame:
+    """
+    Écrit ``transfer/models/<model>/`` + ``transfer/all_models_test_metrics.csv``.
+
+    Duplique aussi le meilleur modèle sous ``transfer/`` (rétrocompatibilité).
+    """
+    models_root = Path(out_dir) / "transfer" / "models"
+    for model_key, preds in preds_by_model.items():
+        _write_model_test_artifacts(
+            models_root / str(model_key),
+            preds,
+            metrics_by_model[model_key],
+            macros=macros,
+        )
+    summary = summarize_all_models_test_metrics(metrics_by_model)
+    summary.to_csv(Path(out_dir) / "transfer" / "all_models_test_metrics.csv", index=False)
+    if best_model and str(best_model) in preds_by_model:
+        export_test_results(
+            out_dir,
+            preds_by_model[str(best_model)],
+            metrics_by_model[str(best_model)],
+            macros=macros,
+        )
+    return summary
+
+
+def evaluate_all_models_on_test(
+    model_keys: Sequence[str],
+    model_registry: Mapping[str, Mapping[str, Any]],
+    X_btp: np.ndarray,
+    y_btp: Sequence[str],
+    X_test: np.ndarray,
+    test_meta: pd.DataFrame,
+    *,
+    macros: Sequence[str] = MACRO_NAMES,
+    seed: int = 42,
+    text_col: str = "sentence",
+    group_col: str = "accident_id",
+    label_col: Optional[str] = "pred_label",
+    method_prefix: str = "supervised_macro_baseline",
+) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Dict[str, Any]]]:
+    """Réentraîne chaque modèle sur 100 % BTP et évalue sur le corpus test."""
+    preds_by_model: Dict[str, pd.DataFrame] = {}
+    metrics_by_model: Dict[str, Dict[str, Any]] = {}
+    for model_key in model_keys:
+        spec = model_registry[model_key]
+        _, preds, metrics = fit_final_and_predict_test(
+            str(model_key),
+            X_btp,
+            y_btp,
+            X_test,
+            test_meta,
+            macros=macros,
+            seed=seed,
+            params=spec.get("params"),
+            use_scaler=spec.get("use_scaler"),
+            method_name=f"{method_prefix}/{model_key}",
+            text_col=text_col,
+            group_col=group_col,
+            label_col=label_col,
+        )
+        preds_by_model[str(model_key)] = preds
+        metrics_by_model[str(model_key)] = metrics
+    return preds_by_model, metrics_by_model
+
+
+def load_cached_test_results_for_model(
+    out_dir: Path,
+    model_key: str,
+    *,
+    macros: Sequence[str],
+) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Recharge les prédictions test d'un modèle depuis ``transfer/models/<model>/``."""
+    model_dir = Path(out_dir) / "transfer" / "models" / str(model_key)
+    preds_path = model_dir / "target_macro_predictions.csv"
+    metrics_path = model_dir / "metrics.json"
+    if not preds_path.is_file() or not metrics_path.is_file():
+        raise FileNotFoundError(f"Artefacts test manquants pour {model_key!r} : {model_dir}")
+    preds = pd.read_csv(preds_path)
+    with open(metrics_path, encoding="utf-8") as f:
+        metrics = json.load(f)
+    cm_path = model_dir / "confusion_matrix.csv"
+    if cm_path.is_file():
+        metrics["_confusion_matrix"] = pd.read_csv(cm_path, index_col=0).to_numpy()
+    rep_path = model_dir / "classification_report.csv"
+    if rep_path.is_file():
+        rep_df = pd.read_csv(rep_path, index_col=0)
+        metrics["_classification_report"] = rep_df.to_dict(orient="index")
+    return preds, metrics
+
+
+def load_cached_all_models_test_results(
+    out_dir: Path,
+    model_keys: Sequence[str],
+    *,
+    macros: Sequence[str],
+) -> Tuple[Dict[str, pd.DataFrame], Dict[str, Dict[str, Any]], pd.DataFrame]:
+    """Recharge tous les modèles + tableau récapitulatif."""
+    preds_by_model: Dict[str, pd.DataFrame] = {}
+    metrics_by_model: Dict[str, Dict[str, Any]] = {}
+    for model_key in model_keys:
+        preds, metrics = load_cached_test_results_for_model(
+            out_dir, model_key, macros=macros
+        )
+        preds_by_model[str(model_key)] = preds
+        metrics_by_model[str(model_key)] = metrics
+    summary_path = Path(out_dir) / "transfer" / "all_models_test_metrics.csv"
+    if summary_path.is_file():
+        summary = pd.read_csv(summary_path)
+    else:
+        summary = summarize_all_models_test_metrics(metrics_by_model)
+    return preds_by_model, metrics_by_model, summary
+
+
 RUN_MANIFEST_NAME = "run_manifest.json"
 
 
@@ -580,6 +743,7 @@ def save_supervised_run_manifest(
     seed: int,
     n_folds: int,
     test_corpus: str,
+    model_keys: Optional[Sequence[str]] = None,
 ) -> Path:
     """Métadonnées du run (meilleur modèle, pour rechargement ``RESTIMATE=False``)."""
     path = supervised_run_manifest_path(out_dir)
@@ -590,6 +754,8 @@ def save_supervised_run_manifest(
         "n_folds": int(n_folds),
         "test_corpus": str(test_corpus),
     }
+    if model_keys is not None:
+        payload["model_keys"] = [str(k) for k in model_keys]
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return path
@@ -692,10 +858,13 @@ def run_supervised_bertopic_phase(
     corpus_id: str,
     method_name: str,
     anchor: Optional[Path] = None,
+    topic_judge_cfg: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Lance BERTopic intra-macro sur les prédictions supervisées."""
     if not bertopic_cfg or bertopic_cfg.get("enabled", True) is False:
         return {}
+    bertopic_cfg_dict = dict(bertopic_cfg)
+    judge_cfg = dict(topic_judge_cfg or bertopic_cfg_dict.pop("topic_judge", None) or {})
     gating = _build_gating_from_predictions(preds, macros)
     meta_t = test_meta.copy()
     meta_t["m_hat"] = preds["pred_macro"].astype(str).to_numpy()
@@ -706,7 +875,7 @@ def run_supervised_bertopic_phase(
         h_t=np.asarray(X_test, dtype=np.float64),
         h_t_adapted=np.asarray(X_test, dtype=np.float64),
         method_name=method_name,
-        bertopic_cfg=dict(bertopic_cfg),
+        bertopic_cfg=bertopic_cfg_dict,
         topics_export_cfg=dict(topics_export_cfg),
         text_col_t=text_col,
         repo_anchor=anchor or TEXT_ROOT,
@@ -716,12 +885,15 @@ def run_supervised_bertopic_phase(
         run_bertopic_grid=False,
         grid_macros=None,
         skip_compression_diagnostics=True,
+        topic_judge_cfg=judge_cfg or None,
     )
 
 
 def load_supervised_config(config_path: str | Path) -> Dict[str, Any]:
-    """Charge le YAML baseline supervisée."""
-    return load_yaml(Path(config_path))
+    """Charge le YAML baseline supervisée (+ fusion config BERTopic partagée)."""
+    anchor = Path(__file__).resolve().parents[1]
+    cfg = load_yaml(Path(config_path))
+    return enrich_run_config_bertopic(cfg, anchor=anchor)
 
 
 def run_supervised_baseline_from_config(config_path: str | Path) -> Dict[str, Any]:
@@ -749,29 +921,44 @@ def run_supervised_baseline_from_config(config_path: str | Path) -> Dict[str, An
     )
     cv_summary = aggregate_cv_metrics(fold_rows)
     best_model = select_best_model(cv_summary, selection_metric=selection_metric)
-    best_spec = model_registry[best_model]
 
     corpus_id = str(data["corpus_id"])
     out_dir = supervised_baseline_output_dir(corpus_id, anchor=anchor)
     export_cv_results(out_dir, fold_rows, cv_summary)
 
     method_name = str(cfg.get("method_name", "supervised_macro_baseline"))
-    _, preds, metrics = fit_final_and_predict_test(
-        best_model,
+    preds_by_model, metrics_by_model = evaluate_all_models_on_test(
+        model_keys,
+        model_registry,
         data["X_btp"],
         data["y_btp"],
         data["X_test"],
         data["test_meta"],
         macros=data["macros"],
         seed=seed,
-        params=best_spec.get("params"),
-        use_scaler=best_spec.get("use_scaler"),
-        method_name=f"{method_name}/{best_model}",
         text_col=data["target_text_col"],
         group_col=data["target_group_col"],
         label_col=data["target_label_col"],
+        method_prefix=method_name,
     )
-    export_test_results(out_dir, preds, metrics, macros=data["macros"])
+    test_summary = export_all_models_test_results(
+        out_dir,
+        preds_by_model,
+        metrics_by_model,
+        macros=data["macros"],
+        best_model=best_model,
+    )
+    preds = preds_by_model[best_model]
+    metrics = metrics_by_model[best_model]
+    save_supervised_run_manifest(
+        out_dir,
+        best_model=best_model,
+        selection_metric=selection_metric,
+        seed=seed,
+        n_folds=n_folds,
+        test_corpus=corpus_id,
+        model_keys=model_keys,
+    )
 
     bertopic_summary = run_supervised_bertopic_phase(
         out_dir,
@@ -781,6 +968,7 @@ def run_supervised_baseline_from_config(config_path: str | Path) -> Dict[str, An
         macros=data["macros"],
         bertopic_cfg=dict(cfg.get("bertopic") or {}),
         topics_export_cfg=dict(cfg.get("topics_export") or {}),
+        topic_judge_cfg=dict(cfg.get("topic_judge") or {}),
         text_col=data["target_text_col"],
         corpus_id=corpus_id,
         method_name=f"{method_name}/{best_model}",
@@ -793,5 +981,6 @@ def run_supervised_baseline_from_config(config_path: str | Path) -> Dict[str, An
         "cv_summary": cv_summary,
         "fold_rows": fold_rows,
         "metrics": metrics,
+        "test_summary": test_summary,
         "bertopic_summary": bertopic_summary,
     }

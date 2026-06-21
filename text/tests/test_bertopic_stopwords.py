@@ -8,6 +8,7 @@ import pandas as pd
 
 from macro_transfer.bertopic_utils import (
     DEFAULT_STOP_WORDS_FILE,
+    bertopic_show_progress,
     load_stop_metier,
     resolve_stop_words_file,
     umap_enabled,
@@ -43,6 +44,12 @@ def test_umap_enabled_disabled():
 
 def test_umap_enabled_missing_key():
     assert umap_enabled({}) is True
+
+
+def test_bertopic_show_progress_default_and_diagnostics():
+    assert bertopic_show_progress({}) is True
+    assert bertopic_show_progress({"diagnostics": {"show_progress": False}}) is False
+    assert bertopic_show_progress({"show_progress": False}) is False
 
 
 def test_summarize_topics_by_macro():

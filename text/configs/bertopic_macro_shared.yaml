@@ -1,0 +1,60 @@
+# Source unique BERTopic intra-macro (FSP + baseline supervisée).
+# Surcharges possibles via bertopic: / topics_export: dans le YAML du run.
+
+bertopic:
+  enabled: true
+  random_state: 42
+  min_topic_size: 10
+  include_ambiguous: false
+  umap:
+    enabled: true
+    n_components: 15
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: cosine
+  macro_params:
+    A0:
+      cluster_selection_method: eom
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    A1:
+      cluster_selection_method: eom
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    B:
+      cluster_selection_method: eom
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+    C:
+      cluster_selection_method: eom
+      min_cluster_size: 8
+      min_samples: 2
+      min_topic_size: 8
+  representation:
+    enabled: true
+    model: gpt-5-mini
+    chat: true
+    nr_docs: 50
+    include_corpus_context: true
+  diagnostics:
+    show_progress: true
+    save_datamap: false
+    save_model: true
+    save_representative_docs: true
+    n_representative_docs: 5
+
+topic_judge:
+  enabled: true
+  model: gpt-5-mini
+  n_representative: 30
+  n_random: 5
+  min_n_units: 8
+  temperature: 0.2
+  show_progress: true
+
+topics_export:
+  top_k_words: 12
+  top_k_sentences: 5

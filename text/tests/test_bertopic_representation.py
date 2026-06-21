@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
+import pandas as pd
 import pytest
 
 from macro_transfer.representation import (
@@ -14,7 +16,7 @@ from macro_transfer.representation import (
     representation_enabled,
     _resolve_prompt,
 )
-from macro_transfer.bertopic_utils import topic_label_from_model
+from macro_transfer.bertopic_utils import format_topic_words, topic_label_from_model
 
 TEXT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,11 +103,49 @@ def test_build_representation_model_mock(_mock_env, mock_client):
     assert hasattr(rep.tokenizer, "encode") and hasattr(rep.tokenizer, "decode")
 
 
-def test_topic_label_from_model_topic_labels_dict():
+def test_topic_label_from_model_custom_name():
     model = MagicMock()
-    model.topic_labels_ = {0: "Chute de hauteur", 1: "Manutention"}
+    model.get_topic_info.return_value = pd.DataFrame(
+        {"Topic": [0], "CustomName": ["Chute de hauteur"]}
+    )
+    model.topic_representations_ = {0: [("Chute de hauteur", 1.0)]}
+    model.representation_model = MagicMock()
     assert topic_label_from_model(model, 0) == "Chute de hauteur"
     assert topic_label_from_model(model, -1) == ""
+
+
+def test_topic_label_ignores_bertopic_keyword_fallback():
+    model = MagicMock()
+    model.custom_labels_ = None
+    model.get_topic_info.return_value = pd.DataFrame(
+        {"Topic": [0], "Name": ["0_chute_hauteur_travail"]}
+    )
+    model.topic_representations_ = {0: [("chute", 0.5), ("hauteur", 0.4)]}
+    model.representation_model = None
+    assert topic_label_from_model(model, 0) == ""
+
+
+def test_topic_label_from_llm_representation():
+    model = MagicMock()
+    model.get_topic_info.return_value = pd.DataFrame({"Topic": [1]})
+    model.topic_representations_ = {1: [("Coincement de main", 1.0)]}
+    model.representation_model = MagicMock()
+    assert topic_label_from_model(model, 1) == "Coincement de main"
+
+
+def test_format_topic_words_prefers_ctfidf_over_llm_label():
+    pytest.importorskip("scipy")
+    from scipy.sparse import csr_matrix
+
+    model = MagicMock()
+    model.topic_sizes_ = {0: 10}
+    model.c_tf_idf_ = csr_matrix([[0.1, 0.5, 0.3]])
+    model.vectorizer_model.get_feature_names_out.return_value = np.array(
+        ["mot1", "chute", "hauteur"]
+    )
+    model.topic_representations_ = {0: [("Libellé LLM", 1.0)]}
+    model.representation_model = MagicMock()
+    assert format_topic_words(model, 0, top_k=3) == "chute hauteur mot1"
 
 
 def test_default_fr_prompt_has_tags():

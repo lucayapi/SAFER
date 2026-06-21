@@ -10,10 +10,12 @@ import pandas as pd
 import yaml
 
 from macro_transfer.bertopic_grid import run_macro_bertopic_grid_search
+from macro_transfer.bertopic_utils import bertopic_progress, bertopic_show_progress
 from macro_transfer.intra_bertopic import fit_bertopic_per_macro
 from macro_transfer.macro_compression import compute_macro_compression_diagnostics
 from macro_transfer.topic_embeddings import resolve_topic_embedding_cfg
 from macro_transfer.topics_export import build_macro_topic_test_table, summarize_topics_by_macro
+from macro_transfer.topic_judge import run_topic_judge_evaluation
 from safer_core.paths import resolve_repo_path
 
 
@@ -54,6 +56,7 @@ def run_bertopic_phase(
     run_bertopic_grid: bool,
     grid_macros: Optional[Sequence[str]],
     skip_compression_diagnostics: bool,
+    topic_judge_cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Phase BERTopic: compression, grid optionnelle, fit intra-macro."""
     bertopic_cfg = dict(bertopic_cfg)
@@ -103,6 +106,10 @@ def run_bertopic_phase(
 
     top_k_words = int(topics_export_cfg.get("top_k_words", 12))
     top_k_sentences = int(topics_export_cfg.get("top_k_sentences", 5))
+    if bertopic_show_progress(bertopic_cfg):
+        bertopic_progress(
+            f"Phase BERTopic — {len(meta_t)} unités, corpus={corpus_id!r}, méthode={method_name!r}"
+        )
     themes_bertopic, assignments_df, bertopic_partial = fit_bertopic_per_macro(
         h_t,
         meta_t,
@@ -137,6 +144,32 @@ def run_bertopic_phase(
     )
     macro_stats.to_csv(summary_dir / "macro_topic_stats.csv", index=False)
 
+    judge_cfg = dict(topic_judge_cfg or {})
+    judge_summary: Dict[str, Any] = {}
+    if judge_cfg.get("enabled", False) and not themes_bertopic.empty:
+        if bertopic_show_progress(bertopic_cfg):
+            n_judge = int(
+                (
+                    pd.to_numeric(themes_bertopic["topic_id"], errors="coerce")
+                    .fillna(-1)
+                    .astype(int)
+                    >= 0
+                ).sum()
+            )
+            bertopic_progress(
+                f"LLM judge des topics — jusqu'à {n_judge} appels "
+                f"({judge_cfg.get('model', 'gpt-5-mini')})…"
+            )
+        judge_summary = run_topic_judge_evaluation(
+            out,
+            meta_t,
+            assignments_df,
+            themes_bertopic,
+            cfg=judge_cfg,
+            text_col=text_col_t,
+            seed=int(bertopic_cfg.get("random_state", 42)),
+        )
+
     return {
         "embedding_mode": topic_emb_cfg["mode"],
         "alpha": topic_emb_cfg["alpha"],
@@ -146,4 +179,5 @@ def run_bertopic_phase(
         "warnings": bertopic_partial.get("warnings", []),
         "compression_diagnostics_path": str(compression_path) if compression_path else None,
         "grid_search_path": str(grid_path) if grid_path else None,
+        "topic_judge_summary": judge_summary,
     }

@@ -17,6 +17,7 @@ from sklearn.metrics import (
 )
 
 from contrastive_methods.eval_geometry import DEFAULT_BTP_RAW_EMB_CSV
+from macro_transfer.bertopic_config import enrich_run_config_bertopic
 from macro_transfer.bertopic_phase import run_bertopic_phase
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.encode import load_target_metadata
@@ -259,8 +260,8 @@ def _build_gating_from_predictions(preds: pd.DataFrame, macros: Sequence[str]) -
 
 def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     cfg_path = Path(config_path)
-    cfg = load_yaml(cfg_path)
     anchor = Path(__file__).resolve().parents[1]
+    cfg = enrich_run_config_bertopic(load_yaml(cfg_path), anchor=anchor)
 
     corpus = str(cfg.get("corpus") or default_test_corpus_id())
     source_cfg = dict(cfg.get("source") or {})
@@ -270,6 +271,7 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     exp_cfg = dict(cfg.get("exports") or {})
     bertopic_cfg = dict(cfg.get("bertopic") or {})
     topics_export_cfg = dict(cfg.get("topics_export") or {})
+    topic_judge_cfg = dict(cfg.get("topic_judge") or {})
     bertopic_enabled = bool(bertopic_cfg.get("enabled", True))
     skip_bertopic = bool(cfg.get("skip_bertopic", False)) and not bertopic_enabled
 
@@ -557,6 +559,7 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
             run_bertopic_grid=False,
             grid_macros=None,
             skip_compression_diagnostics=True,
+            topic_judge_cfg=topic_judge_cfg,
         )
 
     if exp_cfg.get("save_target_embeddings", True):

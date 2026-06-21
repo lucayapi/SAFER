@@ -44,16 +44,17 @@ def test_a0_uses_leaf_cluster_selection():
     assert p["n_neighbors"] == 10
 
 
-def test_frozen_source_prototypes_macro_params_leaf_all_macros():
-    import yaml
+def test_frozen_source_prototypes_macro_params_eom_all_macros():
+    from macro_transfer.bertopic_config import load_bertopic_macro_shared
 
-    cfg_path = Path(__file__).resolve().parents[1] / "configs" / "frozen_source_prototypes.yaml"
-    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
-    macro_params = cfg["bertopic"]["macro_params"]
+    shared = load_bertopic_macro_shared(
+        anchor=Path(__file__).resolve().parents[1]
+    )
+    macro_params = shared["bertopic"]["macro_params"]
     for macro in ("A0", "A1", "B", "C"):
         assert macro in macro_params
         block = macro_params[macro]
-        assert block["cluster_selection_method"] == "leaf"
+        assert block["cluster_selection_method"] == "eom"
         assert block["min_cluster_size"] == 8
         assert block["min_samples"] == 2
         assert block["min_topic_size"] == 8

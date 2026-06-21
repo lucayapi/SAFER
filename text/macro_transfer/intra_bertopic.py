@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -13,16 +14,20 @@ logger = logging.getLogger(__name__)
 
 from macro_transfer.bertopic_exports import (
     compute_topic_stats,
+    save_bertopic_document_datamap,
+    save_bertopic_macro_model,
     write_macro_bertopic_exports,
 )
 from macro_transfer.bertopic_utils import (
+    bertopic_progress,
+    bertopic_show_progress,
     fit_bertopic_subset,
     format_topic_words,
     topic_label_from_model,
 )
 from macro_transfer.constants import MACRO_NAMES
 from macro_transfer.topic_embeddings import build_topic_embeddings
-from scgm_text.topic_export import _top_sentences_by_distance
+from scgm_text.topic_export import _top_sentences_by_distance, _top_words_for_texts
 
 
 def _build_theme_rows(
@@ -54,6 +59,8 @@ def _build_theme_rows(
         centroid = z_sub.mean(axis=0) if len(z_sub) else None
         sentences = subset[sentence_col].astype(str).tolist()
         top_words = format_topic_words(model, tid, top_k=top_k_words)
+        if not top_words and sentences:
+            top_words = _top_words_for_texts(sentences, top_k=top_k_words)
         theme_label = topic_label_from_model(model, tid)
         if centroid is not None and len(sentences) > 0:
             top_sentences = _top_sentences_by_distance(
@@ -204,8 +211,21 @@ def fit_bertopic_per_macro(
     rs = int(cfg.get("random_state", random_state))
     macro_topic_counts: Dict[str, Any] = {}
     warnings_list: list[str] = []
+    show_progress = bertopic_show_progress(cfg)
+    if show_progress:
+        bertopic_progress(
+            f"BERTopic intra-macro — {len(meta)} unités au total "
+            f"(méthode={method!r}, representation="
+            f"{bool((cfg.get('representation') or {}).get('enabled', True))})"
+        )
 
-    for macro in MACRO_NAMES:
+    macro_list: Any = MACRO_NAMES
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        macro_list = tqdm(MACRO_NAMES, desc="Macros BERTopic", unit="macro")
+
+    for macro in macro_list:
         mi = MACRO_NAMES.index(macro)
         logger.info("BERTopic intra-macro : début macro=%s", macro)
         m_hat_mask = gating["m_hat"].astype(str) == macro
@@ -217,6 +237,8 @@ def fit_bertopic_per_macro(
             continue
         idx = np.where(mask.to_numpy())[0]
         texts = meta.iloc[idx][sentence_col].astype(str).tolist()
+        if show_progress:
+            bertopic_progress(f"  → macro {macro} : {len(texts)} unités")
         emb_sub = _resolve_topic_matrix(
             idx,
             z=z,
@@ -246,6 +268,24 @@ def fit_bertopic_per_macro(
                 "largest_topic_id": 0,
                 "largest_topic_share": 1.0,
             }
+            sub_assign = pd.DataFrame(
+                {"doc_idx": idx.astype(int), "m_hat": macro, "topic_id": 0}
+            )
+            theme_rows = _build_theme_rows(
+                None,
+                macro,
+                sub_assign,
+                meta,
+                z_full,
+                method=method,
+                sentence_col=sentence_col,
+                top_k_words=top_k_words,
+                top_k_sentences=top_k_sentences,
+            )
+            if theme_rows:
+                themes = pd.DataFrame(theme_rows)
+                themes.to_csv(legacy_dir / f"themes_macro_{macro}.csv", index=False)
+                theme_parts.append(themes)
             continue
 
         try:
@@ -257,6 +297,7 @@ def fit_bertopic_per_macro(
                 anchor=repo_anchor,
                 macro=macro,
                 corpus_id=corpus_id,
+                show_progress=show_progress,
             )
         except Exception as exc:
             logger.exception(
@@ -318,6 +359,27 @@ def fit_bertopic_per_macro(
                 n_representative_docs=n_rep_docs,
                 bertopic_cfg=cfg,
             )
+
+        if bool(diagnostics_cfg.get("save_model", True)) and model is not None:
+            if show_progress:
+                bertopic_progress(f"  → macro {macro} : sauvegarde modèle BERTopic…")
+            save_bertopic_macro_model(model, macro_dir)
+
+        if bool(diagnostics_cfg.get("save_datamap", False)) and model is not None:
+            if show_progress:
+                bertopic_progress(f"  → macro {macro} : export DataMapPlot…")
+            datamap_path = macro_dir / "datamap_topics.png"
+            saved = save_bertopic_document_datamap(
+                model,
+                texts,
+                emb_for_export,
+                macro=macro,
+                output_path=datamap_path,
+            )
+            if saved is not None and run_output_root is not None:
+                fig_dir = Path(run_output_root) / "figures"
+                fig_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy(saved, fig_dir / f"bertopic_datamap_{macro}.png")
 
         for local_j, doc_idx in enumerate(idx):
             tid = int(topic_ids[local_j])

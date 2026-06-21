@@ -17,6 +17,8 @@ from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
 from macro_transfer.notebook_viz import (
     RAW_TEST_EMBEDDING_SECTION_MD,
     notebook_raw_test_embedding_source,
+    notebook_topic_judge_section_md,
+    notebook_topic_judge_source,
 )
 
 
@@ -214,6 +216,8 @@ else:
     print("assignments.csv absent.")
 """
         ),
+        md(notebook_topic_judge_section_md()),
+        py(notebook_topic_judge_source("OUT_DIR", "FIG_DIR", restimate_var=None)),
         md("## § Fichiers attendus / robustesse"),
         py(
             r"""

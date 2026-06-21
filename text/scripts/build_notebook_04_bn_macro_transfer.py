@@ -17,6 +17,8 @@ from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
 from macro_transfer.notebook_viz import (
     RAW_TEST_EMBEDDING_SECTION_MD,
     notebook_raw_test_embedding_source,
+    notebook_topic_judge_section_md,
+    notebook_topic_judge_source,
 )
 
 
@@ -231,6 +233,15 @@ print("Matrice accident × variables :", acc_df.shape)
 print("Topics retenus :", len(topic_cols))
 display(sel.head(10))
 """
+        ),
+        md(notebook_topic_judge_section_md()),
+        py(
+            notebook_topic_judge_source(
+                "MACRO_TRANSFER_ROOT",
+                "FIGURES_STATIC",
+                restimate_var=None,
+                topic_judge_cfg_var=None,
+            )
         ),
         md("## 3 — Apprentissage du réseau bayésien"),
         py(

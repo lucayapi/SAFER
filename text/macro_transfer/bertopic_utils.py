@@ -62,6 +62,19 @@ def _parse_ngram_range(raw: Any) -> tuple[int, int]:
     return (1, 1)
 
 
+def bertopic_show_progress(bertopic_cfg: Dict[str, Any]) -> bool:
+    """True si les messages / barres de progression BERTopic doivent s'afficher."""
+    diagnostics = dict(bertopic_cfg.get("diagnostics") or {})
+    if "show_progress" in diagnostics:
+        return bool(diagnostics["show_progress"])
+    return bool(bertopic_cfg.get("show_progress", True))
+
+
+def bertopic_progress(msg: str) -> None:
+    """Affichage immédiat (notebook Jupyter / stdout)."""
+    print(msg, flush=True)
+
+
 def umap_enabled(bertopic_cfg: Dict[str, Any]) -> bool:
     """
     True si une étape UMAP doit précéder HDBSCAN.
@@ -338,12 +351,33 @@ def fit_bertopic_subset(
     anchor: Optional[Path] = None,
     macro: Optional[str] = None,
     corpus_id: Optional[str] = None,
+    show_progress: Optional[bool] = None,
 ) -> Tuple[np.ndarray, np.ndarray, Any]:
     """
     Fit BERTopic sur un sous-corpus (embeddings pré-calculés).
 
     Retourne (topic_ids, confidences, model).
     """
+    progress = bertopic_show_progress(bertopic_cfg) if show_progress is None else bool(show_progress)
+    label = str(macro) if macro is not None else "?"
+    rep_on = (
+        representation_enabled(bertopic_cfg)
+        and not bool(bertopic_cfg.get("_disable_representation", False))
+    )
+    if progress:
+        rep_model_name = ""
+        if rep_on:
+            rep_cfg = dict(bertopic_cfg.get("representation") or {})
+            rep_model_name = str(rep_cfg.get("model", "gpt-5-mini"))
+            nr_docs = int(rep_cfg.get("nr_docs", 4))
+            rep_hint = f" + libellés LLM ({rep_model_name}, nr_docs={nr_docs})"
+        else:
+            rep_hint = ""
+        umap_hint = "UMAP → " if umap_enabled(bertopic_cfg) else ""
+        bertopic_progress(
+            f"[BERTopic {label}] {len(texts)} unités — "
+            f"{umap_hint}HDBSCAN + c-TF-IDF{rep_hint}… (plusieurs min si beaucoup de topics)"
+        )
     if macro is not None:
         model = build_bertopic_for_macro(
             macro,
@@ -363,11 +397,88 @@ def fit_bertopic_subset(
         )
     topics, probs = model.fit_transform(list(texts), embeddings)
     topic_arr = np.asarray(topics, dtype=np.int64)
+    if progress:
+        n_topics = len({int(t) for t in topic_arr if int(t) >= 0})
+        noise = int(np.sum(topic_arr < 0))
+        bertopic_progress(
+            f"[BERTopic {label}] terminé — {n_topics} topics, {noise} unités bruit"
+        )
     if probs is not None and hasattr(probs, "shape") and len(probs.shape) == 2:
         conf = np.asarray(probs).max(axis=1)
     else:
         conf = np.ones(len(texts), dtype=np.float64)
     return topic_arr, conf, model
+
+
+def _sorted_topic_labels(model: Any) -> List[int]:
+    topic_sizes = getattr(model, "topic_sizes_", None)
+    if not topic_sizes:
+        return []
+    return sorted(int(k) for k in topic_sizes.keys())
+
+
+def _has_external_representation(model: Any) -> bool:
+    rep = getattr(model, "representation_model", None)
+    if rep is None:
+        return False
+    if isinstance(rep, list):
+        return bool(rep)
+    if isinstance(rep, dict):
+        return bool(rep.get("Main"))
+    return True
+
+
+def _is_llm_topic_representation(model: Any, entries: Sequence[Tuple[Any, Any]]) -> bool:
+    """True si la représentation externe a remplacé le topic par un libellé unique (OpenAI, etc.)."""
+    if not _has_external_representation(model) or not entries or len(entries) != 1:
+        return False
+    word, score = entries[0]
+    if word is None or not str(word).strip():
+        return False
+    try:
+        score_f = float(score)
+    except (TypeError, ValueError):
+        return False
+    return score_f >= 0.99
+
+
+def _ctfidf_word_scores(model: Any, topic_id: int, *, top_k: int = 12) -> List[Tuple[str, float]]:
+    """Mots-clés c-TF-IDF depuis ``c_tf_idf_`` (indépendant de la représentation LLM)."""
+    c_tf_idf = getattr(model, "c_tf_idf_", None)
+    if c_tf_idf is None:
+        return []
+    labels = _sorted_topic_labels(model)
+    tid = int(topic_id)
+    if tid not in labels:
+        return []
+    row_idx = labels.index(tid)
+    if row_idx >= c_tf_idf.shape[0]:
+        return []
+
+    vectorizer = getattr(model, "vectorizer_model", None)
+    if vectorizer is None:
+        return []
+    try:
+        vocab = vectorizer.get_feature_names_out()
+    except AttributeError:
+        vocab = vectorizer.get_feature_names()
+
+    row = c_tf_idf[row_idx]
+    if hasattr(row, "toarray"):
+        dense = np.asarray(row.toarray(), dtype=np.float64).ravel()
+    else:
+        dense = np.asarray(row, dtype=np.float64).ravel()
+    if dense.size == 0:
+        return []
+
+    top_idx = np.argsort(dense)[::-1][:top_k]
+    out: List[Tuple[str, float]] = []
+    for i in top_idx:
+        score = float(dense[i])
+        if score <= 0.0:
+            continue
+        out.append((str(vocab[i]), score))
+    return out
 
 
 def format_topic_words(
@@ -376,13 +487,22 @@ def format_topic_words(
     *,
     top_k: int = 12,
 ) -> str:
-    """Mots du topic via c-TF-IDF BERTopic (``get_topic``)."""
-    if topic_id < 0:
+    """Mots-clés c-TF-IDF BERTopic (matrice ``c_tf_idf_``, pas le libellé LLM)."""
+    if topic_id < 0 or model is None:
         return ""
-    words = model.get_topic(int(topic_id))
-    if not words:
+
+    scored = _ctfidf_word_scores(model, int(topic_id), top_k=top_k)
+    if scored:
+        return " ".join(word for word, _ in scored if word)
+
+    try:
+        words = model.get_topic(int(topic_id))
+    except Exception:
+        words = None
+    if not words or _is_llm_topic_representation(model, words):
         return ""
-    parts = []
+
+    parts: List[str] = []
     for word, _score in words[:top_k]:
         if word:
             parts.append(str(word))
@@ -390,22 +510,30 @@ def format_topic_words(
 
 
 def topic_label_from_model(model: Any, topic_id: int) -> str:
-    """Libellé LLM (colonne Name / topic_labels_) après representation OpenAI."""
-    if topic_id < 0:
+    """Libellé court (OpenAI / ``custom_labels_``), jamais le fallback ``topic_labels_`` BERTopic."""
+    if topic_id < 0 or model is None:
         return ""
-    labels = getattr(model, "topic_labels_", None)
-    if isinstance(labels, dict) and topic_id in labels:
-        name = labels[topic_id]
-        if name and str(name).strip():
-            return str(name).strip()
+    tid = int(topic_id)
+
     try:
         info = model.get_topic_info()
         if info is not None and len(info) > 0 and "Topic" in info.columns:
-            row = info.loc[info["Topic"] == topic_id]
-            if len(row) and "Name" in row.columns:
-                val = row.iloc[0]["Name"]
-                if val is not None and str(val).strip():
-                    return str(val).strip()
+            row = info.loc[info["Topic"] == tid]
+            if len(row):
+                if "CustomName" in row.columns:
+                    custom = row.iloc[0]["CustomName"]
+                    if custom is not None and str(custom).strip():
+                        return str(custom).strip()
     except Exception:
         pass
+
+    topic_reps = getattr(model, "topic_representations_", None) or {}
+    entries = topic_reps.get(tid)
+    if entries is None:
+        entries = topic_reps.get(str(tid))
+    if entries and _is_llm_topic_representation(model, entries):
+        label = str(entries[0][0]).strip()
+        if label and label.lower() != "no label returned":
+            return label
+
     return ""
