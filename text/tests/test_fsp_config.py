@@ -35,6 +35,39 @@ def test_resolve_fsp_output_dir_default():
     assert "metallurgie" in str(p)
 
 
+def test_resolve_fsp_output_dir_legacy_scgm(tmp_path: Path):
+    corpus = "metallurgie"
+    legacy = (
+        tmp_path
+        / "output_test"
+        / corpus
+        / "macro_transfer"
+        / "frozen_source_prototypes"
+        / "scgm"
+        / "transfer"
+    )
+    legacy.mkdir(parents=True)
+    (legacy / "metrics.json").write_text('{"balanced_accuracy": 0.42}', encoding="utf-8")
+
+    p = resolve_fsp_output_dir(corpus, "scgm_text", anchor=tmp_path)
+    assert p.name == "scgm"
+    assert (p / "transfer" / "metrics.json").is_file()
+
+
+def test_resolve_fsp_output_dir_prefers_canonical_over_legacy(tmp_path: Path):
+    corpus = "metallurgie"
+    root = tmp_path / "output_test" / corpus / "macro_transfer" / "frozen_source_prototypes"
+    for method, score in (("scgm_text", 0.9), ("scgm", 0.1)):
+        transfer = root / method / "transfer"
+        transfer.mkdir(parents=True)
+        (transfer / "metrics.json").write_text(
+            f'{{"balanced_accuracy": {score}}}', encoding="utf-8"
+        )
+
+    p = resolve_fsp_output_dir(corpus, "scgm_text", anchor=tmp_path)
+    assert p.name == "scgm_text"
+
+
 def test_resolve_fsp_checkpoint_from_block():
     ckpt = resolve_fsp_checkpoint(
         "softtriple",

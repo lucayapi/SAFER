@@ -14,7 +14,9 @@ from macro_transfer.notebook_viz import (
     RawTestEmbeddingVizResult,
     build_topics_display_dataframe,
     compute_fsp_confidence_calibration,
+    export_fsp_metrics_latex_table,
     get_fsp_top_confident_errors,
+    load_fsp_metrics_comparison_table,
     load_fsp_run_artifacts,
     merge_assignments,
     pick_accident_id_for_colored_text,
@@ -163,6 +165,23 @@ def test_load_fsp_run_artifacts_minimal(tmp_path: Path):
     assert len(art.predictions) == 2
 
 
+def test_load_fsp_run_artifacts_legacy_scgm_sibling(tmp_path: Path):
+    corpus_root = tmp_path / "output_test" / "metallurgie" / "macro_transfer" / "frozen_source_prototypes"
+    legacy_transfer = corpus_root / "scgm" / "transfer"
+    legacy_transfer.mkdir(parents=True)
+    pd.DataFrame({"pred_macro": ["A0"], "confidence": [0.8]}).to_csv(
+        legacy_transfer / "target_macro_predictions.csv", index=False
+    )
+    pd.DataFrame({"macro": ["A0"], "n_source": [1]}).to_csv(
+        legacy_transfer / "source_prototypes.csv", index=False
+    )
+
+    canonical = corpus_root / "scgm_text"
+    art = load_fsp_run_artifacts(canonical)
+    assert art.out_dir.name == "scgm"
+    assert len(art.predictions) == 1
+
+
 def test_fsp_confidence_calibration_and_errors():
     pred = pd.DataFrame(
         {
@@ -185,3 +204,31 @@ def test_resolve_test_label_col():
 def test_raw_test_embedding_viz_result_dataclass():
     r = RawTestEmbeddingVizResult(n_points=10, missing=[])
     assert r.n_points == 10
+
+
+def test_load_fsp_metrics_comparison_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    anchor = tmp_path
+    corpus = "metallurgie"
+
+    def _fake_out(method: str) -> Path:
+        root = anchor / "output_test" / corpus / "macro_transfer" / f"frozen_source_prototypes/{method}"
+        transfer = root / "transfer"
+        transfer.mkdir(parents=True, exist_ok=True)
+        metrics = {"balanced_accuracy": 0.4, "macro_f1": 0.3}
+        if method == "scgm_text":
+            metrics["method"] = "SCGM custom"
+        with open(transfer / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(metrics, f)
+        return root
+
+    monkeypatch.setattr(
+        "macro_transfer.fsp_config.resolve_fsp_output_dir",
+        lambda corpus_id, base_method, *, anchor, output_dir=None: _fake_out(base_method),
+    )
+
+    df = load_fsp_metrics_comparison_table(corpus, methods=["scgm_text", "raw_embedding"], anchor=anchor)
+    assert len(df) == 2
+    assert df.loc[df["method_key"] == "scgm_text", "Méthode"].iloc[0] == "SCGM custom"
+    assert df["metrics_available"].all()
+    latex = export_fsp_metrics_latex_table(df[["Méthode", "Bal. Acc.", "F1 (étapes)", "Confiance moy.", "Entropie moy."]])
+    assert "\\toprule" in latex

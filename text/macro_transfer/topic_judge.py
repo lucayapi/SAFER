@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from macro_transfer.constants import MACRO_NAMES
+from macro_transfer.openai_utils import is_openai_capacity_error
 from scgm_text.openai_theme_labels import (
     _get_client,
     _parse_json_content,
@@ -388,6 +389,7 @@ def run_topic_judge_evaluation(
     n_random = int(cfg.get("n_random", 5))
     min_n_units = int(cfg.get("min_n_units", 8))
     show_progress = bool(cfg.get("show_progress", True))
+    abort_on_openai_error = bool(cfg.get("abort_on_openai_error", True))
     timeout = cfg.get("request_timeout")
     request_timeout = float(timeout) if timeout is not None else None
 
@@ -447,6 +449,16 @@ def run_topic_judge_evaluation(
             )
             rows.append(result)
         except Exception as exc:
+            if abort_on_openai_error and is_openai_capacity_error(exc):
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Judge LLM interrompu (OpenAI) après macro=%s topic_id=%s : %s",
+                    macro,
+                    tid,
+                    exc,
+                )
+                break
             rows.append(
                 {
                     "macro": macro,

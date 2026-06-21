@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from macro_transfer.openai_utils import is_openai_capacity_error
 from macro_transfer.representation import (
     build_representation_model,
     representation_enabled,
@@ -60,6 +61,16 @@ def _parse_ngram_range(raw: Any) -> tuple[int, int]:
     if isinstance(raw, (list, tuple)) and len(raw) >= 2:
         return (int(raw[0]), int(raw[1]))
     return (1, 1)
+
+
+def representation_fallback_on_error(bertopic_cfg: Dict[str, Any]) -> bool:
+    """True si un échec OpenAI lors des libellés doit retomber sur c-TF-IDF."""
+    if bool(bertopic_cfg.get("_disable_representation", False)):
+        return False
+    if not representation_enabled(bertopic_cfg):
+        return False
+    rep_cfg = dict(bertopic_cfg.get("representation") or {})
+    return bool(rep_cfg.get("fallback_on_error", True))
 
 
 def bertopic_show_progress(bertopic_cfg: Dict[str, Any]) -> bool:
@@ -395,7 +406,28 @@ def fit_bertopic_subset(
             macro=macro,
             corpus_id=corpus_id,
         )
-    topics, probs = model.fit_transform(list(texts), embeddings)
+    try:
+        topics, probs = model.fit_transform(list(texts), embeddings)
+    except Exception as exc:
+        if representation_fallback_on_error(bertopic_cfg) and is_openai_capacity_error(exc):
+            if progress:
+                bertopic_progress(
+                    f"[BERTopic {label}] OpenAI indisponible ({type(exc).__name__}) — "
+                    "reprise sans libellés LLM (mots-clés c-TF-IDF uniquement)."
+                )
+            cfg_fb = dict(bertopic_cfg)
+            cfg_fb["_disable_representation"] = True
+            return fit_bertopic_subset(
+                texts,
+                embeddings,
+                cfg_fb,
+                random_state=random_state,
+                anchor=anchor,
+                macro=macro,
+                corpus_id=corpus_id,
+                show_progress=show_progress,
+            )
+        raise
     topic_arr = np.asarray(topics, dtype=np.int64)
     if progress:
         n_topics = len({int(t) for t in topic_arr if int(t) >= 0})

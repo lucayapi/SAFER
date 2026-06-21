@@ -43,17 +43,21 @@ def main() -> None:
     cells = [
         md(
             r"""
-# 08 — Diagnostics Frozen Source Prototypes
+# 08 — Diagnostics Frozen Source Prototypes (toutes méthodes)
 
-Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/frozen_source_prototypes/<FSP_BASE_METHOD>/`.
+Synthèse comparative de **toutes** les méthodes FSP (`scgm_text`, `softtriple`, `supcon`, `batch_triplet`, `raw_embedding`).
 
-**Prérequis** : `BASE_METHOD=<encodeur> CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh`
+Artefacts sous `output_test/<TEST_CORPUS>/macro_transfer/frozen_source_prototypes/<méthode>/`.
+
+**Prérequis** : lancer un run par encodeur —
+`BASE_METHOD=<encodeur> CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh`
+
+La section détail utilise `FSP_BASE_METHOD` (variable d'environnement ou valeur par défaut).
 """
         ),
         py(
             NOTEBOOK_PATH_SETUP
             + """
-import json
 import os
 from pathlib import Path
 
@@ -62,9 +66,12 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-from safer_core.test_corpus import macro_transfer_output_dir
+from macro_transfer.fsp_config import FSP_ENCODER_METHODS, resolve_fsp_output_dir
 from macro_transfer.notebook_viz import (
+    export_fsp_metrics_latex_table,
+    load_fsp_metrics_comparison_table,
     load_fsp_run_artifacts,
+    plot_fsp_methods_metrics_comparison,
     plot_fsp_distribution_histograms,
     plot_fsp_pred_macro_distribution,
     plot_fsp_distance_boxplot,
@@ -74,18 +81,61 @@ from macro_transfer.notebook_viz import (
 )
 
 TEST_CORPUS = os.environ.get("TEST_CORPUS", "metallurgie")
-FSP_BASE_METHOD = "scgm_text"
-OUT_DIR = macro_transfer_output_dir(f"frozen_source_prototypes/{FSP_BASE_METHOD}", TEST_CORPUS, anchor=TEXT_ROOT)
+FSP_TRAINED_METHODS = [m for m in FSP_ENCODER_METHODS if m != "raw_embedding"]
+FSP_BASE_METHOD = os.environ.get("FSP_BASE_METHOD", "scgm_text")
+
+def fsp_out_dir(method: str) -> Path:
+    return resolve_fsp_output_dir(TEST_CORPUS, method, anchor=TEXT_ROOT)
+
+OUT_DIR = fsp_out_dir(FSP_BASE_METHOD)
+ROOT_FSP = OUT_DIR.parent
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"08_fsp_{TEST_CORPUS}"
+FIG_DETAIL_DIR = FIG_DIR / FSP_BASE_METHOD
 FIG_DIR.mkdir(parents=True, exist_ok=True)
+FIG_DETAIL_DIR.mkdir(parents=True, exist_ok=True)
 
 print("Corpus test :", TEST_CORPUS)
+print("Méthodes FSP :", ", ".join(FSP_ENCODER_METHODS))
+print("Détail (FSP_BASE_METHOD) :", FSP_BASE_METHOD)
 print("OUT_DIR :", OUT_DIR)
-print("Predictions file :", OUT_DIR / "transfer" / "target_macro_predictions.csv")
 sns.set_theme(style="whitegrid")
 """
         ),
-        md("## § Chargement et résumé"),
+        md("## § Synthèse — toutes les méthodes"),
+        py(
+            r"""
+all_methods_df = load_fsp_metrics_comparison_table(TEST_CORPUS, anchor=TEXT_ROOT)
+display_cols = ["Méthode", "Bal. Acc.", "F1 (étapes)", "Confiance moy.", "Entropie moy.", "metrics_available"]
+display(all_methods_df[display_cols])
+
+missing = all_methods_df.loc[~all_methods_df["metrics_available"], "method_key"].tolist()
+if missing:
+    print("Runs manquants (metrics.json absent) :", ", ".join(missing))
+    print("Relancer : BASE_METHOD=<encodeur> CORPUS=" + TEST_CORPUS + " bash jobs/run_frozen_source_prototypes.sh")
+
+export_df = all_methods_df[["Méthode", "Bal. Acc.", "F1 (étapes)", "Confiance moy.", "Entropie moy."]].copy()
+TABLE_CSV = ROOT_FSP / "table_transfer_direct_all_methods.csv"
+TABLE_TEX = ROOT_FSP / "table_transfer_direct_all_methods.tex"
+ROOT_FSP.mkdir(parents=True, exist_ok=True)
+export_df.to_csv(TABLE_CSV, index=False)
+latex_table = export_fsp_metrics_latex_table(export_df)
+print(latex_table)
+TABLE_TEX.write_text(latex_table + "\n", encoding="utf-8")
+print("CSV :", TABLE_CSV)
+print("TEX :", TABLE_TEX)
+
+plot_fsp_methods_metrics_comparison(all_methods_df, fig_dir=FIG_DIR)
+"""
+        ),
+        md(
+            r"""
+## § Détail méthode sélectionnée (`FSP_BASE_METHOD`)
+
+Changer `FSP_BASE_METHOD` (ou `os.environ["FSP_BASE_METHOD"]`) puis réexécuter à partir d'ici
+pour explorer une autre méthode : `scgm_text`, `softtriple`, `supcon`, `batch_triplet`, `raw_embedding`.
+"""
+        ),
+        md("### Chargement et résumé"),
         py(
             r"""
 ART = load_fsp_run_artifacts(OUT_DIR)
@@ -99,106 +149,15 @@ else:
     print("metrics.json absent.")
 """
         ),
-        md("## § Comparaison transfert direct (raw vs méthode source)"),
+        md("### Distribution étapes et scores"),
         py(
             r"""
-from pathlib import Path
-import math
-
-ROOT_FSP = OUT_DIR.parent
-RAW_METRICS = macro_transfer_output_dir("frozen_source_prototypes/raw_embedding", TEST_CORPUS, anchor=TEXT_ROOT) / "transfer" / "metrics.json"
-METHOD_METRICS = OUT_DIR / "transfer" / "metrics.json"
-TABLE_CSV = ROOT_FSP / f"table_transfer_direct_{FSP_BASE_METHOD}.csv"
-TABLE_TEX = ROOT_FSP / f"table_transfer_direct_{FSP_BASE_METHOD}.tex"
-ROOT_FSP.mkdir(parents=True, exist_ok=True)
-
-def _load_metrics(path: Path):
-    if not path.is_file():
-        print(f"[WARN] metrics.json absent: {path}")
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-def _to_float(v):
-    try:
-        x = float(v)
-        if math.isnan(x):
-            return np.nan
-        return x
-    except Exception:
-        return np.nan
-
-raw_m = _load_metrics(RAW_METRICS) or {}
-method_m = _load_metrics(METHOD_METRICS) or {}
-
-row_raw = {
-    "Méthode": "Embedding brut + prototypes source",
-    "Bal. Acc.": _to_float(raw_m.get("balanced_accuracy", np.nan)),
-    "F1 (étapes)": _to_float(raw_m.get("macro_f1", np.nan)),
-    "Confiance moy.": _to_float(raw_m.get("mean_confidence", np.nan)),
-    "Entropie moy.": _to_float(raw_m.get("mean_entropy", np.nan)),
-}
-method_label = method_m.get("method", f"{FSP_BASE_METHOD} + prototypes source gelés")
-row_method = {
-    "Méthode": str(method_label),
-    "Bal. Acc.": _to_float(method_m.get("balanced_accuracy", np.nan)),
-    "F1 (étapes)": _to_float(method_m.get("macro_f1", np.nan)),
-    "Confiance moy.": _to_float(method_m.get("mean_confidence", np.nan)),
-    "Entropie moy.": _to_float(method_m.get("mean_entropy", np.nan)),
-}
-
-table_df = pd.DataFrame([row_raw, row_method])
-display(table_df)
-table_df.to_csv(TABLE_CSV, index=False)
-
-def _winner_indices(values, mode="max"):
-    s = pd.Series(values, dtype="float64")
-    if s.notna().sum() == 0:
-        return set()
-    best = s.max() if mode == "max" else s.min()
-    return set(s.index[s == best].tolist())
-
-def _fmt(v, bold=False):
-    if pd.isna(v):
-        return "--"
-    txt = f"{float(v):.4f}"
-    return f"\\textbf{{{txt}}}" if bold else txt
-
-best_bal = _winner_indices(table_df["Bal. Acc."], mode="max")
-best_f1 = _winner_indices(table_df["F1 (étapes)"], mode="max")
-best_conf = _winner_indices(table_df["Confiance moy."], mode="max")
-best_ent = _winner_indices(table_df["Entropie moy."], mode="min")
-
-lines = []
-lines.append("\\begin{tabular}{lcccc}")
-lines.append("\\toprule")
-lines.append("\\textbf{Méthode} & \\textbf{Bal. Acc.} & \\textbf{F1 (étapes)} & \\textbf{Confiance moy.} & \\textbf{Entropie moy.} \\\\")
-lines.append("\\midrule")
-for i, row in table_df.iterrows():
-    lines.append(
-        f"{row['Méthode']} & "
-        f"{_fmt(row['Bal. Acc.'], i in best_bal)} & "
-        f"{_fmt(row['F1 (étapes)'], i in best_f1)} & "
-        f"{_fmt(row['Confiance moy.'], i in best_conf)} & "
-        f"{_fmt(row['Entropie moy.'], i in best_ent)} \\\\"
-    )
-lines.append("\\bottomrule")
-lines.append("\\end{tabular}")
-latex_table = "\n".join(lines)
-print(latex_table)
-TABLE_TEX.write_text(latex_table + "\n", encoding="utf-8")
-print("CSV :", TABLE_CSV)
-print("TEX :", TABLE_TEX)
+plot_fsp_pred_macro_distribution(pred, fig_dir=FIG_DETAIL_DIR)
+plot_fsp_distribution_histograms(pred, fig_dir=FIG_DETAIL_DIR)
+plot_fsp_distance_boxplot(pred, fig_dir=FIG_DETAIL_DIR)
 """
         ),
-        md("## § Distribution étapes et scores"),
-        py(
-            r"""
-plot_fsp_pred_macro_distribution(pred, fig_dir=FIG_DIR)
-plot_fsp_distribution_histograms(pred, fig_dir=FIG_DIR)
-plot_fsp_distance_boxplot(pred, fig_dir=FIG_DIR)
-"""
-        ),
-        md("## § Probabilités et distances"),
+        md("### Probabilités et distances"),
         py(
             r"""
 prob_cols = [c for c in pred.columns if c.startswith("prob_")]
@@ -208,12 +167,12 @@ print("Colonnes dist_* :", dist_cols)
 display(pred[[c for c in ["pred_macro", "confidence", "margin", "entropy"] + prob_cols[:4] + dist_cols[:4] if c in pred.columns]].head())
 """
         ),
-        md("## § Confusion, report, calibration"),
+        md("### Confusion, report, calibration"),
         py(
             r"""
 if ART.confusion is not None and not ART.confusion.empty:
     display(ART.confusion)
-    plot_fsp_confusion_heatmap(ART.confusion, fig_dir=FIG_DIR)
+    plot_fsp_confusion_heatmap(ART.confusion, fig_dir=FIG_DETAIL_DIR)
 else:
     print("confusion_matrix.csv absent.")
 
@@ -231,13 +190,13 @@ if cal is not None and not cal.empty:
     ax.set_title("Calibration confiance")
     ax.set_xlabel("confidence moyenne")
     ax.set_ylabel("accuracy")
-    fig.savefig(FIG_DIR / "calibration.png", dpi=120, bbox_inches="tight")
+    fig.savefig(FIG_DETAIL_DIR / "calibration.png", dpi=120, bbox_inches="tight")
     plt.show()
 else:
     print("Calibration non disponible.")
 """
         ),
-        md("## § Erreurs à forte confiance"),
+        md("### Erreurs à forte confiance"),
         py(
             r"""
 top_err = get_fsp_top_confident_errors(pred, top_k=30)
@@ -248,7 +207,7 @@ else:
     display(top_err[cols])
 """
         ),
-        md("## § Inputs BERTopic"),
+        md("### Inputs BERTopic"),
         py(
             r"""
 all_path = OUT_DIR / "transfer" / "bertopic_input_all.csv"
@@ -267,7 +226,7 @@ for macro in ("A0", "A1", "B", "C"):
         print(f"{macro}: fichier absent")
 """
         ),
-        md("## § BERTopic thèmes / labels"),
+        md("### BERTopic thèmes / labels"),
         py(
             r"""
 themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
@@ -295,8 +254,15 @@ else:
 """
         ),
         md(notebook_topic_judge_section_md()),
-        py(notebook_topic_judge_source("OUT_DIR", "FIG_DIR", restimate_var=None)),
-        md("## § Tableau topics par étape (format article / LaTeX)"),
+        py(
+            notebook_topic_judge_source(
+                "OUT_DIR",
+                "FIG_DETAIL_DIR",
+                restimate_var=None,
+                topic_judge_cfg_var=None,
+            )
+        ),
+        md("### Tableau topics par étape (format article / LaTeX)"),
         py(
             r"""
 stats_path = OUT_DIR / "summary" / "macro_topic_stats.csv"

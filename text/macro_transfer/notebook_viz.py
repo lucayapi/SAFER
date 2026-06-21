@@ -54,6 +54,8 @@ def _read_optional_csv(path: Path) -> Optional[pd.DataFrame]:
 
 def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
     """Charge les sorties baseline Frozen Source Prototypes."""
+    from macro_transfer.fsp_config import FSP_LEGACY_OUTPUT_DIR_ALIASES
+
     root = Path(out_dir).resolve()
     transfer = root / "transfer"
     if not transfer.is_dir():
@@ -64,6 +66,14 @@ def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
                 root = root / variant
                 transfer = cand
                 break
+        if not transfer.is_dir() and root.parent.name == "frozen_source_prototypes":
+            legacy_suffix = FSP_LEGACY_OUTPUT_DIR_ALIASES.get(root.name)
+            if legacy_suffix:
+                cand_root = root.parent / legacy_suffix
+                cand_transfer = cand_root / "transfer"
+                if cand_transfer.is_dir():
+                    root = cand_root
+                    transfer = cand_transfer
     preds_path = transfer / "target_macro_predictions.csv"
     protos_path = transfer / "source_prototypes.csv"
     if not preds_path.is_file():
@@ -84,6 +94,140 @@ def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
         confusion=_read_optional_csv(transfer / "confusion_matrix.csv"),
         classification_report=_read_optional_csv(transfer / "classification_report.csv"),
     )
+
+
+def _fsp_metric_to_float(value: Any) -> float:
+    try:
+        x = float(value)
+        if np.isnan(x):
+            return np.nan
+        return x
+    except (TypeError, ValueError):
+        return np.nan
+
+
+def load_fsp_metrics_comparison_table(
+    corpus_id: str,
+    *,
+    methods: Optional[Sequence[str]] = None,
+    anchor: Path,
+) -> pd.DataFrame:
+    """Table comparative des métriques transfer/metrics.json pour chaque encodeur FSP."""
+    from macro_transfer.fsp_config import (
+        FSP_ENCODER_METHODS,
+        resolve_fsp_method_display_name,
+        resolve_fsp_output_dir,
+    )
+
+    use_methods = list(methods or FSP_ENCODER_METHODS)
+    rows: List[Dict[str, Any]] = []
+    for method in use_methods:
+        out_dir = resolve_fsp_output_dir(corpus_id, method, anchor=anchor)
+        metrics_path = out_dir / "transfer" / "metrics.json"
+        metrics: Dict[str, Any] = {}
+        if metrics_path.is_file():
+            with open(metrics_path, encoding="utf-8") as f:
+                metrics = json.load(f)
+        label = metrics.get("method") or resolve_fsp_method_display_name(method)
+        rows.append(
+            {
+                "method_key": method,
+                "Méthode": str(label),
+                "Bal. Acc.": _fsp_metric_to_float(metrics.get("balanced_accuracy", np.nan)),
+                F1_STEPS: _fsp_metric_to_float(metrics.get("macro_f1", np.nan)),
+                "Confiance moy.": _fsp_metric_to_float(metrics.get("mean_confidence", np.nan)),
+                "Entropie moy.": _fsp_metric_to_float(metrics.get("mean_entropy", np.nan)),
+                "metrics_available": metrics_path.is_file(),
+                "out_dir": str(out_dir),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def export_fsp_metrics_latex_table(table_df: pd.DataFrame) -> str:
+    """Exporte un tableau LaTeX avec meilleures valeurs en gras."""
+    metric_cols = ["Bal. Acc.", F1_STEPS, "Confiance moy.", "Entropie moy."]
+    display_df = table_df[["Méthode", *metric_cols]].copy()
+
+    def _winner_indices(values: Sequence[Any], *, mode: str = "max") -> set[int]:
+        s = pd.Series(values, dtype="float64")
+        if s.notna().sum() == 0:
+            return set()
+        best = s.max() if mode == "max" else s.min()
+        return set(s.index[s == best].tolist())
+
+    def _fmt(value: Any, bold: bool = False) -> str:
+        if pd.isna(value):
+            return "--"
+        txt = f"{float(value):.4f}"
+        return f"\\textbf{{{txt}}}" if bold else txt
+
+    best_bal = _winner_indices(display_df["Bal. Acc."], mode="max")
+    best_f1 = _winner_indices(display_df[F1_STEPS], mode="max")
+    best_conf = _winner_indices(display_df["Confiance moy."], mode="max")
+    best_ent = _winner_indices(display_df["Entropie moy."], mode="min")
+
+    lines = [
+        "\\begin{tabular}{lcccc}",
+        "\\toprule",
+        "\\textbf{Méthode} & \\textbf{Bal. Acc.} & "
+        f"\\textbf{{{F1_STEPS}}} & \\textbf{{Confiance moy.}} & \\textbf{{Entropie moy.}} \\\\",
+        "\\midrule",
+    ]
+    for i, row in display_df.iterrows():
+        lines.append(
+            f"{row['Méthode']} & "
+            f"{_fmt(row['Bal. Acc.'], i in best_bal)} & "
+            f"{_fmt(row[F1_STEPS], i in best_f1)} & "
+            f"{_fmt(row['Confiance moy.'], i in best_conf)} & "
+            f"{_fmt(row['Entropie moy.'], i in best_ent)} \\\\"
+        )
+    lines.extend(["\\bottomrule", "\\end{tabular}"])
+    return "\n".join(lines)
+
+
+def plot_fsp_methods_metrics_comparison(
+    table_df: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+    show: bool = True,
+) -> Optional[Path]:
+    """Barres Bal. Acc. et F1 pour toutes les méthodes FSP disponibles."""
+    if "metrics_available" in table_df.columns:
+        plot_df = table_df[table_df["metrics_available"]].copy()
+    else:
+        plot_df = table_df.copy()
+    if plot_df.empty:
+        return None
+
+    labels = plot_df["Méthode"].astype(str).tolist()
+    x = np.arange(len(labels))
+    width = 0.35
+
+    fig, axes = plt.subplots(1, 2, figsize=(max(8, len(labels) * 1.2), 4))
+    for ax, col, title in (
+        (axes[0], "Bal. Acc.", "Balanced accuracy"),
+        (axes[1], F1_STEPS, F1_STEPS),
+    ):
+        vals = plot_df[col].astype(float)
+        ax.bar(x, vals, color="#4c78a8")
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, rotation=35, ha="right")
+        ax.set_ylim(0, 1)
+        ax.set_title(title)
+
+    fig.tight_layout()
+    out_path: Optional[Path] = None
+    if fig_dir is not None:
+        fig_dir = Path(fig_dir)
+        fig_dir.mkdir(parents=True, exist_ok=True)
+        out_path = fig_dir / "fsp_methods_metrics_comparison.png"
+        fig.savefig(out_path, dpi=120, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    return out_path
 
 
 def get_fsp_macro_columns(predictions: pd.DataFrame) -> tuple[List[str], List[str]]:

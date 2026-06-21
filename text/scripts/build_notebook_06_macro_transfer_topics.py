@@ -217,7 +217,14 @@ else:
 """
         ),
         md(notebook_topic_judge_section_md()),
-        py(notebook_topic_judge_source("OUT_DIR", "FIG_DIR", restimate_var=None)),
+        py(
+            notebook_topic_judge_source(
+                "OUT_DIR",
+                "FIG_DIR",
+                restimate_var=None,
+                topic_judge_cfg_var=None,
+            )
+        ),
         md("## § Fichiers attendus / robustesse"),
         py(
             r"""

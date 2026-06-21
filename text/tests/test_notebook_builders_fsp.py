@@ -29,10 +29,12 @@ def test_builder_08_references_fsp_and_not_tpn_training():
     src = _read(TEXT_ROOT / "scripts" / "build_notebook_08_fsp_macro_transfer.py")
     assert "frozen_source_prototypes" in src
     assert "FSP_BASE_METHOD" in src
+    assert "FSP_ENCODER_METHODS" in src
     assert "raw_embedding" in src
-    assert "target_macro_predictions.csv" in src
-    assert "table_transfer_direct" in src
-    assert "\\\\toprule" in src
+    assert "load_fsp_run_artifacts" in src
+    assert "table_transfer_direct_all_methods" in src
+    assert "load_fsp_metrics_comparison_table" in src
+    assert "export_fsp_metrics_latex_table" in src
     assert "classification_report.csv" in src
     assert "confusion_matrix.csv" in src
     assert "training_log.csv" not in src

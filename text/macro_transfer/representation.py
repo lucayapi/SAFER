@@ -146,10 +146,12 @@ def build_representation_model(
         "prompt": prompt,
         "chat": chat,
         "nr_docs": nr_docs,
-        "exponential_backoff": bool(rep_cfg.get("exponential_backoff", False)),
+        "exponential_backoff": bool(rep_cfg.get("exponential_backoff", True)),
     }
     if delay_in_seconds is not None:
         kwargs["delay_in_seconds"] = delay_in_seconds
+    elif bool(rep_cfg.get("delay_in_seconds_auto", True)):
+        kwargs["delay_in_seconds"] = float(rep_cfg.get("default_delay_in_seconds", 0.75))
     if doc_length is not None:
         kwargs["doc_length"] = doc_length
     if tokenizer is not None:

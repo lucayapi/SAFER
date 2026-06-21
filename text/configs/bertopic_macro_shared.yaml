@@ -39,6 +39,9 @@ bertopic:
     chat: true
     nr_docs: 50
     include_corpus_context: true
+    fallback_on_error: true
+    exponential_backoff: true
+    delay_in_seconds: 0.75
   diagnostics:
     show_progress: true
     save_datamap: false
@@ -54,6 +57,7 @@ topic_judge:
   min_n_units: 8
   temperature: 0.2
   show_progress: true
+  abort_on_openai_error: true
 
 topics_export:
   top_k_words: 12

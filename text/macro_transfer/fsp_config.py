@@ -30,6 +30,12 @@ FSP_METHOD_ALIASES: dict[str, str] = {
     "raw": "raw_embedding",
 }
 
+# Dossiers legacy sous frozen_source_prototypes/ (avant renommage scgm_text / raw_embedding).
+FSP_LEGACY_OUTPUT_DIR_ALIASES: dict[str, str] = {
+    "scgm_text": "scgm",
+    "raw_embedding": "raw",
+}
+
 
 def normalize_fsp_base_method(method: str) -> str:
     m = str(method).strip()
@@ -52,6 +58,15 @@ def fsp_output_method_key(base_method: str) -> str:
     return f"frozen_source_prototypes/{base}"
 
 
+def _fsp_has_transfer_artifacts(root: Path) -> bool:
+    transfer = root / "transfer"
+    if not transfer.is_dir():
+        return False
+    return (transfer / "metrics.json").is_file() or (
+        transfer / "target_macro_predictions.csv"
+    ).is_file()
+
+
 def resolve_fsp_output_dir(
     corpus: str,
     base_method: str,
@@ -61,11 +76,27 @@ def resolve_fsp_output_dir(
 ) -> Path:
     if output_dir:
         return resolve_repo_path(str(output_dir), repo_root=anchor)
-    return macro_transfer_output_dir(
-        fsp_output_method_key(base_method),
+
+    base = validate_fsp_base_method(base_method)
+    canonical = macro_transfer_output_dir(
+        fsp_output_method_key(base),
         corpus,
         anchor=anchor,
     )
+    if _fsp_has_transfer_artifacts(canonical):
+        return canonical
+
+    legacy_suffix = FSP_LEGACY_OUTPUT_DIR_ALIASES.get(base)
+    if legacy_suffix:
+        legacy = macro_transfer_output_dir(
+            f"frozen_source_prototypes/{legacy_suffix}",
+            corpus,
+            anchor=anchor,
+        )
+        if _fsp_has_transfer_artifacts(legacy):
+            return legacy
+
+    return canonical
 
 
 def resolve_fsp_checkpoint(
