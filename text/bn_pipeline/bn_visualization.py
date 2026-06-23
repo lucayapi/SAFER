@@ -631,6 +631,79 @@ def extract_subgraph_for_slide(
     return nodes, edges
 
 
+def path_nodes_from_scenario_row(row: Any) -> list[str]:
+    """Extrait les nœuds BN d'une ligne scénario (``path_nodes`` ou ``topics_present``)."""
+    if isinstance(row, dict):
+        row = pd.Series(row)
+    path_nodes = [
+        p.strip()
+        for p in str(row.get("path_nodes", "")).split(" -> ")
+        if p.strip()
+    ]
+    if not path_nodes:
+        raw_topics = row.get("topics_present", "")
+        if raw_topics is not None and str(raw_topics).strip():
+            path_nodes = [
+                t.strip()
+                for t in str(raw_topics).split("+")
+                if t.strip()
+            ]
+    return path_nodes
+
+
+def plot_bn_scenario_slide(
+    model: Any,
+    scenario_row: Any,
+    variable_macro_map: Dict[str, str],
+    output_path: Path,
+    *,
+    short_title_map: Optional[Dict[str, str]] = None,
+    themes_df: Optional[pd.DataFrame] = None,
+    title: Optional[str] = None,
+    rank: Optional[int] = None,
+    figsize: tuple[float, float] = (10.0, 4.0),
+    col_gap: float = 1.8,
+    row_gap: float = 1.0,
+    box_width: float = 1.5,
+    title_wrap_width: int = 18,
+) -> bool:
+    """Graphe slide compact pour un scénario (chemin causal du BN)."""
+    path_nodes = path_nodes_from_scenario_row(scenario_row)
+    if not path_nodes:
+        return False
+    nodes_sub, edges_sub = extract_subgraph_for_slide(
+        model, path_nodes, variable_macro_map
+    )
+    if title is None:
+        macro_path = ""
+        if hasattr(scenario_row, "get"):
+            macro_path = str(
+                scenario_row.get("macro_path", "")
+                or scenario_row.get("configuration_probable", "")
+            ).strip()
+        if rank is not None:
+            prefix = f"Scénario #{int(rank) + 1}"
+        else:
+            prefix = "Scénario"
+        title = f"{prefix} — {macro_path}" if macro_path else f"{prefix} — chemin causal"
+    plot_bn_graph_cpd_boxes(
+        model,
+        variable_macro_map,
+        Path(output_path),
+        title=title,
+        short_title_map=short_title_map,
+        themes_df=themes_df,
+        nodes_subset=nodes_sub,
+        edges_subset=edges_sub,
+        figsize=figsize,
+        col_gap=col_gap,
+        row_gap=row_gap,
+        box_width=box_width,
+        title_wrap_width=title_wrap_width,
+    )
+    return True
+
+
 def plot_bn_graph_cpd_boxes(
     model: Any,
     variable_macro_map: Dict[str, str],

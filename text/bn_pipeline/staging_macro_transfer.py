@@ -27,6 +27,7 @@ METADATA_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/scgm_text": _FSP_METADATA,
     "frozen_source_prototypes/raw_embedding": _FSP_METADATA,
     "frozen_source_prototypes/softtriple": _FSP_METADATA,
+    "frozen_source_prototypes/softtriple_native": _FSP_METADATA,
     "frozen_source_prototypes/supcon": _FSP_METADATA,
     "frozen_source_prototypes/batch_triplet": _FSP_METADATA,
 }
@@ -38,6 +39,7 @@ BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/scgm_text": "frozen_source_prototypes_scgm_text",
     "frozen_source_prototypes/raw_embedding": "frozen_source_prototypes_raw_embedding",
     "frozen_source_prototypes/softtriple": "frozen_source_prototypes_softtriple",
+    "frozen_source_prototypes/softtriple_native": "frozen_source_prototypes_softtriple_native",
     "frozen_source_prototypes/supcon": "frozen_source_prototypes_supcon",
     "frozen_source_prototypes/batch_triplet": "frozen_source_prototypes_batch_triplet",
 }

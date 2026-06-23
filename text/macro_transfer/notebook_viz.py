@@ -425,6 +425,174 @@ def get_fsp_top_confident_errors(
     return out.head(top_k)
 
 
+def _load_fsp_metrics_json(out_dir: Path) -> dict[str, Any]:
+    metrics_path = out_dir / "transfer" / "metrics.json"
+    if not metrics_path.is_file():
+        return {}
+    with open(metrics_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_softtriple_native_vs_legacy_metrics(
+    corpus_id: str,
+    *,
+    anchor: Path,
+) -> pd.DataFrame:
+    """Compare métriques FSP softtriple_native vs softtriple (prototype moyen)."""
+    from macro_transfer.fsp_config import (
+        FSP_SOFTTRIPLE_NATIVE_METHOD,
+        resolve_fsp_output_dir,
+    )
+
+    rows: list[dict[str, Any]] = []
+    for method_key, label in (
+        (FSP_SOFTTRIPLE_NATIVE_METHOD, "SoftTriple (centres natifs)"),
+        ("softtriple", "SoftTriple (prototype moyen)"),
+    ):
+        out_dir = resolve_fsp_output_dir(corpus_id, method_key, anchor=anchor)
+        metrics = _load_fsp_metrics_json(out_dir)
+        rows.append(
+            {
+                "method_key": method_key,
+                "Méthode": label,
+                "Bal. Acc.": _fsp_metric_to_float(metrics.get("balanced_accuracy")),
+                "F1 (étapes)": _fsp_metric_to_float(metrics.get("macro_f1")),
+                "Confiance moy.": _fsp_metric_to_float(metrics.get("mean_confidence")),
+                "Entropie moy.": _fsp_metric_to_float(metrics.get("mean_entropy")),
+                "assignment_mode": metrics.get("assignment_mode"),
+                "gamma": metrics.get("gamma"),
+                "temperature": metrics.get("temperature"),
+                "distance_metric": metrics.get("distance_metric"),
+                "centers_per_class": metrics.get("centers_per_class"),
+                "metrics_available": bool(metrics),
+                "out_dir": str(out_dir),
+            }
+        )
+    df = pd.DataFrame(rows)
+    if len(df) == 2 and df["metrics_available"].all():
+        native = df.iloc[0]
+        legacy = df.iloc[1]
+        df.loc[len(df)] = {
+            "method_key": "delta_native_minus_legacy",
+            "Méthode": "Δ (natif − legacy)",
+            "Bal. Acc.": native["Bal. Acc."] - legacy["Bal. Acc."],
+            "F1 (étapes)": native["F1 (étapes)"] - legacy["F1 (étapes)"],
+            "Confiance moy.": native["Confiance moy."] - legacy["Confiance moy."],
+            "Entropie moy.": native["Entropie moy."] - legacy["Entropie moy."],
+            "metrics_available": True,
+        }
+    return df
+
+
+def _prototype_dim_matrix(prototypes: pd.DataFrame) -> tuple[np.ndarray, list[str]]:
+    dim_cols = [c for c in prototypes.columns if c.startswith("dim_")]
+    if not dim_cols:
+        raise ValueError("Colonnes dim_* absentes dans source_prototypes.csv")
+    labels: list[str] = []
+    if "macro" in prototypes.columns and "center_k" in prototypes.columns:
+        for _, row in prototypes.iterrows():
+            labels.append(f"{row['macro']}_k{int(row['center_k'])}")
+    else:
+        labels = [f"c{i}" for i in range(len(prototypes))]
+    mat = prototypes[dim_cols].to_numpy(dtype=np.float64)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    norms = np.where(norms > 1e-12, norms, 1.0)
+    mat = mat / norms
+    return mat, labels
+
+
+def plot_softtriple_center_similarity_heatmap(
+    prototypes: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+    filename: str = "softtriple_center_similarity_heatmap.png",
+) -> None:
+    """Heatmap cosinus entre centres W_{r,k}."""
+    import seaborn as sns
+
+    mat, labels = _prototype_dim_matrix(prototypes)
+    sim = mat @ mat.T
+    fig, ax = plt.subplots(figsize=(max(6, len(labels) * 0.45), max(5, len(labels) * 0.4)))
+    sns.heatmap(sim, xticklabels=labels, yticklabels=labels, cmap="coolwarm", vmin=-1, vmax=1, ax=ax)
+    ax.set_title("Similarité cosinus entre centres SoftTriple")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / filename, dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_softtriple_center_weight_bars(
+    summary_df: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+    filename: str = "softtriple_center_weight_bars.png",
+) -> None:
+    """Barplot des poids moyens alpha par macro et centre k."""
+    import seaborn as sns
+
+    if summary_df.empty or "mean_weight" not in summary_df.columns:
+        print("(absent) softtriple_center_weights_summary")
+        return
+    df = summary_df.copy()
+    if "center_k" in df.columns and "macro" in df.columns:
+        df["label"] = df["macro"].astype(str) + "_k" + df["center_k"].astype(int).astype(str)
+    else:
+        df["label"] = df.index.astype(str)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.barplot(data=df, x="label", y="mean_weight", hue="macro" if "macro" in df.columns else None, ax=ax)
+    ax.set_title("Poids moyens des centres (alpha) sur le corpus cible")
+    ax.set_xlabel("centre")
+    ax.set_ylabel("mean_weight")
+    plt.xticks(rotation=45, ha="right")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / filename, dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
+def plot_softtriple_relaxed_score_boxplot(
+    predictions: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+    filename: str = "softtriple_relaxed_score_boxplot.png",
+) -> None:
+    """Boxplot des scores agrégés S (via dist_* = -S) par macro prédite."""
+    import seaborn as sns
+
+    if "pred_macro" not in predictions.columns:
+        print("(absent) pred_macro")
+        return
+    _, dist_cols = get_fsp_macro_columns(predictions)
+    if not dist_cols:
+        print("(absent) colonnes dist_*")
+        return
+    long_df = predictions.melt(
+        id_vars=["pred_macro"],
+        value_vars=dist_cols,
+        var_name="score_macro",
+        value_name="neg_relaxed_score",
+    )
+    long_df["relaxed_score"] = -pd.to_numeric(long_df["neg_relaxed_score"], errors="coerce")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    sns.boxplot(data=long_df, x="pred_macro", y="relaxed_score", hue="score_macro", ax=ax)
+    ax.set_title("Scores relaxés S par macro (dist_* = -S)")
+    ax.legend(title="macro score")
+    plt.tight_layout()
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out / filename, dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+
 def _theme_label_map(themes: pd.DataFrame, *, max_chars: int = 52) -> Dict[Tuple[str, int], str]:
     """Libellés courts pour DataMapPlot (theme_label / theme_title / top_words)."""
     if themes.empty or "macro" not in themes.columns or "topic_id" not in themes.columns:

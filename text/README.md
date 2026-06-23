@@ -178,12 +178,19 @@ Paramètres : [`configs/frozen_source_prototypes.yaml`](configs/frozen_source_pr
 |-------|----------|
 | FSP + BERTopic | `BASE_METHOD=scgm_text CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
 | Autre encodeur | `BASE_METHOD=softtriple CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
+| **SoftTriple centres natifs** | `CORPUS=<id> bash jobs/run_softtriple_native_fsp.sh` (job dédié, sortie `softtriple_native/`) |
 | Embedding brut | `BASE_METHOD=raw_embedding CORPUS=<id> bash jobs/run_frozen_source_prototypes.sh` |
+| CLI natif | `python scripts/run_softtriple_native_fsp.py --corpus <id>` |
+| Notebook 09 | diagnostics SoftTriple natif vs prototype moyen (`build_notebook_09_softtriple_native_fsp.py`) |
 | CLI | `python scripts/run_frozen_source_prototypes.py --config configs/frozen_source_prototypes.yaml --base-method softtriple --corpus <id>` |
 | Notebook 06 | topics + calibration FSP |
 | Notebook 08 | comparaison raw vs encodeur (`FSP_BASE_METHOD`) |
 
 **Sorties** : `output_test/<corpus_id>/macro_transfer/frozen_source_prototypes/<base_method>/`
+
+Pour **SoftTriple**, deux modes coexistent :
+- `softtriple/` — job FSP générique (`BASE_METHOD=softtriple`) : prototype moyen des embeddings BTP par macro ;
+- `softtriple_native/` — job dédié : affectation via centres appris `W_{r,k}` (`macro_probs_softtriple`, cosine par défaut au transfert). L'entraînement SoftTriple peut utiliser une métrique euclidienne ; le YAML natif permet `distance_metric: euclidean` pour comparer.
 
 Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles (alias staging BN).
 
@@ -230,6 +237,7 @@ python scripts/build_notebook_04_bn_macro_transfer.py
 python scripts/build_notebook_06_macro_transfer_topics.py
 python scripts/build_notebook_07_supervised_macro_baseline.py
 python scripts/build_notebook_08_fsp_macro_transfer.py
+python scripts/build_notebook_09_softtriple_native_fsp.py
 ```
 
 ## Métriques principales

@@ -17,6 +17,7 @@ from macro_transfer.topic_judge import (
     parse_judge_response,
     run_topic_judge_evaluation,
     sample_topic_examples,
+    topic_judge_cache_is_valid,
 )
 
 
@@ -120,6 +121,25 @@ def test_aggregate_judge_by_macro():
     assert a0["mean_score_global"] == pytest.approx(3.0)
     assert a0["pct_conserver"] == pytest.approx(50.0)
     assert a0["pct_rejeter"] == pytest.approx(50.0)
+
+
+def test_topic_judge_cache_is_valid_rejects_all_api_errors():
+    scores = pd.DataFrame(
+        [
+            {
+                "score_global": float("nan"),
+                "justification_courte": "Erreur judge : Error code: 400 - temperature",
+            }
+        ]
+    )
+    assert not topic_judge_cache_is_valid(scores)
+
+
+def test_topic_judge_cache_is_valid_accepts_real_scores():
+    scores = pd.DataFrame(
+        [{"score_global": 3.5, "justification_courte": "Topic homogène."}]
+    )
+    assert topic_judge_cache_is_valid(scores)
 
 
 @patch("macro_transfer.topic_judge._get_client")

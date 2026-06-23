@@ -7,11 +7,15 @@ from pathlib import Path
 import pytest
 
 from macro_transfer.fsp_config import (
+    FSP_SOFTTRIPLE_NATIVE_METHOD,
+    fsp_encoder_method,
     fsp_output_method_key,
     normalize_fsp_base_method,
     resolve_fsp_checkpoint,
+    resolve_fsp_method_display_name,
     resolve_fsp_output_dir,
     validate_fsp_base_method,
+    validate_fsp_method,
 )
 
 TEXT_ROOT = Path(__file__).resolve().parents[1]
@@ -84,3 +88,24 @@ def test_resolve_fsp_checkpoint_raw_is_none():
 def test_validate_fsp_base_method_rejects_unknown():
     with pytest.raises(ValueError, match="non supporté"):
         validate_fsp_base_method("tpn_full_scgm_text")
+
+
+def test_softtriple_native_method_resolution():
+    assert validate_fsp_method("softtriple_native") == FSP_SOFTTRIPLE_NATIVE_METHOD
+    assert fsp_encoder_method("softtriple_native") == "softtriple"
+    assert fsp_output_method_key("softtriple_native") == "frozen_source_prototypes/softtriple_native"
+    assert "centres natifs" in resolve_fsp_method_display_name("softtriple_native").lower()
+
+
+def test_resolve_fsp_checkpoint_softtriple_native_falls_back_to_softtriple():
+    ckpt = resolve_fsp_checkpoint(
+        FSP_SOFTTRIPLE_NATIVE_METHOD,
+        {},
+        {"softtriple": "output/softtriple/checkpoints/best_model"},
+    )
+    assert ckpt == "output/softtriple/checkpoints/best_model"
+
+
+def test_resolve_fsp_output_dir_softtriple_native():
+    p = resolve_fsp_output_dir("metallurgie", FSP_SOFTTRIPLE_NATIVE_METHOD, anchor=TEXT_ROOT)
+    assert p.name == "softtriple_native"

@@ -77,7 +77,7 @@ class FrozenEncoderModel(nn.Module):
                 self.backbone_name,
                 trust_remote_code=True,
             )
-        elif self.base_method == "softtriple":
+        elif self.base_method in ("softtriple", "softtriple_native"):
             from contrastive_methods.losses.softtriple import HFTextEncoder
 
             if not self.backbone_name:

@@ -348,6 +348,23 @@ def load_topic_judge_macro_summary(out_dir: Union[str, Path]) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
+def topic_judge_cache_is_valid(scores_df: pd.DataFrame) -> bool:
+    """False si le cache ne contient que des lignes d'erreur API (ex. temperature 400)."""
+    if scores_df.empty:
+        return False
+    if "justification_courte" not in scores_df.columns:
+        return True
+    just = scores_df["justification_courte"].astype(str)
+    error_mask = just.str.startswith("Erreur judge :")
+    if error_mask.all():
+        return False
+    if "score_global" in scores_df.columns:
+        valid_scores = pd.to_numeric(scores_df["score_global"], errors="coerce").notna()
+        if not bool(valid_scores.any()):
+            return False
+    return True
+
+
 def run_topic_judge_evaluation(
     out_dir: Union[str, Path],
     meta: pd.DataFrame,
@@ -375,15 +392,23 @@ def run_topic_judge_evaluation(
     scores_path = topic_judge_scores_path(out_dir)
     macro_path = topic_judge_macro_summary_path(out_dir)
 
-    if scores_path.is_file() and not force:
+    force_run = bool(force or cfg.get("force", False))
+    if scores_path.is_file() and not force_run:
         scores_df = pd.read_csv(scores_path)
-        macro_df = load_topic_judge_macro_summary(out_dir)
-        return {
-            "scores_path": str(scores_path),
-            "macro_summary_path": str(macro_path) if macro_path.is_file() else None,
-            "n_topics": int(len(scores_df)),
-            "cached": True,
-        }
+        if topic_judge_cache_is_valid(scores_df):
+            macro_df = load_topic_judge_macro_summary(out_dir)
+            return {
+                "scores_path": str(scores_path),
+                "macro_summary_path": str(macro_path) if macro_path.is_file() else None,
+                "n_topics": int(len(scores_df)),
+                "cached": True,
+            }
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "Cache topic_judge invalide (%s) — réévaluation.",
+            scores_path,
+        )
 
     load_openai_dotenv()
     cli = client or _get_client()

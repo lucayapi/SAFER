@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""CLI baseline Frozen Source Prototypes (sans adaptation)."""
+"""CLI FSP SoftTriple — centres natifs (job dédié, séparé du FSP générique)."""
 
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
@@ -15,10 +14,11 @@ if str(TEXT_ROOT) not in sys.path:
 
 from macro_transfer.frozen_source_prototypes import run_frozen_source_prototypes
 from macro_transfer.fsp_config import (
+    FSP_SOFTTRIPLE_NATIVE_METHOD,
     resolve_fsp_checkpoint,
     resolve_fsp_method_display_name,
     resolve_fsp_output_dir,
-    validate_fsp_base_method,
+    validate_fsp_method,
 )
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
@@ -26,20 +26,22 @@ from safer_core.paths import resolve_repo_path
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--config", type=str, default="configs/frozen_source_prototypes.yaml")
+    p.add_argument(
+        "--config",
+        type=str,
+        default="configs/frozen_source_prototypes_softtriple_native.yaml",
+    )
     p.add_argument("--output-dir", type=str, default=None)
     p.add_argument("--corpus", type=str, default=None)
-    p.add_argument("--base-method", type=str, default=None, help="Surcharge method.base_method / model.base_method")
-    p.add_argument("--method-display-name", type=str, default=None)
-    p.add_argument(
-        "--skip-bertopic",
-        action="store_true",
-        help="Transfert macro uniquement (équivalent run_bertopic: false)",
-    )
     p.add_argument(
         "--force-topic-judge",
         action="store_true",
         help="Re-evaluate all topics (ignore valid topic_judge_scores.csv)",
+    )
+    p.add_argument(
+        "--skip-bertopic",
+        action="store_true",
+        help="Transfert macro uniquement (équivalent run_bertopic: false)",
     )
     return p.parse_args()
 
@@ -48,19 +50,16 @@ def _apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> None:
     method_block = dict(cfg.get("method") or {})
     model_cfg = dict(cfg.get("model") or {})
     checkpoints = dict(cfg.get("checkpoints") or {})
-    base_method_overridden = False
 
-    if args.base_method:
-        base_method = validate_fsp_base_method(args.base_method)
-        method_block["base_method"] = base_method
-        model_cfg["base_method"] = base_method
-        base_method_overridden = True
-    else:
-        base_method = validate_fsp_base_method(
-            model_cfg.get("base_method") or method_block.get("base_method") or "scgm_text"
+    base_method = validate_fsp_method(
+        model_cfg.get("base_method") or method_block.get("base_method") or FSP_SOFTTRIPLE_NATIVE_METHOD
+    )
+    if base_method != FSP_SOFTTRIPLE_NATIVE_METHOD:
+        raise ValueError(
+            f"Ce script attend base_method={FSP_SOFTTRIPLE_NATIVE_METHOD!r}, reçu {base_method!r}"
         )
-        method_block.setdefault("base_method", base_method)
-        model_cfg.setdefault("base_method", base_method)
+    method_block["base_method"] = base_method
+    model_cfg["base_method"] = base_method
 
     if args.corpus:
         cfg["corpus"] = args.corpus
@@ -73,28 +72,16 @@ def _apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> None:
             resolve_fsp_output_dir(corpus, base_method, anchor=TEXT_ROOT)
         )
 
-    ckpt = resolve_fsp_checkpoint(
-        base_method,
-        model_cfg,
-        checkpoints,
-        base_method_overridden=base_method_overridden,
-    )
+    ckpt = resolve_fsp_checkpoint(base_method, model_cfg, checkpoints)
     if ckpt:
         model_cfg["checkpoint_path"] = ckpt
-    elif base_method == "raw_embedding":
-        model_cfg.pop("checkpoint_path", None)
-        model_cfg.pop("checkpoint", None)
 
-    if args.method_display_name:
-        cfg["method_display_name"] = args.method_display_name
-    else:
-        cfg["method_display_name"] = resolve_fsp_method_display_name(
-            base_method,
-            cfg_display=cfg.get("method_display_name"),
-            model_display=model_cfg.get("method_display_name"),
-        )
+    cfg["method_display_name"] = resolve_fsp_method_display_name(
+        base_method,
+        cfg_display=cfg.get("method_display_name"),
+        model_display=model_cfg.get("method_display_name"),
+    )
 
-    # Merge method-level encoding defaults into model for run_frozen_source_prototypes
     for key in ("backbone_name", "max_seq_length", "encode_batch_size", "device"):
         if key in method_block and key not in model_cfg:
             model_cfg[key] = method_block[key]
@@ -102,13 +89,12 @@ def _apply_cli_overrides(cfg: dict, args: argparse.Namespace) -> None:
     cfg["method"] = method_block
     cfg["model"] = model_cfg
 
-    if args.skip_bertopic:
-        cfg["run_bertopic"] = False
-
     judge_cfg = dict(cfg.get("topic_judge") or {})
     if args.force_topic_judge:
         judge_cfg["force"] = True
         cfg["topic_judge"] = judge_cfg
+    if args.skip_bertopic:
+        cfg["run_bertopic"] = False
 
 
 def main() -> None:
@@ -123,7 +109,7 @@ def main() -> None:
     cfg = load_yaml(cfg_path)
     _apply_cli_overrides(cfg, args)
 
-    tmp_cfg = TEXT_ROOT / ".tmp_frozen_source_prototypes.runtime.yaml"
+    tmp_cfg = TEXT_ROOT / ".tmp_softtriple_native_fsp.runtime.yaml"
     import yaml
 
     tmp_cfg.write_text(yaml.dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")

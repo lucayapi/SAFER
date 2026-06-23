@@ -18,8 +18,10 @@ from macro_transfer.notebook_viz import (
     get_fsp_top_confident_errors,
     load_fsp_metrics_comparison_table,
     load_fsp_run_artifacts,
+    load_softtriple_native_vs_legacy_metrics,
     merge_assignments,
     pick_accident_id_for_colored_text,
+    plot_softtriple_center_similarity_heatmap,
     render_colored_accident_html,
     resolve_test_label_col,
     _theme_label_map,
@@ -232,3 +234,44 @@ def test_load_fsp_metrics_comparison_table(tmp_path: Path, monkeypatch: pytest.M
     assert df["metrics_available"].all()
     latex = export_fsp_metrics_latex_table(df[["Méthode", "Bal. Acc.", "F1 (étapes)", "Confiance moy.", "Entropie moy."]])
     assert "\\toprule" in latex
+
+
+def test_load_softtriple_native_vs_legacy_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    anchor = tmp_path
+    corpus = "metallurgie"
+
+    def _fake_out(method: str) -> Path:
+        root = anchor / "output_test" / corpus / "macro_transfer" / f"frozen_source_prototypes/{method}"
+        transfer = root / "transfer"
+        transfer.mkdir(parents=True, exist_ok=True)
+        metrics = {
+            "balanced_accuracy": 0.5 if method == "softtriple_native" else 0.4,
+            "macro_f1": 0.35,
+            "assignment_mode": "softtriple_native_centers" if method == "softtriple_native" else None,
+        }
+        with open(transfer / "metrics.json", "w", encoding="utf-8") as f:
+            json.dump(metrics, f)
+        return root
+
+    monkeypatch.setattr(
+        "macro_transfer.fsp_config.resolve_fsp_output_dir",
+        lambda corpus_id, base_method, *, anchor, output_dir=None: _fake_out(base_method),
+    )
+
+    df = load_softtriple_native_vs_legacy_metrics(corpus, anchor=anchor)
+    assert len(df) == 3
+    assert df.loc[df["method_key"] == "delta_native_minus_legacy", "Bal. Acc."].iloc[0] == pytest.approx(0.1)
+
+
+def test_plot_softtriple_center_similarity_heatmap_runs(tmp_path: Path):
+    pytest.importorskip("seaborn")
+    protos = pd.DataFrame(
+        {
+            "macro": ["A0", "A0", "A1"],
+            "center_k": [0, 1, 0],
+            "dim_0000": [1.0, 0.0, 0.0],
+            "dim_0001": [0.0, 1.0, 1.0],
+        }
+    )
+    plot_softtriple_center_similarity_heatmap(protos, fig_dir=tmp_path)
+    assert (tmp_path / "softtriple_center_similarity_heatmap.png").is_file()

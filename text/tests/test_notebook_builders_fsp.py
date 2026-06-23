@@ -51,6 +51,9 @@ def test_builder_04_defaults_to_fsp_scgm_text():
     assert "bn_path_scenarios.csv" in src
     assert "SCENARIO_MIN_MACROS" in src
     assert "bn_network_slide.png" in src
+    assert "bn_scenario_slide_" in src
+    assert "SCENARIO_SLIDE_TOP_N" in src
+    assert "plot_bn_scenario_slide" in src
     assert "BN_DISALLOW_A0_TO_B" in src
     assert "BN_ENSURE_MACRO_CHAIN" in src
     assert "extract_bn_path_scenarios" in src
@@ -87,3 +90,19 @@ def test_single_fsp_job_exists():
     job = _read(TEXT_ROOT / "jobs" / "run_frozen_source_prototypes.sh")
     assert "BASE_METHOD" in job
     assert "SKIP_BERTOPIC" not in job
+
+
+def test_softtriple_native_fsp_job_exists():
+    assert (TEXT_ROOT / "jobs" / "run_softtriple_native_fsp.sh").is_file()
+    job = _read(TEXT_ROOT / "jobs" / "run_softtriple_native_fsp.sh")
+    assert "run_softtriple_native_fsp.py" in job
+    assert "frozen_source_prototypes_softtriple_native.yaml" in job
+
+
+def test_builder_09_softtriple_native_diagnostics():
+    src = _read(TEXT_ROOT / "scripts" / "build_notebook_09_softtriple_native_fsp.py")
+    assert "softtriple_native" in src
+    assert "load_softtriple_native_vs_legacy_metrics" in src
+    assert "plot_softtriple_center_similarity_heatmap" in src
+    assert "run_softtriple_native_fsp.sh" in src
+    assert "softtriple_center_weights_summary" in src

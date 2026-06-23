@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Optional, Union
 
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import macro_transfer_output_dir
@@ -16,6 +16,8 @@ FSP_ENCODER_METHODS: tuple[str, ...] = (
     "raw_embedding",
 )
 
+FSP_SOFTTRIPLE_NATIVE_METHOD = "softtriple_native"
+
 FspEncoderName = Literal[
     "scgm_text",
     "softtriple",
@@ -23,6 +25,8 @@ FspEncoderName = Literal[
     "batch_triplet",
     "raw_embedding",
 ]
+
+FspMethodName = Union[FspEncoderName, Literal["softtriple_native"]]
 
 # Alias rétrocompat (lecture seule) pour anciens runs.
 FSP_METHOD_ALIASES: dict[str, str] = {
@@ -44,6 +48,10 @@ def normalize_fsp_base_method(method: str) -> str:
     return FSP_METHOD_ALIASES.get(m, m)
 
 
+def is_softtriple_native_method(method: str) -> bool:
+    return normalize_fsp_base_method(method) == FSP_SOFTTRIPLE_NATIVE_METHOD
+
+
 def validate_fsp_base_method(method: str) -> FspEncoderName:
     m = normalize_fsp_base_method(method)
     if m not in FSP_ENCODER_METHODS:
@@ -53,8 +61,23 @@ def validate_fsp_base_method(method: str) -> FspEncoderName:
     return m  # type: ignore[return-value]
 
 
+def validate_fsp_method(method: str) -> FspMethodName:
+    m = normalize_fsp_base_method(method)
+    if m == FSP_SOFTTRIPLE_NATIVE_METHOD:
+        return m  # type: ignore[return-value]
+    return validate_fsp_base_method(m)
+
+
+def fsp_encoder_method(base_method: str) -> str:
+    """Méthode backbone pour encodage (softtriple_native → softtriple)."""
+    m = validate_fsp_method(base_method)
+    if m == FSP_SOFTTRIPLE_NATIVE_METHOD:
+        return "softtriple"
+    return str(m)
+
+
 def fsp_output_method_key(base_method: str) -> str:
-    base = validate_fsp_base_method(base_method)
+    base = validate_fsp_method(base_method)
     return f"frozen_source_prototypes/{base}"
 
 
@@ -77,7 +100,7 @@ def resolve_fsp_output_dir(
     if output_dir:
         return resolve_repo_path(str(output_dir), repo_root=anchor)
 
-    base = validate_fsp_base_method(base_method)
+    base = validate_fsp_method(base_method)
     canonical = macro_transfer_output_dir(
         fsp_output_method_key(base),
         corpus,
@@ -110,9 +133,9 @@ def resolve_fsp_checkpoint(
     """
     Priorité : explicit_checkpoint > (si override CLI) checkpoints[base_method]
     > model.checkpoint_path > checkpoints[base_method].
-    ``raw_embedding`` → None.
+    ``raw_embedding`` → None. ``softtriple_native`` → checkpoint softtriple.
     """
-    base = validate_fsp_base_method(base_method)
+    base = validate_fsp_method(base_method)
     if base == "raw_embedding":
         return None
 
@@ -121,9 +144,9 @@ def resolve_fsp_checkpoint(
 
     block = checkpoints_block or {}
     if base_method_overridden:
-        ckpt = block.get(base)
-        if ckpt:
-            return str(ckpt)
+        for key in (base, "softtriple" if base == FSP_SOFTTRIPLE_NATIVE_METHOD else None):
+            if key and block.get(key):
+                return str(block[key])
         raise ValueError(
             f"Checkpoint manquant pour {base!r} "
             f"(base_method surchargé : utiliser checkpoints.{base})"
@@ -134,9 +157,9 @@ def resolve_fsp_checkpoint(
         if ckpt:
             return str(ckpt)
 
-    ckpt = block.get(base)
-    if ckpt:
-        return str(ckpt)
+    for key in (base, "softtriple" if base == FSP_SOFTTRIPLE_NATIVE_METHOD else None):
+        if key and block.get(key):
+            return str(block[key])
 
     raise ValueError(
         f"Checkpoint manquant pour {base!r} "
@@ -154,9 +177,11 @@ def resolve_fsp_method_display_name(
         return str(cfg_display)
     if model_display:
         return str(model_display)
-    base = validate_fsp_base_method(base_method)
+    base = validate_fsp_method(base_method)
     if base == "scgm_text":
         return "SCGM + prototypes source gelés"
     if base == "raw_embedding":
         return "Embedding brut + prototypes source"
+    if base == FSP_SOFTTRIPLE_NATIVE_METHOD:
+        return "SoftTriple (centres natifs) + prototypes source gelés"
     return f"{base} + prototypes source gelés"

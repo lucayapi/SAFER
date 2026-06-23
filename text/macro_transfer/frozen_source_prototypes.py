@@ -23,13 +23,19 @@ from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.encode import load_target_metadata
 from macro_transfer.encoder_runtime import FrozenEncoderModel, encode_texts_corpus
 from macro_transfer.fsp_config import (
-    FSP_METHOD_ALIASES,
-    fsp_output_method_key,
-    normalize_fsp_base_method,
+    fsp_encoder_method,
+    is_softtriple_native_method,
     resolve_fsp_checkpoint,
     resolve_fsp_method_display_name,
     resolve_fsp_output_dir,
-    validate_fsp_base_method,
+    validate_fsp_method,
+)
+from macro_transfer.softtriple_macro import (
+    assign_macros_from_softtriple_centers,
+    export_softtriple_source_centers,
+    load_softtriple_centers,
+    load_softtriple_hyperparams,
+    summarize_center_weights,
 )
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
@@ -275,8 +281,15 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     bertopic_cfg = dict(cfg.get("bertopic") or {})
     topics_export_cfg = dict(cfg.get("topics_export") or {})
     topic_judge_cfg = dict(cfg.get("topic_judge") or {})
-    bertopic_enabled = bool(bertopic_cfg.get("enabled", True))
-    skip_bertopic = bool(cfg.get("skip_bertopic", False)) and not bertopic_enabled
+    if "run_bertopic" in cfg:
+        run_bertopic = bool(cfg.get("run_bertopic"))
+    else:
+        run_bertopic = bool(bertopic_cfg.get("enabled", True))
+    # Rétrocompat : skip_bertopic top-level force la désactivation.
+    if bool(cfg.get("skip_bertopic", False)):
+        run_bertopic = False
+    if not run_bertopic:
+        logger.info("BERTopic désactivé (run_bertopic=false) : transfert macro uniquement")
 
     macros = [str(m) for m in tr_cfg.get("macros", list(MACRO_NAMES))]
     if macros != list(MACRO_NAMES):
@@ -336,9 +349,10 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     source_df = source_df[source_df[source_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
     target_df = target_df[target_df[target_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
 
-    base_method = validate_fsp_base_method(
+    base_method = validate_fsp_method(
         model_cfg.get("base_method") or method_block.get("base_method") or "scgm_text"
     )
+    encoder_method = fsp_encoder_method(base_method)
     out_dir = resolve_fsp_output_dir(
         corpus,
         base_method,
@@ -413,7 +427,7 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
                 )
         else:
             model = FrozenEncoderModel(
-                base_method=base_method,
+                base_method=encoder_method,
                 checkpoint=checkpoint,
                 backbone_name=backbone_name,
                 max_seq_length=max_seq_length,
@@ -443,22 +457,73 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
 
     _validate_no_nan_inf("z_source", z_source)
     _validate_no_nan_inf("z_target", z_target)
-    prototypes, proto_df = compute_source_prototypes(
-        z_source,
-        source_df[source_label_col].astype(str).to_numpy(),
-        macros,
-        normalize=normalize_embeddings if metric == "cosine" else False,
-    )
-    _validate_no_nan_inf("prototypes", prototypes)
 
-    assign = assign_macros_from_source_prototypes(
-        z_target,
-        prototypes,
-        macros=macros,
-        tau=tau,
-        metric=metric,
-        eps=eps,
-    )
+    softtriple_native_cfg = dict(tr_cfg.get("softtriple") or {})
+    assignment_mode = "source_prototype_mean"
+    st_gamma: float | None = None
+    st_temperature: float | None = None
+    st_distance_metric: str | None = None
+    centers_per_class: int | None = None
+    gamma_jmk = None
+
+    if is_softtriple_native_method(base_method):
+        if not checkpoint:
+            raise ValueError("softtriple_native requiert un checkpoint SoftTriple")
+        ckpt_dir = Path(checkpoint)
+        centers = load_softtriple_centers(ckpt_dir, prefer_raw_centers=True)
+        hparams = load_softtriple_hyperparams(ckpt_dir, n_macros=len(macros))
+        st_gamma = (
+            float(softtriple_native_cfg["gamma"])
+            if softtriple_native_cfg.get("gamma") is not None
+            else float(hparams["gamma"])
+        )
+        st_temperature = (
+            float(softtriple_native_cfg["temperature"])
+            if softtriple_native_cfg.get("temperature") is not None
+            else float(tau)
+        )
+        st_distance_metric = str(
+            softtriple_native_cfg.get("distance_metric") or "cosine"
+        ).lower()
+        centers_per_class = int(hparams["centers_per_class"])
+        assignment_mode = "softtriple_native_centers"
+
+        assign = assign_macros_from_softtriple_centers(
+            z_target,
+            centers,
+            macros=macros,
+            gamma=st_gamma,
+            temperature=st_temperature,
+            distance_metric=st_distance_metric,
+            normalize_embeddings=normalize_embeddings,
+            normalize_centers=normalize_embeddings,
+            eps=eps,
+        )
+        gamma_jmk = assign["gamma_jmk"]
+        proto_export = export_softtriple_source_centers(
+            centers,
+            macros,
+            normalize=normalize_embeddings,
+        )
+        prototypes = centers.reshape(-1, centers.shape[-1])
+    else:
+        prototypes, proto_df = compute_source_prototypes(
+            z_source,
+            source_df[source_label_col].astype(str).to_numpy(),
+            macros,
+            normalize=normalize_embeddings if metric == "cosine" else False,
+        )
+        _validate_no_nan_inf("prototypes", prototypes)
+
+        assign = assign_macros_from_source_prototypes(
+            z_target,
+            prototypes,
+            macros=macros,
+            tau=tau,
+            metric=metric,
+            eps=eps,
+        )
+        proto_export = None
     probs = np.asarray(assign["probs"], dtype=np.float64)
     dists = np.asarray(assign["distances"], dtype=np.float64)
     _validate_no_nan_inf("distances", dists)
@@ -491,27 +556,53 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
     preds.to_csv(transfer_dir / "target_macro_predictions.csv", index=False)
 
     if exp_cfg.get("save_prototypes", True):
-        dim_cols = pd.DataFrame(
-            prototypes,
-            columns=[f"dim_{j:04d}" for j in range(prototypes.shape[1])],
+        if proto_export is not None:
+            proto_export.to_csv(transfer_dir / "source_prototypes.csv", index=False)
+        else:
+            dim_cols = pd.DataFrame(
+                prototypes,
+                columns=[f"dim_{j:04d}" for j in range(prototypes.shape[1])],
+            )
+            proto_export_legacy = pd.concat(
+                [proto_df.reset_index(drop=True), dim_cols.reset_index(drop=True)],
+                axis=1,
+            )
+            proto_export_legacy.to_csv(transfer_dir / "source_prototypes.csv", index=False)
+
+    if gamma_jmk is not None:
+        summary_dir = out_dir / "summary"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        weights_summary = summarize_center_weights(gamma_jmk, macros)
+        weights_summary.to_csv(transfer_dir / "softtriple_center_weights_summary.csv", index=False)
+        relaxed = np.asarray(assign["relaxed_scores"], dtype=np.float64)
+        relaxed_df = pd.DataFrame(
+            relaxed,
+            columns=[f"score_{m}" for m in macros],
         )
-        proto_export = pd.concat(
-            [proto_df.reset_index(drop=True), dim_cols.reset_index(drop=True)],
-            axis=1,
-        )
-        proto_export.to_csv(transfer_dir / "source_prototypes.csv", index=False)
+        relaxed_df.to_csv(transfer_dir / "softtriple_relaxed_scores.csv", index=False)
 
     metrics_out: dict[str, Any] = {
         "method": method_display_name,
         "n_source": int(len(source_df)),
         "n_target": int(len(target_df)),
-        "distance_metric": metric,
-        "tau": tau,
+        "distance_metric": st_distance_metric if st_distance_metric else metric,
+        "tau": st_temperature if st_temperature is not None else tau,
+        "assignment_mode": assignment_mode,
         "balanced_accuracy": float("nan"),
         "macro_f1": float("nan"),
         "mean_confidence": float(np.mean(assign["confidence"])) if len(assign["confidence"]) else float("nan"),
         "mean_entropy": float(np.mean(assign["entropy"])) if len(assign["entropy"]) else float("nan"),
+        "run_bertopic": run_bertopic,
     }
+    if is_softtriple_native_method(base_method):
+        metrics_out.update(
+            {
+                "gamma": st_gamma,
+                "temperature": st_temperature,
+                "centers_per_class": centers_per_class,
+                "encoder_base_method": encoder_method,
+            }
+        )
     if target_label_col and target_label_col in target_df.columns:
         eval_metrics = evaluate_macro_predictions(
             target_df[target_label_col].astype(str).to_numpy(),
@@ -535,13 +626,19 @@ def run_frozen_source_prototypes(config_path: str | Path) -> dict[str, Any]:
         json.dump(metrics_out, f, indent=2, ensure_ascii=False)
 
     bertopic_all_cols = ["pred_macro", "confidence"] + [f"prob_{m}" for m in macros]
-    bertopic_df = preds[[c for c in [target_group_col, "fact_id", "sentence"] if c in preds.columns] + bertopic_all_cols]
-    bertopic_df.to_csv(transfer_dir / "bertopic_input_all.csv", index=False)
-    for m in macros:
-        bertopic_df[bertopic_df["pred_macro"] == m].to_csv(transfer_dir / f"bertopic_input_{m}.csv", index=False)
+    if run_bertopic and bool(exp_cfg.get("save_bertopic_inputs", True)):
+        bertopic_df = preds[
+            [c for c in [target_group_col, "fact_id", "sentence"] if c in preds.columns]
+            + bertopic_all_cols
+        ]
+        bertopic_df.to_csv(transfer_dir / "bertopic_input_all.csv", index=False)
+        for m in macros:
+            bertopic_df[bertopic_df["pred_macro"] == m].to_csv(
+                transfer_dir / f"bertopic_input_{m}.csv", index=False
+            )
 
     bertopic_summary: Dict[str, Any] = {}
-    if bertopic_enabled and not skip_bertopic:
+    if run_bertopic:
         gating_adapted = _build_gating_from_predictions(preds, macros)
         meta_t = target_df.copy()
         meta_t["m_hat"] = preds["pred_macro"].astype(str).to_numpy()

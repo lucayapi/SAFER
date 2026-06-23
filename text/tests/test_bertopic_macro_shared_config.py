@@ -49,6 +49,16 @@ def test_supervised_and_fsp_resolve_same_bertopic():
     assert fsp_judge == sup_judge
 
 
+def test_softtriple_native_yaml_has_run_bertopic_toggle():
+    raw = yaml.safe_load(
+        (TEXT_ROOT / "configs" / "frozen_source_prototypes_softtriple_native.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert "run_bertopic" in raw
+    assert raw["run_bertopic"] is True
+
+
 def test_enrich_run_config_injects_bertopic():
     raw = {"bertopic_shared": "configs/bertopic_macro_shared.yaml"}
     cfg = enrich_run_config_bertopic(raw, anchor=TEXT_ROOT)

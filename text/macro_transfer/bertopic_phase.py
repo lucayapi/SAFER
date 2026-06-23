@@ -168,6 +168,7 @@ def run_bertopic_phase(
             cfg=judge_cfg,
             text_col=text_col_t,
             seed=int(bertopic_cfg.get("random_state", 42)),
+            force=bool(judge_cfg.get("force", False)),
         )
 
     return {

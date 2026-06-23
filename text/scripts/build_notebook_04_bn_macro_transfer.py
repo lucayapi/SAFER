@@ -55,7 +55,7 @@ Ce notebook construit un **réseau bayésien** à partir des exports FSP-SCGM su
 
 **Interprétation structurelle** : au niveau **topics**, A0→B direct est autorisé (contexte → événement sans A1 identifié). Au niveau **macro agrégé** (`M_*`), M_A0 ne pointe que vers M_A1. Paramètres : `BN_DISALLOW_A0_TO_B`, `BN_ENSURE_MACRO_CHAIN`.
 
-**Sorties principales** : graphe statique + interactif, tableau des scénarios (chemins du BN, ≥ 2 étapes), graphe slide LaTeX.
+**Sorties principales** : graphe statique + interactif, tableau des scénarios (chemins du BN, ≥ 2 étapes) avec graphes slide, export LaTeX `bn_network_slide.png`.
 """
         ),
         py(
@@ -85,6 +85,7 @@ SCENARIO_MIN_MACROS = 2
 SCENARIO_FULL_MIN_MACROS = 3  # export CSV liste complète (≥ N étapes macro)
 SCENARIO_FULL_TOP_N = 500
 SCENARIO_PATH_MAX_LEN = 8
+SCENARIO_SLIDE_TOP_N = 3  # graphes slide affichés en section 5 (top scénarios)
 SLIDE_SCENARIO_RANK = 0
 SLIDE_FIG_WIDTH = 10.0
 SLIDE_FIG_HEIGHT = 4.0
@@ -170,6 +171,7 @@ from bn_pipeline.bn_visualization import (
     extract_subgraph_for_slide,
     join_theme_summary_to_selected_variables,
     plot_bn_graph_cpd_boxes,
+    plot_bn_scenario_slide,
     try_plotly_interactive,
 )
 from bn_pipeline.bn_paths import extract_bn_path_scenarios
@@ -382,6 +384,12 @@ if _ok_plotly and _interactive_html.is_file():
 """
         ),
         md("## 5 — Scénarios récurrents (chemins du BN, ≥ 2 étapes)"),
+        md(
+            r"""
+Tableau des chemins les plus fréquents + **graphes slide** (sous-graphe causal par scénario,
+même style que l’export LaTeX `bn_network_slide.png`).
+"""
+        ),
         py(
             r"""
 n_accidents_bn = int(acc_df["accident_id"].nunique()) if "accident_id" in acc_df.columns else len(acc_df)
@@ -439,6 +447,51 @@ if len(freq_df):
     display(rename_display_columns(scenario_df[_show_cols]))
     print("Export :", TABLES / "bn_path_scenarios.csv")
 
+    _slide_figsize = (float(SLIDE_FIG_WIDTH), float(SLIDE_FIG_HEIGHT))
+    _n_slides = min(max(1, int(SCENARIO_SLIDE_TOP_N)), len(scenario_df))
+    print(f"Graphes slide — top {_n_slides} scénario(s) :")
+    for _slide_i in range(_n_slides):
+        _slide_row = scenario_df.iloc[_slide_i]
+        _slide_png = FIGURES_STATIC / f"bn_scenario_slide_{_slide_i:02d}.png"
+        _ok_slide = plot_bn_scenario_slide(
+            topic_model,
+            _slide_row,
+            topic_var_map_f,
+            _slide_png,
+            short_title_map=short_title_map,
+            themes_df=themes_df,
+            rank=_slide_i,
+            figsize=_slide_figsize,
+            col_gap=1.8,
+            row_gap=1.0,
+            box_width=1.5,
+            title_wrap_width=18,
+        )
+        if _ok_slide:
+            print(" ", _slide_png)
+            ipy_display(Image(filename=str(_slide_png)))
+        else:
+            print(f"  Scénario #{_slide_i + 1} : pas de path_nodes exploitable.")
+
+    _rank_latex = max(0, min(int(SLIDE_SCENARIO_RANK), len(scenario_df) - 1))
+    _latex_png = FIGURES_STATIC / "bn_network_slide.png"
+    if plot_bn_scenario_slide(
+        topic_model,
+        scenario_df.iloc[_rank_latex],
+        topic_var_map_f,
+        _latex_png,
+        short_title_map=short_title_map,
+        themes_df=themes_df,
+        rank=_rank_latex,
+        title="Scénario typique — chemin causal",
+        figsize=_slide_figsize,
+        col_gap=1.8,
+        row_gap=1.0,
+        box_width=1.5,
+        title_wrap_width=18,
+    ):
+        print("Export LaTeX :", _latex_png)
+
     freq_full, _path_diag_full = extract_bn_path_scenarios(
         acc_df,
         topic_model,
@@ -479,56 +532,6 @@ else:
         "Aucun scénario trouvé. Ajuster SCENARIO_MIN_SUPPORT, SCENARIO_MIN_MACROS "
         "ou MAX_TOPICS_PER_MACRO (nombre de topics par étape)."
     )
-"""
-        ),
-        md(
-            """## 6 — Graphe slide (meilleur scénario)
-
-Sous-graphe compact pour inclusion LaTeX : `figures/static/bn_network_slide.png`.
-"""
-        ),
-        py(
-            r"""
-if "scenario_df" in dir() and len(scenario_df):
-    _rank = max(0, min(int(SLIDE_SCENARIO_RANK), len(scenario_df) - 1))
-    _path_row = scenario_df.iloc[_rank]
-    _path_nodes = [
-        p.strip()
-        for p in str(_path_row.get("path_nodes", "")).split(" -> ")
-        if p.strip()
-    ]
-    if not _path_nodes and "topics_present" in _path_row:
-        _path_nodes = [
-            t.strip()
-            for t in str(_path_row["topics_present"]).split("+")
-            if t.strip()
-        ]
-    if _path_nodes:
-        _nodes_sub, _edges_sub = extract_subgraph_for_slide(
-            topic_model, _path_nodes, topic_var_map_f
-        )
-        _slide_png = FIGURES_STATIC / "bn_network_slide.png"
-        plot_bn_graph_cpd_boxes(
-            topic_model,
-            topic_var_map_f,
-            _slide_png,
-            title="Scénario typique — chemin causal",
-            short_title_map=short_title_map,
-            themes_df=themes_df,
-            nodes_subset=_nodes_sub,
-            edges_subset=_edges_sub,
-            figsize=(float(SLIDE_FIG_WIDTH), float(SLIDE_FIG_HEIGHT)),
-            col_gap=1.8,
-            row_gap=1.0,
-            box_width=1.5,
-            title_wrap_width=18,
-        )
-        print("Graphe slide :", _slide_png)
-        ipy_display(Image(filename=str(_slide_png)))
-    else:
-        print("Pas de path_nodes pour le graphe slide (scénario sans chemin explicite).")
-else:
-    print("Pas de scénario — graphe slide non généré.")
 """
         ),
         md(RAW_TEST_EMBEDDING_SECTION_MD),

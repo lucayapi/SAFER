@@ -1,22 +1,19 @@
 method_name: frozen_source_prototypes
 corpus: metallurgie
+method_display_name: "SoftTriple (centres natifs) + prototypes gelés"
 
 method:
-  base_method: scgm_text
+  base_method: softtriple_native
   backbone_name: Qwen/Qwen3-Embedding-0.6B
   max_seq_length: 256
   encode_batch_size: 32
   device: cuda
 
 checkpoints:
-  scgm_text: output/scgm_text/checkpoints/best_model.pt
+  softtriple_native: output/softtriple/checkpoints/best_model
   softtriple: output/softtriple/checkpoints/best_model
-  supcon: output/supcon/checkpoints/best_model
-  batch_triplet: output/batch_triplet/checkpoints/best_model
-  raw_embedding: null
 
-# output_dir dérivé automatiquement si absent :
-# output_test/<corpus>/macro_transfer/frozen_source_prototypes/<base_method>
+# output_test/<corpus>/macro_transfer/frozen_source_prototypes/softtriple_native
 
 source:
   dataset_path: dataset/data_btp.csv
@@ -43,6 +40,15 @@ prototype_transfer:
   normalize_embeddings: true
   tau: 0.07
   eps: 1.0e-12
+  softtriple:
+    use_native_centers: true
+    gamma: null
+    temperature: null
+    distance_metric: cosine
+
+# run_bertopic: true  → transfert macro + BERTopic + topic judge (défaut)
+# run_bertopic: false → transfert macro / classification uniquement
+run_bertopic: true
 
 exports:
   save_source_embeddings: false
@@ -51,9 +57,4 @@ exports:
   save_probabilities: true
   save_bertopic_inputs: true
 
-# run_bertopic: true  → transfert macro + BERTopic + topic judge (défaut)
-# run_bertopic: false → transfert macro / classification uniquement
-run_bertopic: true
-
-# BERTopic + topics : configs/bertopic_macro_shared.yaml (eom, OpenAI nr_docs=50)
 bertopic_shared: configs/bertopic_macro_shared.yaml
