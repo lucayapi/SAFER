@@ -99,6 +99,17 @@ def test_softtriple_native_fsp_job_exists():
     assert "frozen_source_prototypes_softtriple_native.yaml" in job
 
 
+def test_builder_10_supervised_macro_ft():
+    src = _read(TEXT_ROOT / "scripts" / "build_notebook_10_supervised_macro_ft.py")
+    assert "supervised_macro_ft" in src
+    assert "load_supervised_macro_ft_run_artifacts" in src
+    assert "plot_tsne_true_vs_pred" in src
+    assert "tsne_btp_true_vs_pred" in src
+    assert "tsne_test_true_vs_pred" in src
+    assert "train_supervised_macro_ft.sh" in src
+    assert "run_supervised_macro_ft_transfer.sh" in src
+
+
 def test_builder_09_softtriple_native_diagnostics():
     src = _read(TEXT_ROOT / "scripts" / "build_notebook_09_softtriple_native_fsp.py")
     assert "softtriple_native" in src

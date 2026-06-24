@@ -1,0 +1,41 @@
+# Fine-tuning supervisé macro (CE) — config entraînement BTP
+#
+# Modes backbone (model.backbone_trainable + model.train_last_n_layers) :
+#   A gelé     : backbone_trainable: false
+#   B partiel  : backbone_trainable: true, train_last_n_layers: 4
+#   C complet  : backbone_trainable: true, train_last_n_layers: null
+
+method_name: supervised_macro_ft
+output_dir: output/supervised_macro_ft
+test_corpus: metallurgie
+
+data:
+  data_csv: dataset/data_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+
+model:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  backbone_trainable: true
+  train_last_n_layers: null
+  max_seq_length: 256
+  pooling: mean
+  n_classes: 4
+  class_weight: balanced
+  gradient_checkpointing: true
+
+training:
+  n_folds: 5
+  seed: 42
+  selection_metric: macro_f1
+  epochs: 10
+  batch_size: 32
+  lr_backbone: 2.0e-5
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  early_stopping_patience: 2
+
+exports:
+  save_btp_embeddings: true

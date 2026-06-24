@@ -96,6 +96,72 @@ def load_fsp_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
     )
 
 
+def load_supervised_macro_ft_run_artifacts(out_dir: str | Path) -> FSPRunArtifacts:
+    """Charge les sorties macro_transfer/supervised_macro_ft (sans prototypes FSP)."""
+    root = Path(out_dir).resolve()
+    transfer = root / "transfer"
+    preds_path = transfer / "target_macro_predictions.csv"
+    if not preds_path.is_file():
+        raise FileNotFoundError(f"Prédictions manquantes : {preds_path}")
+    metrics: Dict[str, Any] = {}
+    metrics_path = transfer / "metrics.json"
+    if metrics_path.is_file():
+        with open(metrics_path, encoding="utf-8") as f:
+            metrics = json.load(f)
+    protos = pd.DataFrame()
+    return FSPRunArtifacts(
+        out_dir=root,
+        transfer_dir=transfer,
+        predictions=pd.read_csv(preds_path),
+        prototypes=protos,
+        metrics=metrics,
+        confusion=_read_optional_csv(transfer / "confusion_matrix.csv"),
+        classification_report=_read_optional_csv(transfer / "classification_report.csv"),
+    )
+
+
+def load_supervised_macro_ft_vs_baseline07_metrics(corpus_id: str, *, anchor: Path) -> pd.DataFrame:
+    """Compare métriques FT neural vs baseline 07 sklearn."""
+    from supervised_macro_ft.transfer import supervised_macro_ft_output_dir
+
+    rows: list[dict[str, Any]] = []
+
+    ft_root = supervised_macro_ft_output_dir(corpus_id, anchor=anchor)
+    ft_metrics = _load_fsp_metrics_json(ft_root)
+    rows.append(
+        {
+            "Méthode": "Supervised macro FT (CE)",
+            "Bal. Acc.": _fsp_metric_to_float(ft_metrics.get("balanced_accuracy")),
+            "F1 (étapes)": _fsp_metric_to_float(ft_metrics.get("macro_f1")),
+            "Confiance moy.": _fsp_metric_to_float(ft_metrics.get("mean_confidence")),
+            "Entropie moy.": _fsp_metric_to_float(ft_metrics.get("mean_entropy")),
+            "metrics_available": bool(ft_metrics),
+        }
+    )
+
+    base_root = anchor / "output_test" / corpus_id / "supervised_baseline"
+    base_metrics: dict[str, Any] = {}
+    manifest_path = base_root / "run_manifest.json"
+    if manifest_path.is_file():
+        with open(manifest_path, encoding="utf-8") as f:
+            best = json.load(f).get("best_model")
+        best_path = base_root / "transfer" / "models" / str(best) / "metrics.json"
+        if best_path.is_file():
+            with open(best_path, encoding="utf-8") as f:
+                base_metrics = json.load(f)
+    rows.append(
+        {
+            "Méthode": "Baseline 07 (sklearn Qwen brut)",
+            "Bal. Acc.": _fsp_metric_to_float(base_metrics.get("balanced_accuracy")),
+            "F1 (étapes)": _fsp_metric_to_float(base_metrics.get("macro_f1")),
+            "Confiance moy.": _fsp_metric_to_float(base_metrics.get("mean_confidence")),
+            "Entropie moy.": _fsp_metric_to_float(base_metrics.get("mean_entropy")),
+            "metrics_available": bool(base_metrics),
+        }
+    )
+    return pd.DataFrame(rows)
+
+
 def _fsp_metric_to_float(value: Any) -> float:
     try:
         x = float(value)
@@ -340,6 +406,80 @@ def plot_fsp_confusion_heatmap(
         fig.savefig(out / filename, dpi=140, bbox_inches="tight")
     plt.show()
     plt.close(fig)
+
+
+def plot_tsne_true_vs_pred(
+    embeddings: np.ndarray,
+    df: pd.DataFrame,
+    true_col: str,
+    pred_col: str,
+    *,
+    title: str = "",
+    fig_dir: Optional[Path] = None,
+    filename: str = "tsne_true_vs_pred.png",
+    max_points: int = 2000,
+    seed: int = 42,
+    macros: Sequence[str] = MACRO_NAMES,
+) -> Optional[Path]:
+    """
+    t-SNE 2D : panneau gauche = vraie classe, droite = classe prédite (mêmes coordonnées).
+    """
+    from sklearn.manifold import TSNE
+
+    h = np.asarray(embeddings, dtype=np.float64)
+    if len(h) != len(df):
+        raise ValueError(f"embeddings ({len(h)}) et metadata ({len(df)}) non alignés")
+    if true_col not in df.columns or pred_col not in df.columns:
+        raise KeyError(f"Colonnes manquantes : {true_col!r}, {pred_col!r}")
+
+    n = len(h)
+    if n > int(max_points):
+        rng = np.random.default_rng(int(seed))
+        idx = rng.choice(n, size=int(max_points), replace=False)
+    else:
+        idx = np.arange(n, dtype=np.int64)
+    X = h[idx]
+    sub = df.iloc[idx].reset_index(drop=True)
+
+    tsne_xy = TSNE(
+        n_components=2,
+        random_state=int(seed),
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(X)
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    for ax, col, subtitle in zip(
+        axes,
+        (true_col, pred_col),
+        ("Vraie classe", "Classe prédite"),
+    ):
+        for macro in macros:
+            mask = sub[col].astype(str).values == str(macro)
+            if not mask.any():
+                continue
+            ax.scatter(
+                tsne_xy[mask, 0],
+                tsne_xy[mask, 1],
+                s=12,
+                alpha=0.55,
+                label=str(macro),
+                c=MACRO_COLOR_HEX.get(str(macro), "gray"),
+            )
+        ax.set_title(f"{subtitle}" + (f" — {title}" if title else ""))
+        ax.set_xlabel("t-SNE 1")
+        ax.set_ylabel("t-SNE 2")
+        ax.legend(markerscale=2, fontsize=8, loc="best")
+    plt.tight_layout()
+    out_path = None
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        out_path = out / filename
+        fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+    return out_path
 
 
 def plot_fsp_distance_boxplot(

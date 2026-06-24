@@ -49,7 +49,12 @@ def test_supervised_and_fsp_resolve_same_bertopic():
     assert fsp_judge == sup_judge
 
 
-def test_softtriple_native_yaml_has_run_bertopic_toggle():
+def test_supervised_macro_ft_transfer_yaml_has_run_bertopic():
+    raw = yaml.safe_load(
+        (TEXT_ROOT / "configs" / "supervised_macro_ft_transfer.yaml").read_text(encoding="utf-8")
+    )
+    assert "run_bertopic" in raw
+    assert raw["run_bertopic"] is True
     raw = yaml.safe_load(
         (TEXT_ROOT / "configs" / "frozen_source_prototypes_softtriple_native.yaml").read_text(
             encoding="utf-8"

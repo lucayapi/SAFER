@@ -30,6 +30,7 @@ METADATA_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/softtriple_native": _FSP_METADATA,
     "frozen_source_prototypes/supcon": _FSP_METADATA,
     "frozen_source_prototypes/batch_triplet": _FSP_METADATA,
+    "supervised_macro_ft": _FSP_METADATA,
 }
 
 BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
@@ -42,6 +43,7 @@ BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/softtriple_native": "frozen_source_prototypes_softtriple_native",
     "frozen_source_prototypes/supcon": "frozen_source_prototypes_supcon",
     "frozen_source_prototypes/batch_triplet": "frozen_source_prototypes_batch_triplet",
+    "supervised_macro_ft": "supervised_macro_ft",
 }
 
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).

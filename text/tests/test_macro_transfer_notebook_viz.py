@@ -275,3 +275,28 @@ def test_plot_softtriple_center_similarity_heatmap_runs(tmp_path: Path):
     )
     plot_softtriple_center_similarity_heatmap(protos, fig_dir=tmp_path)
     assert (tmp_path / "softtriple_center_similarity_heatmap.png").is_file()
+
+
+def test_plot_tsne_true_vs_pred_runs(tmp_path: Path):
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(0)
+    h = rng.normal(size=(80, 16))
+    df = pd.DataFrame(
+        {
+            "true_macro": np.array(["A0", "A1", "B", "C"] * 20),
+            "pred_macro": np.array(["A0", "A1", "B", "C"] * 20),
+        }
+    )
+    from macro_transfer.notebook_viz import plot_tsne_true_vs_pred
+
+    out = plot_tsne_true_vs_pred(
+        h,
+        df,
+        "true_macro",
+        "pred_macro",
+        title="test",
+        fig_dir=tmp_path,
+        filename="tsne_true_vs_pred.png",
+        max_points=80,
+    )
+    assert out is not None and out.is_file()

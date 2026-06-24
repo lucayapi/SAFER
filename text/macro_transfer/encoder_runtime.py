@@ -49,6 +49,7 @@ class FrozenEncoderModel(nn.Module):
         self.device_obj = _to_device(device)
         self.kind = "hf_auto"
         self.scgm_model = None
+        self.supervised_model = None
         t0 = time.monotonic()
         logger.info(
             "FSP encoder init: base_method=%s checkpoint=%s backbone_name=%s freeze_backbone=%s",
@@ -95,6 +96,25 @@ class FrozenEncoderModel(nn.Module):
             self.tokenizer = st_encoder.tokenizer
             self.projector = None
             self.kind = "hf_auto"
+        elif self.base_method == "supervised_macro_ft":
+            from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_config
+
+            if not checkpoint:
+                raise ValueError("supervised_macro_ft requiert un checkpoint")
+            ckpt_dir = Path(checkpoint)
+            ckpt_cfg = read_checkpoint_config(ckpt_dir)
+            self.backbone_name = str(ckpt_cfg.get("backbone_name") or self.backbone_name or "Qwen/Qwen3-Embedding-0.6B")
+            self.supervised_model = load_checkpoint(ckpt_dir, device=str(self.device_obj))
+            from transformers import AutoTokenizer
+
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.backbone_name, trust_remote_code=True, use_fast=True
+            )
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.unk_token
+            self.encoder = self.supervised_model.backbone.encoder
+            self.projector = None
+            self.kind = "supervised_macro_ft"
         else:
             from transformers import AutoModel, AutoTokenizer
 
@@ -148,6 +168,8 @@ class FrozenEncoderModel(nn.Module):
             return_tensors="pt",
         )
         enc = {k: v.to(self.device_obj) for k, v in enc.items()}
+        if self.kind == "supervised_macro_ft":
+            return self.supervised_model.encode(enc["input_ids"], enc["attention_mask"])
         if self.kind == "scgm":
             h = self.encoder(
                 input_ids=enc["input_ids"],
