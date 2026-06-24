@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Sequence, Tuple
+import logging
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
@@ -12,6 +13,29 @@ from torch.utils.data import DataLoader
 from scgm_text.batch_utils import batch_to_device
 from scgm_text.metrics import accuracy, balanced_accuracy, macro_f1
 from supervised_macro_ft.model import SupervisedMacroModel
+
+logger = logging.getLogger(__name__)
+
+
+def _snapshot_model_state(model: SupervisedMacroModel) -> Dict[str, Any]:
+    encoder = getattr(model.backbone, "encoder", None)
+    if encoder is not None:
+        backbone_state = {k: v.cpu().clone() for k, v in encoder.state_dict().items()}
+    else:
+        backbone_state = {k: v.cpu().clone() for k, v in model.backbone.state_dict().items()}
+    return {
+        "backbone": backbone_state,
+        "classifier": {k: v.cpu().clone() for k, v in model.classifier.state_dict().items()},
+    }
+
+
+def _restore_model_state(model: SupervisedMacroModel, state: Dict[str, Any]) -> None:
+    encoder = getattr(model.backbone, "encoder", None)
+    if encoder is not None:
+        encoder.load_state_dict(state["backbone"])
+    else:
+        model.backbone.load_state_dict(state["backbone"])
+    model.classifier.load_state_dict(state["classifier"])
 
 
 def build_class_weights(
@@ -107,10 +131,12 @@ def fit_model(
     train_cfg: Dict[str, Any],
     device: torch.device,
     class_weight: Optional[torch.Tensor] = None,
-) -> Tuple[SupervisedMacroModel, Dict[str, Any]]:
-    """Entraîne avec early stopping optionnel sur val macro_f1."""
+    run_label: str = "train",
+) -> Tuple[SupervisedMacroModel, Dict[str, Any], List[Dict[str, Any]]]:
+    """Entraîne avec early stopping optionnel sur val macro_f1 ; retourne l'historique epoch par epoch."""
     epochs = int(train_cfg.get("epochs", 10))
     patience = int(train_cfg.get("early_stopping_patience", 2))
+    selection_metric = str(train_cfg.get("selection_metric", "macro_f1"))
     criterion = nn.CrossEntropyLoss(
         weight=class_weight.to(device) if class_weight is not None else None
     )
@@ -119,32 +145,72 @@ def fit_model(
     best_score = float("-inf")
     best_metrics: Dict[str, Any] = {}
     stale = 0
+    history: List[Dict[str, Any]] = []
 
     for epoch in range(epochs):
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        row: Dict[str, Any] = {"epoch": epoch + 1, "train_loss": train_loss}
+
         if val_loader is None:
+            row["is_best"] = True
+            history.append(row)
             best_metrics = {"train_loss": train_loss, "epoch": epoch + 1}
-            best_state = {
-                "backbone": {k: v.cpu().clone() for k, v in model.backbone.encoder.state_dict().items()},
-                "classifier": {k: v.cpu().clone() for k, v in model.classifier.state_dict().items()},
-            }
+            best_state = _snapshot_model_state(model)
+            logger.info(
+                "[%s] epoch=%d/%d train_loss=%.4f",
+                run_label,
+                epoch + 1,
+                epochs,
+                train_loss,
+            )
             continue
+
         val_metrics = evaluate_loader(model, val_loader, device)
-        score = float(val_metrics.get(str(train_cfg.get("selection_metric", "macro_f1")), val_metrics["macro_f1"]))
-        if score > best_score:
+        score = float(val_metrics.get(selection_metric, val_metrics["macro_f1"]))
+        is_best = score > best_score
+        row.update(
+            {
+                "val_loss": val_metrics["loss"],
+                "val_accuracy": val_metrics["accuracy"],
+                "val_macro_f1": val_metrics["macro_f1"],
+                "val_balanced_accuracy": val_metrics["balanced_accuracy"],
+                "selection_score": score,
+                "is_best": is_best,
+            }
+        )
+        history.append(row)
+        if is_best:
             best_score = score
             stale = 0
             best_metrics = {**val_metrics, "train_loss": train_loss, "epoch": epoch + 1}
-            best_state = {
-                "backbone": {k: v.cpu().clone() for k, v in model.backbone.encoder.state_dict().items()},
-                "classifier": {k: v.cpu().clone() for k, v in model.classifier.state_dict().items()},
-            }
+            best_state = _snapshot_model_state(model)
+            logger.info(
+                "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f *best*",
+                run_label,
+                epoch + 1,
+                epochs,
+                train_loss,
+                val_metrics["loss"],
+                selection_metric,
+                score,
+            )
         else:
             stale += 1
+            logger.info(
+                "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
+                run_label,
+                epoch + 1,
+                epochs,
+                train_loss,
+                val_metrics["loss"],
+                selection_metric,
+                score,
+                stale,
+                patience,
+            )
             if stale >= patience:
                 break
 
     if best_state is not None:
-        model.backbone.encoder.load_state_dict(best_state["backbone"])
-        model.classifier.load_state_dict(best_state["classifier"])
-    return model, best_metrics
+        _restore_model_state(model, best_state)
+    return model, best_metrics, history

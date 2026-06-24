@@ -63,7 +63,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
 
     n_folds = int(train_cfg.get("n_folds", 5))
     seed = int(train_cfg.get("seed", 42))
-    fold_rows, cv_summary = run_group_kfold_cv(
+    fold_rows, cv_summary, cv_history = run_group_kfold_cv(
         dataset,
         tokenizer,
         model_cfg=model_cfg,
@@ -78,6 +78,9 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
     pd.DataFrame(fold_rows).to_csv(cv_dir / "cv_per_fold.csv", index=False)
     cv_summary.to_csv(cv_dir / "cv_summary.csv", index=False)
     cv_summary.to_csv(out_dir / "kfold_summary.csv", index=False)
+    if not cv_history.empty:
+        cv_history.to_csv(cv_dir / "train_history.csv", index=False)
+        logger.info("Historique CV exporté : %s", cv_dir / "train_history.csv")
 
     # Fit final 100 % BTP
     batch_size = int(train_cfg.get("batch_size", 32))
@@ -99,14 +102,21 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         int(model_cfg.get("n_classes", 4)),
         model_cfg.get("class_weight"),
     )
-    model, _ = fit_model(
+    model, final_metrics, final_history = fit_model(
         model,
         train_loader,
         val_loader=None,
         train_cfg=train_cfg,
         device=device,
         class_weight=class_weight,
+        run_label="final_fit",
     )
+    if final_history:
+        final_hist_df = pd.DataFrame(
+            [{"phase": "final", "fold": -1, **row} for row in final_history]
+        )
+        final_hist_df.to_csv(out_dir / "train_history_final.csv", index=False)
+        logger.info("Historique fit final exporté : %s", out_dir / "train_history_final.csv")
 
     ckpt_dir = out_dir / "checkpoints" / "best_model"
     save_checkpoint(
@@ -193,7 +203,12 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         "output_dir": str(out_dir),
         "checkpoint_dir": str(ckpt_dir),
         "cv_summary": cv_summary.to_dict(orient="records"),
+        "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,
+        "train_history_paths": {
+            "cv": str(cv_dir / "train_history.csv") if not cv_history.empty else None,
+            "final": str(out_dir / "train_history_final.csv") if final_history else None,
+        },
     }
     with open(out_dir / "train_summary.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)

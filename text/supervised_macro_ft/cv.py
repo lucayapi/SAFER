@@ -44,10 +44,11 @@ def run_group_kfold_cv(
     seed: int,
     device: torch.device,
     fold_out_root: Optional[str] = None,
-) -> Tuple[List[Dict[str, Any]], pd.DataFrame]:
+) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame]:
     groups = dataset.get_groups()
     splits = group_kfold_splits(groups, n_folds, seed)
     fold_rows: List[Dict[str, Any]] = []
+    history_rows: List[Dict[str, Any]] = []
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
     collate_fn = make_text_collate_fn(tokenizer, max_length)
@@ -74,14 +75,23 @@ def run_group_kfold_cv(
             model_cfg.get("class_weight"),
         )
 
-        model, metrics = fit_model(
+        model, metrics, fold_history = fit_model(
             model,
             train_loader,
             val_loader,
             train_cfg=dict(train_cfg),
             device=device,
             class_weight=class_weight,
+            run_label=f"cv_fold_{fold_id}",
         )
+        for hist_row in fold_history:
+            history_rows.append(
+                {
+                    "phase": "cv",
+                    "fold": fold_id,
+                    **hist_row,
+                }
+            )
         row = {
             "fold": fold_id,
             "model": "supervised_macro_ft",
@@ -99,4 +109,5 @@ def run_group_kfold_cv(
                 config={**dict(model_cfg), **dict(train_cfg), "fold": fold_id},
             )
 
-    return fold_rows, aggregate_cv_metrics(fold_rows)
+    history_df = pd.DataFrame(history_rows)
+    return fold_rows, aggregate_cv_metrics(fold_rows), history_df

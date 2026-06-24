@@ -69,10 +69,12 @@ from macro_transfer.notebook_viz import (
     compute_fsp_confidence_calibration,
     get_fsp_top_confident_errors,
     load_supervised_macro_ft_run_artifacts,
+    load_supervised_macro_ft_train_history,
     load_supervised_macro_ft_vs_baseline07_metrics,
     plot_fsp_confusion_heatmap,
     plot_fsp_distribution_histograms,
     plot_fsp_pred_macro_distribution,
+    plot_supervised_macro_ft_train_history,
     plot_tsne_true_vs_pred,
 )
 from supervised_macro_ft.transfer import supervised_macro_ft_output_dir
@@ -98,6 +100,27 @@ if cv_folds.is_file():
     display(pd.read_csv(cv_folds).head())
 else:
     print("CV absente — lancer jobs/train_supervised_macro_ft.sh")
+"""
+        ),
+        md(
+            r"""
+## § Courbes d'entraînement (epoch par epoch)
+
+Fichiers produits par le job train :
+- `output/supervised_macro_ft/cv/train_history.csv` — CV (train/val par fold)
+- `output/supervised_macro_ft/train_history_final.csv` — fit final 100 % BTP (train_loss)
+
+Les logs SLURM (`slurm-sup-macro-ft-*.out`) reprennent les mêmes lignes `[cv_fold_k]` / `[final_fit]`.
+"""
+        ),
+        py(
+            r"""
+hist = load_supervised_macro_ft_train_history(TRAIN_OUT)
+if not hist.empty:
+    display(hist.head(12))
+    plot_supervised_macro_ft_train_history(hist, fig_dir=FIG_DIR, filename="train_history_curves.png")
+else:
+    print("Historique absent — relancer jobs/train_supervised_macro_ft.sh")
 """
         ),
         md("## § Comparaison vs baseline 07 (sklearn Qwen brut)"),

@@ -300,3 +300,24 @@ def test_plot_tsne_true_vs_pred_runs(tmp_path: Path):
         max_points=80,
     )
     assert out is not None and out.is_file()
+
+
+def test_plot_supervised_macro_ft_train_history_runs(tmp_path: Path):
+    hist = pd.DataFrame(
+        {
+            "phase": ["cv", "cv", "cv", "cv", "final", "final"],
+            "fold": [0, 0, 1, 1, -1, -1],
+            "epoch": [1, 2, 1, 2, 1, 2],
+            "train_loss": [1.2, 0.9, 1.1, 0.8, 0.7, 0.5],
+            "val_macro_f1": [0.4, 0.5, 0.45, 0.55, float("nan"), float("nan")],
+        }
+    )
+    from macro_transfer.notebook_viz import plot_supervised_macro_ft_train_history
+
+    out = plot_supervised_macro_ft_train_history(
+        hist,
+        fig_dir=tmp_path,
+        filename="train_history_curves.png",
+        show=False,
+    )
+    assert out is not None and out.is_file()

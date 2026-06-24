@@ -120,6 +120,21 @@ def load_supervised_macro_ft_run_artifacts(out_dir: str | Path) -> FSPRunArtifac
     )
 
 
+def load_supervised_macro_ft_train_history(train_out: str | Path) -> pd.DataFrame:
+    """Charge l'historique epoch par epoch (CV + fit final BTP)."""
+    root = Path(train_out).resolve()
+    frames: list[pd.DataFrame] = []
+    cv_path = root / "cv" / "train_history.csv"
+    final_path = root / "train_history_final.csv"
+    if cv_path.is_file():
+        frames.append(pd.read_csv(cv_path))
+    if final_path.is_file():
+        frames.append(pd.read_csv(final_path))
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
+
+
 def load_supervised_macro_ft_vs_baseline07_metrics(corpus_id: str, *, anchor: Path) -> pd.DataFrame:
     """Compare métriques FT neural vs baseline 07 sklearn."""
     from supervised_macro_ft.transfer import supervised_macro_ft_output_dir
@@ -479,6 +494,90 @@ def plot_tsne_true_vs_pred(
         fig.savefig(out_path, dpi=140, bbox_inches="tight")
     plt.show()
     plt.close(fig)
+    return out_path
+
+
+def plot_supervised_macro_ft_train_history(
+    history_df: pd.DataFrame,
+    *,
+    fig_dir: Optional[Path] = None,
+    filename: str = "train_history_curves.png",
+    show: bool = True,
+) -> Optional[Path]:
+    """Courbes train_loss et val macro F1 par epoch (CV + fit final)."""
+    if history_df.empty or "epoch" not in history_df.columns:
+        return None
+
+    if "phase" in history_df.columns:
+        cv = history_df[history_df["phase"] == "cv"].copy()
+        final = history_df[history_df["phase"] == "final"].copy()
+    else:
+        cv = history_df[history_df.get("fold", -1) >= 0].copy() if "fold" in history_df.columns else history_df.copy()
+        final = history_df[history_df.get("fold", -1) == -1].copy() if "fold" in history_df.columns else pd.DataFrame()
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+
+    ax = axes[0]
+    if not cv.empty and "train_loss" in cv.columns:
+        for fold_id, sub in cv.groupby("fold"):
+            ax.plot(
+                sub["epoch"],
+                sub["train_loss"],
+                alpha=0.35,
+                linewidth=1,
+                color="#4c78a8",
+            )
+        mean_loss = cv.groupby("epoch")["train_loss"].mean()
+        ax.plot(mean_loss.index, mean_loss.values, color="#d62728", linewidth=2, label="CV moyenne")
+    if not final.empty and "train_loss" in final.columns:
+        ax.plot(
+            final["epoch"],
+            final["train_loss"],
+            color="#2ca02c",
+            linewidth=2,
+            linestyle="--",
+            label="fit final (100 % BTP)",
+        )
+    ax.set_title("Train loss")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.legend(fontsize=8)
+
+    ax = axes[1]
+    if not cv.empty and "val_macro_f1" in cv.columns:
+        val_cv = cv.dropna(subset=["val_macro_f1"])
+        if not val_cv.empty:
+            for _, sub in val_cv.groupby("fold"):
+                ax.plot(sub["epoch"], sub["val_macro_f1"], alpha=0.35, linewidth=1, color="#9ecae9")
+            grp = val_cv.groupby("epoch")["val_macro_f1"]
+            mean_f1 = grp.mean()
+            std_f1 = grp.std(ddof=0).fillna(0.0)
+            ax.plot(mean_f1.index, mean_f1.values, color="#1f77b4", linewidth=2, label="CV moyenne")
+            ax.fill_between(
+                mean_f1.index,
+                mean_f1 - std_f1,
+                mean_f1 + std_f1,
+                color="#1f77b4",
+                alpha=0.15,
+                label="±1 écart-type",
+            )
+    ax.set_title("Val macro F1 (CV)")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Macro F1")
+    ax.set_ylim(0, 1)
+    ax.legend(fontsize=8)
+
+    fig.tight_layout()
+    out_path: Optional[Path] = None
+    if fig_dir is not None:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        out_path = out / filename
+        fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
     return out_path
 
 
