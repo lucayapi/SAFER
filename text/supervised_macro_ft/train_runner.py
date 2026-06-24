@@ -20,7 +20,7 @@ from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import save_checkpoint
 from supervised_macro_ft.cv import run_group_kfold_cv
-from supervised_macro_ft.model import SupervisedMacroModel
+from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
 from supervised_macro_ft.train_loop import (
     build_class_weights,
     evaluate_loader,
@@ -88,14 +88,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
     collate_fn = make_text_collate_fn(tokenizer, max_length)
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
-    model = SupervisedMacroModel(
-        backbone_name=backbone_name,
-        num_classes=int(model_cfg.get("n_classes", 4)),
-        pooling=str(model_cfg.get("pooling", "mean")),
-        backbone_trainable=bool(model_cfg.get("backbone_trainable", True)),
-        train_last_n_layers=model_cfg.get("train_last_n_layers"),
-        gradient_checkpointing=bool(model_cfg.get("gradient_checkpointing", False)),
-    ).to(device)
+    model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
 
     class_weight = build_class_weights(
         dataset.label_ids.tolist(),

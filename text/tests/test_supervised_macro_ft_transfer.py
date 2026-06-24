@@ -21,12 +21,18 @@ class _DummyTokenizer:
 
 
 def test_encode_and_predict_shapes():
-    model = SupervisedMacroModel(backbone_name="__test_dummy__", num_classes=4, backbone_trainable=False)
+    model = SupervisedMacroModel(
+        backbone_name="__test_dummy__",
+        num_classes=4,
+        backbone_trainable=False,
+        projection="mlp",
+        hiddim=32,
+    )
     device = torch.device("cpu")
     tok = _DummyTokenizer()
     texts = ["a", "b", "c"]
     h = encode_texts(model, tok, texts, max_length=32, batch_size=2, device=device)
-    assert h.shape == (3, model.backbone.hidden_size)
+    assert h.shape == (3, 32)
     pred, probs, conf, margin, entropy = predict_corpus(
         model, tok, texts, macros=["A0", "A1", "B", "C"], max_length=32, batch_size=2, device=device
     )

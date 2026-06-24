@@ -196,7 +196,7 @@ Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles 
 
 ### Fine-tuning supervisé macro (tête softmax)
 
-Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici l'encodeur θ et la tête lineaire `W,b` sont entraînés par cross-entropy sur BTP.
+Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: mlp`, `hiddim: 128`) + tête CE `W,b` sont entraînés sur BTP ; `encode()` exporte **z** (espace adapté).
 
 | Étape | Commande |
 |-------|----------|

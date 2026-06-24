@@ -12,30 +12,27 @@ from torch.utils.data import DataLoader
 
 from scgm_text.batch_utils import batch_to_device
 from scgm_text.metrics import accuracy, balanced_accuracy, macro_f1
+from supervised_macro_ft.checkpoint_io import _backbone_state_dict, _load_backbone_state_dict
 from supervised_macro_ft.model import SupervisedMacroModel
 
 logger = logging.getLogger(__name__)
 
 
 def _snapshot_model_state(model: SupervisedMacroModel) -> Dict[str, Any]:
-    encoder = getattr(model.backbone, "encoder", None)
-    if encoder is not None:
-        backbone_state = {k: v.cpu().clone() for k, v in encoder.state_dict().items()}
-    else:
-        backbone_state = {k: v.cpu().clone() for k, v in model.backbone.state_dict().items()}
-    return {
-        "backbone": backbone_state,
+    state: Dict[str, Any] = {
+        "backbone": {k: v.cpu().clone() for k, v in _backbone_state_dict(model).items()},
         "classifier": {k: v.cpu().clone() for k, v in model.classifier.state_dict().items()},
     }
+    if model.use_projector:
+        state["projector"] = {k: v.cpu().clone() for k, v in model.projector.state_dict().items()}
+    return state
 
 
 def _restore_model_state(model: SupervisedMacroModel, state: Dict[str, Any]) -> None:
-    encoder = getattr(model.backbone, "encoder", None)
-    if encoder is not None:
-        encoder.load_state_dict(state["backbone"])
-    else:
-        model.backbone.load_state_dict(state["backbone"])
+    _load_backbone_state_dict(model, state["backbone"])
     model.classifier.load_state_dict(state["classifier"])
+    if "projector" in state and model.use_projector:
+        model.projector.load_state_dict(state["projector"])
 
 
 def build_class_weights(
@@ -56,12 +53,16 @@ def build_class_weights(
 
 def build_optimizer(model: SupervisedMacroModel, train_cfg: Dict[str, Any]) -> torch.optim.Optimizer:
     lr_backbone = float(train_cfg.get("lr_backbone", 2e-5))
+    lr_projector = float(train_cfg.get("lr_projector", 1e-3))
     lr_head = float(train_cfg.get("lr_head", 1e-3))
     wd = float(train_cfg.get("weight_decay", 0.01))
     groups = []
     backbone_params = [p for p in model.backbone.parameters() if p.requires_grad]
     if backbone_params:
         groups.append({"params": backbone_params, "lr": lr_backbone, "weight_decay": wd})
+    projector_params = [p for p in model.projector.parameters() if p.requires_grad]
+    if projector_params:
+        groups.append({"params": projector_params, "lr": lr_projector, "weight_decay": wd})
     head_params = [p for p in model.classifier.parameters() if p.requires_grad]
     if head_params:
         groups.append({"params": head_params, "lr": lr_head, "weight_decay": wd})

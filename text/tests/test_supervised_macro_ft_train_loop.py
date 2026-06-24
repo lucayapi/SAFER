@@ -30,7 +30,10 @@ def test_fit_model_returns_epoch_history_with_early_stopping():
     model = SupervisedMacroModel(
         backbone_name="__test_dummy__",
         num_classes=4,
-        backbone_trainable=True,
+        backbone_trainable=False,
+        projection="mlp",
+        hiddim=16,
+        dropout=0.0,
     )
     train_loader = DataLoader(_TinyBatchDataset(), batch_size=8, shuffle=True)
     val_loader = DataLoader(_TinyBatchDataset(), batch_size=8, shuffle=False)
