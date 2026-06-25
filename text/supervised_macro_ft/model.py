@@ -26,6 +26,8 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "projection": projection,
         "hiddim": int(model_cfg.get("hiddim", 128)),
         "dropout": float(model_cfg.get("dropout", 0.1)),
+        "cache_backbone_embeddings": bool(model_cfg.get("cache_backbone_embeddings", True)),
+        "backbone_emb_csv": model_cfg.get("backbone_emb_csv"),
     }
 
 
@@ -110,6 +112,14 @@ class SupervisedMacroModel(nn.Module):
             return h.detach()
         return self.backbone(input_ids=input_ids, attention_mask=attention_mask)
 
+    def encode_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+        """z = ψ(h) à partir d'embeddings backbone déjà calculés."""
+        return self.projector(hidden)
+
+    def forward_logits_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
+        z = self.encode_from_hidden(hidden)
+        return self.classifier(z)
+
     def encode(
         self,
         input_ids: torch.Tensor,
@@ -128,6 +138,8 @@ class SupervisedMacroModel(nn.Module):
         return self.classifier(z)
 
     def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
+        if "hidden" in batch:
+            return self.forward_logits_from_hidden(batch["hidden"])
         return self.forward_logits(batch["input_ids"], batch["attention_mask"])
 
     @torch.no_grad()

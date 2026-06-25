@@ -196,7 +196,7 @@ Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles 
 
 ### Fine-tuning supervisé macro (tête softmax)
 
-Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: mlp`, `hiddim: 128`) + tête CE `W,b` sont entraînés sur BTP ; `encode()` exporte **z** (espace adapté).
+Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: mlp`, `hiddim: 128`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
 
 | Étape | Commande |
 |-------|----------|

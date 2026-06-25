@@ -20,6 +20,14 @@ from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import save_checkpoint
 from supervised_macro_ft.cv import run_group_kfold_cv
+from supervised_macro_ft.embedding_cache import (
+    BackboneHiddenDataset,
+    collate_hidden_batch,
+    encode_projected_matrix,
+    load_or_build_backbone_hidden,
+    predict_from_hidden_matrix,
+    should_cache_backbone_embeddings,
+)
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
 from supervised_macro_ft.train_loop import (
     build_class_weights,
@@ -61,6 +69,33 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         text_col=data_cfg.get("text_col"),
     )
 
+    batch_size = int(train_cfg.get("batch_size", 32))
+    max_length = int(model_cfg.get("max_seq_length", 256))
+    collate_fn = make_text_collate_fn(tokenizer, max_length)
+
+    backbone_hidden: Optional[np.ndarray] = None
+    use_hidden_cache = should_cache_backbone_embeddings(model_cfg)
+    if use_hidden_cache:
+        emb_csv = model_cfg.get("backbone_emb_csv")
+        if emb_csv:
+            model_cfg = {
+                **model_cfg,
+                "backbone_emb_csv": str(resolve_repo_path(str(emb_csv), repo_root=anchor)),
+            }
+        cache_model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
+        backbone_hidden = load_or_build_backbone_hidden(
+            model=cache_model,
+            dataset=dataset,
+            tokenizer=tokenizer,
+            model_cfg=model_cfg,
+            cache_dir=out_dir / "cache",
+            device=device,
+        )
+        logger.info(
+            "Mode cache backbone actif : entraînement projecteur+tête uniquement (%s)",
+            backbone_hidden.shape,
+        )
+
     n_folds = int(train_cfg.get("n_folds", 5))
     seed = int(train_cfg.get("seed", 42))
     fold_rows, cv_summary, cv_history = run_group_kfold_cv(
@@ -72,6 +107,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         seed=seed,
         device=device,
         fold_out_root=str(out_dir),
+        backbone_hidden=backbone_hidden,
     )
     cv_dir = out_dir / "cv"
     cv_dir.mkdir(parents=True, exist_ok=True)
@@ -83,11 +119,6 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         logger.info("Historique CV exporté : %s", cv_dir / "train_history.csv")
 
     # Fit final 100 % BTP
-    batch_size = int(train_cfg.get("batch_size", 32))
-    max_length = int(model_cfg.get("max_seq_length", 256))
-    collate_fn = make_text_collate_fn(tokenizer, max_length)
-    train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-
     model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
 
     class_weight = build_class_weights(
@@ -95,6 +126,17 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         int(model_cfg.get("n_classes", 4)),
         model_cfg.get("class_weight"),
     )
+    if use_hidden_cache and backbone_hidden is not None:
+        final_ds = BackboneHiddenDataset(backbone_hidden, dataset.label_ids)
+        train_loader = DataLoader(
+            final_ds,
+            batch_size=batch_size,
+            shuffle=True,
+            collate_fn=collate_hidden_batch,
+        )
+    else:
+        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+
     model, final_metrics, final_history = fit_model(
         model,
         train_loader,
@@ -121,7 +163,6 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
     exp_cfg = dict(cfg.get("exports") or {})
     if bool(exp_cfg.get("save_btp_embeddings", True)):
         from macro_transfer.constants import MACRO_NAMES
-        from supervised_macro_ft.transfer import encode_texts, predict_corpus
 
         emb_dir = out_dir / "embeddings"
         emb_dir.mkdir(parents=True, exist_ok=True)
@@ -129,27 +170,43 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         text_col = str(data_cfg.get("text_col", "sentence"))
         label_col = str(data_cfg.get("label_col", "pred_label"))
         group_col = str(data_cfg.get("group_col", "accident_id"))
-        texts = meta_df[text_col].astype(str).tolist()
-        h_btp = encode_texts(
-            model,
-            tokenizer,
-            texts,
-            max_length=max_length,
-            batch_size=batch_size,
-            device=device,
-        )
-        pred_macro, probs, confidence, margin, entropy = predict_corpus(
-            model,
-            tokenizer,
-            texts,
-            macros=list(MACRO_NAMES),
-            max_length=max_length,
-            batch_size=batch_size,
-            device=device,
-        )
+
+        if use_hidden_cache and backbone_hidden is not None:
+            z_btp = encode_projected_matrix(
+                model, backbone_hidden, batch_size=batch_size, device=device
+            )
+            pred_macro, probs, confidence, margin, entropy = predict_from_hidden_matrix(
+                model,
+                backbone_hidden,
+                macros=list(MACRO_NAMES),
+                batch_size=batch_size,
+                device=device,
+            )
+        else:
+            from supervised_macro_ft.transfer import encode_texts, predict_corpus
+
+            texts = meta_df[text_col].astype(str).tolist()
+            z_btp = encode_texts(
+                model,
+                tokenizer,
+                texts,
+                max_length=max_length,
+                batch_size=batch_size,
+                device=device,
+            )
+            pred_macro, probs, confidence, margin, entropy = predict_corpus(
+                model,
+                tokenizer,
+                texts,
+                macros=list(MACRO_NAMES),
+                max_length=max_length,
+                batch_size=batch_size,
+                device=device,
+            )
+
         btp_preds = pd.DataFrame(
             {
-                "sentence": texts,
+                "sentence": meta_df[text_col].astype(str).tolist(),
                 label_col: meta_df[label_col].astype(str).to_numpy(),
                 "pred_macro": pred_macro,
                 "confidence": confidence,
@@ -161,7 +218,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
             btp_preds[group_col] = meta_df[group_col].to_numpy()
         for i, m in enumerate(MACRO_NAMES):
             btp_preds[f"prob_{m}"] = probs[:, i]
-        np.save(emb_dir / "btp_embeddings.npy", h_btp)
+        np.save(emb_dir / "btp_embeddings.npy", z_btp)
         btp_preds.to_csv(emb_dir / "btp_embeddings_metadata.csv", index=False)
         logger.info("Embeddings BTP exportés : %s", emb_dir)
 
@@ -198,6 +255,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,
+        "backbone_cache_used": bool(use_hidden_cache),
         "train_history_paths": {
             "cv": str(cv_dir / "train_history.csv") if not cv_history.empty else None,
             "final": str(out_dir / "train_history_final.csv") if final_history else None,

@@ -13,6 +13,11 @@ from safer_core.kfold_eval import group_kfold_splits
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import save_checkpoint
+from supervised_macro_ft.embedding_cache import (
+    BackboneHiddenDataset,
+    collate_hidden_batch,
+    should_cache_backbone_embeddings,
+)
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
 from supervised_macro_ft.train_loop import build_class_weights, evaluate_loader, fit_model
 
@@ -44,6 +49,7 @@ def run_group_kfold_cv(
     seed: int,
     device: torch.device,
     fold_out_root: Optional[str] = None,
+    backbone_hidden: Optional[np.ndarray] = None,
 ) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame]:
     groups = dataset.get_groups()
     splits = group_kfold_splits(groups, n_folds, seed)
@@ -51,15 +57,28 @@ def run_group_kfold_cv(
     history_rows: List[Dict[str, Any]] = []
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
+    use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
     collate_fn = make_text_collate_fn(tokenizer, max_length)
+    label_ids = dataset.label_ids
 
     for fold_id, (train_idx, val_idx) in enumerate(splits):
-        train_ds = Subset(dataset, train_idx.tolist())
-        val_ds = Subset(dataset, val_idx.tolist())
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-
         model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
+
+        if use_hidden_cache:
+            assert backbone_hidden is not None
+            train_ds = BackboneHiddenDataset(backbone_hidden, label_ids, train_idx)
+            val_ds = BackboneHiddenDataset(backbone_hidden, label_ids, val_idx)
+            train_loader = DataLoader(
+                train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_hidden_batch
+            )
+            val_loader = DataLoader(
+                val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_hidden_batch
+            )
+        else:
+            train_ds = Subset(dataset, train_idx.tolist())
+            val_ds = Subset(dataset, val_idx.tolist())
+            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+            val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
         train_labels = [int(dataset.label_ids[i]) for i in train_idx]
         class_weight = build_class_weights(
