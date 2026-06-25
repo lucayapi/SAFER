@@ -26,8 +26,6 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "projection": projection,
         "hiddim": int(model_cfg.get("hiddim", 128)),
         "dropout": float(model_cfg.get("dropout", 0.1)),
-        "cache_backbone_embeddings": bool(model_cfg.get("cache_backbone_embeddings", True)),
-        "backbone_emb_csv": model_cfg.get("backbone_emb_csv"),
     }
 
 
