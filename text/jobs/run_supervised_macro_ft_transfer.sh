@@ -23,14 +23,11 @@ fi
 
 CONFIG="${CONFIG:-configs/supervised_macro_ft_transfer.yaml}"
 CORPUS="${CORPUS:-metallurgie}"
-EXTRA_ARGS=()
+ARGS=(--config "${CONFIG}" --corpus "${CORPUS}")
 if [[ "${RUN_BERTOPIC:-true}" == "false" ]]; then
-  EXTRA_ARGS+=(--skip-bertopic)
+  ARGS+=(--skip-bertopic)
 fi
 
 echo "[sup-macro-xfer] CORPUS=${CORPUS} RUN_BERTOPIC=${RUN_BERTOPIC:-true} $(date -Iseconds)"
-python -u scripts/run_supervised_macro_ft_transfer.py \
-  --config "${CONFIG}" \
-  --corpus "${CORPUS}" \
-  "${EXTRA_ARGS[@]}"
+python -u scripts/run_supervised_macro_ft_transfer.py "${ARGS[@]}"
 echo "[sup-macro-xfer] terminé $(date -Iseconds)"
