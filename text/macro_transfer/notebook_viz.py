@@ -135,6 +135,34 @@ def load_supervised_macro_ft_train_history(train_out: str | Path) -> pd.DataFram
     return pd.concat(frames, ignore_index=True)
 
 
+def load_supervised_macro_ft_geometry_tables(
+    train_out: str | Path,
+    transfer_out: str | Path,
+) -> Dict[str, pd.DataFrame]:
+    """Charge tableaux géométrie η² / IPR (CV, BTP final, test)."""
+    from supervised_macro_ft.geometry_eval import geometry_summary_for_notebook
+
+    train_root = Path(train_out).resolve()
+    xfer_root = Path(transfer_out).resolve()
+    out: Dict[str, pd.DataFrame] = {}
+    kfold_summary = train_root / "metrics" / "kfold_geometry_summary.csv"
+    kfold_per_fold = train_root / "metrics" / "kfold_geometry_per_fold.csv"
+    btp_geom = train_root / "metrics" / "metrics_geometry_btp.csv"
+    test_geom = xfer_root / "transfer" / "metrics_geometry.csv"
+    raw_test_geom = xfer_root.parent.parent / "raw_embedding" / "metrics" / "metrics_geometry.csv"
+    if kfold_summary.is_file():
+        out["kfold_summary"] = geometry_summary_for_notebook(kfold_summary)
+    if kfold_per_fold.is_file():
+        out["kfold_per_fold"] = pd.read_csv(kfold_per_fold)
+    if btp_geom.is_file():
+        out["btp_final"] = pd.read_csv(btp_geom)
+    if test_geom.is_file():
+        out["test"] = pd.read_csv(test_geom)
+    if raw_test_geom.is_file():
+        out["test_raw"] = pd.read_csv(raw_test_geom)
+    return out
+
+
 def load_supervised_macro_ft_vs_baseline07_metrics(corpus_id: str, *, anchor: Path) -> pd.DataFrame:
     """Compare métriques FT neural vs baseline 07 sklearn."""
     from supervised_macro_ft.transfer import supervised_macro_ft_output_dir

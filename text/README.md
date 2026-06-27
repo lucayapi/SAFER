@@ -207,7 +207,7 @@ Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Q
 
 Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervised_macro_ft.yaml), [`configs/supervised_macro_ft_transfer.yaml`](configs/supervised_macro_ft_transfer.yaml).
 
-Sorties : `output/supervised_macro_ft/` (train) ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (transfert). BERTopic utilise les embeddings **fine-tunés** `h_t`, pas `embeddings/test/*.csv`.
+Sorties : `output/supervised_macro_ft/` (train, `metrics/kfold_geometry_*.csv`, `metrics_geometry_btp.csv`) ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (`transfer/metrics_geometry.csv`). BERTopic utilise les embeddings **z** projetés.
 
 Sorties principales :
 - `transfer/source_prototypes.csv`

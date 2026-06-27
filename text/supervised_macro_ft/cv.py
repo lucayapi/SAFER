@@ -18,6 +18,7 @@ from supervised_macro_ft.embedding_cache import (
     collate_hidden_batch,
     should_cache_backbone_embeddings,
 )
+from supervised_macro_ft.geometry_eval import encode_val_projected, evaluate_fold_geometry
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
 from supervised_macro_ft.train_loop import build_class_weights, evaluate_loader, fit_model
 
@@ -50,10 +51,13 @@ def run_group_kfold_cv(
     device: torch.device,
     fold_out_root: Optional[str] = None,
     backbone_hidden: Optional[np.ndarray] = None,
-) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame]:
+    label_col: str = "pred_label",
+    raw_emb_csv: Optional[str] = None,
+) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame, List[Dict[str, Any]]]:
     groups = dataset.get_groups()
     splits = group_kfold_splits(groups, n_folds, seed)
     fold_rows: List[Dict[str, Any]] = []
+    geometry_fold_rows: List[Dict[str, Any]] = []
     history_rows: List[Dict[str, Any]] = []
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
@@ -113,6 +117,25 @@ def run_group_kfold_cv(
         }
         fold_rows.append(row)
 
+        val_meta = dataset.get_metadata_df().iloc[val_idx]
+        z_val = encode_val_projected(
+            model,
+            dataset,
+            val_idx,
+            backbone_hidden=backbone_hidden if use_hidden_cache else None,
+            tokenizer=tokenizer,
+            device=device,
+            model_cfg=model_cfg,
+            batch_size=batch_size,
+        )
+        geom = evaluate_fold_geometry(
+            z_val,
+            val_meta,
+            label_col,
+            raw_emb_csv=raw_emb_csv,
+        )
+        geometry_fold_rows.append({"fold": fold_id, "fold_id": fold_id, **geom})
+
         if fold_out_root:
             fold_dir = f"{fold_out_root}/folds/fold_{fold_id}"
             save_checkpoint(
@@ -122,4 +145,4 @@ def run_group_kfold_cv(
             )
 
     history_df = pd.DataFrame(history_rows)
-    return fold_rows, aggregate_cv_metrics(fold_rows), history_df
+    return fold_rows, aggregate_cv_metrics(fold_rows), history_df, geometry_fold_rows

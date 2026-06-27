@@ -19,6 +19,12 @@ from safer_core.test_corpus import resolve_test_corpus
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import save_checkpoint
+from supervised_macro_ft.geometry_eval import (
+    METHOD_LABEL_BTP,
+    evaluate_corpus_geometry_with_ipr,
+    save_geometry_kfold_tables,
+    save_geometry_metrics_csv,
+)
 from supervised_macro_ft.cv import run_group_kfold_cv
 from supervised_macro_ft.embedding_cache import (
     BackboneHiddenDataset,
@@ -96,9 +102,16 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
             backbone_hidden.shape,
         )
 
+    label_col = str(data_cfg.get("label_col", "pred_label"))
+    raw_emb_csv = model_cfg.get("backbone_emb_csv")
+    if raw_emb_csv:
+        raw_emb_csv = str(resolve_repo_path(str(raw_emb_csv), repo_root=anchor))
+
     n_folds = int(train_cfg.get("n_folds", 5))
     seed = int(train_cfg.get("seed", 42))
-    fold_rows, cv_summary, cv_history = run_group_kfold_cv(
+    metrics_dir = out_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    fold_rows, cv_summary, cv_history, geometry_fold_rows = run_group_kfold_cv(
         dataset,
         tokenizer,
         model_cfg=model_cfg,
@@ -108,6 +121,8 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         device=device,
         fold_out_root=str(out_dir),
         backbone_hidden=backbone_hidden,
+        label_col=label_col,
+        raw_emb_csv=raw_emb_csv,
     )
     cv_dir = out_dir / "cv"
     cv_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +132,9 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
     if not cv_history.empty:
         cv_history.to_csv(cv_dir / "train_history.csv", index=False)
         logger.info("Historique CV exporté : %s", cv_dir / "train_history.csv")
+    if geometry_fold_rows:
+        save_geometry_kfold_tables(geometry_fold_rows, metrics_dir)
+        logger.info("Géométrie CV exportée : %s", metrics_dir)
 
     # Fit final 100 % BTP
     model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
@@ -168,7 +186,6 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         emb_dir.mkdir(parents=True, exist_ok=True)
         meta_df = dataset.get_metadata_df()
         text_col = str(data_cfg.get("text_col", "sentence"))
-        label_col = str(data_cfg.get("label_col", "pred_label"))
         group_col = str(data_cfg.get("group_col", "accident_id"))
 
         if use_hidden_cache and backbone_hidden is not None:
@@ -222,7 +239,17 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         btp_preds.to_csv(emb_dir / "btp_embeddings_metadata.csv", index=False)
         logger.info("Embeddings BTP exportés : %s", emb_dir)
 
-    # Eval optionnelle corpus test
+        geom_btp = evaluate_corpus_geometry_with_ipr(
+            z_btp,
+            meta_df,
+            label_col,
+            method=METHOD_LABEL_BTP,
+            raw_emb_csv=raw_emb_csv,
+        )
+        save_geometry_metrics_csv(geom_btp, metrics_dir / "metrics_geometry_btp.csv")
+        logger.info("Géométrie BTP exportée : %s", metrics_dir / "metrics_geometry_btp.csv")
+
+    # Eval optionnelle corpus test (classification CE)
     test_metrics: Dict[str, Any] = {}
     test_corpus = str(cfg.get("test_corpus") or "metallurgie")
     try:
@@ -245,7 +272,7 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         )
         test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
         test_metrics = evaluate_loader(model, test_loader, device)
-        pd.DataFrame([test_metrics]).to_csv(out_dir / "metrics_geometry_test.csv", index=False)
+        pd.DataFrame([test_metrics]).to_csv(metrics_dir / "metrics_classification_test.csv", index=False)
     except Exception as exc:
         logger.warning("Eval test corpus ignorée : %s", exc)
 
@@ -256,6 +283,8 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,
         "backbone_cache_used": bool(use_hidden_cache),
+        "geometry_kfold_summary": str(metrics_dir / "kfold_geometry_summary.csv"),
+        "geometry_btp": str(metrics_dir / "metrics_geometry_btp.csv"),
         "train_history_paths": {
             "cv": str(cv_dir / "train_history.csv") if not cv_history.empty else None,
             "final": str(out_dir / "train_history_final.csv") if final_history else None,

@@ -27,6 +27,12 @@ from safer_core.test_corpus import default_test_corpus_id, macro_transfer_output
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_config
+from supervised_macro_ft.geometry_eval import (
+    METHOD_LABEL_TEST,
+    evaluate_corpus_geometry_with_ipr,
+    geometry_keys_from_row,
+    save_geometry_metrics_csv,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -169,6 +175,28 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
             model, tokenizer, texts, max_length=max_length, batch_size=batch_size, device=device
         )
 
+    raw_emb_csv = target_cfg.get("raw_emb_csv")
+    if raw_emb_csv:
+        raw_emb_csv = str(resolve_repo_path(str(raw_emb_csv), repo_root=anchor))
+    else:
+        default_test_emb = anchor / "embeddings" / "test" / f"Qwen3-Embedding-0.6B_{corpus}.csv"
+        raw_emb_csv = str(default_test_emb) if default_test_emb.is_file() else None
+
+    geom_test: Dict[str, Any] = {}
+    if label_col and label_col in test_meta.columns:
+        try:
+            geom_test = evaluate_corpus_geometry_with_ipr(
+                z_target,
+                test_meta,
+                str(label_col),
+                method=METHOD_LABEL_TEST,
+                raw_emb_csv=raw_emb_csv,
+            )
+            save_geometry_metrics_csv(geom_test, transfer_dir / "metrics_geometry.csv")
+            logger.info("Géométrie test exportée : %s", transfer_dir / "metrics_geometry.csv")
+        except Exception as exc:
+            logger.warning("Géométrie test ignorée : %s", exc)
+
     pred_macro, probs, confidence, margin, entropy = predict_corpus(
         model, tokenizer, texts, macros=macros, max_length=max_length, batch_size=batch_size, device=device
     )
@@ -209,6 +237,13 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
         metrics_out.update(eval_metrics)
         metrics_out["_confusion_matrix"] = cm
         metrics_out["_classification_report"] = cls_rep
+
+    if geom_test:
+        for key, val in geometry_keys_from_row(geom_test).items():
+            metrics_out[f"geometry_{key}"] = val
+        for col in ("IPR_mean", "IPR_A0", "IPR_A1", "IPR_B", "IPR_C"):
+            if col in geom_test:
+                metrics_out[f"geometry_{col}"] = geom_test[col]
 
     export_test_results(out_dir, preds, metrics_out, macros=macros)
 
@@ -261,5 +296,6 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
         "output_dir": str(out_dir),
         "transfer_dir": str(transfer_dir),
         "metrics_path": str(transfer_dir / "metrics.json"),
+        "geometry_metrics_path": str(transfer_dir / "metrics_geometry.csv"),
         "bertopic_summary": bertopic_summary,
     }

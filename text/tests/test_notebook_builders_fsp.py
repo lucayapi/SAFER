@@ -105,6 +105,8 @@ def test_builder_10_supervised_macro_ft():
     assert "load_supervised_macro_ft_run_artifacts" in src
     assert "plot_tsne_true_vs_pred" in src
     assert "load_supervised_macro_ft_train_history" in src
+    assert "load_supervised_macro_ft_geometry_tables" in src
+    assert "kfold_geometry_display_table" in src
     assert "plot_supervised_macro_ft_train_history" in src
     assert "train_history_curves" in src
     assert "tsne_btp_true_vs_pred" in src

@@ -69,6 +69,7 @@ from macro_transfer.notebook_viz import (
     compute_fsp_confidence_calibration,
     get_fsp_top_confident_errors,
     load_supervised_macro_ft_run_artifacts,
+    load_supervised_macro_ft_geometry_tables,
     load_supervised_macro_ft_train_history,
     load_supervised_macro_ft_vs_baseline07_metrics,
     plot_fsp_confusion_heatmap,
@@ -121,6 +122,53 @@ if not hist.empty:
     plot_supervised_macro_ft_train_history(hist, fig_dir=FIG_DIR, filename="train_history_curves.png")
 else:
     print("Historique absent — relancer jobs/train_supervised_macro_ft.sh")
+"""
+        ),
+        md(
+            r"""
+## § Géométrie η² / IPR (embeddings projetés z)
+
+Métriques sur **z = ψ(h)** (L2-normalisé), alignées notebook 01 / SCGM :
+- **η² macro balanced** (`eta2_macro_balanced_perc`) et **η² weighted**
+- **IPR** vs embedding Qwen brut (même corpus / fold)
+
+Fichiers : `metrics/kfold_geometry_*.csv`, `metrics/metrics_geometry_btp.csv`, `transfer/metrics_geometry.csv`
+"""
+        ),
+        py(
+            r"""
+from metrics.compare_display import (
+    enrich_geometry_with_ipr,
+    joint_eta2_ipr_table,
+    kfold_geometry_display_table,
+    kfold_ipr_display_table,
+)
+
+GEO = load_supervised_macro_ft_geometry_tables(TRAIN_OUT, OUT_DIR)
+
+if "kfold_summary" in GEO and not GEO["kfold_summary"].empty:
+    print("### CV BTP — η² / IPR (μ±σ sur folds val)")
+    display(kfold_geometry_display_table(GEO["kfold_summary"]))
+    display(kfold_ipr_display_table(GEO["kfold_summary"]))
+    if "kfold_per_fold" in GEO:
+        display(GEO["kfold_per_fold"])
+else:
+    print("Géométrie CV absente — relancer jobs/train_supervised_macro_ft.sh")
+
+frames = []
+if "btp_final" in GEO:
+    frames.append(GEO["btp_final"])
+if "test" in GEO:
+    frames.append(GEO["test"])
+if "test_raw" in GEO:
+    frames.append(GEO["test_raw"])
+if frames:
+    geom_all = enrich_geometry_with_ipr(pd.concat(frames, ignore_index=True))
+    print("### BTP fit final + test metallurgie (η² + IPR)")
+    display(geom_all)
+    display(joint_eta2_ipr_table(geom_all))
+else:
+    print("Géométrie BTP/test absente — relancer train + transfert.")
 """
         ),
         md("## § Comparaison vs baseline 07 (sklearn Qwen brut)"),
