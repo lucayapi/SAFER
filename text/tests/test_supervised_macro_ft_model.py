@@ -12,7 +12,7 @@ def test_supervised_macro_model_forward_and_probs_with_projector():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=32,
         dropout=0.0,
     )

@@ -23,7 +23,15 @@ from macro_transfer.frozen_source_prototypes import (
 from macro_transfer.supervised_baseline import build_predictions_dataframe, export_test_results
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
-from safer_core.test_corpus import default_test_corpus_id, macro_transfer_output_dir, resolve_test_paths_from_config
+from safer_core.test_corpus import (
+    default_test_corpus_id,
+    resolve_test_paths_from_config,
+)
+from supervised_macro_ft.paths import (
+    resolve_supervised_macro_output_dir,
+    supervised_macro_ft_output_dir,
+    supervised_macro_output_dir,
+)
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_config
@@ -35,14 +43,6 @@ from supervised_macro_ft.geometry_eval import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def supervised_macro_output_dir(method_slug: str, corpus: str, *, anchor: Path) -> Path:
-    return macro_transfer_output_dir(method_slug, corpus, anchor=anchor)
-
-
-def supervised_macro_ft_output_dir(corpus: str, *, anchor: Path) -> Path:
-    return supervised_macro_output_dir("supervised_macro_ft", corpus, anchor=anchor)
 
 
 def _load_tokenizer(backbone_name: str):
@@ -154,9 +154,12 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
     method_slug = str(cfg.get("method_name", "supervised_macro_ft"))
     method_display = str(cfg.get("method_display_name", "Supervised macro FT (CE)"))
 
-    out_dir = supervised_macro_output_dir(method_slug, corpus, anchor=anchor)
-    if cfg.get("output_dir"):
-        out_dir = resolve_repo_path(str(cfg["output_dir"]), repo_root=anchor)
+    out_dir = resolve_supervised_macro_output_dir(
+        method_slug,
+        corpus,
+        anchor=anchor,
+        output_dir=str(cfg["output_dir"]) if cfg.get("output_dir") else None,
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     transfer_dir = out_dir / "transfer"
     emb_dir = out_dir / "embeddings"

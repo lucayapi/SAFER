@@ -118,7 +118,7 @@ def test_builder_10_supervised_macro_ft():
 def test_builder_11_supervised_macro_geo_ft():
     src = _read(TEXT_ROOT / "scripts" / "build_notebook_11_supervised_macro_geo_ft.py")
     assert "supervised_macro_geo_ft" in src
-    assert "supervised_macro_output_dir" in src
+    assert "supervised_macro_ft.paths" in src or "resolve_supervised_macro_output_dir" in src
     assert "lambda_geo" in src
     assert "load_supervised_macro_ft_geometry_tables" in src
     assert "plot_supervised_macro_ft_train_history" in src

@@ -6,6 +6,10 @@ import numpy as np
 import torch
 
 from supervised_macro_ft.model import SupervisedMacroModel
+from supervised_macro_ft.paths import (
+    resolve_supervised_macro_output_dir,
+    supervised_macro_output_dir,
+)
 from supervised_macro_ft.transfer import encode_texts, predict_corpus
 
 
@@ -25,7 +29,7 @@ def test_encode_and_predict_shapes():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=32,
     )
     device = torch.device("cpu")
@@ -39,3 +43,18 @@ def test_encode_and_predict_shapes():
     assert len(pred) == 3
     assert probs.shape == (3, 4)
     assert np.allclose(probs.sum(axis=1), np.ones(3), atol=1e-5)
+
+
+def test_resolve_supervised_macro_output_dir_legacy_fallback(tmp_path):
+    anchor = tmp_path
+    corpus = "metallurgie"
+    method = "supervised_macro_geo_ft"
+    legacy = anchor / "output_test" / corpus / method / "transfer"
+    legacy.mkdir(parents=True)
+    (legacy / "target_macro_predictions.csv").write_text("x\n", encoding="utf-8")
+
+    resolved = resolve_supervised_macro_output_dir(method, corpus, anchor=anchor)
+    assert resolved == (anchor / "output_test" / corpus / method).resolve()
+
+    canonical = supervised_macro_output_dir(method, corpus, anchor=anchor)
+    assert resolved != canonical

@@ -31,7 +31,7 @@ def test_fit_model_returns_epoch_history_with_early_stopping():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=16,
         dropout=0.0,
     )
@@ -64,7 +64,7 @@ def test_fit_model_lambda_geo_zero_skips_geo_columns_still_present():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=16,
         dropout=0.0,
     )

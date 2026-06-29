@@ -10,6 +10,39 @@ from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_c
 from supervised_macro_ft.model import SupervisedMacroModel
 
 
+def test_checkpoint_roundtrip_ln_gelu(tmp_path: Path):
+    model = SupervisedMacroModel(
+        backbone_name="__test_dummy__",
+        num_classes=4,
+        backbone_trainable=False,
+        projection="ln_gelu",
+        hiddim=32,
+        proj_hidden=48,
+        dropout=0.0,
+    )
+    save_checkpoint(
+        model,
+        tmp_path / "ln_model",
+        config={
+            "backbone_name": "__test_dummy__",
+            "n_classes": 4,
+            "projection": "ln_gelu",
+            "hiddim": 32,
+            "proj_hidden": 48,
+        },
+    )
+    cfg = read_checkpoint_config(tmp_path / "ln_model")
+    assert cfg["projection"] == "ln_gelu"
+    assert cfg["proj_hidden"] == 48
+    loaded = load_checkpoint(tmp_path / "ln_model", device="cpu")
+    x = torch.randint(0, 20, (2, 5))
+    m = torch.ones(2, 5, dtype=torch.long)
+    with torch.no_grad():
+        z1 = model.encode(x, m)
+        z2 = loaded.encode(x, m)
+    assert torch.allclose(z1, z2, atol=1e-5)
+
+
 def test_checkpoint_roundtrip_with_projector(tmp_path: Path):
     model = SupervisedMacroModel(
         backbone_name="__test_dummy__",

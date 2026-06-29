@@ -4,21 +4,54 @@ from __future__ import annotations
 
 from typing import Any, Dict, Literal, Optional
 
+import torch
 import torch.nn as nn
 
-ProjectionName = Literal["linear", "mlp"]
-# Official end2end pipeline: fc (alias linear) or mlp only.
+ProjectionName = Literal["linear", "ln_gelu", "residual", "mlp"]
+# mlp (ReLU) : legacy SCGM. macro FT : linear | ln_gelu | residual.
+
+
+class ResidualProjector(nn.Module):
+    """r = LayerNorm(h + α·g(h)) ; z = Linear(d_in → hiddim)(r), g : d_in → bottleneck → d_in."""
+
+    def __init__(
+        self,
+        input_dim: int,
+        hiddim: int,
+        *,
+        bottleneck: int = 256,
+        alpha: float = 0.1,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.alpha = float(alpha)
+        self.g = nn.Sequential(
+            nn.Linear(input_dim, bottleneck),
+            nn.GELU(),
+            nn.Dropout(dropout) if dropout > 0.0 else nn.Identity(),
+            nn.Linear(bottleneck, input_dim),
+        )
+        self.norm = nn.LayerNorm(input_dim)
+        self.out_proj = nn.Linear(input_dim, hiddim)
+
+    def forward(self, h: torch.Tensor) -> torch.Tensor:
+        r = self.norm(h + self.alpha * self.g(h))
+        return self.out_proj(r)
 
 
 def normalize_projection_name(projection: Optional[str], with_mlp: Optional[bool] = None) -> str:
     """
-    ``projection`` ∈ {fc, linear, mlp}. ``fc`` ≡ ``linear``.
-    ``identity`` is rejected on the official end2end path.
+    ``projection`` ∈ {fc, linear, ln_gelu, residual, mlp}.
+    ``fc`` ≡ ``linear``. ``mlp`` = legacy SCGM (ReLU).
     """
     if projection is not None and str(projection).strip():
         p = str(projection).strip().lower()
         if p in ("fc", "linear"):
             return "linear"
+        if p == "ln_gelu":
+            return "ln_gelu"
+        if p == "residual":
+            return "residual"
         if p == "mlp":
             return "mlp"
         if p == "identity":
@@ -47,6 +80,10 @@ def build_embedding_projector(
     input_dim: int,
     hiddim: int,
     dropout: float = 0.0,
+    *,
+    proj_hidden: Optional[int] = None,
+    proj_bottleneck: Optional[int] = None,
+    proj_alpha: float = 0.1,
 ) -> nn.Module:
     p = normalize_projection_name(projection, None)
     if p == "identity":
@@ -57,6 +94,27 @@ def build_embedding_projector(
         return nn.Identity()
     if p == "linear":
         return nn.Linear(input_dim, hiddim)
+    if p == "ln_gelu":
+        hidden = int(proj_hidden if proj_hidden is not None else min(input_dim, 512))
+        layers: list[nn.Module] = [
+            nn.Linear(input_dim, hidden),
+            nn.LayerNorm(hidden),
+            nn.GELU(),
+        ]
+        if dropout > 0.0:
+            layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(hidden, hiddim))
+        return nn.Sequential(*layers)
+    if p == "residual":
+        bottleneck = int(proj_bottleneck if proj_bottleneck is not None else 256)
+        return ResidualProjector(
+            input_dim,
+            hiddim,
+            bottleneck=bottleneck,
+            alpha=float(proj_alpha),
+            dropout=dropout,
+        )
+    # legacy SCGM : mlp avec ReLU
     layers = [nn.Linear(input_dim, input_dim), nn.ReLU()]
     if dropout > 0.0:
         layers.append(nn.Dropout(dropout))

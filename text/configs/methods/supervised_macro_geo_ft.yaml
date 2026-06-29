@@ -2,6 +2,8 @@
 #
 # Loss : L = L_CE + lambda_geo * L_geo
 # L_geo = MSE(cos(z_i, z_j), cos(h_i, h_j)) hors diagonale
+#
+# Projecteur : linear | ln_gelu | residual (voir supervised_macro_ft.yaml)
 
 method_name: supervised_macro_geo_ft
 output_dir: output/supervised_macro_geo_ft
@@ -20,8 +22,11 @@ model:
   train_last_n_layers: null
   max_seq_length: 256
   pooling: mean
-  projection: mlp
-  hiddim: 128
+  projection: linear
+  hiddim: 512
+  proj_hidden: 512
+  proj_bottleneck: 256
+  proj_alpha: 0.1
   dropout: 0.1
   n_classes: 4
   class_weight: balanced

@@ -83,12 +83,12 @@ from macro_transfer.notebook_viz import (
     plot_supervised_macro_ft_train_history,
     plot_tsne_true_vs_pred,
 )
-from supervised_macro_ft.transfer import supervised_macro_output_dir
+from supervised_macro_ft.paths import resolve_supervised_macro_output_dir
 
 METHOD_SLUG = "supervised_macro_geo_ft"
 TEST_CORPUS = os.environ.get("TEST_CORPUS", "metallurgie")
 TRAIN_OUT = TEXT_ROOT / "output" / METHOD_SLUG
-OUT_DIR = supervised_macro_output_dir(METHOD_SLUG, TEST_CORPUS, anchor=TEXT_ROOT)
+OUT_DIR = resolve_supervised_macro_output_dir(METHOD_SLUG, TEST_CORPUS, anchor=TEXT_ROOT)
 FIG_DIR = TEXT_ROOT / "notebooks" / "figures" / f"11_supervised_macro_geo_ft_{TEST_CORPUS}"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 summary_path = TRAIN_OUT / "train_summary.json"

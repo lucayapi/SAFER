@@ -15,7 +15,7 @@ from scgm_text.projection import build_embedding_projector, normalize_projection
 
 def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
     """Construit les kwargs SupervisedMacroModel depuis la section YAML ``model``."""
-    projection = model_cfg.get("projection", "mlp")
+    projection = model_cfg.get("projection", "linear")
     return {
         "backbone_name": str(model_cfg["backbone_name"]),
         "num_classes": int(model_cfg.get("n_classes", 4)),
@@ -24,8 +24,11 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "train_last_n_layers": model_cfg.get("train_last_n_layers"),
         "gradient_checkpointing": bool(model_cfg.get("gradient_checkpointing", False)),
         "projection": projection,
-        "hiddim": int(model_cfg.get("hiddim", 128)),
+        "hiddim": int(model_cfg.get("hiddim", 512)),
         "dropout": float(model_cfg.get("dropout", 0.1)),
+        "proj_hidden": model_cfg.get("proj_hidden"),
+        "proj_bottleneck": model_cfg.get("proj_bottleneck"),
+        "proj_alpha": float(model_cfg.get("proj_alpha", 0.1)),
     }
 
 
@@ -45,9 +48,12 @@ class SupervisedMacroModel(nn.Module):
         backbone_trainable: bool = True,
         train_last_n_layers: Optional[int] = None,
         gradient_checkpointing: bool = False,
-        projection: Optional[str] = "mlp",
-        hiddim: int = 128,
+        projection: Optional[str] = "linear",
+        hiddim: int = 512,
         dropout: float = 0.1,
+        proj_hidden: Optional[int] = None,
+        proj_bottleneck: Optional[int] = None,
+        proj_alpha: float = 0.1,
     ) -> None:
         super().__init__()
         backbone_trainable, train_last_n_layers = normalize_backbone_trainability(
@@ -59,6 +65,9 @@ class SupervisedMacroModel(nn.Module):
         self.train_last_n_layers = train_last_n_layers
         self.num_classes = int(num_classes)
         self.dropout = float(dropout)
+        self.proj_hidden = int(proj_hidden) if proj_hidden is not None else None
+        self.proj_bottleneck = int(proj_bottleneck) if proj_bottleneck is not None else None
+        self.proj_alpha = float(proj_alpha)
 
         self.use_projector = projection is not None and str(projection).strip().lower() not in (
             "none",
@@ -88,6 +97,9 @@ class SupervisedMacroModel(nn.Module):
                 backbone_dim,
                 self.hiddim,
                 dropout=self.dropout,
+                proj_hidden=self.proj_hidden,
+                proj_bottleneck=self.proj_bottleneck,
+                proj_alpha=self.proj_alpha,
             )
             self.classifier = nn.Linear(self.hiddim, self.num_classes)
         else:

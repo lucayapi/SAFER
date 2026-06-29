@@ -28,7 +28,7 @@ def test_forward_on_hidden_batch_skips_backbone():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=16,
     )
     h = torch.randn(5, model.backbone.hidden_size)

@@ -171,11 +171,11 @@ def load_supervised_macro_ft_vs_baseline07_metrics(
     method_label: str = "Supervised macro FT (CE)",
 ) -> pd.DataFrame:
     """Compare métriques FT neural vs baseline 07 sklearn."""
-    from supervised_macro_ft.transfer import supervised_macro_output_dir
+    from supervised_macro_ft.paths import resolve_supervised_macro_output_dir
 
     rows: list[dict[str, Any]] = []
 
-    ft_root = supervised_macro_output_dir(method_slug, corpus_id, anchor=anchor)
+    ft_root = resolve_supervised_macro_output_dir(method_slug, corpus_id, anchor=anchor)
     ft_metrics = _load_fsp_metrics_json(ft_root)
     rows.append(
         {

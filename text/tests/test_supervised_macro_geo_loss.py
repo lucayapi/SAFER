@@ -41,7 +41,7 @@ def test_forward_with_latents_hidden_batch():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=16,
         dropout=0.0,
     )
@@ -82,7 +82,7 @@ def test_fit_model_with_lambda_geo_records_geo_loss():
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=16,
         dropout=0.0,
     )

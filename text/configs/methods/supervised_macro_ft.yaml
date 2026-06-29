@@ -1,9 +1,14 @@
 # Fine-tuning supervisé macro (CE) — config entraînement BTP
 #
 # Modes backbone (model.backbone_trainable + model.train_last_n_layers) :
-#   A gelé + projecteur : backbone_trainable: false, projection: mlp, cache_backbone_embeddings: true
+#   A gelé + projecteur : backbone_trainable: false, cache_backbone_embeddings: true
 #   B partiel           : backbone_trainable: true, train_last_n_layers: 4
 #   C complet           : backbone_trainable: true, train_last_n_layers: null
+#
+# Projecteur (model.projection) :
+#   linear   — Linear(d_in → hiddim), défaut doux
+#   ln_gelu  — Linear → LayerNorm → GELU → Linear (proj_hidden intermédiaire)
+#   residual — LayerNorm(h + α·g(h)) puis Linear → hiddim (proj_bottleneck pour g)
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
@@ -22,14 +27,22 @@ model:
   train_last_n_layers: null
   max_seq_length: 256
   pooling: mean
-  projection: mlp
-  hiddim: 128
+  projection: linear
+  hiddim: 512
+  proj_hidden: 512
+  proj_bottleneck: 256
+  proj_alpha: 0.1
   dropout: 0.1
   n_classes: 4
   class_weight: balanced
   gradient_checkpointing: false
   cache_backbone_embeddings: true
   backbone_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  # projection: ln_gelu
+  # hiddim: 256
+  # projection: residual
+  # proj_bottleneck: 256
+  # proj_alpha: 0.1
 
 training:
   n_folds: 5

@@ -64,6 +64,11 @@ def save_checkpoint(
         payload.setdefault("projection", model.projection_name)
         payload.setdefault("hiddim", model.hiddim)
         payload.setdefault("dropout", model.dropout)
+        if model.proj_hidden is not None:
+            payload.setdefault("proj_hidden", model.proj_hidden)
+        if model.proj_bottleneck is not None:
+            payload.setdefault("proj_bottleneck", model.proj_bottleneck)
+        payload.setdefault("proj_alpha", model.proj_alpha)
     with open(out / "config.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return out
@@ -92,9 +97,12 @@ def load_checkpoint(
         backbone_trainable=False,
         train_last_n_layers=None,
         gradient_checkpointing=False,
-        projection=None if legacy else str(cfg.get("projection", "mlp")),
-        hiddim=int(cfg.get("hiddim", 128)),
+        projection=None if legacy else str(cfg.get("projection", "linear")),
+        hiddim=int(cfg.get("hiddim", 512)),
         dropout=float(cfg.get("dropout", 0.0)),
+        proj_hidden=cfg.get("proj_hidden"),
+        proj_bottleneck=cfg.get("proj_bottleneck"),
+        proj_alpha=float(cfg.get("proj_alpha", 0.1)),
     )
     loc = map_location or device
     backbone_path = ckpt_dir / "hf_model.bin"
