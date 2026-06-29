@@ -65,11 +65,16 @@ def load_filtered_metadata(
     data_df = create_doc_id_if_missing(data_df)
 
     ok_mask = parse_bool_column(data_df[pred_ok_col])
-    label_series = data_df[label_col]
-    valid_label_mask = label_series.notna() & label_series.isin(VALID_LABELS)
+    label_series = data_df[label_col].astype(str).str.strip()
+    invalid_str = label_series.str.lower().isin({"nan", "none", ""})
+    valid_label_mask = label_series.notna() & ~invalid_str & label_series.isin(VALID_LABELS)
     filtered = data_df.loc[ok_mask & valid_label_mask].copy()
     filtered.reset_index(drop=True, inplace=True)
-    filtered["label_id"] = filtered[label_col].map(LABEL2ID).astype(np.int64)
+    filtered["label_id"] = filtered[label_col].astype(str).str.strip().map(LABEL2ID)
+    if filtered["label_id"].isna().any():
+        bad = filtered.loc[filtered["label_id"].isna(), label_col].astype(str).unique().tolist()
+        raise ValueError(f"Labels non mappés vers LABEL2ID : {bad[:20]}")
+    filtered["label_id"] = filtered["label_id"].astype(np.int64)
     filtered["row_id"] = np.arange(len(filtered), dtype=np.int64)
     if group_col not in filtered.columns:
         raise ValueError(f"Missing group column: {group_col}")

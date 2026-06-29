@@ -49,7 +49,17 @@ class TextRawDataset(Dataset):
         self.group_col = group_col
         self.text_col = resolve_text_column(metadata_df, text_col)
         self.texts = metadata_df[self.text_col].astype(str).tolist()
-        self.label_ids = metadata_df["label_id"].to_numpy(dtype=np.int64)
+        label_ids = metadata_df["label_id"].to_numpy(dtype=np.float64)
+        if np.isnan(label_ids).any():
+            raise ValueError(
+                "label_id contient des NaN — passer par load_filtered_metadata "
+                "ou filtrer les labels invalides avant TextRawDataset(metadata_df=...)."
+            )
+        self.label_ids = label_ids.astype(np.int64)
+        if (self.label_ids < 0).any() or (self.label_ids > 3).any():
+            raise ValueError(
+                f"label_id hors plage [0, 3] : min={self.label_ids.min()}, max={self.label_ids.max()}"
+            )
         self.groups = metadata_df[group_col].astype(str).tolist()
         self.row_ids = metadata_df["row_id"].to_numpy(dtype=np.int64)
 

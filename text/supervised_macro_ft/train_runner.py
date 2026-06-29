@@ -12,7 +12,6 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from macro_transfer.encode import load_target_metadata
 from safer_core.io import load_yaml
 from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import resolve_test_corpus
@@ -262,22 +261,14 @@ def run_supervised_macro_ft_training(
     test_metrics: Dict[str, Any] = {}
     test_corpus = str(cfg.get("test_corpus") or "metallurgie")
     try:
-        from macro_transfer.constants import LABEL2ID
-
         spec = resolve_test_corpus(test_corpus, anchor=anchor)
-        test_meta = load_target_metadata(str(spec.data_csv), text_col=str(data_cfg.get("text_col", "sentence")))
         label_col = str(data_cfg.get("label_col", "pred_label"))
-        test_meta = test_meta.copy()
-        if label_col in test_meta.columns:
-            test_meta["label_id"] = test_meta[label_col].astype(str).map(LABEL2ID)
-        else:
-            test_meta["label_id"] = 0
         test_ds = TextRawDataset(
             str(spec.data_csv),
             label_col=label_col,
+            pred_ok_col=str(data_cfg.get("pred_ok_col", "pred_ok")),
             group_col=str(data_cfg.get("group_col", "accident_id")),
             text_col=data_cfg.get("text_col"),
-            metadata_df=test_meta,
         )
         test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
         test_metrics = evaluate_loader(model, test_loader, device)
