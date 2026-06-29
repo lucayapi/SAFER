@@ -10,12 +10,19 @@ import torch.nn.functional as F
 
 from scgm_text.backbone import TextBackbone
 from scgm_text.config_parsing import normalize_backbone_trainability
-from scgm_text.projection import build_embedding_projector, normalize_projection_name
+from scgm_text.projection import (
+    SKLEARN_MLP_OUT_DIM,
+    build_embedding_projector,
+    normalize_projection_name,
+)
 
 
 def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
     """Construit les kwargs SupervisedMacroModel depuis la section YAML ``model``."""
-    projection = model_cfg.get("projection", "linear")
+    projection = str(model_cfg.get("projection", "linear")).strip().lower()
+    hiddim = int(model_cfg.get("hiddim", 512))
+    if projection in ("mlp_sklearn", "sklearn_mlp"):
+        hiddim = SKLEARN_MLP_OUT_DIM
     return {
         "backbone_name": str(model_cfg["backbone_name"]),
         "num_classes": int(model_cfg.get("n_classes", 4)),
@@ -24,7 +31,7 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "train_last_n_layers": model_cfg.get("train_last_n_layers"),
         "gradient_checkpointing": bool(model_cfg.get("gradient_checkpointing", False)),
         "projection": projection,
-        "hiddim": int(model_cfg.get("hiddim", 512)),
+        "hiddim": hiddim,
         "dropout": float(model_cfg.get("dropout", 0.1)),
         "proj_hidden": model_cfg.get("proj_hidden"),
         "proj_bottleneck": model_cfg.get("proj_bottleneck"),
@@ -77,6 +84,8 @@ class SupervisedMacroModel(nn.Module):
         if self.use_projector:
             self.projection_name = normalize_projection_name(str(projection), None)
             self.hiddim = int(hiddim)
+            if self.projection_name == "mlp_sklearn":
+                self.hiddim = SKLEARN_MLP_OUT_DIM
         else:
             self.projection_name = "legacy"
             self.hiddim = int(hiddim)

@@ -7,8 +7,11 @@ from typing import Any, Dict, Literal, Optional
 import torch
 import torch.nn as nn
 
-ProjectionName = Literal["linear", "ln_gelu", "residual", "mlp"]
-# mlp (ReLU) : legacy SCGM. macro FT : linear | ln_gelu | residual.
+ProjectionName = Literal["linear", "ln_gelu", "residual", "mlp_sklearn", "mlp"]
+# mlp (ReLU) : legacy SCGM. mlp_sklearn : baseline 07 (256→128). macro FT : linear | ln_gelu | residual | mlp_sklearn.
+
+SKLEARN_MLP_HIDDEN = 256
+SKLEARN_MLP_OUT_DIM = 128
 
 
 class ResidualProjector(nn.Module):
@@ -41,8 +44,8 @@ class ResidualProjector(nn.Module):
 
 def normalize_projection_name(projection: Optional[str], with_mlp: Optional[bool] = None) -> str:
     """
-    ``projection`` ∈ {fc, linear, ln_gelu, residual, mlp}.
-    ``fc`` ≡ ``linear``. ``mlp`` = legacy SCGM (ReLU).
+    ``projection`` ∈ {fc, linear, ln_gelu, residual, mlp_sklearn, mlp}.
+    ``fc`` ≡ ``linear``. ``sklearn_mlp`` ≡ ``mlp_sklearn``. ``mlp`` = legacy SCGM (ReLU).
     """
     if projection is not None and str(projection).strip():
         p = str(projection).strip().lower()
@@ -52,6 +55,8 @@ def normalize_projection_name(projection: Optional[str], with_mlp: Optional[bool
             return "ln_gelu"
         if p == "residual":
             return "residual"
+        if p in ("mlp_sklearn", "sklearn_mlp"):
+            return "mlp_sklearn"
         if p == "mlp":
             return "mlp"
         if p == "identity":
@@ -114,6 +119,14 @@ def build_embedding_projector(
             alpha=float(proj_alpha),
             dropout=dropout,
         )
+    if p == "mlp_sklearn":
+        hidden = int(proj_hidden if proj_hidden is not None else SKLEARN_MLP_HIDDEN)
+        out_dim = int(hiddim if hiddim == SKLEARN_MLP_OUT_DIM else SKLEARN_MLP_OUT_DIM)
+        layers = [nn.Linear(input_dim, hidden), nn.ReLU()]
+        if dropout > 0.0:
+            layers.append(nn.Dropout(dropout))
+        layers.append(nn.Linear(hidden, out_dim))
+        return nn.Sequential(*layers)
     # legacy SCGM : mlp avec ReLU
     layers = [nn.Linear(input_dim, input_dim), nn.ReLU()]
     if dropout > 0.0:

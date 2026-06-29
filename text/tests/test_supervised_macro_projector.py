@@ -42,6 +42,7 @@ def test_residual_projector_shape():
         ("linear", 32, {}),
         ("ln_gelu", 32, {"proj_hidden": 48}),
         ("residual", 32, {"proj_bottleneck": 16, "proj_alpha": 0.2}),
+        ("mlp_sklearn", 128, {"proj_hidden": 256}),
     ],
 )
 def test_supervised_macro_model_projections_forward(projection, hiddim, extra):
@@ -80,3 +81,17 @@ def test_supervised_macro_model_kwargs_from_cfg_ln_gelu():
     assert kw["projection"] == "residual"
     assert kw["hiddim"] == 256
     assert kw["proj_bottleneck"] == 128
+
+
+def test_model_kwargs_from_cfg_mlp_sklearn_forces_hiddim_128():
+    from supervised_macro_ft.model import model_kwargs_from_cfg
+
+    kw = model_kwargs_from_cfg(
+        {
+            "backbone_name": "x",
+            "projection": "mlp_sklearn",
+            "hiddim": 512,
+        }
+    )
+    assert kw["projection"] == "mlp_sklearn"
+    assert kw["hiddim"] == 128

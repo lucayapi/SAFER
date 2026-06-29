@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import numpy as np
@@ -52,22 +52,144 @@ def _load_tokenizer(backbone_name: str):
     return tok
 
 
-def run_supervised_macro_ft_training(
-    config_path: str | Path,
+def _resolve_cfg(
+    config_path: str | Path | None,
     *,
+    cfg: Optional[Dict[str, Any]] = None,
     training_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    anchor = Path(__file__).resolve().parents[1]
-    cfg = load_yaml(Path(config_path))
+    if cfg is None:
+        if config_path is None:
+            raise ValueError("config_path ou cfg requis")
+        cfg = load_yaml(Path(config_path))
     if training_overrides:
         train_section = dict(cfg.get("training") or {})
         train_section.update(training_overrides)
         cfg = {**cfg, "training": train_section}
+    return cfg
+
+
+def _prepare_backbone_hidden(
+    *,
+    anchor: Path,
+    out_dir: Path,
+    dataset: TextRawDataset,
+    model_cfg: Dict[str, Any],
+    train_cfg: Dict[str, Any],
+    tokenizer,
+    device: torch.device,
+    backbone_hidden: Optional[np.ndarray] = None,
+    shared_cache_dir: Optional[Path] = None,
+) -> Tuple[Optional[np.ndarray], Dict[str, Any]]:
+    if backbone_hidden is not None:
+        return backbone_hidden, model_cfg
+    use_hidden_cache = should_cache_backbone_embeddings(model_cfg)
+    if not use_hidden_cache:
+        return None, model_cfg
+    emb_csv = model_cfg.get("backbone_emb_csv")
+    if emb_csv:
+        model_cfg = {
+            **model_cfg,
+            "backbone_emb_csv": str(resolve_repo_path(str(emb_csv), repo_root=anchor)),
+        }
+    cache_dir = shared_cache_dir if shared_cache_dir is not None else out_dir / "cache"
+    cache_model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
+    hidden = load_or_build_backbone_hidden(
+        model=cache_model,
+        dataset=dataset,
+        tokenizer=tokenizer,
+        model_cfg=model_cfg,
+        cache_dir=cache_dir,
+        device=device,
+    )
+    logger.info(
+        "Mode cache backbone actif : entraînement projecteur+tête uniquement (%s)",
+        hidden.shape,
+    )
+    return hidden, model_cfg
+
+
+def prepare_shared_backbone_hidden(
+    cfg: Dict[str, Any],
+    *,
+    cache_dir: str | Path,
+    anchor: Optional[Path] = None,
+) -> Optional[np.ndarray]:
+    """Charge ou construit le cache backbone partagé (tuning)."""
+    anchor = anchor or Path(__file__).resolve().parents[1]
+    data_cfg = dict(cfg.get("data") or {})
+    model_cfg = dict(cfg.get("model") or {})
+    train_cfg = dict(cfg.get("training") or {})
+    if not should_cache_backbone_embeddings(model_cfg):
+        return None
+    backbone_name = str(model_cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B"))
+    tokenizer = _load_tokenizer(backbone_name)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data_csv = resolve_repo_path(data_cfg.get("data_csv", "dataset/data_btp.csv"), repo_root=anchor)
+    dataset = TextRawDataset(
+        str(data_csv),
+        label_col=str(data_cfg.get("label_col", "pred_label")),
+        pred_ok_col=str(data_cfg.get("pred_ok_col", "pred_ok")),
+        group_col=str(data_cfg.get("group_col", "accident_id")),
+        text_col=data_cfg.get("text_col"),
+    )
+    hidden, _ = _prepare_backbone_hidden(
+        anchor=anchor,
+        out_dir=Path(cache_dir),
+        dataset=dataset,
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        tokenizer=tokenizer,
+        device=device,
+        shared_cache_dir=Path(cache_dir),
+    )
+    return hidden
+
+
+def run_supervised_macro_ft_cv(
+    cfg: Dict[str, Any],
+    *,
+    combo_output_dir: str | Path,
+    backbone_hidden: Optional[np.ndarray] = None,
+    shared_cache_dir: Optional[str | Path] = None,
+) -> Dict[str, Any]:
+    """CV seule (GroupKFold) ; retourne métriques agrégées dont mean_balanced_accuracy."""
+    result = run_supervised_macro_ft_training(
+        None,
+        cv_only=True,
+        cfg=cfg,
+        output_dir_override=combo_output_dir,
+        backbone_hidden=backbone_hidden,
+        shared_cache_dir=shared_cache_dir,
+    )
+    cv_summary = pd.DataFrame(result.get("cv_summary") or [])
+    row: Dict[str, Any] = {"combo_output_dir": str(combo_output_dir)}
+    if not cv_summary.empty:
+        row.update(cv_summary.iloc[0].to_dict())
+    row["selection_score"] = float(row.get("mean_balanced_accuracy", float("nan")))
+    return row
+
+
+def run_supervised_macro_ft_training(
+    config_path: str | Path | None,
+    *,
+    cv_only: bool = False,
+    cfg: Optional[Dict[str, Any]] = None,
+    output_dir_override: Optional[str | Path] = None,
+    backbone_hidden: Optional[np.ndarray] = None,
+    shared_cache_dir: Optional[str | Path] = None,
+    training_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    anchor = Path(__file__).resolve().parents[1]
+    cfg = _resolve_cfg(config_path, cfg=cfg, training_overrides=training_overrides)
     data_cfg = dict(cfg.get("data") or {})
     model_cfg = dict(cfg.get("model") or {})
     train_cfg = dict(cfg.get("training") or {})
     method_name = str(cfg.get("method_name", "supervised_macro_ft"))
-    out_dir = resolve_repo_path(str(cfg.get("output_dir", "output/supervised_macro_ft")), repo_root=anchor)
+    if output_dir_override is not None:
+        out_dir = Path(output_dir_override)
+    else:
+        out_dir = resolve_repo_path(str(cfg.get("output_dir", "output/supervised_macro_ft")), repo_root=anchor)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     backbone_name = str(model_cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B"))
@@ -87,28 +209,19 @@ def run_supervised_macro_ft_training(
     max_length = int(model_cfg.get("max_seq_length", 256))
     collate_fn = make_text_collate_fn(tokenizer, max_length)
 
-    backbone_hidden: Optional[np.ndarray] = None
-    use_hidden_cache = should_cache_backbone_embeddings(model_cfg)
-    if use_hidden_cache:
-        emb_csv = model_cfg.get("backbone_emb_csv")
-        if emb_csv:
-            model_cfg = {
-                **model_cfg,
-                "backbone_emb_csv": str(resolve_repo_path(str(emb_csv), repo_root=anchor)),
-            }
-        cache_model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
-        backbone_hidden = load_or_build_backbone_hidden(
-            model=cache_model,
-            dataset=dataset,
-            tokenizer=tokenizer,
-            model_cfg=model_cfg,
-            cache_dir=out_dir / "cache",
-            device=device,
-        )
-        logger.info(
-            "Mode cache backbone actif : entraînement projecteur+tête uniquement (%s)",
-            backbone_hidden.shape,
-        )
+    shared_dir = Path(shared_cache_dir) if shared_cache_dir is not None else None
+    backbone_hidden, model_cfg = _prepare_backbone_hidden(
+        anchor=anchor,
+        out_dir=out_dir,
+        dataset=dataset,
+        model_cfg=model_cfg,
+        train_cfg=train_cfg,
+        tokenizer=tokenizer,
+        device=device,
+        backbone_hidden=backbone_hidden,
+        shared_cache_dir=shared_dir,
+    )
+    use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
 
     label_col = str(data_cfg.get("label_col", "pred_label"))
     raw_emb_csv = model_cfg.get("backbone_emb_csv")
@@ -143,6 +256,17 @@ def run_supervised_macro_ft_training(
     if geometry_fold_rows:
         save_geometry_kfold_tables(geometry_fold_rows, metrics_dir)
         logger.info("Géométrie CV exportée : %s", metrics_dir)
+
+    if cv_only:
+        return {
+            "method_name": method_name,
+            "output_dir": str(out_dir),
+            "cv_summary": cv_summary.to_dict(orient="records"),
+            "backbone_cache_used": bool(use_hidden_cache),
+            "selection_score": float(
+                cv_summary.iloc[0]["mean_balanced_accuracy"] if not cv_summary.empty else float("nan")
+            ),
+        }
 
     # Fit final 100 % BTP
     model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)

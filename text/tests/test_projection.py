@@ -11,6 +11,18 @@ def test_fc_alias_is_linear():
 def test_ln_gelu_and_residual_aliases():
     assert normalize_projection_name("ln_gelu", None) == "ln_gelu"
     assert normalize_projection_name("residual", None) == "residual"
+    assert normalize_projection_name("mlp_sklearn", None) == "mlp_sklearn"
+    assert normalize_projection_name("sklearn_mlp", None) == "mlp_sklearn"
+
+
+def test_mlp_sklearn_projector_output_dim():
+    proj = build_embedding_projector("mlp_sklearn", 1024, 128, proj_hidden=256)
+    assert proj(torch.randn(4, 1024)).shape == (4, 128)
+
+
+def test_mlp_sklearn_forces_out_dim_even_if_hiddim_differs():
+    proj = build_embedding_projector("mlp_sklearn", 64, 512)
+    assert proj(torch.randn(2, 64)).shape == (2, 128)
 
 
 def test_ln_gelu_projector_output_dim():

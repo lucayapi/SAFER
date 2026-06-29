@@ -196,18 +196,22 @@ Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles 
 
 ### Fine-tuning supervisé macro (tête softmax)
 
-Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: linear|ln_gelu|residual`, défaut `linear`, `hiddim: 512`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
+Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: linear|ln_gelu|residual|mlp_sklearn`, défaut `linear`, `hiddim: 512`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
+
+`mlp_sklearn` aligne l'architecture MLP du notebook 07 (`hidden_layer_sizes: [256, 128]`, ReLU) ; le baseline sklearn applique aussi un **StandardScaler** sur h (non reproduit ici).
 
 | Étape | Commande |
 |-------|----------|
 | Entraînement BTP | `bash jobs/train_supervised_macro_ft.sh` |
+| Grid search CV (balanced accuracy) | `MAX_COMBOS=4 SKIP_FINAL_FIT=1 bash jobs/tune_supervised_macro_ft.sh` |
+| Grille complète + fit final | `bash jobs/tune_supervised_macro_ft.sh` |
 | Transfert test + BERTopic | `CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Classif seule | `RUN_BERTOPIC=false CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Notebook 10 | `python scripts/build_notebook_10_supervised_macro_ft.py` |
 
-Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervised_macro_ft.yaml), [`configs/supervised_macro_ft_transfer.yaml`](configs/supervised_macro_ft_transfer.yaml).
+Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervised_macro_ft.yaml), [`configs/supervised_macro_ft_transfer.yaml`](configs/supervised_macro_ft_transfer.yaml), grille [`configs/tuning/supervised_macro_ft_grid.yaml`](configs/tuning/supervised_macro_ft_grid.yaml).
 
-Sorties : `output/supervised_macro_ft/` (train, `metrics/kfold_geometry_*.csv`, `metrics_geometry_btp.csv`) ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (`transfer/metrics_geometry.csv`). BERTopic utilise les embeddings **z** projetés.
+Sorties : `output/supervised_macro_ft/` (train, `metrics/kfold_geometry_*.csv`, `metrics_geometry_btp.csv`) ; tuning : `output/supervised_macro_ft/tuning/grid_summary.csv`, `best_combo.json` ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (`transfer/metrics_geometry.csv`). BERTopic utilise les embeddings **z** projetés.
 
 ### Variante geo (CE + λ·L_geo)
 

@@ -1,0 +1,19 @@
+base_config: configs/methods/supervised_macro_ft.yaml
+output_dir: output/supervised_macro_ft/tuning
+final_output_dir: output/supervised_macro_ft
+selection_metric: balanced_accuracy
+n_folds: 5
+seed: 42
+test_corpus: metallurgie
+
+# Grille : notation pointée model.* / training.* (fusionnée sur base_config).
+grid:
+  model.projection: [linear, ln_gelu, residual, mlp_sklearn]
+  model.hiddim: [128, 256, 512]
+  model.proj_hidden: [256, 512]
+  model.proj_bottleneck: [256]
+  model.proj_alpha: [0.1, 0.2]
+  model.dropout: [0.1]
+  training.lr_projector: [1.0e-3, 5.0e-4]
+  training.lr_head: [1.0e-3]
+  training.selection_metric: [balanced_accuracy]

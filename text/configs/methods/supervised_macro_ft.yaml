@@ -6,9 +6,10 @@
 #   C complet           : backbone_trainable: true, train_last_n_layers: null
 #
 # Projecteur (model.projection) :
-#   linear   — Linear(d_in → hiddim), défaut doux
-#   ln_gelu  — Linear → LayerNorm → GELU → Linear (proj_hidden intermédiaire)
-#   residual — LayerNorm(h + α·g(h)) puis Linear → hiddim (proj_bottleneck pour g)
+#   linear      — Linear(d_in → hiddim), défaut doux
+#   ln_gelu     — Linear → LayerNorm → GELU → Linear (proj_hidden intermédiaire)
+#   residual    — LayerNorm(h + α·g(h)) puis Linear → hiddim (proj_bottleneck pour g)
+#   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128) ; hiddim forcé à 128
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
