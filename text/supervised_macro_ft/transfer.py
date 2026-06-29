@@ -37,8 +37,12 @@ from supervised_macro_ft.geometry_eval import (
 logger = logging.getLogger(__name__)
 
 
+def supervised_macro_output_dir(method_slug: str, corpus: str, *, anchor: Path) -> Path:
+    return macro_transfer_output_dir(method_slug, corpus, anchor=anchor)
+
+
 def supervised_macro_ft_output_dir(corpus: str, *, anchor: Path) -> Path:
-    return macro_transfer_output_dir("supervised_macro_ft", corpus, anchor=anchor)
+    return supervised_macro_output_dir("supervised_macro_ft", corpus, anchor=anchor)
 
 
 def _load_tokenizer(backbone_name: str):
@@ -147,9 +151,10 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
     test_meta = load_target_metadata(str(target_csv), text_col=text_col)
     texts = test_meta[text_col].astype(str).tolist()
     macros = list(MACRO_NAMES)
+    method_slug = str(cfg.get("method_name", "supervised_macro_ft"))
     method_display = str(cfg.get("method_display_name", "Supervised macro FT (CE)"))
 
-    out_dir = supervised_macro_ft_output_dir(corpus, anchor=anchor)
+    out_dir = supervised_macro_output_dir(method_slug, corpus, anchor=anchor)
     if cfg.get("output_dir"):
         out_dir = resolve_repo_path(str(cfg["output_dir"]), repo_root=anchor)
     out_dir.mkdir(parents=True, exist_ok=True)

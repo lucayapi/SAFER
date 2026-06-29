@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from scgm_text.batch_utils import batch_to_device
 from scgm_text.metrics import accuracy, balanced_accuracy, macro_f1
 from supervised_macro_ft.checkpoint_io import _backbone_state_dict, _load_backbone_state_dict
+from supervised_macro_ft.geometry_loss import similarity_preservation_loss
 from supervised_macro_ft.model import SupervisedMacroModel
 
 logger = logging.getLogger(__name__)
@@ -77,20 +78,39 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
     device: torch.device,
-) -> float:
+    *,
+    lambda_geo: float = 0.0,
+    geo_remove_diag: bool = True,
+) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
+    total_ce = 0.0
+    total_geo = 0.0
     n_batches = 0
+    use_geo = float(lambda_geo) > 0.0
     for batch in loader:
         batch = batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
-        logits = model(batch)
-        loss = criterion(logits, batch["label_ids"])
+        logits, z, h = model.forward_with_latents(batch)
+        loss_ce = criterion(logits, batch["label_ids"])
+        if use_geo:
+            loss_geo = similarity_preservation_loss(h, z, remove_diag=geo_remove_diag)
+            loss = loss_ce + float(lambda_geo) * loss_geo
+        else:
+            loss_geo = logits.new_zeros(())
+            loss = loss_ce
         loss.backward()
         optimizer.step()
         total_loss += float(loss.item())
+        total_ce += float(loss_ce.item())
+        total_geo += float(loss_geo.item())
         n_batches += 1
-    return total_loss / max(n_batches, 1)
+    denom = max(n_batches, 1)
+    return {
+        "train_loss": total_loss / denom,
+        "train_loss_ce": total_ce / denom,
+        "train_loss_geo": total_geo / denom,
+    }
 
 
 @torch.no_grad()
@@ -138,6 +158,8 @@ def fit_model(
     epochs = int(train_cfg.get("epochs", 10))
     patience = int(train_cfg.get("early_stopping_patience", 2))
     selection_metric = str(train_cfg.get("selection_metric", "macro_f1"))
+    lambda_geo = float(train_cfg.get("lambda_geo", 0.0))
+    geo_remove_diag = bool(train_cfg.get("geo_remove_diag", True))
     criterion = nn.CrossEntropyLoss(
         weight=class_weight.to(device) if class_weight is not None else None
     )
@@ -149,21 +171,41 @@ def fit_model(
     history: List[Dict[str, Any]] = []
 
     for epoch in range(epochs):
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
-        row: Dict[str, Any] = {"epoch": epoch + 1, "train_loss": train_loss}
+        train_metrics = train_one_epoch(
+            model,
+            train_loader,
+            criterion,
+            optimizer,
+            device,
+            lambda_geo=lambda_geo,
+            geo_remove_diag=geo_remove_diag,
+        )
+        train_loss = float(train_metrics["train_loss"])
+        row: Dict[str, Any] = {"epoch": epoch + 1, **train_metrics}
 
         if val_loader is None:
             row["is_best"] = True
             history.append(row)
-            best_metrics = {"train_loss": train_loss, "epoch": epoch + 1}
+            best_metrics = {**train_metrics, "epoch": epoch + 1}
             best_state = _snapshot_model_state(model)
-            logger.info(
-                "[%s] epoch=%d/%d train_loss=%.4f",
-                run_label,
-                epoch + 1,
-                epochs,
-                train_loss,
-            )
+            if lambda_geo > 0:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    train_metrics["train_loss_ce"],
+                    train_metrics["train_loss_geo"],
+                )
+            else:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                )
             continue
 
         val_metrics = evaluate_loader(model, val_loader, device)
@@ -183,32 +225,62 @@ def fit_model(
         if is_best:
             best_score = score
             stale = 0
-            best_metrics = {**val_metrics, "train_loss": train_loss, "epoch": epoch + 1}
+            best_metrics = {**val_metrics, **train_metrics, "epoch": epoch + 1}
             best_state = _snapshot_model_state(model)
-            logger.info(
-                "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f *best*",
-                run_label,
-                epoch + 1,
-                epochs,
-                train_loss,
-                val_metrics["loss"],
-                selection_metric,
-                score,
-            )
+            if lambda_geo > 0:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f *best*",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    train_metrics["train_loss_ce"],
+                    train_metrics["train_loss_geo"],
+                    val_metrics["loss"],
+                    selection_metric,
+                    score,
+                )
+            else:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f *best*",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    val_metrics["loss"],
+                    selection_metric,
+                    score,
+                )
         else:
             stale += 1
-            logger.info(
-                "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
-                run_label,
-                epoch + 1,
-                epochs,
-                train_loss,
-                val_metrics["loss"],
-                selection_metric,
-                score,
-                stale,
-                patience,
-            )
+            if lambda_geo > 0:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    train_metrics["train_loss_ce"],
+                    train_metrics["train_loss_geo"],
+                    val_metrics["loss"],
+                    selection_metric,
+                    score,
+                    stale,
+                    patience,
+                )
+            else:
+                logger.info(
+                    "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
+                    run_label,
+                    epoch + 1,
+                    epochs,
+                    train_loss,
+                    val_metrics["loss"],
+                    selection_metric,
+                    score,
+                    stale,
+                    patience,
+                )
             if stale >= patience:
                 break
 

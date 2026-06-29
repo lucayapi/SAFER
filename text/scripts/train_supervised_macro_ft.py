@@ -25,9 +25,21 @@ def main() -> None:
     )
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=str, default="configs/methods/supervised_macro_ft.yaml")
+    p.add_argument(
+        "--lambda-geo",
+        type=float,
+        default=None,
+        help="Override training.lambda_geo (ex. sweep 0.01–1.0)",
+    )
     args = p.parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
-    result = run_supervised_macro_ft_training(cfg_path)
+    overrides: dict[str, float] = {}
+    if args.lambda_geo is not None:
+        overrides["lambda_geo"] = float(args.lambda_geo)
+    result = run_supervised_macro_ft_training(
+        cfg_path,
+        training_overrides=overrides or None,
+    )
     print("OK:", result["output_dir"])
     print("checkpoint:", result["checkpoint_dir"])
 

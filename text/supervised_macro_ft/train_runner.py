@@ -53,12 +53,21 @@ def _load_tokenizer(backbone_name: str):
     return tok
 
 
-def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
+def run_supervised_macro_ft_training(
+    config_path: str | Path,
+    *,
+    training_overrides: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     anchor = Path(__file__).resolve().parents[1]
     cfg = load_yaml(Path(config_path))
+    if training_overrides:
+        train_section = dict(cfg.get("training") or {})
+        train_section.update(training_overrides)
+        cfg = {**cfg, "training": train_section}
     data_cfg = dict(cfg.get("data") or {})
     model_cfg = dict(cfg.get("model") or {})
     train_cfg = dict(cfg.get("training") or {})
+    method_name = str(cfg.get("method_name", "supervised_macro_ft"))
     out_dir = resolve_repo_path(str(cfg.get("output_dir", "output/supervised_macro_ft")), repo_root=anchor)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -277,8 +286,11 @@ def run_supervised_macro_ft_training(config_path: str | Path) -> Dict[str, Any]:
         logger.warning("Eval test corpus ignorée : %s", exc)
 
     result = {
+        "method_name": method_name,
         "output_dir": str(out_dir),
         "checkpoint_dir": str(ckpt_dir),
+        "lambda_geo": float(train_cfg.get("lambda_geo", 0.0)),
+        "geo_remove_diag": bool(train_cfg.get("geo_remove_diag", True)),
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,

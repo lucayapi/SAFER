@@ -209,6 +209,19 @@ Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervise
 
 Sorties : `output/supervised_macro_ft/` (train, `metrics/kfold_geometry_*.csv`, `metrics_geometry_btp.csv`) ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (`transfer/metrics_geometry.csv`). BERTopic utilise les embeddings **z** projetés.
 
+### Variante geo (CE + λ·L_geo)
+
+Loss : **L = L_CE + λ·L_geo** avec préservation des similarités cosinus Qwen (hors diagonale). Sorties séparées du baseline CE-only.
+
+| Étape | Commande |
+|-------|----------|
+| Entraînement BTP | `bash jobs/train_supervised_macro_geo_ft.sh` |
+| Sweep λ | `LAMBDA_GEO=0.05 bash jobs/train_supervised_macro_geo_ft.sh` |
+| Transfert metallurgie | `CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
+| Notebook 11 | `python scripts/build_notebook_11_supervised_macro_geo_ft.py` |
+
+Configs : [`configs/methods/supervised_macro_geo_ft.yaml`](configs/methods/supervised_macro_geo_ft.yaml), [`configs/supervised_macro_geo_ft_transfer.yaml`](configs/supervised_macro_geo_ft_transfer.yaml). Sorties : `output/supervised_macro_geo_ft/` ; `output_test/<corpus>/macro_transfer/supervised_macro_geo_ft/`.
+
 Sorties principales :
 - `transfer/source_prototypes.csv`
 - `transfer/target_macro_predictions.csv`
@@ -238,6 +251,7 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `06_macro_transfer_topics.ipynb` | **Lecture seule** — FSP (probas/distances macro, BERTopic inputs, calibration/erreurs) |
 | `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (GroupKFold BTP → test métallurgie → BERTopic) |
 | `10_supervised_macro_ft_results.ipynb` | **Lecture** — fine-tuning CE (θ + tête softmax) ; BERTopic sur h_t adapté (voir jobs dédiés) |
+| `11_supervised_macro_geo_ft_results.ipynb` | **Lecture** — CE + λ·L_geo (préservation similarités Qwen) ; métriques géométrie + t-SNE |
 | `08_fsp_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics FSP (raw vs encodeur, confusion/report, distances, BERTopic) |
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.

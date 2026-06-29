@@ -135,6 +135,21 @@ class SupervisedMacroModel(nn.Module):
         z = self.encode(input_ids, attention_mask)
         return self.classifier(z)
 
+    def forward_with_latents(
+        self,
+        batch: Dict[str, Any],
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Retourne (logits, z, h) en un seul forward."""
+        if "hidden" in batch:
+            h = batch["hidden"]
+            z = self.encode_from_hidden(h)
+            logits = self.classifier(z)
+            return logits, z, h
+        h = self._encode_backbone(batch["input_ids"], batch["attention_mask"])
+        z = self.projector(h)
+        logits = self.classifier(z)
+        return logits, z, h
+
     def forward(self, batch: Dict[str, Any]) -> torch.Tensor:
         if "hidden" in batch:
             return self.forward_logits_from_hidden(batch["hidden"])
