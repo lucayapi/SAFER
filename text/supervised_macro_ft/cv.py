@@ -53,6 +53,7 @@ def run_group_kfold_cv(
     backbone_hidden: Optional[np.ndarray] = None,
     label_col: str = "pred_label",
     raw_emb_csv: Optional[str] = None,
+    save_fold_checkpoints: bool = True,
 ) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame, List[Dict[str, Any]]]:
     groups = dataset.get_groups()
     splits = group_kfold_splits(groups, n_folds, seed)
@@ -66,6 +67,11 @@ def run_group_kfold_cv(
     label_ids = dataset.label_ids
 
     for fold_id, (train_idx, val_idx) in enumerate(splits):
+        print(
+            f"[macro_ft cv] fold {fold_id + 1}/{n_folds} "
+            f"(train={len(train_idx)}, val={len(val_idx)})",
+            flush=True,
+        )
         model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
 
         if use_hidden_cache:
@@ -136,7 +142,7 @@ def run_group_kfold_cv(
         )
         geometry_fold_rows.append({"fold": fold_id, "fold_id": fold_id, **geom})
 
-        if fold_out_root:
+        if fold_out_root and save_fold_checkpoints:
             fold_dir = f"{fold_out_root}/folds/fold_{fold_id}"
             save_checkpoint(
                 model,

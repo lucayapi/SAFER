@@ -244,6 +244,7 @@ def run_supervised_macro_ft_training(
         backbone_hidden=backbone_hidden,
         label_col=label_col,
         raw_emb_csv=raw_emb_csv,
+        save_fold_checkpoints=not cv_only,
     )
     cv_dir = out_dir / "cv"
     cv_dir.mkdir(parents=True, exist_ok=True)

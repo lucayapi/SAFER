@@ -205,6 +205,8 @@ Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Q
 | Entraînement BTP | `bash jobs/train_supervised_macro_ft.sh` |
 | Grid search CV (balanced accuracy) | `MAX_COMBOS=4 SKIP_FINAL_FIT=1 bash jobs/tune_supervised_macro_ft.sh` |
 | Grille complète + fit final | `bash jobs/tune_supervised_macro_ft.sh` |
+
+En mode tuning (`cv_only`), seuls les **CSV** sont écrits par combo (`cv/`, `metrics/`) — pas de checkpoints `folds/fold_*` (évite ~1–2 Go × fold × combo sur le disque). Le fit final du meilleur combo écrit `checkpoints/best_model/`.
 | Transfert test + BERTopic | `CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Classif seule | `RUN_BERTOPIC=false CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Notebook 10 | `python scripts/build_notebook_10_supervised_macro_ft.py` |

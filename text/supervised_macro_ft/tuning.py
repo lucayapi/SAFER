@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import itertools
 import json
+import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -27,6 +30,14 @@ from supervised_macro_ft.train_runner import (
 )
 
 MACRO_FT_GRID_PREFIXES = ("training.", "model.")
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        force=True,
+    )
 
 
 def validate_macro_ft_grid_keys(grid: Dict[str, Any]) -> None:
@@ -56,7 +67,11 @@ def _combo_id(overrides: Dict[str, Any]) -> str:
             parts.append(f"{short}{val:.0e}".replace("+", ""))
         else:
             parts.append(f"{short}{val}")
-    return "_".join(parts)[:120] if parts else "default"
+    readable = "_".join(parts)[:100] if parts else "default"
+    digest = hashlib.sha1(
+        json.dumps(overrides, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:8]
+    return f"{readable}_{digest}"
 
 
 def _merge_overrides(base_cfg: Dict[str, Any], overrides: Dict[str, Any]) -> Dict[str, Any]:
@@ -100,6 +115,7 @@ def _run_combo_cv(
 
 
 def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
+    _configure_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--grid-config",
@@ -136,18 +152,27 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     shared_cache_dir = tuning_root / "_shared_cache"
     ensure_dir(shared_cache_dir)
 
+    print(
+        f"[macro_ft tuning] {len(combos)} combos, n_folds={n_folds}, "
+        f"selection={selection_metric}",
+        flush=True,
+    )
+
     print("[macro_ft tuning] Chargement cache backbone partagé…", flush=True)
     backbone_hidden = prepare_shared_backbone_hidden(base_cfg, cache_dir=shared_cache_dir)
+    if backbone_hidden is not None:
+        print(f"[macro_ft tuning] cache backbone : shape={backbone_hidden.shape}", flush=True)
 
     summary_rows: List[Dict[str, Any]] = []
     best_score = float("-inf")
     best_combo_id: Optional[str] = None
     best_overrides: Dict[str, Any] = {}
 
-    for overrides in combos:
+    for combo_idx, overrides in enumerate(combos, start=1):
         cid = _combo_id(overrides)
         combo_dir = tuning_root / "combos" / cid
-        print(f"[macro_ft tuning] {cid}", flush=True)
+        print(f"[macro_ft tuning] combo {combo_idx}/{len(combos)}: {cid}", flush=True)
+        t0 = time.perf_counter()
         row = _run_combo_cv(
             base_cfg,
             overrides,
@@ -158,10 +183,16 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
             seed=seed,
             selection_metric=selection_metric,
         )
+        elapsed = time.perf_counter() - t0
         row["combo_id"] = cid
         row.update({k.replace(".", "_"): v for k, v in overrides.items()})
         summary_rows.append(row)
         score = float(row.get("selection_score", float("nan")))
+        print(
+            f"[macro_ft tuning] fin combo {combo_idx}/{len(combos)} "
+            f"score={score:.4f} ({elapsed / 60:.1f} min)",
+            flush=True,
+        )
         if score == score and score > best_score:
             best_score = score
             best_combo_id = cid

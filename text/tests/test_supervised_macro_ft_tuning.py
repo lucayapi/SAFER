@@ -60,6 +60,27 @@ def test_combo_id_readable():
     cid = _combo_id({"model.projection": "mlp_sklearn", "training.lr_projector": 5e-4})
     assert "projection" in cid
     assert "mlp_sklearn" in cid
+    assert len(cid.split("_")[-1]) == 8
+
+
+def test_combo_id_unique_when_readable_truncated():
+    a = _combo_id(
+        {
+            "model.projection": "linear",
+            "model.hiddim": 128,
+            "training.epochs": 15,
+            "training.lr_projector": 1e-3,
+        }
+    )
+    b = _combo_id(
+        {
+            "model.projection": "linear",
+            "model.hiddim": 256,
+            "training.epochs": 15,
+            "training.lr_projector": 1e-3,
+        }
+    )
+    assert a != b
 
 
 @patch("supervised_macro_ft.tuning.run_supervised_macro_ft_cv")
@@ -97,3 +118,12 @@ def test_grid_yaml_loads():
     assert "mlp_sklearn" in spec["grid"]["model.projection"]
     combos = expand_grid(spec["grid"])
     assert len(combos) == 96
+
+
+def test_run_group_kfold_cv_save_fold_checkpoints_default():
+    import inspect
+
+    from supervised_macro_ft.cv import run_group_kfold_cv
+
+    param = inspect.signature(run_group_kfold_cv).parameters["save_fold_checkpoints"]
+    assert param.default is True

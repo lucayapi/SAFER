@@ -37,4 +37,6 @@ source "${TEXT_JOBS_DIR}/_tune_common.sh"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
+export PYTHONUNBUFFERED=1
+
 tune_job_run tune_supervised_macro_ft.py configs/tuning/supervised_macro_ft_grid.yaml
