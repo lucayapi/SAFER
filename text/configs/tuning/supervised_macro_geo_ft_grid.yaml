@@ -1,0 +1,21 @@
+base_config: configs/methods/supervised_macro_geo_ft.yaml
+output_dir: output/supervised_macro_geo_ft/tuning
+final_output_dir: output/supervised_macro_geo_ft
+selection_metric: balanced_accuracy
+n_folds: 5
+seed: 42
+test_corpus: metallurgie
+
+# Grille : architecture projecteur + λ_geo (CE + λ·L_geo).
+# 96 archis × 5 λ = 480 combos — smoke : MAX_COMBOS=4 SKIP_FINAL_FIT=1
+grid:
+  model.projection: [linear, ln_gelu, residual, mlp_sklearn]
+  model.hiddim: [128, 256, 512]
+  model.proj_hidden: [256, 512]
+  model.proj_bottleneck: [256]
+  model.proj_alpha: [0.1, 0.2]
+  model.dropout: [0.1]
+  training.lr_projector: [1.0e-3, 5.0e-4]
+  training.lr_head: [1.0e-3]
+  training.lambda_geo: [0.01, 0.05, 0.1, 0.5, 1.0]
+  training.selection_metric: [balanced_accuracy]

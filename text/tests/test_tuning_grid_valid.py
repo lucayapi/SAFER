@@ -21,6 +21,8 @@ from safer_core.io import load_yaml
 from safer_core.paths import TEXT_ROOT as PKG_ROOT
 from scgm_text.tuning import expand_grid as scgm_expand_grid
 from scgm_text.tuning import validate_scgm_grid_keys
+from supervised_macro_ft.tuning import expand_grid as macro_expand_grid
+from supervised_macro_ft.tuning import validate_macro_ft_grid_keys
 
 
 @pytest.mark.parametrize(
@@ -56,3 +58,27 @@ def test_scgm_grid_keys_and_combos_merge():
         merged = merge_config_dict(base, overrides)
         assert merged["training"]["lr"] > 0
         assert merged["model"]["lmd"] > 0
+
+
+@pytest.mark.parametrize(
+    "grid_name",
+    ["supervised_macro_ft_grid.yaml", "supervised_macro_geo_ft_grid.yaml"],
+)
+def test_macro_ft_grid_keys_and_combos_merge(grid_name: str):
+    spec = load_yaml(PKG_ROOT / f"configs/tuning/{grid_name}")
+    base = load_yaml(PKG_ROOT / spec["base_config"])
+    grid = spec.get("grid") or {}
+    validate_macro_ft_grid_keys(grid)
+    combos = macro_expand_grid(grid)
+    assert combos
+    for overrides in combos[:3]:
+        merged = merge_config_dict(base, overrides)
+        assert merged["model"]["projection"] in (
+            "linear",
+            "ln_gelu",
+            "residual",
+            "mlp_sklearn",
+        )
+        assert float(merged["training"]["lr_projector"]) > 0
+        if "training.lambda_geo" in overrides:
+            assert float(merged["training"]["lambda_geo"]) > 0

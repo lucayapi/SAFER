@@ -222,11 +222,13 @@ Loss : **L = L_CE + λ·L_geo** avec préservation des similarités cosinus Qwen
 | Étape | Commande |
 |-------|----------|
 | Entraînement BTP | `bash jobs/train_supervised_macro_geo_ft.sh` |
-| Sweep λ | `LAMBDA_GEO=0.05 bash jobs/train_supervised_macro_geo_ft.sh` |
+| Sweep λ (manuel) | `LAMBDA_GEO=0.05 bash jobs/train_supervised_macro_geo_ft.sh` |
+| Grid search CV | `MAX_COMBOS=4 SKIP_FINAL_FIT=1 bash jobs/tune_supervised_macro_geo_ft.sh` |
+| Grille complète + fit final | `bash jobs/tune_supervised_macro_geo_ft.sh` |
 | Transfert metallurgie | `CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
 | Notebook 11 | `python scripts/build_notebook_11_supervised_macro_geo_ft.py` |
 
-Configs : [`configs/methods/supervised_macro_geo_ft.yaml`](configs/methods/supervised_macro_geo_ft.yaml), [`configs/supervised_macro_geo_ft_transfer.yaml`](configs/supervised_macro_geo_ft_transfer.yaml). Sorties : `output/supervised_macro_geo_ft/` ; `output_test/<corpus>/macro_transfer/supervised_macro_geo_ft/`.
+Configs : [`configs/methods/supervised_macro_geo_ft.yaml`](configs/methods/supervised_macro_geo_ft.yaml), [`configs/supervised_macro_geo_ft_transfer.yaml`](configs/supervised_macro_geo_ft_transfer.yaml), grille [`configs/tuning/supervised_macro_geo_ft_grid.yaml`](configs/tuning/supervised_macro_geo_ft_grid.yaml). Sorties : `output/supervised_macro_geo_ft/` (tuning : `tuning/grid_summary.csv`, `best_combo.json`) ; `output_test/<corpus>/macro_transfer/supervised_macro_geo_ft/`.
 
 Sorties principales :
 - `transfer/source_prototypes.csv`
