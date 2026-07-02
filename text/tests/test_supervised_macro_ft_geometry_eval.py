@@ -47,3 +47,24 @@ def test_save_geometry_kfold_tables(tmp_path):
     assert (tmp_path / "kfold_geometry_summary.csv").is_file()
     summary = pd.read_csv(tmp_path / "kfold_geometry_summary.csv")
     assert "mean_eta2_macro_balanced" in summary.columns
+
+
+def test_evaluate_raw_val_geometry_without_doc_id_column(tmp_path):
+    meta = pd.DataFrame(
+        {
+            "sentence": ["a", "b"],
+            "pred_label": ["A0", "A1"],
+        }
+    )
+    emb_path = tmp_path / "raw.csv"
+    pd.DataFrame(
+        {
+            "doc_id": [1, 2],
+            "dim_0001": [0.1, 0.2],
+            "dim_0002": [0.3, 0.4],
+        }
+    ).to_csv(emb_path, index=False)
+    from contrastive_methods.eval_geometry import evaluate_raw_val_geometry
+
+    row = evaluate_raw_val_geometry(meta, "pred_label", emb_csv=emb_path)
+    assert "eta2_macro_balanced" in row

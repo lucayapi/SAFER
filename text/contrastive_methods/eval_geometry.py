@@ -42,11 +42,13 @@ def evaluate_raw_val_geometry(
 ) -> Dict[str, Any]:
     """Géométrie η² / W_r sur embeddings Qwen pré-calculés (même val fold)."""
     from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+    from scgm_text.utils_io import create_doc_id_if_missing
 
     emb_path = resolve_btp_raw_emb_csv(emb_csv)
     if not emb_path.is_file():
         raise FileNotFoundError(f"emb_csv absent pour IPR val : {emb_path}")
     slim = val_df.drop(columns=[c for c in val_df.columns if c.startswith("dim_")], errors="ignore")
+    slim = create_doc_id_if_missing(slim)
     merged, dim_cols = merge_metadata_with_embeddings(slim, str(emb_path))
     if merged.empty:
         raise ValueError("aucune ligne après fusion val / embeddings bruts")

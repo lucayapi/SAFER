@@ -21,10 +21,12 @@ def load_target_metadata(
     text_col: str = "sentence",
 ) -> pd.DataFrame:
     """Charge le CSV cible (toutes les lignes, sans filtre pred_ok)."""
+    from scgm_text.utils_io import create_doc_id_if_missing
+
     df = pd.read_csv(data_csv)
     if text_col not in df.columns:
         raise ValueError(f"Colonne {text_col!r} absente de {data_csv}")
-    return df.reset_index(drop=True)
+    return create_doc_id_if_missing(df.reset_index(drop=True))
 
 
 def encode_target_corpus(
