@@ -17,6 +17,10 @@ from safer_core.paths import resolve_repo_path
 from supervised_macro_ft.transfer import run_supervised_macro_ft_transfer
 
 
+def _parse_bool_flag(value: str) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -32,6 +36,14 @@ def main() -> None:
         action="store_true",
         help="Transfert macro uniquement (run_bertopic=false)",
     )
+    p.add_argument(
+        "--judge-enable",
+        type=_parse_bool_flag,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override judge_enable (true/false) — LLM juge qualité topics",
+    )
     args = p.parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     cfg = load_yaml(cfg_path)
@@ -39,6 +51,8 @@ def main() -> None:
         cfg["corpus"] = args.corpus
     if args.skip_bertopic:
         cfg["run_bertopic"] = False
+    if args.judge_enable is not None:
+        cfg["judge_enable"] = bool(args.judge_enable)
     tmp = TEXT_ROOT / ".tmp_supervised_macro_ft_transfer.yaml"
     import yaml
 

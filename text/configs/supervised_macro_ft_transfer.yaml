@@ -4,9 +4,13 @@ method_display_name: "Supervised macro FT (CE) + BERTopic"
 
 checkpoint: output/supervised_macro_ft/checkpoints/best_model
 
-# run_bertopic: true  → transfert + BERTopic + topic judge
-# run_bertopic: false → classification uniquement
+# run_bertopic: true  → phase BERTopic (clustering + titres topics LLM)
+# run_bertopic: false → classification macro uniquement
 run_bertopic: true
+
+# judge_enable: true  → si run_bertopic=true, appels LLM juge qualité topics
+# judge_enable: false → BERTopic + titres topics seulement (pas de juge)
+judge_enable: true
 
 target:
   dataset_path: dataset/test/data_metallurgie.csv

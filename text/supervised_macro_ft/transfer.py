@@ -228,6 +228,7 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
         "n_target": int(len(test_meta)),
         "checkpoint": str(checkpoint),
         "run_bertopic": run_bertopic,
+        "judge_enable": bool(run_bertopic and topic_judge_cfg.get("enabled", False)),
         "balanced_accuracy": float("nan"),
         "macro_f1": float("nan"),
         "mean_confidence": float(np.mean(confidence)) if len(confidence) else float("nan"),

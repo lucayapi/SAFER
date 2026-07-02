@@ -62,6 +62,9 @@ def resolve_bertopic_run_config(
         dict(shared.get("topic_judge") or {}),
         dict(cfg.get("topic_judge") or {}),
     )
+    run_topic_judge = dict(cfg.get("topic_judge") or {})
+    if "judge_enable" in cfg and "enabled" not in run_topic_judge:
+        topic_judge["enabled"] = bool(cfg["judge_enable"])
     return bertopic, topics_export, topic_judge
 
 
@@ -76,4 +79,6 @@ def enrich_run_config_bertopic(
     out["bertopic"] = bertopic
     out["topics_export"] = topics_export
     out["topic_judge"] = topic_judge
+    if "judge_enable" in cfg:
+        out["judge_enable"] = bool(cfg["judge_enable"])
     return out

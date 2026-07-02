@@ -209,7 +209,10 @@ Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Q
 En mode tuning (`cv_only`), seuls les **CSV** sont écrits par combo (`cv/`, `metrics/`) — pas de checkpoints `folds/fold_*` (évite ~1–2 Go × fold × combo sur le disque). Le fit final du meilleur combo écrit `checkpoints/best_model/`.
 | Transfert test + BERTopic | `CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Classif seule | `RUN_BERTOPIC=false CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
+| BERTopic sans juge LLM | `JUDGE_ENABLE=false CORPUS=<id> bash jobs/run_supervised_macro_ft_transfer.sh` |
 | Notebook 10 | `python scripts/build_notebook_10_supervised_macro_ft.py` |
+
+Transfert : `run_bertopic` (YAML ou `RUN_BERTOPIC`) active BERTopic ; `judge_enable` (YAML ou `JUDGE_ENABLE`) contrôle les appels LLM du **juge qualité** (les titres topics restent générés via `bertopic.representation`).
 
 Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervised_macro_ft.yaml), [`configs/supervised_macro_ft_transfer.yaml`](configs/supervised_macro_ft_transfer.yaml), grille [`configs/tuning/supervised_macro_ft_grid.yaml`](configs/tuning/supervised_macro_ft_grid.yaml).
 
@@ -226,6 +229,8 @@ Loss : **L = L_CE + λ·L_geo** avec préservation des similarités cosinus Qwen
 | Grid search CV | `MAX_COMBOS=4 SKIP_FINAL_FIT=1 bash jobs/tune_supervised_macro_geo_ft.sh` |
 | Grille complète + fit final | `bash jobs/tune_supervised_macro_geo_ft.sh` |
 | Transfert metallurgie | `CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
+| Classif seule | `RUN_BERTOPIC=false CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
+| BERTopic sans juge LLM | `JUDGE_ENABLE=false CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
 | Notebook 11 | `python scripts/build_notebook_11_supervised_macro_geo_ft.py` |
 
 Configs : [`configs/methods/supervised_macro_geo_ft.yaml`](configs/methods/supervised_macro_geo_ft.yaml), [`configs/supervised_macro_geo_ft_transfer.yaml`](configs/supervised_macro_geo_ft_transfer.yaml), grille [`configs/tuning/supervised_macro_geo_ft_grid.yaml`](configs/tuning/supervised_macro_geo_ft_grid.yaml). Sorties : `output/supervised_macro_geo_ft/` (tuning : `tuning/grid_summary.csv`, `best_combo.json`) ; `output_test/<corpus>/macro_transfer/supervised_macro_geo_ft/`.

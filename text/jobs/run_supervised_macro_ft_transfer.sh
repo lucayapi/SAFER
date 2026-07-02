@@ -3,7 +3,8 @@
 #
 # Usage:
 #   CORPUS=metallurgie bash jobs/run_supervised_macro_ft_transfer.sh
-#   CORPUS=metallurgie RUN_BERTOPIC=false bash jobs/run_supervised_macro_ft_transfer.sh
+#   RUN_BERTOPIC=false CORPUS=metallurgie bash jobs/run_supervised_macro_ft_transfer.sh
+#   JUDGE_ENABLE=false CORPUS=metallurgie bash jobs/run_supervised_macro_ft_transfer.sh
 
 #SBATCH --job-name=sup-macro-xfer
 #SBATCH --partition=gpu
@@ -27,7 +28,10 @@ ARGS=(--config "${CONFIG}" --corpus "${CORPUS}")
 if [[ "${RUN_BERTOPIC:-true}" == "false" ]]; then
   ARGS+=(--skip-bertopic)
 fi
+if [[ -n "${JUDGE_ENABLE:-}" ]]; then
+  ARGS+=(--judge-enable "${JUDGE_ENABLE}")
+fi
 
-echo "[sup-macro-xfer] CORPUS=${CORPUS} RUN_BERTOPIC=${RUN_BERTOPIC:-true} $(date -Iseconds)"
+echo "[sup-macro-xfer] CORPUS=${CORPUS} RUN_BERTOPIC=${RUN_BERTOPIC:-true} JUDGE_ENABLE=${JUDGE_ENABLE:-<yaml>} $(date -Iseconds)"
 python -u scripts/run_supervised_macro_ft_transfer.py "${ARGS[@]}"
 echo "[sup-macro-xfer] terminé $(date -Iseconds)"
