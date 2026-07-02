@@ -111,6 +111,8 @@ def test_builder_10_supervised_macro_ft():
     assert "train_history_curves" in src
     assert "tsne_btp_true_vs_pred" in src
     assert "tsne_test_true_vs_pred" in src
+    assert "plot_tsne_datasets_overlay" in src
+    assert "tsne_btp_test_by_dataset" in src
     assert "train_supervised_macro_ft.sh" in src
     assert "run_supervised_macro_ft_transfer.sh" in src
 

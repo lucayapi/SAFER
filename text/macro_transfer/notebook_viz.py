@@ -32,6 +32,18 @@ MACRO_COLOR_HEX: Dict[str, str] = {
     "C": "#d62728",
 }
 
+DATASET_COLOR_HEX: Dict[str, str] = {
+    "BTP": "#1f77b4",
+    "metallurgie": "#ff7f0e",
+}
+
+MACRO_MARKERS: Dict[str, str] = {
+    "A0": "o",
+    "A1": "s",
+    "B": "^",
+    "C": "D",
+}
+
 
 @dataclass
 class FSPRunArtifacts:
@@ -519,6 +531,131 @@ def plot_tsne_true_vs_pred(
         ax.set_xlabel("t-SNE 1")
         ax.set_ylabel("t-SNE 2")
         ax.legend(markerscale=2, fontsize=8, loc="best")
+    plt.tight_layout()
+    out_path = None
+    if fig_dir:
+        out = Path(fig_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        out_path = out / filename
+        fig.savefig(out_path, dpi=140, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+    return out_path
+
+
+def _subsample_indices_stratified(
+    group_sizes: Sequence[int],
+    *,
+    max_points: int,
+    seed: int,
+) -> List[np.ndarray]:
+    """Sous-échantillonne chaque groupe proportionnellement (au moins 1 point par groupe non vide)."""
+    sizes = [int(s) for s in group_sizes]
+    total = sum(sizes)
+    if total <= int(max_points) or total == 0:
+        return [np.arange(s, dtype=np.int64) for s in sizes]
+    rng = np.random.default_rng(int(seed))
+    frac = float(max_points) / float(total)
+    selected: List[np.ndarray] = []
+    for size in sizes:
+        if size <= 0:
+            selected.append(np.array([], dtype=np.int64))
+            continue
+        n_take = max(1, int(round(size * frac)))
+        n_take = min(n_take, size)
+        selected.append(rng.choice(size, size=n_take, replace=False))
+    return selected
+
+
+def plot_tsne_datasets_overlay(
+    embeddings_list: Sequence[np.ndarray],
+    meta_list: Sequence[pd.DataFrame],
+    dataset_labels: Sequence[str],
+    macro_col: str,
+    *,
+    title: str = "BTP + test (z projeté)",
+    fig_dir: Optional[Path] = None,
+    filename: str = "tsne_btp_test_by_dataset.png",
+    max_points: int = 4000,
+    seed: int = 42,
+    macros: Sequence[str] = MACRO_NAMES,
+) -> Optional[Path]:
+    """
+    t-SNE 2D joint sur plusieurs corpus : couleur = dataset, marqueur = macro.
+
+    Une seule projection t-SNE partagée pour comparer l'organisation des points.
+    """
+    from sklearn.manifold import TSNE
+
+    if len(embeddings_list) != len(meta_list) or len(embeddings_list) != len(dataset_labels):
+        raise ValueError("embeddings_list, meta_list et dataset_labels doivent avoir la même longueur")
+    if not embeddings_list:
+        raise ValueError("embeddings_list vide")
+
+    arrays: List[np.ndarray] = []
+    frames: List[pd.DataFrame] = []
+    ds_tags: List[str] = []
+    for emb, meta, ds in zip(embeddings_list, meta_list, dataset_labels):
+        h = np.asarray(emb, dtype=np.float64)
+        if len(h) != len(meta):
+            raise ValueError(f"embeddings ({len(h)}) et metadata ({len(meta)}) non alignés pour {ds!r}")
+        if macro_col not in meta.columns:
+            raise KeyError(f"Colonne macro manquante {macro_col!r} pour dataset {ds!r}")
+        arrays.append(h)
+        frames.append(meta.reset_index(drop=True))
+        ds_tags.extend([str(ds)] * len(h))
+
+    X_all = np.vstack(arrays)
+    meta_all = pd.concat(frames, ignore_index=True)
+    meta_all["_dataset"] = ds_tags
+
+    group_sizes = [len(a) for a in arrays]
+    local_indices = _subsample_indices_stratified(group_sizes, max_points=max_points, seed=seed)
+    global_parts: List[np.ndarray] = []
+    offset = 0
+    for size, local_idx in zip(group_sizes, local_indices):
+        if len(local_idx):
+            global_parts.append(local_idx + offset)
+        offset += size
+    idx = np.concatenate(global_parts) if global_parts else np.arange(len(X_all), dtype=np.int64)
+
+    X = X_all[idx]
+    sub = meta_all.iloc[idx].reset_index(drop=True)
+
+    tsne_xy = TSNE(
+        n_components=2,
+        random_state=int(seed),
+        init="pca",
+        learning_rate="auto",
+    ).fit_transform(X)
+
+    fig, ax = plt.subplots(figsize=(9, 7))
+    fallback_colors = ["#9467bd", "#8c564b", "#e377c2", "#7f7f7f"]
+    for ds_i, ds in enumerate(dataset_labels):
+        ds_color = DATASET_COLOR_HEX.get(str(ds), fallback_colors[ds_i % len(fallback_colors)])
+        for macro in macros:
+            mask = (sub["_dataset"].astype(str).values == str(ds)) & (
+                sub[macro_col].astype(str).values == str(macro)
+            )
+            if not mask.any():
+                continue
+            label = f"{ds} — {macro}"
+            ax.scatter(
+                tsne_xy[mask, 0],
+                tsne_xy[mask, 1],
+                s=18,
+                alpha=0.6,
+                c=ds_color,
+                marker=MACRO_MARKERS.get(str(macro), "o"),
+                edgecolors="white",
+                linewidths=0.3,
+                label=label,
+            )
+
+    ax.set_title(title)
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
+    ax.legend(markerscale=1.2, fontsize=7, loc="best", ncol=2)
     plt.tight_layout()
     out_path = None
     if fig_dir:

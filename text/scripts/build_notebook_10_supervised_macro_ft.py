@@ -77,6 +77,7 @@ from macro_transfer.notebook_viz import (
     plot_fsp_pred_macro_distribution,
     plot_supervised_macro_ft_train_history,
     plot_tsne_true_vs_pred,
+    plot_tsne_datasets_overlay,
 )
 from supervised_macro_ft.transfer import supervised_macro_ft_output_dir
 
@@ -263,6 +264,55 @@ if test_emb_path.is_file() and len(pred) == len(np.load(test_emb_path)):
         print("Colonnes true_macro / pred_macro absentes pour t-SNE test.")
 else:
     print("Embeddings test absents — relancer jobs/run_supervised_macro_ft_transfer.sh")
+"""
+        ),
+        md(
+            r"""
+## § t-SNE 2D — BTP + test sur une même projection
+
+Embeddings **z projeté** (post fine-tuning : Qwen gelé → ψ) ; **une seule** projection t-SNE partagée.
+
+- **Couleur** = corpus (BTP vs corpus test)
+- **Marqueur** = macro (`A0`–`C`)
+
+Prérequis : `jobs/train_supervised_macro_ft.sh` + `jobs/run_supervised_macro_ft_transfer.sh`.
+"""
+        ),
+        py(
+            r"""
+btp_emb_path = TRAIN_OUT / "embeddings" / "btp_embeddings.npy"
+btp_meta_path = TRAIN_OUT / "embeddings" / "btp_embeddings_metadata.csv"
+test_emb_path = OUT_DIR / "embeddings" / "target_embeddings.npy"
+
+if (
+    btp_emb_path.is_file()
+    and btp_meta_path.is_file()
+    and test_emb_path.is_file()
+    and len(pred) == len(np.load(test_emb_path))
+):
+    h_btp = np.load(btp_emb_path)
+    meta_btp = pd.read_csv(btp_meta_path)
+    h_test = np.load(test_emb_path)
+    true_col = "true_macro" if "true_macro" in pred.columns else "pred_label"
+    meta_test = pred.copy()
+    macro_btp_col = "pred_label" if "pred_label" in meta_btp.columns else true_col
+    if true_col not in meta_test.columns or macro_btp_col not in meta_btp.columns:
+        print("Colonnes macro absentes pour overlay t-SNE combiné.")
+    else:
+        meta_btp_o = meta_btp.assign(_macro_plot=meta_btp[macro_btp_col].astype(str))
+        meta_test_o = meta_test.assign(_macro_plot=meta_test[true_col].astype(str))
+        plot_tsne_datasets_overlay(
+            [h_btp, h_test],
+            [meta_btp_o, meta_test_o],
+            ["BTP", TEST_CORPUS],
+            macro_col="_macro_plot",
+            title=f"BTP + {TEST_CORPUS} (z projeté)",
+            fig_dir=FIG_DIR,
+            filename="tsne_btp_test_by_dataset.png",
+            max_points=4000,
+        )
+else:
+    print("Embeddings BTP/test incomplets — relancer train + transfert.")
 """
         ),
         md("## § BERTopic (embeddings h_t adaptés)"),

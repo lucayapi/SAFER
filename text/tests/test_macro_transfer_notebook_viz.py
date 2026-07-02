@@ -302,6 +302,29 @@ def test_plot_tsne_true_vs_pred_runs(tmp_path: Path):
     assert out is not None and out.is_file()
 
 
+def test_plot_tsne_datasets_overlay_runs(tmp_path: Path):
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(1)
+    h_btp = rng.normal(size=(60, 8))
+    h_test = rng.normal(size=(40, 8)) + 0.5
+    meta_btp = pd.DataFrame({"pred_label": np.array(["A0", "A1", "B", "C"] * 15)})
+    meta_test = pd.DataFrame({"true_macro": np.array(["A0", "A1", "B", "C"] * 10)})
+    from macro_transfer.notebook_viz import plot_tsne_datasets_overlay
+
+    meta_btp = meta_btp.assign(_macro_plot=meta_btp["pred_label"])
+    meta_test = meta_test.assign(_macro_plot=meta_test["true_macro"])
+    out = plot_tsne_datasets_overlay(
+        [h_btp, h_test],
+        [meta_btp, meta_test],
+        ["BTP", "metallurgie"],
+        "_macro_plot",
+        fig_dir=tmp_path,
+        filename="tsne_btp_test_by_dataset.png",
+        max_points=100,
+    )
+    assert out is not None and out.is_file()
+
+
 def test_plot_supervised_macro_ft_train_history_runs(tmp_path: Path):
     hist = pd.DataFrame(
         {
