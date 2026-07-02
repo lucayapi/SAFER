@@ -15,6 +15,7 @@ from scgm_text.projection import (
     build_embedding_projector,
     normalize_projection_name,
 )
+from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 
 
 def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
@@ -36,6 +37,7 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "proj_hidden": model_cfg.get("proj_hidden"),
         "proj_bottleneck": model_cfg.get("proj_bottleneck"),
         "proj_alpha": float(model_cfg.get("proj_alpha", 0.1)),
+        "standardize_backbone": should_standardize_backbone(model_cfg),
     }
 
 
@@ -61,6 +63,7 @@ class SupervisedMacroModel(nn.Module):
         proj_hidden: Optional[int] = None,
         proj_bottleneck: Optional[int] = None,
         proj_alpha: float = 0.1,
+        standardize_backbone: bool = False,
     ) -> None:
         super().__init__()
         backbone_trainable, train_last_n_layers = normalize_backbone_trainability(
@@ -75,6 +78,8 @@ class SupervisedMacroModel(nn.Module):
         self.proj_hidden = int(proj_hidden) if proj_hidden is not None else None
         self.proj_bottleneck = int(proj_bottleneck) if proj_bottleneck is not None else None
         self.proj_alpha = float(proj_alpha)
+        self.standardize_backbone = bool(standardize_backbone)
+        self.backbone_scaler: Optional[BackboneScaler] = None
 
         self.use_projector = projection is not None and str(projection).strip().lower() not in (
             "none",
@@ -131,9 +136,18 @@ class SupervisedMacroModel(nn.Module):
             return h.detach()
         return self.backbone(input_ids=input_ids, attention_mask=attention_mask)
 
+    def set_backbone_scaler(self, scaler: Optional[BackboneScaler]) -> None:
+        self.backbone_scaler = scaler
+        self.standardize_backbone = scaler is not None
+
+    def _prepare_hidden_for_projector(self, hidden: torch.Tensor) -> torch.Tensor:
+        if self.backbone_scaler is None:
+            return hidden
+        return self.backbone_scaler.transform_tensor(hidden)
+
     def encode_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
-        """z = ψ(h) à partir d'embeddings backbone déjà calculés."""
-        return self.projector(hidden)
+        """z = ψ(h) à partir d'embeddings backbone déjà calculés (h brut si L_geo)."""
+        return self.projector(self._prepare_hidden_for_projector(hidden))
 
     def forward_logits_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
         z = self.encode_from_hidden(hidden)
@@ -146,7 +160,7 @@ class SupervisedMacroModel(nn.Module):
     ) -> torch.Tensor:
         """Retourne z = ψ(h) (espace adapté pour export / BERTopic)."""
         h = self._encode_backbone(input_ids, attention_mask)
-        return self.projector(h)
+        return self.projector(self._prepare_hidden_for_projector(h))
 
     def forward_logits(
         self,
@@ -167,7 +181,7 @@ class SupervisedMacroModel(nn.Module):
             logits = self.classifier(z)
             return logits, z, h
         h = self._encode_backbone(batch["input_ids"], batch["attention_mask"])
-        z = self.projector(h)
+        z = self.projector(self._prepare_hidden_for_projector(h))
         logits = self.classifier(z)
         return logits, z, h
 

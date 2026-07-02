@@ -17,6 +17,7 @@ from safer_core.paths import resolve_repo_path
 from safer_core.test_corpus import resolve_test_corpus
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
+from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 from supervised_macro_ft.checkpoint_io import save_checkpoint
 from supervised_macro_ft.geometry_eval import (
     METHOD_LABEL_BTP,
@@ -57,11 +58,16 @@ def _resolve_cfg(
     *,
     cfg: Optional[Dict[str, Any]] = None,
     training_overrides: Optional[Dict[str, Any]] = None,
+    model_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if cfg is None:
         if config_path is None:
             raise ValueError("config_path ou cfg requis")
         cfg = load_yaml(Path(config_path))
+    if model_overrides:
+        model_section = dict(cfg.get("model") or {})
+        model_section.update(model_overrides)
+        cfg = {**cfg, "model": model_section}
     if training_overrides:
         train_section = dict(cfg.get("training") or {})
         train_section.update(training_overrides)
@@ -179,9 +185,15 @@ def run_supervised_macro_ft_training(
     backbone_hidden: Optional[np.ndarray] = None,
     shared_cache_dir: Optional[str | Path] = None,
     training_overrides: Optional[Dict[str, Any]] = None,
+    model_overrides: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     anchor = Path(__file__).resolve().parents[1]
-    cfg = _resolve_cfg(config_path, cfg=cfg, training_overrides=training_overrides)
+    cfg = _resolve_cfg(
+        config_path,
+        cfg=cfg,
+        training_overrides=training_overrides,
+        model_overrides=model_overrides,
+    )
     data_cfg = dict(cfg.get("data") or {})
     model_cfg = dict(cfg.get("model") or {})
     train_cfg = dict(cfg.get("training") or {})
@@ -222,6 +234,11 @@ def run_supervised_macro_ft_training(
         shared_cache_dir=shared_dir,
     )
     use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
+    if should_standardize_backbone(model_cfg) and not use_hidden_cache:
+        logger.warning(
+            "standardize_backbone=true requiert cache_backbone_embeddings (backbone gelé) ; "
+            "standardisation ignorée."
+        )
 
     label_col = str(data_cfg.get("label_col", "pred_label"))
     raw_emb_csv = model_cfg.get("backbone_emb_csv")
@@ -271,6 +288,10 @@ def run_supervised_macro_ft_training(
 
     # Fit final 100 % BTP
     model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
+
+    if use_hidden_cache and backbone_hidden is not None and should_standardize_backbone(model_cfg):
+        all_idx = np.arange(len(dataset), dtype=np.int64)
+        model.set_backbone_scaler(BackboneScaler.fit(backbone_hidden, all_idx))
 
     class_weight = build_class_weights(
         dataset.label_ids.tolist(),
@@ -411,6 +432,7 @@ def run_supervised_macro_ft_training(
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,
         "backbone_cache_used": bool(use_hidden_cache),
+        "standardize_backbone": bool(model.backbone_scaler is not None),
         "geometry_kfold_summary": str(metrics_dir / "kfold_geometry_summary.csv"),
         "geometry_btp": str(metrics_dir / "metrics_geometry_btp.csv"),
         "train_history_paths": {

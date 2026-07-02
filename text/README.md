@@ -198,7 +198,7 @@ Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles 
 
 Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: linear|ln_gelu|residual|mlp_sklearn`, défaut `linear`, `hiddim: 512`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
 
-`mlp_sklearn` aligne l'architecture MLP du notebook 07 (`hidden_layer_sizes: [256, 128]`, ReLU) ; le baseline sklearn applique aussi un **StandardScaler** sur h (non reproduit ici).
+`mlp_sklearn` aligne l'architecture MLP du notebook 07 (`hidden_layer_sizes: [256, 128]`, ReLU) ; le baseline sklearn applique aussi un **StandardScaler** sur h — reproduit via `model.standardize_backbone: true` (ou `STANDARDIZE_BACKBONE=true` dans les jobs).
 
 | Étape | Commande |
 |-------|----------|

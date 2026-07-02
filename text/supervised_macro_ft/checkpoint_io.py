@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 import torch
 
+from supervised_macro_ft.backbone_scaler import BackboneScaler
 from supervised_macro_ft.model import SupervisedMacroModel
 
 
@@ -42,6 +43,11 @@ def _is_legacy_checkpoint(cfg: Dict[str, Any], ckpt_dir: Path) -> bool:
     return str(projection).strip().lower() in ("none", "null", "", "legacy")
 
 
+def _attach_backbone_scaler_from_config(model: SupervisedMacroModel, cfg: Dict[str, Any]) -> None:
+    scaler = BackboneScaler.from_config(cfg)
+    model.set_backbone_scaler(scaler)
+
+
 def save_checkpoint(
     model: SupervisedMacroModel,
     out_dir: str | Path,
@@ -60,6 +66,9 @@ def save_checkpoint(
     payload.setdefault("pooling", model.pooling)
     payload.setdefault("backbone_trainable", model.backbone_trainable)
     payload.setdefault("train_last_n_layers", model.train_last_n_layers)
+    payload.setdefault("standardize_backbone", bool(model.backbone_scaler is not None))
+    if model.backbone_scaler is not None:
+        payload["backbone_scaler"] = model.backbone_scaler.to_dict()
     if model.use_projector:
         payload.setdefault("projection", model.projection_name)
         payload.setdefault("hiddim", model.hiddim)
@@ -103,6 +112,7 @@ def load_checkpoint(
         proj_hidden=cfg.get("proj_hidden"),
         proj_bottleneck=cfg.get("proj_bottleneck"),
         proj_alpha=float(cfg.get("proj_alpha", 0.1)),
+        standardize_backbone=bool(cfg.get("standardize_backbone", False)),
     )
     loc = map_location or device
     backbone_path = ckpt_dir / "hf_model.bin"
@@ -116,6 +126,7 @@ def load_checkpoint(
     projector_path = ckpt_dir / "projector.pt"
     if projector_path.is_file():
         model.projector.load_state_dict(_torch_load(projector_path, loc))
+    _attach_backbone_scaler_from_config(model, cfg)
     model.to(torch.device(device if device != "cpu" or map_location is None else map_location))
     model.eval()
     return model

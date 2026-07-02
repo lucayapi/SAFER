@@ -32,6 +32,7 @@ model:
   class_weight: balanced
   gradient_checkpointing: false
   cache_backbone_embeddings: true
+  standardize_backbone: false
   backbone_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 training:

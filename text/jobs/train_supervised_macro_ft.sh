@@ -3,6 +3,7 @@
 #
 # Usage:
 #   cd ~/SAFER/text && bash jobs/train_supervised_macro_ft.sh
+#   STANDARDIZE_BACKBONE=true bash jobs/train_supervised_macro_ft.sh
 #   TEST_CORPUS=metallurgie bash jobs/train_supervised_macro_ft.sh
 
 #SBATCH --job-name=sup-macro-ft
@@ -24,6 +25,11 @@ fi
 CONFIG="${CONFIG:-configs/methods/supervised_macro_ft.yaml}"
 export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
 
-echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPUS=${TEST_CORPUS} $(date -Iseconds)"
-python -u scripts/train_supervised_macro_ft.py --config "${CONFIG}"
+ARGS=(--config "${CONFIG}")
+if [[ -n "${STANDARDIZE_BACKBONE:-}" ]]; then
+  ARGS+=(--standardize-backbone "${STANDARDIZE_BACKBONE}")
+fi
+
+echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPUS=${TEST_CORPUS} STANDARDIZE_BACKBONE=${STANDARDIZE_BACKBONE:-<yaml>} $(date -Iseconds)"
+python -u scripts/train_supervised_macro_ft.py "${ARGS[@]}"
 echo "[sup-macro-ft] terminé $(date -Iseconds)"

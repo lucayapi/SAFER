@@ -10,6 +10,7 @@
 #   ln_gelu     — Linear → LayerNorm → GELU → Linear (proj_hidden intermédiaire)
 #   residual    — LayerNorm(h + α·g(h)) puis Linear → hiddim (proj_bottleneck pour g)
 #   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128) ; hiddim forcé à 128
+# standardize_backbone — StandardScaler sur h avant ψ (fit train / fold), comme notebook 07
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
@@ -38,6 +39,7 @@ model:
   class_weight: balanced
   gradient_checkpointing: false
   cache_backbone_embeddings: true
+  standardize_backbone: false
   backbone_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
   # projection: ln_gelu
   # hiddim: 256

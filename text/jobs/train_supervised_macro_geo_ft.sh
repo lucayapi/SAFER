@@ -4,6 +4,7 @@
 # Usage:
 #   cd ~/SAFER/text && bash jobs/train_supervised_macro_geo_ft.sh
 #   LAMBDA_GEO=0.05 bash jobs/train_supervised_macro_geo_ft.sh
+#   STANDARDIZE_BACKBONE=true bash jobs/train_supervised_macro_geo_ft.sh
 #   TEST_CORPUS=metallurgie bash jobs/train_supervised_macro_geo_ft.sh
 #
 # Sweep λ suggéré : 0.01, 0.05, 0.1, 0.5, 1.0
@@ -31,7 +32,10 @@ ARGS=(--config "${CONFIG}")
 if [[ -n "${LAMBDA_GEO:-}" ]]; then
   ARGS+=(--lambda-geo "${LAMBDA_GEO}")
 fi
+if [[ -n "${STANDARDIZE_BACKBONE:-}" ]]; then
+  ARGS+=(--standardize-backbone "${STANDARDIZE_BACKBONE}")
+fi
 
-echo "[sup-macro-geo-ft] CONFIG=${CONFIG} LAMBDA_GEO=${LAMBDA_GEO:-<yaml>} TEST_CORPUS=${TEST_CORPUS} $(date -Iseconds)"
+echo "[sup-macro-geo-ft] CONFIG=${CONFIG} LAMBDA_GEO=${LAMBDA_GEO:-<yaml>} STANDARDIZE_BACKBONE=${STANDARDIZE_BACKBONE:-<yaml>} TEST_CORPUS=${TEST_CORPUS} $(date -Iseconds)"
 python -u scripts/train_supervised_macro_ft.py "${ARGS[@]}"
 echo "[sup-macro-geo-ft] terminé $(date -Iseconds)"

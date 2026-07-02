@@ -12,6 +12,7 @@ from torch.utils.data import DataLoader, Subset
 from safer_core.kfold_eval import group_kfold_splits
 from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
+from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 from supervised_macro_ft.checkpoint_io import save_checkpoint
 from supervised_macro_ft.embedding_cache import (
     BackboneHiddenDataset,
@@ -73,6 +74,11 @@ def run_group_kfold_cv(
             flush=True,
         )
         model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
+
+        if use_hidden_cache and should_standardize_backbone(model_cfg):
+            assert backbone_hidden is not None
+            scaler = BackboneScaler.fit(backbone_hidden, train_idx)
+            model.set_backbone_scaler(scaler)
 
         if use_hidden_cache:
             assert backbone_hidden is not None
