@@ -2,14 +2,11 @@
 Supervised Contrastive Loss (HobbitLong / SupContrast).
 
 Adapté de https://github.com/HobbitLong/SupContrast (BSD-2-Clause).
-Paper: Khosla et al., Supervised Contrastive Learning, arXiv:2004.11362.
-
-Wrapper SentenceTransformer : 1 vue par phrase, embeddings L2-normalisés, cosinus uniquement.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -19,9 +16,7 @@ from contrastive_methods.config import ContrastiveConfig
 
 
 class HobbitSupConLoss(nn.Module):
-    """
-    SupConLoss officiel (features [bsz, n_views, dim], L2-normalisées en amont).
-    """
+    """SupConLoss officiel (features [bsz, n_views, dim], L2-normalisées en amont)."""
 
     def __init__(
         self,
@@ -92,21 +87,17 @@ class HobbitSupConLoss(nn.Module):
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-12)
 
-        mask_pos_pairs = mask.sum(1)
-        mask_pos_pairs = torch.where(mask_pos_pairs < 1e-6, torch.ones_like(mask_pos_pairs), mask_pos_pairs)
-        mean_log_prob_pos = (mask * log_prob).sum(1) / mask_pos_pairs
-
+        mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-12)
         loss = -(self.temperature / self.base_temperature) * mean_log_prob_pos
         loss = loss.view(anchor_count, batch_size).mean()
         return loss
 
 
-class SupConSentenceTransformerLoss(nn.Module):
-    """Interface SentenceTransformer : encode → L2 → [B, 1, D] → HobbitSupConLoss."""
+class SupConEmbeddingLoss(nn.Module):
+    """SupCon sur embeddings [B, D] (encodeur HF unifié)."""
 
     def __init__(
         self,
-        model: Any,
         *,
         temperature: float = 0.07,
         contrast_mode: str = "all",
@@ -114,7 +105,6 @@ class SupConSentenceTransformerLoss(nn.Module):
         normalize_embeddings: bool = True,
     ) -> None:
         super().__init__()
-        self.model = model
         self.normalize_embeddings = bool(normalize_embeddings)
         base_t = float(base_temperature) if base_temperature is not None else float(temperature)
         self.criterion = HobbitSupConLoss(
@@ -123,23 +113,19 @@ class SupConSentenceTransformerLoss(nn.Module):
             base_temperature=base_t,
         )
 
-    def forward(self, sentence_features, labels: Optional[torch.Tensor] = None):
-        if labels is None:
-            raise ValueError("SupConSentenceTransformerLoss nécessite des labels.")
-        embeddings = self.model(sentence_features[0])["sentence_embedding"]
+    def forward(self, embeddings: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
         if self.normalize_embeddings:
             embeddings = F.normalize(embeddings, p=2, dim=-1)
         features = embeddings.unsqueeze(1)
         return self.criterion(features, labels)
 
 
-def build_supcon_loss(cfg: ContrastiveConfig, model: Any) -> SupConSentenceTransformerLoss:
+def build_supcon_embedding_loss(cfg: ContrastiveConfig) -> SupConEmbeddingLoss:
     if cfg.method_name == "supcon" and cfg.distance_metric != "cosine":
         raise ValueError(
             f"SupCon (HobbitLong) exige distance_metric=cosine, reçu {cfg.distance_metric!r}"
         )
-    return SupConSentenceTransformerLoss(
-        model=model,
+    return SupConEmbeddingLoss(
         temperature=cfg.supcon_temperature,
         contrast_mode=cfg.supcon_contrast_mode,
         base_temperature=cfg.supcon_base_temperature,

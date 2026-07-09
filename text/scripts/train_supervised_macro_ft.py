@@ -20,6 +20,13 @@ def _parse_bool_flag(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _parse_optional_int(value: str) -> int | None:
+    text = str(value).strip().lower()
+    if text in ("null", "none", ""):
+        return None
+    return int(value)
+
+
 def main() -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -43,14 +50,51 @@ def main() -> None:
         default=None,
         help="Override model.standardize_backbone (true/false)",
     )
+    p.add_argument(
+        "--oversampling",
+        type=_parse_bool_flag,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override model.oversampling (true/false)",
+    )
+    p.add_argument(
+        "--class-weight",
+        type=str,
+        default=None,
+        help="Override model.class_weight (null|balanced)",
+    )
+    p.add_argument(
+        "--backbone-trainable",
+        type=_parse_bool_flag,
+        nargs="?",
+        const=True,
+        default=None,
+        help="Override model.backbone_trainable (true/false)",
+    )
+    p.add_argument(
+        "--train-last-n-layers",
+        type=_parse_optional_int,
+        default=None,
+        help="Override model.train_last_n_layers (int ou null)",
+    )
     args = p.parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     training_overrides: dict[str, float] = {}
-    model_overrides: dict[str, bool] = {}
+    model_overrides: dict[str, object] = {}
     if args.lambda_geo is not None:
         training_overrides["lambda_geo"] = float(args.lambda_geo)
     if args.standardize_backbone is not None:
         model_overrides["standardize_backbone"] = bool(args.standardize_backbone)
+    if args.oversampling is not None:
+        model_overrides["oversampling"] = bool(args.oversampling)
+    if args.class_weight is not None:
+        cw = str(args.class_weight).strip().lower()
+        model_overrides["class_weight"] = None if cw in ("null", "none", "") else cw
+    if args.backbone_trainable is not None:
+        model_overrides["backbone_trainable"] = bool(args.backbone_trainable)
+    if args.train_last_n_layers is not None:
+        model_overrides["train_last_n_layers"] = args.train_last_n_layers
     result = run_supervised_macro_ft_training(
         cfg_path,
         training_overrides=training_overrides or None,

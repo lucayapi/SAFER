@@ -5,12 +5,15 @@
 #   B partiel           : backbone_trainable: true, train_last_n_layers: 4
 #   C complet           : backbone_trainable: true, train_last_n_layers: null
 #
-# Projecteur (model.projection) :
-#   linear      — Linear(d_in → hiddim), défaut doux
-#   ln_gelu     — Linear → LayerNorm → GELU → Linear (proj_hidden intermédiaire)
-#   residual    — LayerNorm(h + α·g(h)) puis Linear → hiddim (proj_bottleneck pour g)
-#   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128) ; hiddim forcé à 128
-# standardize_backbone — StandardScaler sur h avant ψ (fit train / fold), comme notebook 07
+# Projecteur (model.projection) : linear | mlp_sklearn uniquement
+#   linear      — Linear(d_in → hiddim)
+#   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128)
+#
+# Rééquilibrage (mutuellement exclusif si les deux activés → erreur) :
+#   oversampling: false — pas de sur-échantillonnage (défaut)
+#   class_weight: null   — pas de pondération CE (défaut) ; option : balanced
+#
+# standardize_backbone — StandardScaler sur h avant ψ (backbone gelé uniquement)
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
@@ -29,35 +32,30 @@ model:
   train_last_n_layers: null
   max_seq_length: 256
   pooling: mean
-  projection: linear
-  hiddim: 512
-  proj_hidden: 512
-  proj_bottleneck: 256
-  proj_alpha: 0.1
+  projection: mlp_sklearn
+  hiddim: 128
+  proj_hidden: 256
   dropout: 0.1
   n_classes: 4
-  class_weight: balanced
+  oversampling: false
+  class_weight: null
   gradient_checkpointing: false
   cache_backbone_embeddings: true
   standardize_backbone: false
   backbone_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
-  # projection: ln_gelu
-  # hiddim: 256
-  # projection: residual
-  # proj_bottleneck: 256
-  # proj_alpha: 0.1
 
 training:
-  n_folds: 5
+  n_folds: 3
   seed: 42
-  selection_metric: macro_f1
-  epochs: 10
+  selection_metric: balanced_accuracy
+  epochs: 30
   batch_size: 32
   lr_backbone: 2.0e-5
   lr_projector: 1.0e-3
   lr_head: 1.0e-3
   weight_decay: 0.01
   early_stopping_patience: 2
+  use_amp: false
 
 exports:
   save_btp_embeddings: true

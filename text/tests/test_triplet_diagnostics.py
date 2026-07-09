@@ -5,18 +5,12 @@ from __future__ import annotations
 import csv
 import math
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 import torch
 
-pytest.importorskip("sentence_transformers")
-
 from contrastive_methods.config import ContrastiveConfig
-from contrastive_methods.losses.triplet_st import (
-    BatchTripletLossWithDiagnostics,
-    build_batch_triplet_loss,
-)
+from contrastive_methods.losses.triplet_st import BatchTripletEmbeddingLoss, build_batch_triplet_embedding_loss
 from contrastive_methods.triplet_diagnostics import (
     TRIPLET_DIAG_CSV_COLUMNS,
     TripletDiagnosticLogger,
@@ -112,70 +106,30 @@ def test_diagnostic_logger_csv(tmp_path: Path):
     assert list(rows[0].keys()) == TRIPLET_DIAG_CSV_COLUMNS
 
 
-def test_build_batch_triplet_loss_native_vs_custom():
-    cfg_off = ContrastiveConfig(
-        method_name="batch_triplet",
-        dataset_path=Path("."),
-        triplet_log_diagnostics=False,
-        triplet_implementation="sentence_transformers",
-    )
-    model = MagicMock()
-    loss_off = build_batch_triplet_loss(cfg_off, model)
-    from sentence_transformers import losses as st_losses
-
-    assert isinstance(loss_off, st_losses.BatchHardSoftMarginTripletLoss)
-
-    cfg_on = ContrastiveConfig(
+def test_build_batch_triplet_embedding_loss_with_diagnostics():
+    cfg = ContrastiveConfig(
         method_name="batch_triplet",
         dataset_path=Path("."),
         triplet_log_diagnostics=True,
-        triplet_implementation="custom_diagnostics",
         distance_metric="cosine",
     )
-    loss_on = build_batch_triplet_loss(cfg_on, model)
-    assert isinstance(loss_on, BatchTripletLossWithDiagnostics)
+    logger = TripletDiagnosticLogger(Path("/tmp/unused.csv"), every_steps=999)
+    loss_on = build_batch_triplet_embedding_loss(cfg, diagnostic_logger=logger)
+    assert isinstance(loss_on, BatchTripletEmbeddingLoss)
 
 
-def test_wrapper_forward_requires_grad():
-    model = MagicMock()
-
-    def encode_forward(features):
-        n = features["input_ids"].shape[0]
-        return {"sentence_embedding": torch.randn(n, 4, requires_grad=True)}
-
-    model.side_effect = encode_forward
-
-    wrapper = BatchTripletLossWithDiagnostics(
-        model=model,
-        distance_metric="cosine",
-        soft_margin=True,
-        margin=None,
-        diagnostic_logger=None,
-    )
+def test_embedding_loss_forward_requires_grad():
+    loss_mod = BatchTripletEmbeddingLoss(distance_metric="cosine", soft_margin=True)
+    emb = torch.randn(4, 4, requires_grad=True)
     labels = torch.tensor([0, 0, 1, 1])
-    features = [{"input_ids": torch.zeros(4, 2, dtype=torch.long)}]
-    loss = wrapper(features, labels)
+    loss = loss_mod(emb, labels)
     assert loss.ndim == 0
     loss.backward()
 
 
-def test_wrapper_mono_label_raises():
-    model = MagicMock()
-
-    def encode_forward(features):
-        n = features["input_ids"].shape[0]
-        return {"sentence_embedding": torch.randn(n, 4, requires_grad=True)}
-
-    model.side_effect = encode_forward
-
-    wrapper = BatchTripletLossWithDiagnostics(
-        model=model,
-        distance_metric="cosine",
-        soft_margin=True,
-        margin=None,
-        diagnostic_logger=None,
-    )
+def test_embedding_loss_mono_label_raises():
+    loss_mod = BatchTripletEmbeddingLoss(distance_metric="cosine", soft_margin=True)
+    emb = torch.randn(4, 4, requires_grad=True)
     labels = torch.tensor([0, 0, 0, 0])
-    features = [{"input_ids": torch.zeros(4, 2, dtype=torch.long)}]
     with pytest.raises(RuntimeError, match="mono-label batch"):
-        wrapper(features, labels)
+        loss_mod(emb, labels)

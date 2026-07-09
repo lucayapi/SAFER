@@ -21,8 +21,11 @@ def test_load_batch_triplet_yaml():
     assert cfg.val_ratio == 0.1
     assert cfg.batch_size == 64
     assert cfg.triplet_log_diagnostics is False
-    assert cfg.triplet_implementation == "sentence_transformers"
     assert cfg.distance_metric == "euclidean"
+    assert cfg.backbone_trainable is False
+    assert cfg.use_projector is True
+    assert cfg.post_eval_enabled is True
+    assert cfg.post_eval_classifier == "logistic_regression"
 
 
 def test_load_softtriple_yaml():

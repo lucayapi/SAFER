@@ -1,57 +1,41 @@
-"""Entraînement SoftTriple (boucle PyTorch custom)."""
+"""Entraînement SoftTriple (boucle PyTorch custom, encodeur HF unifié)."""
 
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 import torch
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from contrastive_methods.center_diagnostics import export_softtriple_center_artifacts
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
-from contrastive_methods.eval_geometry import (
-    METRIC_EVAL_NORMALIZE,
-    evaluate_embeddings_geometry,
-    selection_score,
-)
-from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row
+from contrastive_methods.encoder_model import build_contrastive_encoder
+from contrastive_methods.eval_geometry import selection_score
 from contrastive_methods.export import embeddings_to_dataframe
-from contrastive_methods.losses.softtriple import (
-    HFTextEncoder,
-    SoftTripleLoss,
-    encode_texts_with_hf_encoder,
-    make_collate_fn,
+from contrastive_methods.hf_training_common import (
+    build_eval_loader,
+    build_optimizer,
+    build_train_loader,
+    encode_texts,
+    evaluate_val_geometry_from_loader,
+    load_contrastive_checkpoint,
+    run_training_epoch,
+    save_contrastive_checkpoint,
 )
+from contrastive_methods.losses.softtriple import SoftTripleLoss
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from contrastive_methods.results import TrainingResult
-from contrastive_methods.st_common import get_device, resolve_autocast_dtype
+from contrastive_methods.hf_training_common import get_device, resolve_autocast_dtype
+from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row
 from scgm_text.dataset_text_embeddings import ID2LABEL, LABEL2ID
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
 
-
-class _SplitDataset(torch.utils.data.Dataset):
-    def __init__(self, df: pd.DataFrame, text_col: str) -> None:
-        self.texts = df[text_col].astype(str).tolist()
-        self.labels = df["label_id"].astype(int).tolist()
-
-    def __len__(self) -> int:
-        return len(self.texts)
-
-    def __getitem__(self, idx: int):
-        return {"text": self.texts[idx], "label": self.labels[idx]}
-
-
-def _dataloader_kwargs(device: str) -> Dict[str, Any]:
-    if not str(device).startswith("cuda"):
-        return {}
-    return {"pin_memory": True, "num_workers": 2, "persistent_workers": True}
+from contrastive_methods.hf_training_common import dataloader_kwargs as _dataloader_kwargs
 
 
 def _print_softtriple_epoch(
@@ -76,90 +60,29 @@ def _print_softtriple_epoch(
     print(" | ".join(parts), flush=True)
 
 
-def _run_epoch(
-    encoder: HFTextEncoder,
-    loss_module: SoftTripleLoss,
-    loader: DataLoader,
-    optimizer: torch.optim.Optimizer,
-    device: torch.device,
-    *,
-    train: bool,
-    autocast_dtype: Optional[torch.dtype] = None,
-    scaler: Optional[torch.cuda.amp.GradScaler] = None,
-) -> float:
-    encoder.train(mode=train)
-    loss_module.train(mode=train)
-    use_amp = autocast_dtype is not None and device.type == "cuda"
-    total = 0.0
-    n_batches = 0
-    for batch in loader:
-        input_ids = batch["input_ids"].to(device, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-        labels = batch["labels"].to(device, non_blocking=True)
-        if train:
-            optimizer.zero_grad(set_to_none=True)
-        with torch.autocast(
-            device_type=device.type,
-            dtype=autocast_dtype or torch.float32,
-            enabled=use_amp,
-        ):
-            emb = encoder(input_ids, attention_mask)
-            loss, _ = loss_module(emb, labels)
-        if train:
-            if scaler is not None:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
-        total += float(loss.detach().float().cpu().item())
-        n_batches += 1
-    return total / max(1, n_batches)
-
-
 @torch.no_grad()
 def _run_val_epoch_with_geometry(
-    encoder: HFTextEncoder,
+    encoder,
     loss_module: SoftTripleLoss,
     loader: DataLoader,
     val_df: pd.DataFrame,
     cfg: ContrastiveConfig,
     device: torch.device,
-    *,
-    autocast_dtype: Optional[torch.dtype] = None,
-) -> Tuple[float, Dict[str, Any]]:
-    """
-    Une seule passe val : val_loss SoftTriple + embeddings pour métriques géométrie.
-    Même loss et même normalisation L2 eval que avant (METRIC_EVAL_NORMALIZE).
-    """
+) -> tuple[float, Dict[str, Any]]:
     encoder.eval()
     loss_module.eval()
-    use_amp = autocast_dtype is not None and device.type == "cuda"
     total = 0.0
     n_batches = 0
-    emb_parts: List[np.ndarray] = []
     for batch in loader:
         input_ids = batch["input_ids"].to(device, non_blocking=True)
         attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
-        with torch.autocast(
-            device_type=device.type,
-            dtype=autocast_dtype or torch.float32,
-            enabled=use_amp,
-        ):
-            emb = encoder(input_ids, attention_mask)
-            loss, _ = loss_module(emb, labels)
+        emb = encoder({"input_ids": input_ids, "attention_mask": attention_mask})
+        loss, _ = loss_module(emb, labels)
         total += float(loss.detach().float().cpu().item())
         n_batches += 1
-        emb_out = emb.detach()
-        if METRIC_EVAL_NORMALIZE:
-            emb_out = F.normalize(emb_out, p=2, dim=1)
-        emb_parts.append(emb_out.float().cpu().numpy())
     val_loss = total / max(1, n_batches)
-    embeddings = np.vstack(emb_parts) if emb_parts else np.zeros((0, encoder.embedding_dim))
-    labels = val_df[cfg.label_col].to_numpy()
-    geom = evaluate_embeddings_geometry(embeddings, labels, method="val")
+    geom = evaluate_val_geometry_from_loader(encoder, loader, val_df, cfg, device)
     return val_loss, geom
 
 
@@ -208,15 +131,15 @@ def _save_softtriple_checkpoint(
     *,
     export_centers: bool = True,
 ) -> None:
-    best_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(encoder.encoder.state_dict(), best_dir / "hf_model.bin")
-    encoder.tokenizer.save_pretrained(str(best_dir))
-    torch.save(
-        {
-            "loss_state": loss_module.state_dict(),
-            "config": _softtriple_hyperparams_dict(cfg),
+    save_contrastive_checkpoint(
+        encoder,
+        best_dir,
+        extra_state={
+            "softtriple_state.pt": {
+                "loss_state": loss_module.state_dict(),
+                "config": _softtriple_hyperparams_dict(cfg),
+            }
         },
-        best_dir / "softtriple_state.pt",
     )
     if export_centers:
         _maybe_export_centers(loss_module, cfg, best_dir)
@@ -239,10 +162,8 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
 
     device = get_device()
-    encoder = HFTextEncoder(
-        cfg.backbone_name,
-        gradient_checkpointing=cfg.gradient_checkpointing,
-    ).to(device)
+    dev = torch.device(device)
+    encoder = build_contrastive_encoder(cfg).to(dev)
     loss_module = SoftTripleLoss(
         embedding_dim=encoder.embedding_dim,
         num_classes=len(LABEL2ID),
@@ -255,32 +176,17 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         center_min_distance=cfg.center_min_distance,
         distance_metric=cfg.distance_metric,
         center_regularization_type=cfg.center_regularization_type,
-    ).to(device)
+    ).to(dev)
 
-    collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
-    dl_kwargs = _dataloader_kwargs(device)
-    train_loader = DataLoader(
-        _SplitDataset(train_df, dataset.text_col),
-        batch_size=cfg.batch_size,
-        shuffle=True,
-        collate_fn=collate,
-        **dl_kwargs,
+    cache_dir = checkpoints / "backbone_cache"
+    train_loader, use_hidden_cache = build_train_loader(
+        cfg, train_df, dataset.text_col, encoder, dev, cache_dir
     )
     val_loader = None
     if len(val_df) > 0 and not cfg.final_fit_full_data:
-        val_loader = DataLoader(
-            _SplitDataset(val_df, dataset.text_col),
-            batch_size=cfg.eval_batch_size,
-            shuffle=False,
-            collate_fn=collate,
-            **dl_kwargs,
-        )
+        val_loader = build_eval_loader(cfg, val_df, dataset.text_col, encoder, dev)
 
-    optimizer = torch.optim.AdamW(
-        list(encoder.parameters()) + list(loss_module.parameters()),
-        lr=cfg.learning_rate,
-    )
-    dev = torch.device(device)
+    optimizer = build_optimizer(encoder, [loss_module], cfg.learning_rate)
     autocast_dtype = resolve_autocast_dtype(device)
     scaler = (
         torch.cuda.amp.GradScaler()
@@ -295,26 +201,21 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     t_train = time.perf_counter()
     for epoch in range(cfg.epochs):
         epoch_no = epoch + 1
-        train_loss = _run_epoch(
+        train_loss = run_training_epoch(
             encoder,
             loss_module,
             train_loader,
             optimizer,
             dev,
             train=True,
+            use_hidden_cache=use_hidden_cache,
             autocast_dtype=autocast_dtype,
             scaler=scaler,
         )
         val_loss = float("nan")
         if val_loader is not None:
             val_loss, geom = _run_val_epoch_with_geometry(
-                encoder,
-                loss_module,
-                val_loader,
-                val_df,
-                cfg,
-                dev,
-                autocast_dtype=autocast_dtype,
+                encoder, loss_module, val_loader, val_df, cfg, dev
             )
             score = selection_score(geom, cfg.selection_metric)
             _print_softtriple_epoch(
@@ -353,32 +254,21 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         metrics_dir / "train_log.csv", index=False
     )
 
-    ckpt_path = best_dir / "hf_model.bin"
-    try:
-        state = torch.load(ckpt_path, map_location=dev, weights_only=True)
-    except TypeError:
-        state = torch.load(ckpt_path, map_location=dev)
-    encoder.encoder.load_state_dict(state)
-    loss_state_path = best_dir / "softtriple_state.pt"
-    if loss_state_path.is_file():
-        try:
-            ckpt_loss = torch.load(loss_state_path, map_location=dev, weights_only=True)
-        except TypeError:
-            ckpt_loss = torch.load(loss_state_path, map_location=dev)
-        if isinstance(ckpt_loss, dict) and "loss_state" in ckpt_loss:
-            loss_module.load_state_dict(ckpt_loss["loss_state"])
+    def _load_softtriple_state(payload: Any) -> None:
+        if isinstance(payload, dict) and "loss_state" in payload:
+            loss_module.load_state_dict(payload["loss_state"])
 
+    encoder = load_contrastive_checkpoint(
+        cfg,
+        best_dir,
+        device,
+        extra_loaders={"softtriple_state.pt": _load_softtriple_state},
+    )
     _maybe_export_centers(loss_module, cfg, run_root)
 
     emb_path = embeddings_dir / "final_embeddings.csv"
     texts = dataset.metadata_df[dataset.text_col].astype(str).tolist()
-    embeddings = encode_texts_with_hf_encoder(
-        encoder,
-        texts,
-        batch_size=cfg.encode_batch_size,
-        device=device,
-        max_length=cfg.max_seq_length,
-    )
+    embeddings = encode_texts(encoder, texts, cfg, device)
     frame = embeddings_to_dataframe(dataset.metadata_df["doc_id"].to_numpy(), embeddings)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(emb_path, index=False)

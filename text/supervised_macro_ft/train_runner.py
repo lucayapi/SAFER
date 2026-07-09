@@ -25,6 +25,9 @@ from supervised_macro_ft.geometry_eval import (
     save_geometry_kfold_tables,
     save_geometry_metrics_csv,
 )
+from supervised_macro_ft.class_balance import balanced_oversample_indices
+from supervised_macro_ft.class_balance import resolve_train_balance
+from supervised_macro_ft.config_validation import validate_macro_ft_startup
 from supervised_macro_ft.cv import run_group_kfold_cv
 from supervised_macro_ft.embedding_cache import (
     BackboneHiddenDataset,
@@ -35,6 +38,7 @@ from supervised_macro_ft.embedding_cache import (
     should_cache_backbone_embeddings,
 )
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
+from supervised_macro_ft.run_logging import log_cv_summary, log_phase, log_run_complete, log_test_metrics
 from supervised_macro_ft.train_loop import (
     build_class_weights,
     evaluate_loader,
@@ -109,7 +113,7 @@ def _prepare_backbone_hidden(
         device=device,
     )
     logger.info(
-        "Mode cache backbone actif : entraînement projecteur+tête uniquement (%s)",
+        "[macro_ft] Mode cache backbone actif : entraînement projecteur+tête uniquement (%s)",
         hidden.shape,
     )
     return hidden, model_cfg
@@ -207,6 +211,7 @@ def run_supervised_macro_ft_training(
     backbone_name = str(model_cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B"))
     tokenizer = _load_tokenizer(backbone_name)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    resolve_train_balance(model_cfg)
 
     data_csv = resolve_repo_path(data_cfg.get("data_csv", "dataset/data_btp.csv"), repo_root=anchor)
     dataset = TextRawDataset(
@@ -234,9 +239,16 @@ def run_supervised_macro_ft_training(
         shared_cache_dir=shared_dir,
     )
     use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
+    use_oversampling, class_weight_mode = validate_macro_ft_startup(
+        model_cfg,
+        train_cfg,
+        device=device,
+        n_samples=len(dataset),
+        backbone_hidden_available=backbone_hidden is not None,
+    )
     if should_standardize_backbone(model_cfg) and not use_hidden_cache:
         logger.warning(
-            "standardize_backbone=true requiert cache_backbone_embeddings (backbone gelé) ; "
+            "[macro_ft] standardize_backbone=true requiert cache_backbone_embeddings (backbone gelé) ; "
             "standardisation ignorée."
         )
 
@@ -245,10 +257,15 @@ def run_supervised_macro_ft_training(
     if raw_emb_csv:
         raw_emb_csv = str(resolve_repo_path(str(raw_emb_csv), repo_root=anchor))
 
-    n_folds = int(train_cfg.get("n_folds", 5))
+    n_folds = int(train_cfg.get("n_folds", 3))
     seed = int(train_cfg.get("seed", 42))
+    selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
     metrics_dir = out_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
+    log_phase(
+        "Phase 1/3 — CV GroupKFold",
+        detail=f"{n_folds} folds, metric={selection_metric}",
+    )
     fold_rows, cv_summary, cv_history, geometry_fold_rows = run_group_kfold_cv(
         dataset,
         tokenizer,
@@ -270,10 +287,11 @@ def run_supervised_macro_ft_training(
     cv_summary.to_csv(out_dir / "kfold_summary.csv", index=False)
     if not cv_history.empty:
         cv_history.to_csv(cv_dir / "train_history.csv", index=False)
-        logger.info("Historique CV exporté : %s", cv_dir / "train_history.csv")
+        logger.info("[macro_ft] Historique CV exporté : %s", cv_dir / "train_history.csv")
     if geometry_fold_rows:
         save_geometry_kfold_tables(geometry_fold_rows, metrics_dir)
-        logger.info("Géométrie CV exportée : %s", metrics_dir)
+        logger.info("[macro_ft] Géométrie CV exportée : %s", metrics_dir)
+    log_cv_summary(cv_summary, selection_metric=selection_metric)
 
     if cv_only:
         return {
@@ -287,6 +305,7 @@ def run_supervised_macro_ft_training(
         }
 
     # Fit final 100 % BTP
+    log_phase("Phase 2/3 — Fit final 100 % BTP")
     model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
 
     if use_hidden_cache and backbone_hidden is not None and should_standardize_backbone(model_cfg):
@@ -296,10 +315,20 @@ def run_supervised_macro_ft_training(
     class_weight = build_class_weights(
         dataset.label_ids.tolist(),
         int(model_cfg.get("n_classes", 4)),
-        model_cfg.get("class_weight"),
+        class_weight_mode,
     )
     if use_hidden_cache and backbone_hidden is not None:
-        final_ds = BackboneHiddenDataset(backbone_hidden, dataset.label_ids)
+        final_idx = np.arange(len(dataset), dtype=np.int64)
+        if use_oversampling:
+            final_idx = balanced_oversample_indices(
+                dataset.label_ids, final_idx, seed=seed
+            )
+            logger.info(
+                "[macro_ft] Fit final oversampling : %d -> %d exemples",
+                len(dataset),
+                len(final_idx),
+            )
+        final_ds = BackboneHiddenDataset(backbone_hidden, dataset.label_ids, final_idx)
         train_loader = DataLoader(
             final_ds,
             batch_size=batch_size,
@@ -307,7 +336,25 @@ def run_supervised_macro_ft_training(
             collate_fn=collate_hidden_batch,
         )
     else:
-        train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+        if use_oversampling:
+            from torch.utils.data import Subset
+
+            final_idx = balanced_oversample_indices(
+                dataset.label_ids,
+                np.arange(len(dataset), dtype=np.int64),
+                seed=seed,
+            )
+            logger.info(
+                "[macro_ft] Fit final oversampling : %d -> %d exemples",
+                len(dataset),
+                len(final_idx),
+            )
+            final_ds = Subset(dataset, final_idx.tolist())
+            train_loader = DataLoader(
+                final_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn
+            )
+        else:
+            train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
     model, final_metrics, final_history = fit_model(
         model,
@@ -318,12 +365,17 @@ def run_supervised_macro_ft_training(
         class_weight=class_weight,
         run_label="final_fit",
     )
+    logger.info(
+        "[macro_ft] Fit final terminé — train_loss=%.4f (epoch %s)",
+        float(final_metrics.get("train_loss", float("nan"))),
+        final_metrics.get("epoch", "?"),
+    )
     if final_history:
         final_hist_df = pd.DataFrame(
             [{"phase": "final", "fold": -1, **row} for row in final_history]
         )
         final_hist_df.to_csv(out_dir / "train_history_final.csv", index=False)
-        logger.info("Historique fit final exporté : %s", out_dir / "train_history_final.csv")
+        logger.info("[macro_ft] Historique fit final exporté : %s", out_dir / "train_history_final.csv")
 
     ckpt_dir = out_dir / "checkpoints" / "best_model"
     save_checkpoint(
@@ -391,7 +443,7 @@ def run_supervised_macro_ft_training(
             btp_preds[f"prob_{m}"] = probs[:, i]
         np.save(emb_dir / "btp_embeddings.npy", z_btp)
         btp_preds.to_csv(emb_dir / "btp_embeddings_metadata.csv", index=False)
-        logger.info("Embeddings BTP exportés : %s", emb_dir)
+        logger.info("[macro_ft] Embeddings BTP exportés : %s", emb_dir)
 
         geom_btp = evaluate_corpus_geometry_with_ipr(
             z_btp,
@@ -401,11 +453,12 @@ def run_supervised_macro_ft_training(
             raw_emb_csv=raw_emb_csv,
         )
         save_geometry_metrics_csv(geom_btp, metrics_dir / "metrics_geometry_btp.csv")
-        logger.info("Géométrie BTP exportée : %s", metrics_dir / "metrics_geometry_btp.csv")
+        logger.info("[macro_ft] Géométrie BTP exportée : %s", metrics_dir / "metrics_geometry_btp.csv")
 
     # Eval optionnelle corpus test (classification CE)
     test_metrics: Dict[str, Any] = {}
     test_corpus = str(cfg.get("test_corpus") or "metallurgie")
+    log_phase("Phase 3/3 — Eval classification test", detail=test_corpus)
     try:
         spec = resolve_test_corpus(test_corpus, anchor=anchor)
         label_col = str(data_cfg.get("label_col", "pred_label"))
@@ -419,8 +472,9 @@ def run_supervised_macro_ft_training(
         test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
         test_metrics = evaluate_loader(model, test_loader, device)
         pd.DataFrame([test_metrics]).to_csv(metrics_dir / "metrics_classification_test.csv", index=False)
+        log_test_metrics(test_metrics, corpus=test_corpus)
     except Exception as exc:
-        logger.warning("Eval test corpus ignorée : %s", exc)
+        logger.warning("[macro_ft] Eval test corpus ignorée : %s", exc)
 
     result = {
         "method_name": method_name,
@@ -432,6 +486,8 @@ def run_supervised_macro_ft_training(
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,
         "backbone_cache_used": bool(use_hidden_cache),
+        "oversampling": bool(use_oversampling),
+        "class_weight": class_weight_mode,
         "standardize_backbone": bool(model.backbone_scaler is not None),
         "geometry_kfold_summary": str(metrics_dir / "kfold_geometry_summary.csv"),
         "geometry_btp": str(metrics_dir / "metrics_geometry_btp.csv"),
@@ -442,4 +498,9 @@ def run_supervised_macro_ft_training(
     }
     with open(out_dir / "train_summary.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
+    log_run_complete(
+        output_dir=str(out_dir),
+        checkpoint_dir=str(ckpt_dir),
+        summary_path=str(out_dir / "train_summary.json"),
+    )
     return result

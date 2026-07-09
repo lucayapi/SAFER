@@ -1,22 +1,16 @@
-"""Tests log train_log.csv unifié (SupCon / Batch Triplet)."""
+"""Tests log train_log.csv unifié (entraînement contrastif HF)."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
-import pandas as pd
 import pytest
 
 TEXT_ROOT = Path(__file__).resolve().parents[1]
 if str(TEXT_ROOT) not in sys.path:
     sys.path.insert(0, str(TEXT_ROOT))
 
-pytest.importorskip("datasets")
-
-from contrastive_methods.config import ContrastiveConfig
-from contrastive_methods.st_common import ContrastiveEpochCallback
 from contrastive_methods.training_log import (
     TRAIN_LOG_COLUMNS,
     EpochLossAccumulator,
@@ -51,102 +45,6 @@ def test_build_train_log_row_val_columns():
     assert row["epoch"] == 1
     assert row["val_eta2_macro_balanced_perc"] == 10.0
     assert row["val_eta2_macro_balanced"] == 0.1
-
-
-@patch("contrastive_methods.st_common.evaluate_st_val_geometry")
-def test_contrastive_epoch_callback_prints_epoch_line(mock_eval, capsys):
-    mock_eval.return_value = {"eta2_macro_balanced_perc": 9.5}
-    log_rows = []
-    val_df = pd.DataFrame(
-        {"sentence": ["a"], "pred_label": ["A0"], "label_id": [0]}
-    )
-    cfg = ContrastiveConfig(
-        method_name="batch_triplet",
-        dataset_path=Path("."),
-        epochs=30,
-    )
-    acc = EpochLossAccumulator()
-    acc.record(0.6, 1.0)
-    acc.record(0.4, 1.0)
-    cb = ContrastiveEpochCallback(
-        MagicMock(),
-        val_df,
-        "sentence",
-        cfg,
-        Path("/tmp/best"),
-        log_rows,
-        use_val_geometry=True,
-        loss_accumulator=acc,
-    )
-    cb.on_epoch_end(None, MagicMock(epoch=1, log_history=[]), None)
-    out = capsys.readouterr().out
-    assert "[BatchTriplet epoch=1/30]" in out
-    assert "train_loss=0.5000" in out
-    assert "eta2_macro_balanced_perc=9.5000" in out
-
-
-@patch("contrastive_methods.st_common.evaluate_st_val_geometry")
-def test_contrastive_epoch_callback_writes_standard_columns(mock_eval):
-    mock_eval.return_value = {
-        "eta2_macro_balanced_perc": 12.0,
-        "eta2_macro_balanced": 0.12,
-        "eta2_weighted": 0.11,
-    }
-    log_rows = []
-    val_df = pd.DataFrame(
-        {
-            "sentence": ["a", "b"],
-            "pred_label": ["A0", "A1"],
-            "label_id": [0, 1],
-        }
-    )
-    cfg = ContrastiveConfig(method_name="supcon", dataset_path=Path("."))
-    model = MagicMock()
-    cb = ContrastiveEpochCallback(
-        model,
-        val_df,
-        "sentence",
-        cfg,
-        Path("/tmp/best"),
-        log_rows,
-        use_val_geometry=True,
-    )
-    state = MagicMock(
-        epoch=1,
-        log_history=[{"epoch": 1, "loss": 0.6}, {"epoch": 1, "loss": 0.4}],
-    )
-    cb.on_epoch_end(None, state, None)
-    assert len(log_rows) == 1
-    assert log_rows[0]["train_loss"] == 0.5
-    assert log_rows[0]["val_eta2_macro_balanced_perc"] == 12.0
-    assert "grad_norm" not in log_rows[0]
-    assert "step" not in log_rows[0]
-    for col in ("epoch", "train_loss", "val_eta2_macro_balanced_perc"):
-        assert col in log_rows[0]
-
-
-@patch("contrastive_methods.st_common.evaluate_st_val_geometry")
-def test_contrastive_epoch_callback_final_fit_train_only(mock_eval):
-    log_rows = []
-    cfg = ContrastiveConfig(
-        method_name="batch_triplet",
-        dataset_path=Path("."),
-        final_fit_full_data=True,
-    )
-    cb = ContrastiveEpochCallback(
-        MagicMock(),
-        pd.DataFrame(),
-        "sentence",
-        cfg,
-        Path("/tmp/best"),
-        log_rows,
-        use_val_geometry=False,
-    )
-    state = MagicMock(epoch=1, log_history=[{"epoch": 1, "loss": 0.25}])
-    cb.on_epoch_end(None, state, None)
-    mock_eval.assert_not_called()
-    assert log_rows[0]["train_loss"] == 0.25
-    assert log_rows[0].get("val_eta2_macro_balanced_perc") is None
 
 
 def test_train_log_columns_list():

@@ -15,6 +15,7 @@ from scgm_text.metrics import accuracy, balanced_accuracy, macro_f1
 from supervised_macro_ft.checkpoint_io import _backbone_state_dict, _load_backbone_state_dict
 from supervised_macro_ft.geometry_loss import similarity_preservation_loss
 from supervised_macro_ft.model import SupervisedMacroModel
+from supervised_macro_ft.run_logging import log_early_stop, log_fit_start
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,12 @@ def build_optimizer(model: SupervisedMacroModel, train_cfg: Dict[str, Any]) -> t
     return torch.optim.AdamW(groups)
 
 
+def _resolve_use_amp(train_cfg: Dict[str, Any], model: SupervisedMacroModel, device: torch.device) -> bool:
+    if "use_amp" in train_cfg:
+        return bool(train_cfg.get("use_amp"))
+    return bool(model.has_trainable_backbone and device.type == "cuda")
+
+
 def train_one_epoch(
     model: SupervisedMacroModel,
     loader: DataLoader,
@@ -81,6 +88,7 @@ def train_one_epoch(
     *,
     lambda_geo: float = 0.0,
     geo_remove_diag: bool = True,
+    use_amp: bool = False,
 ) -> Dict[str, float]:
     model.train()
     total_loss = 0.0
@@ -88,19 +96,26 @@ def train_one_epoch(
     total_geo = 0.0
     n_batches = 0
     use_geo = float(lambda_geo) > 0.0
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     for batch in loader:
         batch = batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
-        logits, z, h = model.forward_with_latents(batch)
-        loss_ce = criterion(logits, batch["label_ids"])
-        if use_geo:
-            loss_geo = similarity_preservation_loss(h, z, remove_diag=geo_remove_diag)
-            loss = loss_ce + float(lambda_geo) * loss_geo
+        with torch.cuda.amp.autocast(enabled=use_amp):
+            logits, z, h = model.forward_with_latents(batch)
+            loss_ce = criterion(logits, batch["label_ids"])
+            if use_geo:
+                loss_geo = similarity_preservation_loss(h, z, remove_diag=geo_remove_diag)
+                loss = loss_ce + float(lambda_geo) * loss_geo
+            else:
+                loss_geo = logits.new_zeros(())
+                loss = loss_ce
+        if use_amp:
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
         else:
-            loss_geo = logits.new_zeros(())
-            loss = loss_ce
-        loss.backward()
-        optimizer.step()
+            loss.backward()
+            optimizer.step()
         total_loss += float(loss.item())
         total_ce += float(loss_ce.item())
         total_geo += float(loss_geo.item())
@@ -155,15 +170,23 @@ def fit_model(
     run_label: str = "train",
 ) -> Tuple[SupervisedMacroModel, Dict[str, Any], List[Dict[str, Any]]]:
     """Entraîne avec early stopping optionnel sur val macro_f1 ; retourne l'historique epoch par epoch."""
-    epochs = int(train_cfg.get("epochs", 10))
+    epochs = int(train_cfg.get("epochs", 30))
     patience = int(train_cfg.get("early_stopping_patience", 2))
-    selection_metric = str(train_cfg.get("selection_metric", "macro_f1"))
+    selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
     lambda_geo = float(train_cfg.get("lambda_geo", 0.0))
     geo_remove_diag = bool(train_cfg.get("geo_remove_diag", True))
     criterion = nn.CrossEntropyLoss(
         weight=class_weight.to(device) if class_weight is not None else None
     )
     optimizer = build_optimizer(model, train_cfg)
+    use_amp = _resolve_use_amp(train_cfg, model, device)
+    log_fit_start(
+        run_label,
+        epochs=epochs,
+        selection_metric=selection_metric,
+        use_amp=use_amp,
+        n_train=len(train_loader.dataset) if hasattr(train_loader, "dataset") else None,
+    )
     best_state: Optional[Dict[str, Any]] = None
     best_score = float("-inf")
     best_metrics: Dict[str, Any] = {}
@@ -179,6 +202,7 @@ def fit_model(
             device,
             lambda_geo=lambda_geo,
             geo_remove_diag=geo_remove_diag,
+            use_amp=use_amp,
         )
         train_loss = float(train_metrics["train_loss"])
         row: Dict[str, Any] = {"epoch": epoch + 1, **train_metrics}
@@ -190,7 +214,7 @@ def fit_model(
             best_state = _snapshot_model_state(model)
             if lambda_geo > 0:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -200,7 +224,7 @@ def fit_model(
                 )
             else:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -209,7 +233,7 @@ def fit_model(
             continue
 
         val_metrics = evaluate_loader(model, val_loader, device)
-        score = float(val_metrics.get(selection_metric, val_metrics["macro_f1"]))
+        score = float(val_metrics.get(selection_metric, val_metrics["balanced_accuracy"]))
         is_best = score > best_score
         row.update(
             {
@@ -229,7 +253,7 @@ def fit_model(
             best_state = _snapshot_model_state(model)
             if lambda_geo > 0:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f *best*",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f *best*",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -242,7 +266,7 @@ def fit_model(
                 )
             else:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f *best*",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f *best*",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -255,7 +279,7 @@ def fit_model(
             stale += 1
             if lambda_geo > 0:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f ce=%.4f geo=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -270,7 +294,7 @@ def fit_model(
                 )
             else:
                 logger.info(
-                    "[%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
+                    "[macro_ft] [%s] epoch=%d/%d train_loss=%.4f val_loss=%.4f %s=%.4f (patience %d/%d)",
                     run_label,
                     epoch + 1,
                     epochs,
@@ -282,6 +306,7 @@ def fit_model(
                     patience,
                 )
             if stale >= patience:
+                log_early_stop(run_label, epoch=epoch + 1, patience=patience)
                 break
 
     if best_state is not None:

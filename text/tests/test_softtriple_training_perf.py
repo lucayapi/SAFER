@@ -17,7 +17,7 @@ if str(TEXT_ROOT) not in sys.path:
     sys.path.insert(0, str(TEXT_ROOT))
 
 from contrastive_methods.config import ContrastiveConfig
-from contrastive_methods.st_common import resolve_autocast_dtype
+from contrastive_methods.hf_training_common import resolve_autocast_dtype
 from contrastive_methods.training_softtriple import (
     _dataloader_kwargs,
     _run_val_epoch_with_geometry,
@@ -29,7 +29,11 @@ class _FakeEncoder(torch.nn.Module):
         super().__init__()
         self.embedding_dim = dim
 
-    def forward(self, input_ids, attention_mask):
+    def forward(self, inputs):
+        if isinstance(inputs, dict):
+            input_ids = inputs["input_ids"]
+        else:
+            input_ids = inputs
         b = input_ids.shape[0]
         return torch.ones(b, self.embedding_dim, device=input_ids.device)
 

@@ -18,7 +18,6 @@ from contrastive_methods.distance import (
 )
 from contrastive_methods.losses.softtriple import SoftTripleLoss
 from contrastive_methods.losses.supcon import SupConLoss
-from unittest.mock import MagicMock
 
 
 def test_normalize_distance_metric_default():
@@ -63,12 +62,7 @@ def test_softtriple_euclidean_forward():
 
 def test_supcon_hobbit_cosine_forward():
     emb = torch.randn(4, 16)
-    model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb})
-    loss_mod = SupConLoss(
-        model=model,
-        temperature=0.07,
-        normalize_embeddings=True,
-    )
-    out = loss_mod(({"input_ids": torch.zeros(4, 3)},), torch.tensor([0, 0, 1, 1]))
+    loss_mod = SupConLoss(temperature=0.07, normalize_embeddings=True)
+    out = loss_mod(emb, torch.tensor([0, 0, 1, 1]))
     assert out.ndim == 0
     assert torch.isfinite(out)

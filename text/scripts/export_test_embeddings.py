@@ -12,7 +12,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset
-from contrastive_methods.export import export_st_embeddings
+from contrastive_methods.export import export_text_embeddings
 from safer_core.test_corpus import default_test_corpus_id, resolve_test_corpus
 
 
@@ -43,12 +43,14 @@ def main() -> None:
         backbone_name=args.backbone_name,
         encode_batch_size=args.batch_size,
         max_seq_length=args.max_seq_length,
+        use_projector=False,
+        backbone_trainable=False,
     )
     dataset = prepare_text_dataset(cfg)
     dest = Path(output_csv) if Path(output_csv).is_absolute() else ROOT_DIR / output_csv
     dest.parent.mkdir(parents=True, exist_ok=True)
-    export_st_embeddings(
-        cfg.backbone_name,
+    export_text_embeddings(
+        cfg,
         dataset,
         dest,
         batch_size=cfg.encode_batch_size,

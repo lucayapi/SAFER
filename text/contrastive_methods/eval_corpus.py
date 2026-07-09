@@ -5,13 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import pandas as pd
-
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset
 from contrastive_methods.eval_geometry import encode_contrastive_texts, evaluate_embeddings_geometry
 from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.metrics import METHOD_DISPLAY
+from contrastive_methods.post_eval import run_post_eval_on_corpus
+from contrastive_methods.hf_training_common import get_device
 from safer_core.io import save_metrics_geometry
 from safer_core.paths import layout_method_output
 from safer_core.test_corpus import method_test_results_dir
@@ -38,6 +38,12 @@ def evaluate_contrastive_on_csv(
         max_seq_length=cfg.max_seq_length,
         encode_batch_size=cfg.encode_batch_size,
         eval_batch_size=cfg.eval_batch_size,
+        backbone_trainable=cfg.backbone_trainable,
+        train_last_n_layers=cfg.train_last_n_layers,
+        cache_backbone_embeddings=cfg.cache_backbone_embeddings,
+        use_projector=cfg.use_projector,
+        projection=cfg.projection,
+        hiddim=cfg.hiddim,
     )
     dataset = prepare_text_dataset(cfg_eval)
     texts = dataset.metadata_df[dataset.text_col].astype(str).tolist()
@@ -68,16 +74,20 @@ def evaluate_btp_and_test(
     checkpoint_dir: Path,
     output_root: Path,
 ) -> Dict[str, Path]:
-    """Écrit metrics_geometry_btp.csv et metrics_geometry_test.csv."""
+    """Écrit metrics_geometry_btp.csv, metrics_geometry_test.csv et classification si post_eval."""
     layout = layout_method_output(cfg.method_name, str(output_root))
     metrics_dir = Path(layout["metrics"])
     emb_dir = Path(layout["embeddings"])
     metrics_dir.mkdir(parents=True, exist_ok=True)
     emb_dir.mkdir(parents=True, exist_ok=True)
+    device = get_device()
 
     btp_csv = cfg.dataset_path
     test_csv = cfg.test_data_csv
-    paths = {}
+    paths: Dict[str, Path] = {}
+    btp_dataset = prepare_text_dataset(cfg)
+    btp_df = btp_dataset.metadata_df
+
     evaluate_contrastive_on_csv(
         cfg,
         checkpoint_dir,
@@ -87,6 +97,20 @@ def evaluate_btp_and_test(
         metrics_dir=metrics_dir,
     )
     paths["btp"] = metrics_dir / "metrics_geometry_btp.csv"
+
+    if cfg.post_eval_enabled:
+        run_post_eval_on_corpus(
+            cfg,
+            checkpoint_dir,
+            btp_df,
+            btp_df,
+            cfg.text_col,
+            device,
+            corpus="btp",
+            metrics_dir=metrics_dir,
+        )
+        paths["classification_btp"] = metrics_dir / "metrics_classification_btp.csv"
+
     if test_csv.is_file():
         test_root = method_test_results_dir(cfg.method_name, cfg.test_corpus)
         test_metrics = test_root / "metrics"
@@ -102,4 +126,40 @@ def evaluate_btp_and_test(
             metrics_dir=test_metrics,
         )
         paths["test"] = test_metrics / "metrics_geometry_test.csv"
+        if cfg.post_eval_enabled:
+            test_cfg = ContrastiveConfig(
+                method_name=cfg.method_name,
+                dataset_path=Path(test_csv),
+                text_col=cfg.text_col,
+                label_col=cfg.label_col,
+                group_col=cfg.group_col,
+                pred_ok_col=cfg.pred_ok_col,
+                backbone_name=cfg.backbone_name,
+                max_seq_length=cfg.max_seq_length,
+                encode_batch_size=cfg.encode_batch_size,
+                eval_batch_size=cfg.eval_batch_size,
+                backbone_trainable=cfg.backbone_trainable,
+                train_last_n_layers=cfg.train_last_n_layers,
+                cache_backbone_embeddings=cfg.cache_backbone_embeddings,
+                use_projector=cfg.use_projector,
+                projection=cfg.projection,
+                hiddim=cfg.hiddim,
+                post_eval_enabled=cfg.post_eval_enabled,
+                post_eval_classifier=cfg.post_eval_classifier,
+                post_eval_class_weight=cfg.post_eval_class_weight,
+                post_eval_oversampling=cfg.post_eval_oversampling,
+            )
+            test_dataset = prepare_text_dataset(test_cfg)
+            test_df = test_dataset.metadata_df
+            run_post_eval_on_corpus(
+                cfg,
+                checkpoint_dir,
+                btp_df,
+                test_df,
+                cfg.text_col,
+                device,
+                corpus="test",
+                metrics_dir=test_metrics,
+            )
+            paths["classification_test"] = test_metrics / "metrics_classification_test.csv"
     return paths

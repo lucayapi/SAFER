@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Union
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
+from contrastive_methods.config import ContrastiveConfig
+from contrastive_methods.encoder_model import build_contrastive_encoder, load_contrastive_encoder_from_checkpoint
+from contrastive_methods.hf_training_common import encode_texts, get_device
 from scgm_text.dataset_text_raw import TextRawDataset
 
-if TYPE_CHECKING:
-    from sentence_transformers import SentenceTransformer
 
-
-def dim_column_names(dim: int) -> List[str]:
+def dim_column_names(dim: int) -> list[str]:
     return [f"dim_{i:04d}" for i in range(1, dim + 1)]
 
 
@@ -29,27 +29,30 @@ def embeddings_to_dataframe(
     return pd.concat([ids_df, emb_df], axis=1)
 
 
-def export_st_embeddings(
-    model: Union["SentenceTransformer", str, Path],
+def export_text_embeddings(
+    cfg: ContrastiveConfig,
     dataset: TextRawDataset,
     dest_csv: Path,
     *,
-    batch_size: int = 16,
-    normalize: bool = True,
+    checkpoint_dir: Optional[Path] = None,
+    batch_size: Optional[int] = None,
     show_progress: bool = False,
 ) -> Path:
-    from sentence_transformers import SentenceTransformer
-
-    if not isinstance(model, SentenceTransformer):
-        model = SentenceTransformer(str(model))
-
+    """Encode un corpus via ``ContrastiveEncoder`` (backbone brut ou checkpoint contrastif)."""
+    device = get_device()
+    if checkpoint_dir is not None:
+        encoder = load_contrastive_encoder_from_checkpoint(cfg, checkpoint_dir, device)
+    else:
+        encoder = build_contrastive_encoder(cfg).to(device)
     texts = dataset.metadata_df[dataset.text_col].astype(str).tolist()
-    embeddings = model.encode(
+    if show_progress:
+        print(f"[export] encodage de {len(texts)} phrases…", flush=True)
+    embeddings = encode_texts(
+        encoder,
         texts,
-        batch_size=batch_size,
-        show_progress_bar=show_progress,
-        normalize_embeddings=normalize,
-        convert_to_numpy=True,
+        cfg,
+        device,
+        batch_size=batch_size or cfg.encode_batch_size,
     )
     doc_ids = dataset.metadata_df["doc_id"].to_numpy()
     frame = embeddings_to_dataframe(doc_ids, np.asarray(embeddings))

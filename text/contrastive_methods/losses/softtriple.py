@@ -1,14 +1,12 @@
-"""SoftTriple loss + encodeur HF (mean pooling)."""
+"""SoftTriple loss (entraînement sur embeddings encodeur HF unifié)."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Dataset
 
 from contrastive_methods.distance import (
     center_merge_l21_penalty,
@@ -19,64 +17,6 @@ from contrastive_methods.distance import (
 )
 
 VALID_CENTER_REGULARIZATION_TYPES = frozenset({"none", "merge_l21", "diversity"})
-
-
-def mean_pooling(last_hidden_state: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-    mask = attention_mask.unsqueeze(-1).expand(last_hidden_state.size()).float()
-    summed = torch.sum(last_hidden_state * mask, dim=1)
-    counts = torch.clamp(mask.sum(dim=1), min=1e-9)
-    return summed / counts
-
-
-class HFTextEncoder(nn.Module):
-    def __init__(
-        self,
-        base_model_name: str,
-        hf_cache_folder: Optional[str] = None,
-        gradient_checkpointing: bool = False,
-    ) -> None:
-        super().__init__()
-        from transformers import AutoConfig, AutoModel, AutoTokenizer
-
-        config = AutoConfig.from_pretrained(
-            base_model_name,
-            cache_dir=hf_cache_folder,
-            trust_remote_code=True,
-        )
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            base_model_name,
-            cache_dir=hf_cache_folder,
-            trust_remote_code=True,
-            use_fast=True,
-        )
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token or self.tokenizer.unk_token
-
-        self.encoder = AutoModel.from_pretrained(
-            base_model_name,
-            cache_dir=hf_cache_folder,
-            trust_remote_code=True,
-            config=config,
-        )
-        if gradient_checkpointing and hasattr(self.encoder, "gradient_checkpointing_enable"):
-            self.encoder.gradient_checkpointing_enable()
-
-        hidden_size = getattr(config, "hidden_size", None) or getattr(config, "d_model", None)
-        if hidden_size is None:
-            raise ValueError("Impossible d'inférer hidden_size depuis le config du modèle.")
-        self.embedding_dim = int(hidden_size)
-
-    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
-        outputs = self.encoder(
-            input_ids=input_ids,
-            attention_mask=attention_mask,
-            return_dict=True,
-        )
-        if hasattr(outputs, "last_hidden_state") and outputs.last_hidden_state is not None:
-            return mean_pooling(outputs.last_hidden_state, attention_mask)
-        if hasattr(outputs, "pooler_output") and outputs.pooler_output is not None:
-            return outputs.pooler_output
-        raise ValueError("Le modèle HF ne retourne ni last_hidden_state ni pooler_output.")
 
 
 class SoftTripleLoss(nn.Module):
@@ -185,18 +125,6 @@ class SoftTripleLoss(nn.Module):
         }
 
 
-class _TextBatchDataset(Dataset):
-    def __init__(self, texts: List[str], labels: List[int]) -> None:
-        self.texts = texts
-        self.labels = labels
-
-    def __len__(self) -> int:
-        return len(self.texts)
-
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        return {"text": self.texts[idx], "label": self.labels[idx]}
-
-
 def make_collate_fn(tokenizer, max_length: int):
     def collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         texts = [x["text"] for x in batch]
@@ -215,40 +143,3 @@ def make_collate_fn(tokenizer, max_length: int):
         }
 
     return collate
-
-
-@torch.no_grad()
-def encode_texts_with_hf_encoder(
-    model: HFTextEncoder,
-    texts: List[str],
-    *,
-    batch_size: int,
-    device: str,
-    normalize_embeddings: bool = True,
-    max_length: Optional[int] = None,
-) -> np.ndarray:
-    model.eval()
-    if max_length is None:
-        max_length = min(int(getattr(model.tokenizer, "model_max_length", 512) or 512), 512)
-    collate_fn = make_collate_fn(model.tokenizer, max_length)
-    ds = _TextBatchDataset(texts, [0] * len(texts))
-    dl = DataLoader(ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    parts = []
-    dev = torch.device(device)
-    from contrastive_methods.st_common import resolve_autocast_dtype
-
-    autocast_dtype = resolve_autocast_dtype(device)
-    use_amp = autocast_dtype is not None and dev.type == "cuda"
-    for batch in dl:
-        input_ids = batch["input_ids"].to(dev, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(dev, non_blocking=True)
-        with torch.autocast(
-            device_type=dev.type,
-            dtype=autocast_dtype or torch.float32,
-            enabled=use_amp,
-        ):
-            emb = model(input_ids, attention_mask)
-        if normalize_embeddings:
-            emb = F.normalize(emb, p=2, dim=1)
-        parts.append(emb.cpu().numpy())
-    return np.vstack(parts) if parts else np.zeros((0, model.embedding_dim), dtype=np.float32)

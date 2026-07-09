@@ -10,31 +10,31 @@ from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_c
 from supervised_macro_ft.model import SupervisedMacroModel
 
 
-def test_checkpoint_roundtrip_ln_gelu(tmp_path: Path):
+def test_checkpoint_roundtrip_mlp_sklearn(tmp_path: Path):
     model = SupervisedMacroModel(
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="ln_gelu",
-        hiddim=32,
+        projection="mlp_sklearn",
+        hiddim=128,
         proj_hidden=48,
         dropout=0.0,
     )
     save_checkpoint(
         model,
-        tmp_path / "ln_model",
+        tmp_path / "mlp_model",
         config={
             "backbone_name": "__test_dummy__",
             "n_classes": 4,
-            "projection": "ln_gelu",
-            "hiddim": 32,
+            "projection": "mlp_sklearn",
+            "hiddim": 128,
             "proj_hidden": 48,
         },
     )
-    cfg = read_checkpoint_config(tmp_path / "ln_model")
-    assert cfg["projection"] == "ln_gelu"
+    cfg = read_checkpoint_config(tmp_path / "mlp_model")
+    assert cfg["projection"] == "mlp_sklearn"
     assert cfg["proj_hidden"] == 48
-    loaded = load_checkpoint(tmp_path / "ln_model", device="cpu")
+    loaded = load_checkpoint(tmp_path / "mlp_model", device="cpu")
     x = torch.randint(0, 20, (2, 5))
     m = torch.ones(2, 5, dtype=torch.long)
     with torch.no_grad():
@@ -48,7 +48,7 @@ def test_checkpoint_roundtrip_with_projector(tmp_path: Path):
         backbone_name="__test_dummy__",
         num_classes=4,
         backbone_trainable=False,
-        projection="mlp",
+        projection="linear",
         hiddim=32,
         dropout=0.0,
     )
@@ -58,12 +58,12 @@ def test_checkpoint_roundtrip_with_projector(tmp_path: Path):
         config={
             "backbone_name": "__test_dummy__",
             "n_classes": 4,
-            "projection": "mlp",
+            "projection": "linear",
             "hiddim": 32,
         },
     )
     cfg = read_checkpoint_config(tmp_path / "best_model")
-    assert cfg["projection"] == "mlp"
+    assert cfg["projection"] == "linear"
     assert (tmp_path / "best_model" / "projector.pt").is_file()
     loaded = load_checkpoint(tmp_path / "best_model", device="cpu")
     x = torch.randint(0, 20, (2, 5))
@@ -83,6 +83,7 @@ def test_checkpoint_legacy_without_projector(tmp_path: Path):
         num_classes=4,
         backbone_trainable=False,
         projection=None,
+        strict_ft_projection=False,
     )
     save_checkpoint(
         model,

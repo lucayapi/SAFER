@@ -61,10 +61,16 @@ def test_scgm_grid_keys_and_combos_merge():
 
 
 @pytest.mark.parametrize(
-    "grid_name",
-    ["supervised_macro_ft_grid.yaml", "supervised_macro_geo_ft_grid.yaml"],
+    "grid_name,allowed_projections",
+    [
+        ("supervised_macro_ft_grid.yaml", ("linear", "mlp_sklearn")),
+        (
+            "supervised_macro_geo_ft_grid.yaml",
+            ("linear", "ln_gelu", "residual", "mlp_sklearn"),
+        ),
+    ],
 )
-def test_macro_ft_grid_keys_and_combos_merge(grid_name: str):
+def test_macro_ft_grid_keys_and_combos_merge(grid_name, allowed_projections):
     spec = load_yaml(PKG_ROOT / f"configs/tuning/{grid_name}")
     base = load_yaml(PKG_ROOT / spec["base_config"])
     grid = spec.get("grid") or {}
@@ -73,12 +79,7 @@ def test_macro_ft_grid_keys_and_combos_merge(grid_name: str):
     assert combos
     for overrides in combos[:3]:
         merged = merge_config_dict(base, overrides)
-        assert merged["model"]["projection"] in (
-            "linear",
-            "ln_gelu",
-            "residual",
-            "mlp_sklearn",
-        )
+        assert merged["model"]["projection"] in allowed_projections
         assert float(merged["training"]["lr_projector"]) > 0
         if "training.lambda_geo" in overrides:
             assert float(merged["training"]["lambda_geo"]) > 0

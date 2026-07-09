@@ -1,10 +1,9 @@
-"""Tests SupConLoss HobbitLong (tensor pur, sans ST)."""
+"""Tests SupConLoss HobbitLong (embeddings, sans ST)."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import torch
 
@@ -15,8 +14,8 @@ if str(TEXT_ROOT) not in sys.path:
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.losses.supcon_hobbit import (
     HobbitSupConLoss,
-    SupConSentenceTransformerLoss,
-    build_supcon_loss,
+    SupConEmbeddingLoss,
+    build_supcon_embedding_loss,
 )
 
 
@@ -47,20 +46,20 @@ def test_hobbit_supcon_same_label_lower_loss_than_random():
     assert torch.isfinite(loss_same) and torch.isfinite(loss_diff)
 
 
-def test_supcon_st_wrapper_mock_model():
+def test_supcon_embedding_loss():
+    loss_mod = SupConEmbeddingLoss(temperature=0.07, normalize_embeddings=True)
     emb = torch.randn(4, 16)
-    model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb.clone()})
-    loss_mod = SupConSentenceTransformerLoss(model=model, temperature=0.07)
-    out = loss_mod(({"input_ids": torch.zeros(4, 3)},), torch.tensor([0, 0, 1, 1]))
+    labels = torch.tensor([0, 0, 1, 1])
+    out = loss_mod(emb, labels)
     assert out.ndim == 0
     assert torch.isfinite(out)
 
 
-def test_build_supcon_loss_rejects_non_cosine():
+def test_build_supcon_embedding_loss_rejects_non_cosine():
     cfg = ContrastiveConfig(
         method_name="supcon",
         dataset_path=TEXT_ROOT / "dataset/data_btp.csv",
         distance_metric="euclidean",
     )
     with __import__("pytest").raises(ValueError, match="cosine"):
-        build_supcon_loss(cfg, MagicMock())
+        build_supcon_embedding_loss(cfg)

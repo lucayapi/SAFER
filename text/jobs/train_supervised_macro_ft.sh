@@ -4,6 +4,8 @@
 # Usage:
 #   cd ~/SAFER/text && bash jobs/train_supervised_macro_ft.sh
 #   STANDARDIZE_BACKBONE=true bash jobs/train_supervised_macro_ft.sh
+#   OVERSAMPLING=true bash jobs/train_supervised_macro_ft.sh
+#   BACKBONE_TRAINABLE=true TRAIN_LAST_N_LAYERS=4 bash jobs/train_supervised_macro_ft.sh
 #   TEST_CORPUS=metallurgie bash jobs/train_supervised_macro_ft.sh
 
 #SBATCH --job-name=sup-macro-ft
@@ -29,7 +31,19 @@ ARGS=(--config "${CONFIG}")
 if [[ -n "${STANDARDIZE_BACKBONE:-}" ]]; then
   ARGS+=(--standardize-backbone "${STANDARDIZE_BACKBONE}")
 fi
+if [[ -n "${OVERSAMPLING:-}" ]]; then
+  ARGS+=(--oversampling "${OVERSAMPLING}")
+fi
+if [[ -n "${CLASS_WEIGHT:-}" ]]; then
+  ARGS+=(--class-weight "${CLASS_WEIGHT}")
+fi
+if [[ -n "${BACKBONE_TRAINABLE:-}" ]]; then
+  ARGS+=(--backbone-trainable "${BACKBONE_TRAINABLE}")
+fi
+if [[ -n "${TRAIN_LAST_N_LAYERS:-}" ]]; then
+  ARGS+=(--train-last-n-layers "${TRAIN_LAST_N_LAYERS}")
+fi
 
-echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPUS=${TEST_CORPUS} STANDARDIZE_BACKBONE=${STANDARDIZE_BACKBONE:-<yaml>} $(date -Iseconds)"
+echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPUS=${TEST_CORPUS} STANDARDIZE_BACKBONE=${STANDARDIZE_BACKBONE:-<yaml>} OVERSAMPLING=${OVERSAMPLING:-<yaml>} CLASS_WEIGHT=${CLASS_WEIGHT:-<yaml>} BACKBONE_TRAINABLE=${BACKBONE_TRAINABLE:-<yaml>} TRAIN_LAST_N_LAYERS=${TRAIN_LAST_N_LAYERS:-<yaml>} $(date -Iseconds)"
 python -u scripts/train_supervised_macro_ft.py "${ARGS[@]}"
 echo "[sup-macro-ft] terminé $(date -Iseconds)"

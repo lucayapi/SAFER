@@ -75,9 +75,6 @@ def save_checkpoint(
         payload.setdefault("dropout", model.dropout)
         if model.proj_hidden is not None:
             payload.setdefault("proj_hidden", model.proj_hidden)
-        if model.proj_bottleneck is not None:
-            payload.setdefault("proj_bottleneck", model.proj_bottleneck)
-        payload.setdefault("proj_alpha", model.proj_alpha)
     with open(out / "config.json", "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     return out
@@ -113,6 +110,7 @@ def load_checkpoint(
         proj_bottleneck=cfg.get("proj_bottleneck"),
         proj_alpha=float(cfg.get("proj_alpha", 0.1)),
         standardize_backbone=bool(cfg.get("standardize_backbone", False)),
+        strict_ft_projection=False,
     )
     loc = map_location or device
     backbone_path = ckpt_dir / "hf_model.bin"

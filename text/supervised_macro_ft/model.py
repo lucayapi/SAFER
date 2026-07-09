@@ -13,32 +13,54 @@ from scgm_text.config_parsing import normalize_backbone_trainability
 from scgm_text.projection import (
     SKLEARN_MLP_OUT_DIM,
     build_embedding_projector,
-    normalize_projection_name,
 )
 from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
+
+MACRO_FT_PROJECTIONS = ("linear", "mlp_sklearn")
+
+
+def validate_macro_ft_projection(projection: Optional[str]) -> str:
+    """Valide et normalise la projection FT (linear | mlp_sklearn uniquement)."""
+    raw = str(projection or "mlp_sklearn").strip().lower()
+    if raw in ("sklearn_mlp",):
+        raw = "mlp_sklearn"
+    if raw not in MACRO_FT_PROJECTIONS:
+        allowed = ", ".join(MACRO_FT_PROJECTIONS)
+        raise ValueError(
+            f"projection FT non supportée : {projection!r}. "
+            f"Valeurs autorisées : {allowed}."
+        )
+    return raw
+
+
+def _resolve_gradient_checkpointing(model_cfg: Mapping[str, Any], backbone_trainable: bool) -> bool:
+    if "gradient_checkpointing" in model_cfg:
+        return bool(model_cfg.get("gradient_checkpointing"))
+    return bool(backbone_trainable)
 
 
 def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
     """Construit les kwargs SupervisedMacroModel depuis la section YAML ``model``."""
-    projection = str(model_cfg.get("projection", "linear")).strip().lower()
+    projection = validate_macro_ft_projection(model_cfg.get("projection", "mlp_sklearn"))
     hiddim = int(model_cfg.get("hiddim", 512))
-    if projection in ("mlp_sklearn", "sklearn_mlp"):
+    if projection == "mlp_sklearn":
         hiddim = SKLEARN_MLP_OUT_DIM
-    return {
+    backbone_trainable = bool(model_cfg.get("backbone_trainable", True))
+    kwargs: Dict[str, Any] = {
         "backbone_name": str(model_cfg["backbone_name"]),
         "num_classes": int(model_cfg.get("n_classes", 4)),
         "pooling": str(model_cfg.get("pooling", "mean")),
-        "backbone_trainable": bool(model_cfg.get("backbone_trainable", True)),
+        "backbone_trainable": backbone_trainable,
         "train_last_n_layers": model_cfg.get("train_last_n_layers"),
-        "gradient_checkpointing": bool(model_cfg.get("gradient_checkpointing", False)),
+        "gradient_checkpointing": _resolve_gradient_checkpointing(model_cfg, backbone_trainable),
         "projection": projection,
         "hiddim": hiddim,
         "dropout": float(model_cfg.get("dropout", 0.1)),
-        "proj_hidden": model_cfg.get("proj_hidden"),
-        "proj_bottleneck": model_cfg.get("proj_bottleneck"),
-        "proj_alpha": float(model_cfg.get("proj_alpha", 0.1)),
         "standardize_backbone": should_standardize_backbone(model_cfg),
     }
+    if projection == "mlp_sklearn":
+        kwargs["proj_hidden"] = model_cfg.get("proj_hidden")
+    return kwargs
 
 
 class SupervisedMacroModel(nn.Module):
@@ -57,13 +79,14 @@ class SupervisedMacroModel(nn.Module):
         backbone_trainable: bool = True,
         train_last_n_layers: Optional[int] = None,
         gradient_checkpointing: bool = False,
-        projection: Optional[str] = "linear",
+        projection: Optional[str] = "mlp_sklearn",
         hiddim: int = 512,
         dropout: float = 0.1,
         proj_hidden: Optional[int] = None,
         proj_bottleneck: Optional[int] = None,
         proj_alpha: float = 0.1,
         standardize_backbone: bool = False,
+        strict_ft_projection: bool = True,
     ) -> None:
         super().__init__()
         backbone_trainable, train_last_n_layers = normalize_backbone_trainability(
@@ -87,7 +110,12 @@ class SupervisedMacroModel(nn.Module):
             "",
         )
         if self.use_projector:
-            self.projection_name = normalize_projection_name(str(projection), None)
+            if strict_ft_projection:
+                self.projection_name = validate_macro_ft_projection(str(projection))
+            else:
+                from scgm_text.projection import normalize_projection_name
+
+                self.projection_name = normalize_projection_name(str(projection), None)
             self.hiddim = int(hiddim)
             if self.projection_name == "mlp_sklearn":
                 self.hiddim = SKLEARN_MLP_OUT_DIM
@@ -106,14 +134,21 @@ class SupervisedMacroModel(nn.Module):
         backbone_dim = int(self.backbone.hidden_size)
 
         if self.use_projector:
+            proj_kwargs: Dict[str, Any] = {
+                "dropout": self.dropout,
+            }
+            if self.projection_name == "mlp_sklearn":
+                proj_kwargs["proj_hidden"] = self.proj_hidden
+            elif self.projection_name in ("ln_gelu", "residual"):
+                proj_kwargs["proj_hidden"] = self.proj_hidden
+                if self.projection_name == "residual":
+                    proj_kwargs["proj_bottleneck"] = self.proj_bottleneck
+                    proj_kwargs["proj_alpha"] = self.proj_alpha
             self.projector = build_embedding_projector(
                 self.projection_name,
                 backbone_dim,
                 self.hiddim,
-                dropout=self.dropout,
-                proj_hidden=self.proj_hidden,
-                proj_bottleneck=self.proj_bottleneck,
-                proj_alpha=self.proj_alpha,
+                **proj_kwargs,
             )
             self.classifier = nn.Linear(self.hiddim, self.num_classes)
         else:

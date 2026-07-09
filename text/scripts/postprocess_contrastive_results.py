@@ -18,7 +18,6 @@ from contrastive_methods.config import config_to_resolved_dict, load_contrastive
 from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
-import safer_core.paths as paths_mod
 
 METHODS = ("batch_triplet", "softtriple", "supcon")
 
@@ -41,12 +40,12 @@ def _resolve_embeddings(output_root: Path) -> Path:
         return final
     candidates = [
         p
-        for p in sorted(results_root.rglob("*.csv"))
+        for p in sorted(output_root.rglob("*.csv"))
         if p.is_file() and p.stat().st_size > 0 and _has_dim_cols(p)
     ]
     if not candidates:
         raise FileNotFoundError(
-            f"Aucun CSV dim_* sous {results_root}. Lancez scripts/train_<method>.py d'abord."
+            f"Aucun CSV dim_* sous {output_root}. Lancez scripts/train_<method>.py d'abord."
         )
     return candidates[0]
 
@@ -56,7 +55,7 @@ def postprocess_contrastive_method(method_name: str, config_path: Optional[str] 
     layout = layout_method_output(method_name, cfg.resolved_output_dir)
     output_root = Path(layout["root"])
     metrics_dir = Path(layout["metrics"])
-    emb_path = _resolve_embeddings(results_root)
+    emb_path = _resolve_embeddings(output_root)
     dest = output_root / "embeddings" / "final_embeddings.csv"
     if emb_path.resolve() != dest.resolve():
         dest.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +70,7 @@ def postprocess_contrastive_method(method_name: str, config_path: Optional[str] 
             "postprocessed_at": datetime.now(timezone.utc).isoformat(),
         }
     )
-    save_config_resolved(resolved, results_root)
+    save_config_resolved(resolved, output_root)
     print(f"[postprocess] {method_name}: embeddings → {dest}")
     print(f"[postprocess] metrics → {metrics_dir / 'metrics_geometry.csv'}")
     return dest

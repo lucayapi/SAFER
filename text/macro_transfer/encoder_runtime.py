@@ -50,6 +50,7 @@ class FrozenEncoderModel(nn.Module):
         self.kind = "hf_auto"
         self.scgm_model = None
         self.supervised_model = None
+        self.contrastive_encoder = None
         t0 = time.monotonic()
         logger.info(
             "FSP encoder init: base_method=%s checkpoint=%s backbone_name=%s freeze_backbone=%s",
@@ -78,24 +79,37 @@ class FrozenEncoderModel(nn.Module):
                 self.backbone_name,
                 trust_remote_code=True,
             )
-        elif self.base_method in ("softtriple", "softtriple_native"):
-            from contrastive_methods.losses.softtriple import HFTextEncoder
+        elif self.base_method in ("softtriple", "softtriple_native", "supcon", "batch_triplet"):
+            from contrastive_methods.config import ContrastiveConfig
+            from contrastive_methods.encoder_model import load_contrastive_encoder_from_checkpoint
 
+            if not checkpoint:
+                raise ValueError(f"{self.base_method} requiert un checkpoint contrastif")
+            ckpt_dir = Path(checkpoint)
+            if ckpt_dir.is_file():
+                ckpt_dir = ckpt_dir.parent
+            method_name = (
+                "softtriple"
+                if self.base_method in ("softtriple", "softtriple_native")
+                else self.base_method
+            )
             if not self.backbone_name:
                 self.backbone_name = "Qwen/Qwen3-Embedding-0.6B"
-            st_encoder = HFTextEncoder(self.backbone_name, gradient_checkpointing=False)
-            if checkpoint:
-                ckpt_dir = Path(checkpoint)
-                if ckpt_dir.is_file():
-                    ckpt_dir = ckpt_dir.parent
-                model_bin = ckpt_dir / "hf_model.bin"
-                if model_bin.is_file():
-                    state = torch.load(model_bin, map_location="cpu")
-                    st_encoder.encoder.load_state_dict(state, strict=False)
-            self.encoder = st_encoder.encoder
-            self.tokenizer = st_encoder.tokenizer
+            cfg = ContrastiveConfig(
+                method_name=method_name,
+                dataset_path=Path("."),
+                backbone_name=self.backbone_name,
+                max_seq_length=self.max_seq_length,
+            )
+            self.contrastive_encoder = load_contrastive_encoder_from_checkpoint(
+                cfg,
+                ckpt_dir,
+                str(self.device_obj),
+            )
+            self.tokenizer = self.contrastive_encoder.tokenizer
+            self.encoder = None
             self.projector = None
-            self.kind = "hf_auto"
+            self.kind = "contrastive"
         elif self.base_method == "supervised_macro_ft":
             from supervised_macro_ft.checkpoint_io import load_checkpoint, read_checkpoint_config
 
@@ -170,6 +184,11 @@ class FrozenEncoderModel(nn.Module):
         enc = {k: v.to(self.device_obj) for k, v in enc.items()}
         if self.kind == "supervised_macro_ft":
             return self.supervised_model.encode(enc["input_ids"], enc["attention_mask"])
+        if self.kind == "contrastive":
+            h = self.contrastive_encoder(
+                {"input_ids": enc["input_ids"], "attention_mask": enc["attention_mask"]}
+            )
+            return F.normalize(h, p=2, dim=-1, eps=EPS)
         if self.kind == "scgm":
             h = self.encoder(
                 input_ids=enc["input_ids"],

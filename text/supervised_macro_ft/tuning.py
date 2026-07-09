@@ -58,6 +58,53 @@ def expand_grid(grid: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [dict(zip(keys, vals)) for vals in itertools.product(*values_list)]
 
 
+def is_valid_macro_ft_tuning_model_cfg(model_cfg: Dict[str, Any]) -> bool:
+    """Exclut les combinaisons YAML impossibles ou redondantes."""
+    from supervised_macro_ft.backbone_scaler import should_standardize_backbone
+    from supervised_macro_ft.class_balance import resolve_train_balance
+    from supervised_macro_ft.model import validate_macro_ft_projection
+
+    model = dict(model_cfg or {})
+    try:
+        validate_macro_ft_projection(model.get("projection", "mlp_sklearn"))
+        resolve_train_balance(model)
+    except ValueError:
+        return False
+
+    backbone_trainable = bool(model.get("backbone_trainable", False))
+    train_last_n = model.get("train_last_n_layers")
+    if not backbone_trainable and train_last_n is not None:
+        try:
+            if int(train_last_n) > 0:
+                return False
+        except (TypeError, ValueError):
+            return False
+
+    if backbone_trainable and should_standardize_backbone(model):
+        return False
+
+    projection = validate_macro_ft_projection(model.get("projection", "mlp_sklearn"))
+    if projection == "mlp_sklearn":
+        hiddim = model.get("hiddim")
+        if hiddim is not None and int(hiddim) != 128:
+            return False
+
+    return True
+
+
+def filter_macro_ft_tuning_combos(
+    combos: List[Dict[str, Any]],
+    base_cfg: Dict[str, Any],
+) -> List[Dict[str, Any]]:
+    """Filtre la grille après fusion avec la config de base."""
+    kept: List[Dict[str, Any]] = []
+    for overrides in combos:
+        merged = _merge_overrides(base_cfg, overrides)
+        if is_valid_macro_ft_tuning_model_cfg(dict(merged.get("model") or {})):
+            kept.append(overrides)
+    return kept
+
+
 def _combo_id(overrides: Dict[str, Any]) -> str:
     parts = []
     for key in sorted(overrides.keys()):
@@ -137,13 +184,14 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
 
     grid = spec.get("grid") or {}
     validate_macro_ft_grid_keys(grid)
-    n_folds = int(spec.get("n_folds", 5))
+    n_folds = int(spec.get("n_folds", 3))
     selection_metric = str(spec.get("selection_metric", "balanced_accuracy"))
     tuning_output = str(spec.get("output_dir", "output/supervised_macro_ft/tuning"))
     final_output = str(spec.get("final_output_dir", "output/supervised_macro_ft"))
     seed = int(tune_args.seed if tune_args.seed is not None else spec.get("seed", 42))
 
     combos = expand_grid(grid)
+    combos = filter_macro_ft_tuning_combos(combos, base_cfg)
     if tune_args.max_combos is not None:
         combos = combos[: tune_args.max_combos]
 
@@ -152,16 +200,18 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     shared_cache_dir = tuning_root / "_shared_cache"
     ensure_dir(shared_cache_dir)
 
-    print(
-        f"[macro_ft tuning] {len(combos)} combos, n_folds={n_folds}, "
-        f"selection={selection_metric}",
-        flush=True,
+    log = logging.getLogger(__name__)
+    log.info(
+        "[macro_ft tuning] %d combos valides, n_folds=%d, selection=%s",
+        len(combos),
+        n_folds,
+        selection_metric,
     )
 
-    print("[macro_ft tuning] Chargement cache backbone partagé…", flush=True)
+    log.info("[macro_ft tuning] Chargement cache backbone partagé…")
     backbone_hidden = prepare_shared_backbone_hidden(base_cfg, cache_dir=shared_cache_dir)
     if backbone_hidden is not None:
-        print(f"[macro_ft tuning] cache backbone : shape={backbone_hidden.shape}", flush=True)
+        log.info("[macro_ft tuning] cache backbone : shape=%s", backbone_hidden.shape)
 
     summary_rows: List[Dict[str, Any]] = []
     best_score = float("-inf")
@@ -171,7 +221,7 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     for combo_idx, overrides in enumerate(combos, start=1):
         cid = _combo_id(overrides)
         combo_dir = tuning_root / "combos" / cid
-        print(f"[macro_ft tuning] combo {combo_idx}/{len(combos)}: {cid}", flush=True)
+        log.info("[macro_ft tuning] combo %d/%d: %s", combo_idx, len(combos), cid)
         t0 = time.perf_counter()
         row = _run_combo_cv(
             base_cfg,
@@ -188,10 +238,12 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         row.update({k.replace(".", "_"): v for k, v in overrides.items()})
         summary_rows.append(row)
         score = float(row.get("selection_score", float("nan")))
-        print(
-            f"[macro_ft tuning] fin combo {combo_idx}/{len(combos)} "
-            f"score={score:.4f} ({elapsed / 60:.1f} min)",
-            flush=True,
+        log.info(
+            "[macro_ft tuning] fin combo %d/%d score=%.4f (%.1f min)",
+            combo_idx,
+            len(combos),
+            score,
+            elapsed / 60,
         )
         if score == score and score > best_score:
             best_score = score
@@ -216,7 +268,7 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         train_section = dict(final_cfg.get("training") or {})
         train_section["seed"] = seed
         final_cfg = {**final_cfg, "training": train_section, "output_dir": final_output}
-        print("[macro_ft tuning] Réentraînement final 100 % BTP…", flush=True)
+        log.info("[macro_ft tuning] Réentraînement final 100 %% BTP…")
         run_supervised_macro_ft_training(
             None,
             cfg=final_cfg,
@@ -229,5 +281,5 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         with open(configs_dir / "best_combo.yaml", "w", encoding="utf-8") as f:
             yaml.safe_dump(best_info, f, sort_keys=False, allow_unicode=True)
 
-    print(f"[macro_ft tuning] Meilleur : {best_combo_id} (score={best_score:.4f})")
+    log.info("[macro_ft tuning] Meilleur : %s (score=%.4f)", best_combo_id, best_score)
     return 0

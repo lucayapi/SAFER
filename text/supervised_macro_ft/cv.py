@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
@@ -14,6 +15,10 @@ from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 from supervised_macro_ft.checkpoint_io import save_checkpoint
+from supervised_macro_ft.class_balance import (
+    balanced_oversample_indices,
+    resolve_train_balance,
+)
 from supervised_macro_ft.embedding_cache import (
     BackboneHiddenDataset,
     collate_hidden_batch,
@@ -21,7 +26,10 @@ from supervised_macro_ft.embedding_cache import (
 )
 from supervised_macro_ft.geometry_eval import encode_val_projected, evaluate_fold_geometry
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
+from supervised_macro_ft.run_logging import log_cv_fold_done, log_cv_fold_start
 from supervised_macro_ft.train_loop import build_class_weights, evaluate_loader, fit_model
+
+logger = logging.getLogger(__name__)
 
 
 def aggregate_cv_metrics(fold_rows: Sequence[Mapping[str, Any]]) -> pd.DataFrame:
@@ -66,12 +74,22 @@ def run_group_kfold_cv(
     use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
     collate_fn = make_text_collate_fn(tokenizer, max_length)
     label_ids = dataset.label_ids
+    use_oversampling, class_weight_mode = resolve_train_balance(model_cfg)
+    selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
 
     for fold_id, (train_idx, val_idx) in enumerate(splits):
-        print(
-            f"[macro_ft cv] fold {fold_id + 1}/{n_folds} "
-            f"(train={len(train_idx)}, val={len(val_idx)})",
-            flush=True,
+        train_idx_fit = train_idx
+        if use_oversampling:
+            train_idx_fit = balanced_oversample_indices(
+                label_ids, train_idx, seed=seed + int(fold_id)
+            )
+        log_cv_fold_start(
+            fold_id,
+            n_folds,
+            n_train=int(len(train_idx_fit)),
+            n_val=int(len(val_idx)),
+            oversampled=bool(use_oversampling and len(train_idx_fit) != len(train_idx)),
+            use_hidden_cache=use_hidden_cache,
         )
         model = SupervisedMacroModel(**model_kwargs_from_cfg(model_cfg)).to(device)
 
@@ -82,7 +100,7 @@ def run_group_kfold_cv(
 
         if use_hidden_cache:
             assert backbone_hidden is not None
-            train_ds = BackboneHiddenDataset(backbone_hidden, label_ids, train_idx)
+            train_ds = BackboneHiddenDataset(backbone_hidden, label_ids, train_idx_fit)
             val_ds = BackboneHiddenDataset(backbone_hidden, label_ids, val_idx)
             train_loader = DataLoader(
                 train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_hidden_batch
@@ -91,16 +109,16 @@ def run_group_kfold_cv(
                 val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_hidden_batch
             )
         else:
-            train_ds = Subset(dataset, train_idx.tolist())
+            train_ds = Subset(dataset, train_idx_fit.tolist())
             val_ds = Subset(dataset, val_idx.tolist())
             train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
             val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
 
         train_labels = [int(dataset.label_ids[i]) for i in train_idx]
         class_weight = build_class_weights(
-            train_labels,
+            train_labels if not use_oversampling else [int(dataset.label_ids[i]) for i in train_idx_fit],
             int(model_cfg.get("n_classes", 4)),
-            model_cfg.get("class_weight"),
+            class_weight_mode,
         )
 
         model, metrics, fold_history = fit_model(
@@ -124,10 +142,12 @@ def run_group_kfold_cv(
             "fold": fold_id,
             "model": "supervised_macro_ft",
             **metrics,
-            "n_train": int(len(train_idx)),
+            "n_train": int(len(train_idx_fit)),
+            "n_train_raw": int(len(train_idx)),
             "n_val": int(len(val_idx)),
         }
         fold_rows.append(row)
+        log_cv_fold_done(fold_id, n_folds, metrics, selection_metric=selection_metric)
 
         val_meta = dataset.get_metadata_df().iloc[val_idx]
         z_val = encode_val_projected(

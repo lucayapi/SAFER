@@ -18,6 +18,12 @@ data:
 model:
   backbone_name: Qwen/Qwen3-Embedding-0.6B
   max_seq_length: 256
+  backbone_trainable: false
+  train_last_n_layers: null
+  cache_backbone_embeddings: true
+  use_projector: true
+  projection: linear
+  hiddim: 128
 
 training:
   batch_size: 64
@@ -25,7 +31,11 @@ training:
   encode_batch_size: 16
   epochs: 30
   learning_rate: 2.0e-5
-  warmup_ratio: 0.1
   gradient_accumulation_steps: 1
-  gradient_checkpointing: false
   distance_metric: euclidean
+
+post_eval:
+  enabled: true
+  classifier: logistic_regression
+  class_weight: null
+  oversampling: false

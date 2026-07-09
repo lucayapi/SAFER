@@ -28,10 +28,8 @@ class ContrastiveConfig:
     encode_batch_size: int = 16
     epochs: int = 30
     learning_rate: float = 2.0e-5
-    warmup_ratio: float = 0.1
     val_ratio: float = 0.1
     gradient_accumulation_steps: int = 1
-    gradient_checkpointing: bool = False
     use_prompt: bool = False
     # softtriple
     centers_per_class: int = 5
@@ -45,6 +43,13 @@ class ContrastiveConfig:
     export_effective_centers: bool = False
     effective_center_distance_threshold: float = 0.05
     effective_center_similarity_threshold: float = 0.995
+    # backbone / projecteur (encodeur HF unifié)
+    backbone_trainable: bool = False
+    train_last_n_layers: Optional[int] = None
+    cache_backbone_embeddings: bool = True
+    use_projector: bool = True
+    projection: str = "linear"
+    hiddim: int = 128
     # supcon (HobbitLong / SupContrast)
     supcon_temperature: float = 0.07
     supcon_base_temperature: float = 0.07
@@ -55,7 +60,6 @@ class ContrastiveConfig:
     triplet_log_diagnostics: bool = False
     triplet_diagnostics_every_steps: int = 50
     triplet_diagnostics_eps: float = 1e-6
-    triplet_implementation: str = "sentence_transformers"
     triplet_loss_type: str = "soft_margin"
     # distance (SupCon, SoftTriple, batch triplet)
     distance_metric: str = "euclidean"
@@ -64,6 +68,11 @@ class ContrastiveConfig:
     n_folds: int = 1
     test_corpus: Optional[str] = None
     test_dataset_path: Optional[Path] = None
+    # post-évaluation classification (logistic sklearn)
+    post_eval_enabled: bool = True
+    post_eval_classifier: str = "logistic_regression"
+    post_eval_class_weight: Optional[str] = None
+    post_eval_oversampling: bool = False
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -117,6 +126,7 @@ def load_contrastive_config(
     data = _section(raw, "data")
     model = _section(raw, "model")
     training = _section(raw, "training")
+    post_eval = _section(raw, "post_eval")
     softtriple = _section(raw, "softtriple")
     supcon = _section(raw, "supcon")
     batch_triplet = _section(raw, "batch_triplet")
@@ -165,13 +175,9 @@ def load_contrastive_config(
         ),
         epochs=int(pick("epochs", default=30, sources=(training, raw))),
         learning_rate=float(pick("learning_rate", default=2.0e-5, sources=(training, raw))),
-        warmup_ratio=float(pick("warmup_ratio", default=0.1, sources=(training, raw))),
         val_ratio=float(pick("val_ratio", default=0.1, sources=(data, training, raw))),
         gradient_accumulation_steps=int(
             pick("gradient_accumulation_steps", default=1, sources=(training, raw))
-        ),
-        gradient_checkpointing=bool(
-            pick("gradient_checkpointing", default=False, sources=(training, raw))
         ),
         use_prompt=use_prompt,
         centers_per_class=int(
@@ -219,9 +225,6 @@ def load_contrastive_config(
         triplet_diagnostics_eps=float(
             pick("diagnostics_eps", default=1e-6, sources=(batch_triplet,))
         ),
-        triplet_implementation=str(
-            pick("implementation", default="sentence_transformers", sources=(batch_triplet,))
-        ),
         triplet_loss_type=str(
             pick("loss_type", default="soft_margin", sources=(batch_triplet,))
         ),
@@ -248,6 +251,22 @@ def load_contrastive_config(
         effective_center_similarity_threshold=float(
             pick("effective_center_similarity_threshold", default=0.995, sources=(softtriple,))
         ),
+        backbone_trainable=bool(
+            pick("backbone_trainable", default=False, sources=(model, raw))
+        ),
+        train_last_n_layers=pick("train_last_n_layers", default=None, sources=(model, raw)),
+        cache_backbone_embeddings=bool(
+            pick("cache_backbone_embeddings", default=True, sources=(model, raw))
+        ),
+        use_projector=bool(
+            pick("use_projector", default=True, sources=(model, raw))
+        ),
+        projection=str(
+            pick("projection", default="linear", sources=(model, raw))
+        ),
+        hiddim=int(
+            pick("hiddim", default=128, sources=(model, raw))
+        ),
         selection_metric=str(
             pick("selection_metric", default="eta2_macro_balanced_perc", sources=(raw, training))
         ),
@@ -262,8 +281,21 @@ def load_contrastive_config(
             if (test_rel := pick("test_dataset_path", default=None, sources=(data, raw, training)))
             else None
         ),
+        post_eval_enabled=bool(
+            pick("enabled", default=True, sources=(post_eval,))
+        ),
+        post_eval_classifier=str(
+            pick("classifier", default="logistic_regression", sources=(post_eval, raw))
+        ),
+        post_eval_class_weight=pick("class_weight", default=None, sources=(post_eval, raw)),
+        post_eval_oversampling=bool(
+            pick("oversampling", default=False, sources=(post_eval, raw))
+        ),
         extra={"raw": raw, "config_path": str(path)},
     )
+    from contrastive_methods.config_validation import validate_contrastive_config
+
+    cfg = validate_contrastive_config(cfg)
     import os
 
     env_corpus = os.environ.get("TEST_CORPUS")

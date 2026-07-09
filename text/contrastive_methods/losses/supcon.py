@@ -1,17 +1,18 @@
-"""SupCon via HobbitLong/SupContrast (réexport pour compatibilité imports)."""
+"""SupCon via HobbitLong/SupContrast (réexport)."""
 
 from contrastive_methods.losses.supcon_hobbit import (
     HobbitSupConLoss,
-    SupConSentenceTransformerLoss,
-    build_supcon_loss,
+    SupConEmbeddingLoss,
+    build_supcon_embedding_loss,
 )
 
-# Alias historique : la loss ST utilisée à l'entraînement
-SupConLoss = SupConSentenceTransformerLoss
+SupConLoss = SupConEmbeddingLoss
+build_supcon_loss = build_supcon_embedding_loss
 
 __all__ = [
     "HobbitSupConLoss",
     "SupConLoss",
-    "SupConSentenceTransformerLoss",
+    "SupConEmbeddingLoss",
+    "build_supcon_embedding_loss",
     "build_supcon_loss",
 ]

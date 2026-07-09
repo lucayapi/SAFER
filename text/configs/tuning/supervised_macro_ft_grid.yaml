@@ -2,18 +2,25 @@ base_config: configs/methods/supervised_macro_ft.yaml
 output_dir: output/supervised_macro_ft/tuning
 final_output_dir: output/supervised_macro_ft
 selection_metric: balanced_accuracy
-n_folds: 5
+n_folds: 3
 seed: 42
 test_corpus: metallurgie
 
-# Grille : notation pointée model.* / training.* (fusionnée sur base_config).
+# Grille : seuls les hyperparamètres réellement balayés.
+# Fixés dans base_config (non répétés ici) :
+#   dropout, weight_decay, early_stopping_patience, lr_head, lr_backbone,
+#   proj_hidden, selection_metric, epochs, batch_size, class_weight, …
+#
+# Combinaisons invalides filtrées dans tuning.py :
+#   - backbone_trainable=false + train_last_n_layers>0
+#   - projection=mlp_sklearn + hiddim≠128
+#   - oversampling=true + class_weight=balanced
+#   - backbone_trainable=true + standardize_backbone=true
+
 grid:
-  model.projection: [linear, ln_gelu, residual, mlp_sklearn]
+  model.projection: [linear, mlp_sklearn]
   model.hiddim: [128, 256, 512]
-  model.proj_hidden: [256, 512]
-  model.proj_bottleneck: [256]
-  model.proj_alpha: [0.1, 0.2]
-  model.dropout: [0.1]
+  model.oversampling: [false, true]
+  model.backbone_trainable: [false, true]
+  model.train_last_n_layers: [null, 2, 3, 4]
   training.lr_projector: [1.0e-3, 5.0e-4]
-  training.lr_head: [1.0e-3]
-  training.selection_metric: [balanced_accuracy]

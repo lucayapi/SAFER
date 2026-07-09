@@ -17,6 +17,8 @@ from supervised_macro_ft.tuning import (
     _combo_id,
     _merge_overrides,
     expand_grid,
+    filter_macro_ft_tuning_combos,
+    is_valid_macro_ft_tuning_model_cfg,
     validate_macro_ft_grid_keys,
 )
 
@@ -114,10 +116,48 @@ def test_grid_yaml_loads():
     from safer_core.io import load_yaml
 
     spec = load_yaml(TEXT_ROOT / "configs/tuning/supervised_macro_ft_grid.yaml")
+    base = load_yaml(TEXT_ROOT / spec["base_config"])
     assert spec["selection_metric"] == "balanced_accuracy"
+    assert spec["n_folds"] == 3
     assert "mlp_sklearn" in spec["grid"]["model.projection"]
-    combos = expand_grid(spec["grid"])
-    assert len(combos) == 96
+    assert spec["grid"]["model.backbone_trainable"] == [False, True]
+    raw = expand_grid(spec["grid"])
+    combos = filter_macro_ft_tuning_combos(raw, base)
+    assert len(raw) == 192
+    assert len(combos) == 80
+    assert "training.lr_head" not in spec["grid"]
+    assert "training.selection_metric" not in spec["grid"]
+    assert "model.dropout" not in spec["grid"]
+
+
+def test_filter_rejects_frozen_backbone_with_partial_layers():
+    assert not is_valid_macro_ft_tuning_model_cfg(
+        {
+            "projection": "linear",
+            "backbone_trainable": False,
+            "train_last_n_layers": 4,
+        }
+    )
+
+
+def test_filter_rejects_mlp_sklearn_with_wrong_hiddim():
+    assert not is_valid_macro_ft_tuning_model_cfg(
+        {
+            "projection": "mlp_sklearn",
+            "hiddim": 512,
+        }
+    )
+
+
+def test_filter_accepts_trainable_partial_backbone():
+    assert is_valid_macro_ft_tuning_model_cfg(
+        {
+            "projection": "mlp_sklearn",
+            "hiddim": 128,
+            "backbone_trainable": True,
+            "train_last_n_layers": 3,
+        }
+    )
 
 
 def test_geo_grid_yaml_loads():

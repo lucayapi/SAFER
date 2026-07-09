@@ -13,5 +13,3 @@ grid:
   training.batch_size: [8, 16]
   training.epochs: [15, 30]
   training.distance_metric: [euclidean]
-  training.warmup_ratio: [0.1]
-  # batch_triplet.triplet_margin: [5.0]  # décommenter si supporté par sentence-transformers

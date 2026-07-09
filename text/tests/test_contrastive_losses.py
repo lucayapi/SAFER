@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import torch
 
@@ -14,6 +13,8 @@ if str(TEXT_ROOT) not in sys.path:
 
 from contrastive_methods.losses.softtriple import SoftTripleLoss
 from contrastive_methods.losses.supcon import SupConLoss
+from contrastive_methods.losses.supcon_hobbit import SupConEmbeddingLoss
+from contrastive_methods.losses.triplet_st import BatchTripletEmbeddingLoss
 
 
 def test_softtriple_forward_shape():
@@ -31,12 +32,20 @@ def test_softtriple_forward_shape():
     assert "loss_total" in stats
 
 
-def test_supcon_loss_with_mock_model():
+def test_supcon_embedding_loss():
+    loss_mod = SupConEmbeddingLoss(temperature=0.07, normalize_embeddings=True)
     emb = torch.randn(4, 16)
-    model = MagicMock(side_effect=lambda _x: {"sentence_embedding": emb})
-    loss_mod = SupConLoss(model=model, temperature=0.07)
-    features = ({"input_ids": torch.zeros(4, 3)},)
     labels = torch.tensor([0, 0, 1, 1])
-    out = loss_mod(features, labels)
+    out = loss_mod(emb, labels)
     assert out.ndim == 0
     assert torch.isfinite(out)
+
+
+def test_batch_triplet_embedding_loss():
+    loss_mod = BatchTripletEmbeddingLoss(distance_metric="euclidean", soft_margin=True)
+    emb = torch.randn(8, 16)
+    labels = torch.tensor([0, 0, 1, 1, 2, 2, 3, 3])
+    out = loss_mod(emb, labels)
+    assert out.ndim == 0
+    assert torch.isfinite(out)
+

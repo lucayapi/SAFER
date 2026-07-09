@@ -31,6 +31,7 @@ from safer_core.paths import TEXT_ROOT, resolve_repo_path
 from safer_core.test_corpus import default_test_corpus_id, resolve_test_corpus
 from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
 from scgm_text.utils_io import create_doc_id_if_missing
+from supervised_macro_ft.class_balance import balanced_oversample_arrays
 
 logger = logging.getLogger(__name__)
 
@@ -177,21 +178,7 @@ def _resample_train_for_class_weight(
         raise ValueError(
             f"class_weight MLP : seule la valeur 'balanced' est supportée, reçu {class_weight!r}"
         )
-    rng = np.random.RandomState(int(seed))
-    classes = np.unique(y)
-    if len(classes) == 0:
-        return X, y
-    counts = np.array([np.sum(y == cls) for cls in classes], dtype=np.int64)
-    target_n = int(counts.max())
-    parts: List[np.ndarray] = []
-    for cls in classes:
-        cls_idx = np.where(y == cls)[0]
-        if len(cls_idx) == 0:
-            continue
-        parts.append(rng.choice(cls_idx, size=target_n, replace=True))
-    all_idx = np.concatenate(parts)
-    rng.shuffle(all_idx)
-    return X[all_idx], y[all_idx]
+    return balanced_oversample_arrays(X, y, seed=seed)
 
 
 def _fit_pipeline(pipe: Pipeline, X: np.ndarray, y: np.ndarray, *, seed: int = 42) -> Pipeline:

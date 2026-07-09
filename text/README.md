@@ -196,9 +196,18 @@ Les anciens runs sous `frozen_source_prototypes/scgm` ou `raw` restent lisibles 
 
 ### Fine-tuning supervisé macro (tête softmax)
 
-Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: linear|ln_gelu|residual|mlp_sklearn`, défaut `linear`, `hiddim: 512`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
+Distinct du notebook **07** (sklearn sur embeddings Qwen **figés** CSV) : ici Qwen gelé + projecteur ψ (`projection: linear|mlp_sklearn`, défaut `mlp_sklearn`) + tête CE ; avec `cache_backbone_embeddings: true`, Qwen n'est encodé qu'**une fois** (ou lu depuis `embeddings/Qwen3-Embedding-0.6B_btp.csv`), puis seuls ψ et la tête s'entraînent par epoch.
 
 `mlp_sklearn` aligne l'architecture MLP du notebook 07 (`hidden_layer_sizes: [256, 128]`, ReLU) ; le baseline sklearn applique aussi un **StandardScaler** sur h — reproduit via `model.standardize_backbone: true` (ou `STANDARDIZE_BACKBONE=true` dans les jobs).
+
+Rééquilibrage des classes (mutuellement exclusif si les deux activés) :
+- `model.oversampling: true` — sur-échantillonnage équilibré sur le train (comme baseline MLP sklearn), défaut `false`
+- `model.class_weight: balanced` — pondération CE, défaut `null` (pas de rééquilibrage)
+
+Modes backbone :
+- **A gelé + cache** : `backbone_trainable: false` (rapide)
+- **B partiel** : `backbone_trainable: true`, `train_last_n_layers: 4` (recommandé si FT)
+- **C complet** : `backbone_trainable: true`, `train_last_n_layers: null` (lent ; `gradient_checkpointing` auto si non défini ; `training.use_amp: true` sur GPU)
 
 | Étape | Commande |
 |-------|----------|
@@ -297,12 +306,18 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 ## Méthodes contrastives
 
-**Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss`).
+**Backend** : encodeur HF unifié (`ContrastiveEncoder` = `TextBackbone` + projecteur optionnel) pour **Batch Triplet**, **SoftTriple** et **SupCon**. Le backbone peut être gelé (`backbone_trainable: false`, défaut) avec cache d'embeddings (`cache_backbone_embeddings: true`), partiellement entraîné (`train_last_n_layers`) ou entièrement fine-tuné.
 
-**Losses d'entraînement** :
-- **Batch triplet** : [`BatchHardSoftMarginTripletLoss`](https://sbert.net/docs/sentence_transformer/loss_overview.html) (Sentence Transformers) + sampler `GROUP_BY_LABEL` ; `training.distance_metric` = euclidien par défaut.
-- **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) (`SupConLoss`, cosinus L2, 1 vue par phrase) ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
-- **SoftTriple** : loss native ; euclidien par défaut. Entraînement custom avec **AMP GPU** (bf16/fp16, aligné ST), val `loss` + géométrie en **une passe** par epoch. Console : `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` ; détail dans `metrics/train_log.csv`.
+**Projecteur** (`model.use_projector`, `projection: linear | mlp_sklearn`, `hiddim`) : entraîné avec la loss contrastive ; désactivable (`use_projector: false`).
+
+**Post-évaluation classification** (`post_eval:`) : après entraînement contrastif, régression logistique sklearn sur les embeddings encodés (fit train / eval val en CV ; fit BTP 100 % / eval BTP + test en fit final). La **sélection du best checkpoint reste géométrique** (δ_macro = `eta2_macro_balanced_perc`). Métriques : `accuracy`, `macro_f1`, `balanced_accuracy` → `metrics_classification_{btp,test}.csv` et colonnes `val_*` dans `kfold_summary.csv`.
+
+**Métrique principale** : δ_macro (%) = `eta2_macro_balanced_perc` = 100 × η²_macro_balanced (structuration macro de l'espace). Sélection du meilleur checkpoint sur le **val** via δ_macro (plus `eval_loss` pour SoftTriple).
+
+**Losses d'entraînement** (boucle PyTorch HF unifiée) :
+- **Batch triplet** : batch-hard triplet sur embeddings + `PKBatchSampler` ; `training.distance_metric` = euclidien par défaut.
+- **SupCon** : [HobbitLong/SupContrast](https://github.com/HobbitLong/SupContrast) sur embeddings L2-normalisés ; `training.distance_metric` doit être `cosine` ; hyperparamètres dans `supcon:` (`temperature`, `base_temperature`, `contrast_mode`).
+- **SoftTriple** : loss native ; euclidien par défaut. Entraînement custom avec **AMP GPU** (bf16/fp16), val `loss` + géométrie en **une passe** par epoch. Console : `[SoftTriple epoch=k/N] train_loss=… | val_loss=… | …` ; détail dans `metrics/train_log.csv`.
 
 Les métriques val/export (η²) restent calculées sur embeddings L2-normalisés, indépendamment de la loss.
 
@@ -347,11 +362,14 @@ python scripts/train_batch_triplet.py --config configs/methods/batch_triplet.yam
 
 Pour un split unique (ancien comportement) : `n_folds: 1` dans le YAML.
 
-**PKBatchSampler (Batch Triplet)** : batches équilibrés auto — P = nombre de macros dans le fold train, K = `batch_size / P` (ex. 64 et 4 classes → 16 ex./classe). Vérification : `python scripts/debug_pk_sampler.py`. Au démarrage : `[PKSampler DEBUG] batch=0 labels={"0":16,...}`.
+**PKBatchSampler (Batch Triplet)** : batches équilibrés auto — P = nombre de macros dans le fold train, K = `batch_size / P` (ex. 64 et 4 classes → 16 ex./classe). Vérification : `python scripts/debug_pk_sampler.py`.
 
-**SupCon** : sampler shuffle standard ST (`BATCH_SAMPLER`), pas PK.
+**SupCon** : sampler shuffle standard, pas PK.
 
-**Batch Triplet / SupCon** : loss native ST. Pendant l’entraînement : `[BatchTriplet epoch=k/N] train_loss=… | eta2_macro_balanced_perc=…` (idem `SupCon`) ; détail dans `metrics/train_log.csv`. Un dict HF récapitulatif peut encore apparaître à la fin de `trainer.train()` (pas un log par epoch).
+**Batch Triplet / SupCon / SoftTriple** : boucle HF unifiée. Pendant l'entraînement : `[BatchTriplet epoch=k/N] train_loss=… | eta2_macro_balanced_perc=…` (idem `SupCon`, `SoftTriple`) ; détail dans `metrics/train_log.csv`.
+
+Checkpoints : `checkpoints/best_model/contrastive_encoder.pt` (+ `softtriple_state.pt` pour SoftTriple).
+
 
 ### Tuning (grille + réentraînement final 100 %)
 
@@ -371,7 +389,7 @@ Grille en **notation pointée** (`training.learning_rate`, `supcon.temperature`,
 Sorties tuning : `output/<method>/tuning/grid_summary.csv`, `best_combo.json`, `combos/<combo_id>/`.  
 Après tuning : réentraînement sur tout le corpus → `output/<method>/embeddings/final_embeddings.csv`.
 
-Package : `contrastive_methods/` (`train.py`, `tuning.py`, `training_*.py`, `eval_geometry.py`, `training_log.py`).
+Package : `contrastive_methods/` (`train.py`, `tuning.py`, `encoder_model.py`, `hf_training_common.py`, `post_eval.py`, `training_*.py`, `eval_geometry.py`, `training_log.py`).
 
 ## Tests
 

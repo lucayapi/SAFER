@@ -16,7 +16,9 @@ from contrastive_methods.config import (
 from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset, train_val_metadata
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
 from contrastive_methods.eval_geometry import compute_fold_ipr
+from contrastive_methods.post_eval import CV_CLASSIFICATION_METRIC_KEYS, run_post_eval_on_fold
 from contrastive_methods.results import TrainingResult
+from contrastive_methods.hf_training_common import get_device
 from safer_core.kfold_eval import (
     KFOLD_AGGREGATE_METRIC_KEYS,
     aggregate_fold_rows,
@@ -64,6 +66,7 @@ def run_kfold_loop(
     dataset = prepare_text_dataset(cfg)
     splits = get_group_kfold_splits(dataset, cfg)
     fold_rows: List[Dict[str, Any]] = []
+    device = get_device()
 
     for fold_id, (train_idx, val_idx) in enumerate(splits):
         if fold_dir_fn is not None:
@@ -82,11 +85,19 @@ def run_kfold_loop(
 
         print(f"[{log_prefix}] fold {fold_id} → {fold_out}", flush=True)
         result = runner(fold_cfg)
-        _, val_df = train_val_metadata(dataset, train_idx, val_idx)
+        train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
         row: Dict[str, Any] = {"fold_id": fold_id, **(result.val_geometry or {})}
         row.update(compute_fold_ipr(val_df, cfg.label_col, result.val_geometry or {}))
         row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
         row["train_wall_time_sec"] = float(result.train_wall_time_sec)
+        ckpt = Path(fold_cfg.output_dir) / "checkpoints" / "best_model"
+        if cfg.post_eval_enabled and ckpt.is_dir():
+            try:
+                row.update(
+                    run_post_eval_on_fold(cfg, ckpt, train_df, val_df, cfg.text_col, device)
+                )
+            except Exception as exc:
+                print(f"[{log_prefix}] post_eval fold {fold_id} ignoré : {exc}", flush=True)
         fold_rows.append(row)
         del result
         gc.collect()
@@ -98,7 +109,10 @@ def run_kfold_loop(
         except ImportError:
             pass
 
-    agg = aggregate_fold_rows(fold_rows, metric_keys=KFOLD_AGGREGATE_METRIC_KEYS)
+    agg = aggregate_fold_rows(
+        fold_rows,
+        metric_keys=KFOLD_AGGREGATE_METRIC_KEYS + CV_CLASSIFICATION_METRIC_KEYS,
+    )
     if save_tables:
         save_kfold_tables(fold_rows, metrics_dir)
     return fold_rows, agg
@@ -138,6 +152,7 @@ def run_contrastive_final_fit_and_eval(cfg: ContrastiveConfig) -> None:
     t0 = time.perf_counter()
     result = runner(cfg_final)
     metrics_dir = Path(layout_method_output(cfg.method_name, cfg.resolved_output_dir)["metrics"])
+    metrics_dir.mkdir(parents=True, exist_ok=True)
     record_final_fit_wall_time(metrics_dir, time.perf_counter() - t0)
     ckpt = result.output_root / "checkpoints" / "best_model"
     if not ckpt.exists():
