@@ -1,4 +1,4 @@
-"""Grid search contrastif avec K-fold — sélection par mean eta2_macro_balanced_perc."""
+"""Grid search contrastif avec K-fold — sélection par mean val_balanced_accuracy."""
 
 from __future__ import annotations
 
@@ -14,9 +14,8 @@ import yaml
 
 from contrastive_methods.config import load_contrastive_config_from_dict, merge_config_dict
 from contrastive_methods.eval_corpus import evaluate_btp_and_test
-from contrastive_methods.eval_geometry import selection_score
 from contrastive_methods.kfold_train import get_contrastive_runner, run_tuning_combo_kfold
-from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
+from safer_core.classification_eval import CV_CLASSIFICATION_METRIC_KEYS, DEFAULT_SELECTION_METRIC
 from safer_core.io import ensure_dir, load_yaml, save_config_resolved
 from safer_core.paths import TEXT_ROOT
 
@@ -112,9 +111,11 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
     base_raw = merge_config_dict(base_raw, {"seed": seed})
     grid = spec.get("grid") or {}
     validate_contrastive_grid_keys(method_name, grid)
-    selection_metric = str(spec.get("selection_metric", PRIMARY_SELECTION_METRIC))
+    selection_metric = str(spec.get("selection_metric", DEFAULT_SELECTION_METRIC))
     n_folds = int(spec.get("n_folds", 5))
-    if os.environ.get("TEST_CORPUS"):
+    if os.environ.get("TEST_CORPORA"):
+        spec = {**spec, "test_corpora": [c.strip() for c in os.environ["TEST_CORPORA"].split(",") if c.strip()]}
+    elif os.environ.get("TEST_CORPUS"):
         spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
     tuning_output = str(spec.get("output_dir", f"output/{method_name}/tuning"))
     final_output = str(spec.get("final_output_dir", f"output/{method_name}"))
@@ -165,16 +166,14 @@ def run_tuning(method_name: str, argv: Optional[List[str]] = None) -> int:
             row = {
                 "combo_id": cid,
                 "selection_metric": selection_metric,
-                "selection_score": result.best_eta2_macro_balanced_perc,
+                "selection_score": float("nan"),
+                "best_train_loss": result.best_train_loss,
                 **{k.replace(".", "_"): v for k, v in overrides.items()},
             }
-            if result.val_geometry:
-                for key in GEOMETRY_METRIC_KEYS:
-                    row[f"val_{key}"] = result.val_geometry.get(key)
         summary_rows.append(row)
         score = float(row.get("selection_score", float("-inf")))
-        if not (score == score):  # NaN check
-            score = selection_score(row, selection_metric)
+        if not (score == score):
+            score = float("-inf")
         if score > best_score:
             best_score = score
             best_combo_id = cid

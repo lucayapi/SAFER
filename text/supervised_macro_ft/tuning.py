@@ -175,12 +175,17 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     tune_args = parser.parse_args(argv)
 
     spec = load_yaml(TEXT_ROOT / tune_args.grid_config)
-    if os.environ.get("TEST_CORPUS"):
-        spec = {**spec, "test_corpus": os.environ["TEST_CORPUS"]}
+    if os.environ.get("TEST_CORPORA"):
+        corpora = [c.strip() for c in os.environ["TEST_CORPORA"].split(",") if c.strip()]
+        spec = {**spec, "test_corpora": corpora}
+    elif os.environ.get("TEST_CORPUS"):
+        spec = {**spec, "test_corpora": [os.environ["TEST_CORPUS"]]}
     base_config_path = TEXT_ROOT / str(spec.get("base_config", "configs/methods/supervised_macro_ft.yaml"))
     base_cfg = load_yaml(base_config_path)
-    if spec.get("test_corpus"):
-        base_cfg = {**base_cfg, "test_corpus": spec["test_corpus"]}
+    if spec.get("test_corpora"):
+        base_cfg = {**base_cfg, "test_corpora": list(spec["test_corpora"])}
+    elif spec.get("test_corpus"):
+        base_cfg = {**base_cfg, "test_corpora": [spec["test_corpus"]]}
 
     grid = spec.get("grid") or {}
     validate_macro_ft_grid_keys(grid)

@@ -1,18 +1,21 @@
-"""K-fold groupé (accident_id) et agrégation μ±σ des métriques géométriques."""
+"""K-fold groupé (accident_id) et agrégation μ±σ des métriques CV."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupKFold
 
-from metrics.geometry import GEOMETRY_METRIC_KEYS, PRIMARY_SELECTION_METRIC
-from metrics.intra_role_preservation import IPR_COLUMNS
-
+DEFAULT_SELECTION_METRIC = "balanced_accuracy"
+CV_CLASSIFICATION_METRIC_KEYS: Tuple[str, ...] = (
+    "val_accuracy",
+    "val_macro_f1",
+    "val_balanced_accuracy",
+)
 TRAINING_TIMING_KEYS: Tuple[str, ...] = ("train_wall_time_sec",)
-KFOLD_AGGREGATE_METRIC_KEYS: Tuple[str, ...] = GEOMETRY_METRIC_KEYS + IPR_COLUMNS + TRAINING_TIMING_KEYS
+KFOLD_AGGREGATE_METRIC_KEYS: Tuple[str, ...] = CV_CLASSIFICATION_METRIC_KEYS + TRAINING_TIMING_KEYS
 
 
 def group_kfold_splits(
@@ -48,8 +51,8 @@ def group_kfold_splits(
 def aggregate_fold_rows(
     fold_rows: List[Dict[str, Any]],
     *,
-    metric_keys: Sequence[str] = GEOMETRY_METRIC_KEYS,
-    selection_metric: str = PRIMARY_SELECTION_METRIC,
+    metric_keys: Sequence[str] = KFOLD_AGGREGATE_METRIC_KEYS,
+    selection_metric: str = f"val_{DEFAULT_SELECTION_METRIC}",
 ) -> Dict[str, Any]:
     """Agrège des lignes par fold → mean/std + selection_score (mean du critère principal)."""
     if not fold_rows:
@@ -72,28 +75,16 @@ def aggregate_fold_rows(
     return out
 
 
-def extract_test_metric_rows(fold_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Extrait les métriques test (préfixe test_) pour agrégation kfold_test."""
-    out: List[Dict[str, Any]] = []
-    for row in fold_rows:
-        entry: Dict[str, Any] = {"fold_id": row.get("fold_id")}
-        for key in GEOMETRY_METRIC_KEYS:
-            test_key = f"test_{key}"
-            if test_key in row:
-                entry[key] = row[test_key]
-        out.append(entry)
-    return out
-
-
 def save_kfold_tables(
     fold_rows: List[Dict[str, Any]],
     metrics_dir,
     *,
     prefix: str = "kfold",
-    selection_metric: str = PRIMARY_SELECTION_METRIC,
+    selection_metric: str = f"val_{DEFAULT_SELECTION_METRIC}",
     final_fit_wall_time_sec: Optional[float] = None,
+    cv_dir=None,
 ) -> None:
-    """Écrit kfold_per_fold.csv et kfold_summary.csv (géométrie + temps par fold, fit final optionnel)."""
+    """Écrit kfold_per_fold.csv et kfold_summary.csv (classification CV + temps par fold)."""
     from pathlib import Path
 
     metrics_dir = Path(metrics_dir)
@@ -107,6 +98,22 @@ def save_kfold_tables(
     if final_fit_wall_time_sec is not None:
         summary["final_fit_wall_time_sec"] = float(final_fit_wall_time_sec)
     pd.DataFrame([summary]).to_csv(metrics_dir / f"{prefix}_summary.csv", index=False)
+    if cv_dir is not None:
+        from pathlib import Path
+
+        cv_path = Path(cv_dir)
+        cv_path.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(fold_rows).to_csv(cv_path / "cv_per_fold.csv", index=False)
+        cv_summary = {
+            "n_folds": summary.get("n_folds"),
+            "mean_balanced_accuracy": summary.get("mean_val_balanced_accuracy"),
+            "std_balanced_accuracy": summary.get("std_val_balanced_accuracy"),
+            "mean_accuracy": summary.get("mean_val_accuracy"),
+            "std_accuracy": summary.get("std_val_accuracy"),
+            "mean_macro_f1": summary.get("mean_val_macro_f1"),
+            "std_macro_f1": summary.get("std_val_macro_f1"),
+        }
+        pd.DataFrame([cv_summary]).to_csv(cv_path / "cv_summary.csv", index=False)
 
 
 def record_final_fit_wall_time(metrics_dir, seconds: float, *, prefix: str = "kfold") -> None:

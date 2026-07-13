@@ -240,9 +240,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--best_checkpoint_metric",
         type=str,
-        default="eta2_macro_balanced_perc",
-        choices=["eta2_macro_balanced_perc", "eta2_macro_balanced"],
-        help="Critère de sélection du best_model.pt (géométrie, pas F1).",
+        default="train_loss",
+        choices=["train_loss"],
+        help="Critère de sélection du best_model.pt (min train_loss).",
     )
     parser.add_argument(
         "--kfold",
@@ -517,17 +517,10 @@ def checkpoint_selection_score(
     metric_name: str,
     lambda_c1: float = 0.0,
 ) -> float:
-    if metric_name == "eta2_macro_balanced_perc":
-        val = float(val_metrics.get("val_eta2_macro_balanced_perc", float("nan")))
-        if np.isnan(val):
-            val = float(val_metrics.get("val_delta_macro_pct", float("nan")))
-        if np.isnan(val):
-            val = 100.0 * float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
-        return val if np.isfinite(val) else float("-inf")
-    eta2 = float(val_metrics.get("val_eta2_macro_balanced", float("nan")))
-    if np.isnan(eta2):
-        return float("-inf")
-    return eta2
+    if metric_name == "train_loss":
+        loss = float(val_metrics.get("train_loss", float("nan")))
+        return -loss if np.isfinite(loss) else float("-inf")
+    return float("-inf")
 
 
 def evaluate_split(
@@ -830,9 +823,8 @@ def run_training(
     if args.compute_classifier_diagnostics:
         legacy_fields.extend(["val_acc", "val_macro_f1", "val_balanced_acc"])
 
-    best_score = float("-inf")
+    best_train_loss = float("inf")
     best_epoch = 0
-    best_geometry: Dict[str, float] = {}
     last_eval_geom: Dict[str, Any] = {}
     with open(dirs["legacy_logs_csv"], "w", newline="", encoding="utf-8") as legacy_file:
         legacy_writer = csv.DictWriter(legacy_file, fieldnames=legacy_fields)
@@ -1038,14 +1030,10 @@ def run_training(
                 train_idx,
                 val_idx,
             )
-            score = checkpoint_selection_score(
-                val_metrics,
-                args.best_checkpoint_metric,
-            )
-            if score > best_score:
-                best_score = score
+            train_loss_epoch = float(row["train_loss"])
+            if train_loss_epoch < best_train_loss:
+                best_train_loss = train_loss_epoch
                 best_epoch = epoch
-                best_geometry = _geometry_keys_from_row(eval_geom)
                 save_checkpoint(
                     os.path.join(dirs["checkpoints_dir"], "best_model.pt"),
                     model,
@@ -1054,31 +1042,26 @@ def run_training(
                     val_idx,
                 )
 
-    if not best_geometry and last_eval_geom:
-        best_geometry = _geometry_keys_from_row(last_eval_geom)
-
     ensure_best_checkpoint_file(dirs["checkpoints_dir"])
 
     config_payload["best_checkpoint_metric"] = args.best_checkpoint_metric
-    config_payload["best_checkpoint_score"] = best_score
+    config_payload["best_checkpoint_score"] = best_train_loss
     config_payload["best_checkpoint_epoch"] = best_epoch
     save_config_resolved(config_payload, layout["root"])
     save_json(config_payload, layout["configs"] / "config.json")
-    selection_score = best_geometry.get(PRIMARY_SELECTION_METRIC, float("nan"))
-    if not np.isfinite(selection_score):
-        selection_score = best_score if np.isfinite(best_score) else float("nan")
     return {
-        **best_geometry,
-        "best_checkpoint_score": best_score,
+        "best_train_loss": float(best_train_loss),
+        "best_checkpoint_score": float(best_train_loss),
         "best_checkpoint_epoch": best_epoch,
-        "selection_score": float(selection_score),
+        "selection_score": float(best_train_loss),
         "train_wall_time_sec": float(time.perf_counter() - t_run_start),
     }
 
 
 def run_kfold(args: argparse.Namespace) -> None:
-    from contrastive_methods.eval_geometry import compute_fold_ipr
+    from safer_core.classification_eval import DEFAULT_SELECTION_METRIC
     from safer_core.kfold_eval import group_kfold_splits, save_kfold_tables
+    from scgm_text.eval_corpus import run_fold_classification_eval
 
     dataset = TextRawDataset(
         data_csv=args.data_csv,
@@ -1096,12 +1079,35 @@ def run_kfold(args: argparse.Namespace) -> None:
         fold_args.output_dir = os.path.join(base_out, "folds", f"fold_{fold_id}")
         print(f"[kfold] fold {fold_id} → {fold_args.output_dir}", flush=True)
         metrics = run_training(fold_args, train_idx_override=train_idx, val_idx_override=val_idx)
-        val_meta = dataset.metadata_df.iloc[val_idx]
-        method_geom = {k: metrics[k] for k in GEOMETRY_METRIC_KEYS if k in metrics}
-        ipr = compute_fold_ipr(val_meta, args.label_col, method_geom)
-        fold_rows.append({"fold_id": fold_id, **metrics, **ipr})
+        ckpt = os.path.join(fold_args.output_dir, "checkpoints", "best_model.pt")
+        row: Dict[str, Any] = {
+            "fold_id": fold_id,
+            "best_train_loss": metrics.get("best_train_loss"),
+            "train_wall_time_sec": metrics.get("train_wall_time_sec"),
+        }
+        if os.path.isfile(ckpt):
+            try:
+                row.update(
+                    run_fold_classification_eval(
+                        ckpt,
+                        train_idx,
+                        val_idx,
+                        data_csv=args.data_csv,
+                        label_col=args.label_col,
+                        text_col=args.text_col,
+                        seed=args.seed,
+                    )
+                )
+            except Exception as exc:
+                print(f"[kfold] classification fold {fold_id} ignorée : {exc}", flush=True)
+        fold_rows.append(row)
     layout = layout_method_output("scgm_text", base_out)
-    save_kfold_tables(fold_rows, layout["metrics"])
+    save_kfold_tables(
+        fold_rows,
+        layout["metrics"],
+        selection_metric=f"val_{DEFAULT_SELECTION_METRIC}",
+        cv_dir=Path(layout["root"]) / "cv",
+    )
     print(f"[kfold] Résumé val → {layout['metrics'] / 'kfold_summary.csv'}", flush=True)
 
 
@@ -1120,15 +1126,14 @@ def run_post_train_eval(args: argparse.Namespace) -> None:
         data_btp=args.data_csv,
         data_test=args.test_data_csv,
         test_corpus_id=getattr(args, "test_corpus", None),
+        test_corpora=getattr(args, "test_corpora", None),
         label_col=args.label_col,
         pred_ok_col=args.pred_ok_col,
         group_col=args.group_col,
         save_projections=True,
     )
-    if paths.get("projections_test"):
-        print(f"[eval] Projections test : {paths['projections_test']}", flush=True)
-    elif paths.get("test"):
-        print("[eval] Métriques test OK mais projections .npy non écrites (voir messages ci-dessus).", flush=True)
+    if paths.get("cross_domain"):
+        print(f"[eval] Cross-domain : {paths['cross_domain']}", flush=True)
 
 
 def main() -> None:

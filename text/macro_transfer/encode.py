@@ -9,8 +9,7 @@ import numpy as np
 import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig, load_contrastive_config
-from contrastive_methods.eval_geometry import encode_contrastive_texts
-from scgm_text.eval_corpus import project_embedding_corpus
+from contrastive_methods.hf_training_common import encode_contrastive_texts
 
 MethodName = Literal["scgm_text", "softtriple"]
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -72,10 +73,20 @@ def main() -> None:
         default=None,
         help="Override model.train_last_n_layers (int ou null)",
     )
+    p.add_argument(
+        "--test-corpora",
+        type=str,
+        default=None,
+        help="Override test_corpora (comma-separated, ex. metallurgie,caou)",
+    )
     args = p.parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     training_overrides: dict[str, float] = {}
     model_overrides: dict[str, object] = {}
+    test_corpora_override: list[str] | None = None
+    test_corpora_raw = args.test_corpora or os.environ.get("TEST_CORPORA")
+    if test_corpora_raw:
+        test_corpora_override = [c.strip() for c in str(test_corpora_raw).split(",") if c.strip()]
     if args.standardize_backbone is not None:
         model_overrides["standardize_backbone"] = bool(args.standardize_backbone)
     if args.oversampling is not None:
@@ -91,6 +102,7 @@ def main() -> None:
         cfg_path,
         training_overrides=training_overrides or None,
         model_overrides=model_overrides or None,
+        test_corpora_override=test_corpora_override,
     )
     print("OK:", result["output_dir"])
     print("checkpoint:", result["checkpoint_dir"])

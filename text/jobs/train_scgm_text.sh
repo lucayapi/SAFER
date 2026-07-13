@@ -54,9 +54,9 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 
 
 
-export TEST_CORPUS="${TEST_CORPUS:-metallurgie}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
 
-echo "TEST_CORPUS=${TEST_CORPUS}"
+echo "TEST_CORPORA=${TEST_CORPORA}"
 
 echo "Mode entraînement : SCGM-text (configs/methods/scgm_text.yaml)"
 

@@ -1,4 +1,4 @@
-"""Validation réorganisation SAFER text."""
+"""Tests jobs exist."""
 
 from __future__ import annotations
 
@@ -75,13 +75,12 @@ def test_native_contrastive_modules_present():
         "config.py",
         "data.py",
         "export.py",
-        "metrics.py",
+        "eval_corpus.py",
         "train.py",
         "training_triplet.py",
         "training_supcon.py",
         "training_softtriple.py",
         "tuning.py",
-        "eval_geometry.py",
         "losses/supcon.py",
         "losses/softtriple.py",
     ):
@@ -91,14 +90,12 @@ def test_native_contrastive_modules_present():
 def test_jobs_exist():
     for name in (
         "train_scgm_text.sh",
-        "export_raw_geometry.sh",
+        "export_raw_embeddings_eval.sh",
         "export_corpus_embeddings.sh",
         "export_test_embeddings.sh",
         "train_batch_triplet.sh",
         "train_softtriple.sh",
         "train_supcon.sh",
-        "run_frozen_source_prototypes.sh",
-        "compare_methods.sh",
     ):
         assert (JOBS_DIR / name).is_file(), name
 
@@ -111,10 +108,8 @@ def test_notebooks_no_training():
         "scgm_train_text.run_training",
     )
     for name in (
-        "01_compare_embedding_methods.ipynb",
         "02_scgm_text_results.ipynb",
-        "04_bayesian_network_macro_transfer.ipynb",
-        "06_macro_transfer_topics.ipynb",
+        "05_view_batch_triplet_results.ipynb",
     ):
         nb = TEXT_ROOT / "notebooks" / name
         if not nb.is_file():
@@ -123,17 +118,3 @@ def test_notebooks_no_training():
         src = "".join("".join(c.get("source", [])) for c in data["cells"])
         for token in forbidden:
             assert token not in src, f"{name} must not reference {token!r}"
-
-
-def test_collect_results_loader_finds_csv(tmp_path):
-    from scripts.collect_results import _load_method_row
-
-    raw_m = tmp_path / "raw_embedding" / "metrics"
-    raw_m.mkdir(parents=True)
-    (raw_m / "metrics_geometry.csv").write_text(
-        "method,eta2_macro_balanced,eta2_weighted\nEmbedding brut,0.1,0.2\n",
-        encoding="utf-8",
-    )
-    row = _load_method_row(tmp_path / "raw_embedding")
-    assert row is not None
-    assert row["method"] == "Embedding brut"

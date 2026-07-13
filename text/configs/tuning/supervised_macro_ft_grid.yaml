@@ -4,7 +4,7 @@ final_output_dir: output/supervised_macro_ft
 selection_metric: balanced_accuracy
 n_folds: 3
 seed: 42
-test_corpus: metallurgie
+test_corpora: [metallurgie, caou]
 
 # Grille : seuls les hyperparamètres réellement balayés.
 # Fixés dans base_config (non répétés ici) :

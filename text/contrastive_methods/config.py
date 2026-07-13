@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from safer_core.io import load_yaml
 from safer_core.paths import TEXT_ROOT
@@ -64,9 +64,10 @@ class ContrastiveConfig:
     # distance (SupCon, SoftTriple, batch triplet)
     distance_metric: str = "euclidean"
     final_fit_full_data: bool = False
-    selection_metric: str = "eta2_macro_balanced_perc"
+    selection_metric: str = "balanced_accuracy"
     n_folds: int = 1
     test_corpus: Optional[str] = None
+    test_corpora: Optional[List[str]] = None
     test_dataset_path: Optional[Path] = None
     # post-évaluation classification (logistic sklearn)
     post_eval_enabled: bool = True
@@ -88,6 +89,13 @@ class ContrastiveConfig:
         if self.output_dir:
             return self.output_dir
         return f"output/{self.method_name}"
+
+    def test_corpora_list(self) -> List[str]:
+        if self.test_corpora:
+            return [str(c) for c in self.test_corpora]
+        if self.test_corpus:
+            return [str(self.test_corpus)]
+        return ["metallurgie"]
 
 
 def _section(raw: Dict[str, Any], name: str) -> Dict[str, Any]:
@@ -268,12 +276,17 @@ def load_contrastive_config(
             pick("hiddim", default=128, sources=(model, raw))
         ),
         selection_metric=str(
-            pick("selection_metric", default="eta2_macro_balanced_perc", sources=(raw, training))
+            pick("selection_metric", default="balanced_accuracy", sources=(raw, training))
         ),
         n_folds=int(pick("n_folds", default=1, sources=(raw, training))),
         test_corpus=(
             str(tc)
             if (tc := pick("test_corpus", default=None, sources=(data, raw, training)))
+            else None
+        ),
+        test_corpora=(
+            [str(c) for c in corpora]
+            if (corpora := pick("test_corpora", default=None, sources=(data, raw, training)))
             else None
         ),
         test_dataset_path=(
@@ -301,6 +314,12 @@ def load_contrastive_config(
     env_corpus = os.environ.get("TEST_CORPUS")
     if env_corpus:
         cfg.test_corpus = str(env_corpus)
+        cfg.test_corpora = None
+        cfg.test_dataset_path = None
+    env_corpora = os.environ.get("TEST_CORPORA")
+    if env_corpora:
+        cfg.test_corpora = [c.strip() for c in env_corpora.split(",") if c.strip()]
+        cfg.test_corpus = None
         cfg.test_dataset_path = None
     return cfg
 

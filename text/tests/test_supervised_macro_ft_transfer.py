@@ -1,16 +1,16 @@
-"""Tests transfert supervised_macro_ft (encode + predict)."""
+"""Tests inférence supervised_macro_ft (encode + predict)."""
 
 from __future__ import annotations
 
 import numpy as np
 import torch
 
+from supervised_macro_ft.inference import encode_texts, predict_corpus
 from supervised_macro_ft.model import SupervisedMacroModel
 from supervised_macro_ft.paths import (
     resolve_supervised_macro_output_dir,
     supervised_macro_output_dir,
 )
-from supervised_macro_ft.transfer import encode_texts, predict_corpus
 
 
 class _DummyTokenizer:

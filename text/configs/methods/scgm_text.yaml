@@ -12,7 +12,7 @@
 method_name: scgm_text
 use_prompt: false
 output_dir: output/scgm_text
-test_corpus: metallurgie
+test_corpora: [metallurgie, caou]
 
 data:
   data_csv: dataset/data_btp.csv

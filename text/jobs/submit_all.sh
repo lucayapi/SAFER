@@ -8,7 +8,7 @@ cd "$DIR"
 # Logs SLURM : slurm-<job_name>-<job_id>.out|.err dans ce dossier (jobs/).
 # Les jobs résolvent text/ via SLURM_SUBMIT_DIR + jobs/_bootstrap.sh (pas /tmp/slurmd/...).
 
-sbatch export_raw_geometry.sh
+sbatch export_raw_embeddings_eval.sh
 TRAIN_SCGM_ID=$(sbatch --parsable train_scgm_text.sh)
 echo "train_scgm_text job_id=${TRAIN_SCGM_ID}"
 sbatch train_batch_triplet.sh
@@ -16,5 +16,3 @@ sbatch train_softtriple.sh
 sbatch train_supcon.sh
 echo "Jobs soumis. Suivi : squeue -u \$USER"
 sbatch export_corpus_embeddings.sh   # embeddings Qwen pour btp / metallurgie / caou
-echo "Puis : BASE_METHOD=scgm_text CORPUS=metallurgie bash run_frozen_source_prototypes.sh"
-echo "Comparaisons : sbatch compare_methods.sh"

@@ -9,15 +9,17 @@ import pandas as pd
 import pytest
 
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.frozen_source_prototypes import _build_gating_from_predictions
+from safer_core.classification_metrics import build_gating_from_predictions
 from macro_transfer.supervised_baseline import (
     aggregate_cv_metrics,
     build_classifier_pipeline,
     build_predictions_dataframe,
+    load_ood_balanced_accuracy_by_corpus,
     merge_model_registry,
     run_model_group_kfold_cv,
     select_best_model,
     summarize_all_models_test_metrics,
+    summarize_cross_domain_generalization,
     _fit_pipeline,
     _resample_train_for_class_weight,
 )
@@ -66,7 +68,7 @@ def test_build_gating_from_classifier_probs():
             "prob_C": [0.02, 0.1],
         }
     )
-    gating = _build_gating_from_predictions(preds, MACRO_NAMES)
+    gating = build_gating_from_predictions(preds, MACRO_NAMES)
     assert list(gating["m_hat"]) == ["A0", "B"]
     assert float(gating.loc[0, "prob_A0"]) == pytest.approx(0.9)
     assert float(gating.loc[1, "prob_B"]) == pytest.approx(0.7)
@@ -256,3 +258,61 @@ def test_summarize_all_models_test_metrics():
     )
     assert list(summary["model"]) == ["a", "b"]
     assert summary.loc[1, "macro_f1"] == pytest.approx(0.55)
+
+
+def test_summarize_cross_domain_generalization():
+    cv_summary = pd.DataFrame(
+        [
+            {
+                "model": "a",
+                "mean_balanced_accuracy": 0.80,
+                "std_balanced_accuracy": 0.04,
+            },
+            {
+                "model": "b",
+                "mean_balanced_accuracy": 0.70,
+                "std_balanced_accuracy": 0.02,
+            },
+        ]
+    )
+    ood_ba_by_corpus = {
+        "metallurgie": {"a": 0.60, "b": 0.50},
+        "caou": {"a": 0.40, "b": 0.30},
+    }
+    summary = summarize_cross_domain_generalization(
+        cv_summary, ood_ba_by_corpus, model_keys=["a", "b"]
+    )
+    assert list(summary["model"]) == ["a", "b"]
+    assert summary.loc[0, "cv_ba_mean"] == pytest.approx(0.80)
+    assert summary.loc[0, "cv_ba_std"] == pytest.approx(0.04)
+    assert summary.loc[0, "ba_ood_avg"] == pytest.approx(0.50)
+    assert summary.loc[0, "ba_ood_worst"] == pytest.approx(0.40)
+    assert summary.loc[1, "ba_ood_avg"] == pytest.approx(0.40)
+    assert summary.loc[1, "ba_ood_worst"] == pytest.approx(0.30)
+
+
+def test_load_ood_balanced_accuracy_by_corpus(tmp_path):
+    for corpus_id, ba_a, ba_b in [
+        ("metallurgie", 0.55, 0.45),
+        ("caou", 0.35, 0.25),
+    ]:
+        transfer = (
+            tmp_path
+            / "output_test"
+            / corpus_id
+            / "supervised_baseline"
+            / "transfer"
+        )
+        transfer.mkdir(parents=True)
+        pd.DataFrame(
+            [
+                {"model": "a", "balanced_accuracy": ba_a},
+                {"model": "b", "balanced_accuracy": ba_b},
+            ]
+        ).to_csv(transfer / "all_models_test_metrics.csv", index=False)
+
+    loaded = load_ood_balanced_accuracy_by_corpus(
+        ["metallurgie", "caou"], ["a", "b"], anchor=tmp_path
+    )
+    assert loaded["metallurgie"]["a"] == pytest.approx(0.55)
+    assert loaded["caou"]["b"] == pytest.approx(0.25)

@@ -229,23 +229,22 @@ def test_plot_topics_n_units_by_z_with_metadata_merge(tmp_path):
     assert (fig_dir / "topics_n_units_by_z.png").is_file()
 
 
-@patch("scgm_text.eval_corpus.load_scgm_checkpoint")
+@patch("scgm_text.checkpoint_io.load_scgm_checkpoint")
 @patch("scgm_text.eval_corpus.project_embedding_corpus")
 @patch("scgm_text.eval_corpus.TextRawDataset")
 def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, mock_load_ckpt, tmp_path):
     from scgm_text.eval_corpus import save_scgm_projected_corpus
 
     mock_load_ckpt.return_value = (None, {"input_mode": "precomputed_embeddings"}, None)
-    mock_project.return_value = (np.ones((3, 4), dtype=np.float32), np.array(["A0", "A1", "B"]))
     meta = pd.DataFrame(
         {
             "doc_id": ["d0", "d1", "d2"],
             "accident_id": ["a0", "a1", "a2"],
             "pred_label": ["A0", "A1", "B"],
+            "sentence": ["s0", "s1", "s2"],
         }
     )
-    ds = mock_dataset_cls.return_value
-    ds.get_metadata_df.return_value = meta
+    mock_project.return_value = (np.ones((3, 4), dtype=np.float32), meta)
 
     emb_dir = tmp_path / "embeddings"
     paths = save_scgm_projected_corpus(
@@ -254,8 +253,8 @@ def test_save_scgm_projected_corpus(mock_dataset_cls, mock_project, mock_load_ck
         emb_dir,
         stem="test",
     )
-    assert paths["projections"].name == "projected_embeddings_test.npy"
-    assert paths["metadata"].name == "test_metadata.csv"
+    assert paths["projections"].name == "projected_test.npy"
+    assert paths["metadata"].name == "projected_test_metadata.csv"
     assert np.load(paths["projections"]).shape == (3, 4)
     assert paths["metadata"].is_file()
 
@@ -468,3 +467,18 @@ def test_softtriple_centers_summary_and_projection(tmp_path):
     )
     assert out is not None
     assert out.is_file()
+
+
+def test_load_projected_embeddings_pair(tmp_path):
+    from scgm_text.notebook_viz import load_projected_embeddings_pair
+
+    npy_path = tmp_path / "projected_btp.npy"
+    meta_path = tmp_path / "projected_btp_metadata.csv"
+    np.save(npy_path, np.random.randn(4, 8))
+    pd.DataFrame({"pred_label": ["A0", "A1", "B", "C"]}).to_csv(meta_path, index=False)
+    pair = load_projected_embeddings_pair(npy_path, meta_path)
+    assert pair is not None
+    x, meta = pair
+    assert x.shape == (4, 8)
+    assert len(meta) == 4
+    assert load_projected_embeddings_pair(tmp_path / "missing.npy", meta_path) is None

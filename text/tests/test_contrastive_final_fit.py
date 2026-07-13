@@ -26,15 +26,15 @@ def test_run_contrastive_final_fit_and_eval_calls_eval_once(tmp_path):
     fake_result = TrainingResult(
         embeddings_path=tmp_path / "emb.csv",
         output_root=tmp_path / "run",
-        best_eta2_macro_balanced_perc=42.0,
+        best_train_loss=0.42,
     )
     ckpt_dir = tmp_path / "run" / "checkpoints" / "best_model"
     ckpt_dir.mkdir(parents=True)
 
     with patch.object(kt, "get_contrastive_runner") as mock_runner_fn:
-        with patch.object(kt, "evaluate_btp_and_test") as mock_eval:
+        with patch.object(kt, "run_final_classification_eval") as mock_eval:
             mock_runner_fn.return_value = MagicMock(return_value=fake_result)
-            mock_eval.return_value = {"test": tmp_path / "metrics_geometry_test.csv"}
+            mock_eval.return_value = {"cross_domain": tmp_path / "cross_domain.csv"}
             kt.run_contrastive_final_fit_and_eval(cfg)
 
     mock_eval.assert_called_once()

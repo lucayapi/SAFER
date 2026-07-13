@@ -2,10 +2,10 @@ method_name: softtriple
 base_config: configs/methods/softtriple.yaml
 output_dir: output/softtriple/tuning
 final_output_dir: output/softtriple
-selection_metric: eta2_macro_balanced_perc
+selection_metric: balanced_accuracy
 n_folds: 5
 seed: 42
-test_corpus: metallurgie
+test_corpora: [metallurgie, caou]
 final_fit_full_data: true
 
 grid:

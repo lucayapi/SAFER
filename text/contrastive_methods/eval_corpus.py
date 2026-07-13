@@ -1,135 +1,101 @@
-"""Évaluation géométrique BTP / test avec best model contrastif."""
+"""Évaluation classification multi-corpus (BTP + OOD) pour modèles contrastifs."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Mapping, Optional
+
+import pandas as pd
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset
-from contrastive_methods.eval_geometry import encode_contrastive_texts, evaluate_embeddings_geometry
-from contrastive_methods.export import embeddings_to_dataframe
-from contrastive_methods.metrics import METHOD_DISPLAY
-from contrastive_methods.post_eval import run_post_eval_on_corpus
-from contrastive_methods.hf_training_common import get_device
-from safer_core.io import save_metrics_geometry
+from contrastive_methods.hf_training_common import encode_contrastive_texts, get_device
+from contrastive_methods.post_eval import (
+    evaluate_classifier_on_embeddings,
+    fit_classifier_on_embeddings,
+)
+from safer_core.classification_eval import (
+    build_cv_summary_from_kfold,
+    export_projected_embeddings,
+    resolve_test_corpora,
+    save_classification_outputs,
+)
 from safer_core.paths import layout_method_output
-from safer_core.test_corpus import method_test_results_dir
+from safer_core.test_corpus import resolve_test_corpus
 
 
-def evaluate_contrastive_on_csv(
+def _metadata_for_export(df: pd.DataFrame, cfg: ContrastiveConfig) -> pd.DataFrame:
+    meta = df.copy()
+    if "doc_id" not in meta.columns:
+        meta = meta.reset_index(drop=True)
+        meta["doc_id"] = [f"row_{i}" for i in range(len(meta))]
+    return meta
+
+
+def _encode_corpus_df(
     cfg: ContrastiveConfig,
+    df: pd.DataFrame,
+    text_col: str,
     checkpoint_dir: Path,
-    data_csv: Path,
-    *,
-    corpus: str = "btp",
-    embeddings_out: Optional[Path] = None,
-    metrics_dir: Optional[Path] = None,
-) -> Dict[str, Any]:
-    """Encode un CSV avec le best checkpoint et calcule metrics_geometry."""
-    cfg_eval = ContrastiveConfig(
-        method_name=cfg.method_name,
-        dataset_path=Path(data_csv),
-        text_col=cfg.text_col,
-        label_col=cfg.label_col,
-        group_col=cfg.group_col,
-        pred_ok_col=cfg.pred_ok_col,
-        backbone_name=cfg.backbone_name,
-        max_seq_length=cfg.max_seq_length,
-        encode_batch_size=cfg.encode_batch_size,
-        eval_batch_size=cfg.eval_batch_size,
-        backbone_trainable=cfg.backbone_trainable,
-        train_last_n_layers=cfg.train_last_n_layers,
-        cache_backbone_embeddings=cfg.cache_backbone_embeddings,
-        use_projector=cfg.use_projector,
-        projection=cfg.projection,
-        hiddim=cfg.hiddim,
-    )
-    dataset = prepare_text_dataset(cfg_eval)
-    texts = dataset.metadata_df[dataset.text_col].astype(str).tolist()
-    labels = dataset.metadata_df[cfg.label_col].to_numpy()
-    display = METHOD_DISPLAY.get(cfg.method_name, cfg.method_name)
-
-    emb = encode_contrastive_texts(
+    device: str,
+) -> Any:
+    texts = df[text_col].astype(str).tolist()
+    return encode_contrastive_texts(
         cfg,
         texts,
         checkpoint_dir=checkpoint_dir,
+        device=device,
         batch_size=cfg.encode_batch_size,
     )
 
-    if embeddings_out is not None:
-        frame = embeddings_to_dataframe(dataset.metadata_df["doc_id"].to_numpy(), emb)
-        embeddings_out.parent.mkdir(parents=True, exist_ok=True)
-        frame.to_csv(embeddings_out, index=False)
 
-    row = evaluate_embeddings_geometry(emb, labels, method=f"{display}_{corpus}")
-    if metrics_dir is not None:
-        stem = f"metrics_geometry_{corpus}"
-        save_metrics_geometry(row, metrics_dir, stem=stem)
-    return row
-
-
-def evaluate_btp_and_test(
+def run_final_classification_eval(
     cfg: ContrastiveConfig,
     checkpoint_dir: Path,
     output_root: Path,
+    *,
+    cv_summary: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Path]:
-    """Écrit metrics_geometry_btp.csv, metrics_geometry_test.csv et classification si post_eval."""
+    """Encode BTP + corpus test, export embeddings, LR sklearn, CSV classification."""
     layout = layout_method_output(cfg.method_name, str(output_root))
     metrics_dir = Path(layout["metrics"])
     emb_dir = Path(layout["embeddings"])
     metrics_dir.mkdir(parents=True, exist_ok=True)
     emb_dir.mkdir(parents=True, exist_ok=True)
     device = get_device()
+    anchor = Path(__file__).resolve().parents[1]
 
-    btp_csv = cfg.dataset_path
-    test_csv = cfg.test_data_csv
-    paths: Dict[str, Path] = {}
     btp_dataset = prepare_text_dataset(cfg)
     btp_df = btp_dataset.metadata_df
+    text_col = cfg.text_col
+    label_col = cfg.label_col
+    group_col = cfg.group_col
 
-    evaluate_contrastive_on_csv(
-        cfg,
-        checkpoint_dir,
-        btp_csv,
-        corpus="btp",
-        embeddings_out=emb_dir / "final_embeddings_btp.csv",
-        metrics_dir=metrics_dir,
+    X_btp = _encode_corpus_df(cfg, btp_df, text_col, checkpoint_dir, device)
+    export_projected_embeddings(
+        X_btp,
+        _metadata_for_export(btp_df, cfg),
+        emb_dir,
+        "btp",
+        label_col=label_col,
+        group_col=group_col,
+        text_col=text_col,
     )
-    paths["btp"] = metrics_dir / "metrics_geometry_btp.csv"
 
-    if cfg.post_eval_enabled:
-        run_post_eval_on_corpus(
-            cfg,
-            checkpoint_dir,
-            btp_df,
-            btp_df,
-            cfg.text_col,
-            device,
-            corpus="btp",
-            metrics_dir=metrics_dir,
-        )
-        paths["classification_btp"] = metrics_dir / "metrics_classification_btp.csv"
+    macros = None
+    y_train_int = btp_df["label_id"].astype(int).to_numpy()
+    pipe = fit_classifier_on_embeddings(X_btp, y_train_int, cfg, seed=cfg.seed)
 
-    if test_csv.is_file():
-        test_root = method_test_results_dir(cfg.method_name, cfg.test_corpus)
-        test_metrics = test_root / "metrics"
-        test_emb_out = test_root / "embeddings"
-        test_metrics.mkdir(parents=True, exist_ok=True)
-        test_emb_out.mkdir(parents=True, exist_ok=True)
-        evaluate_contrastive_on_csv(
-            cfg,
-            checkpoint_dir,
-            test_csv,
-            corpus="test",
-            embeddings_out=test_emb_out / "final_embeddings_test.csv",
-            metrics_dir=test_metrics,
-        )
-        paths["test"] = test_metrics / "metrics_geometry_test.csv"
-        if cfg.post_eval_enabled:
+    metrics_by_corpus: Dict[str, Mapping[str, Any]] = {}
+    y_btp_macro = btp_df[label_col].astype(str).to_numpy()
+    metrics_by_corpus["btp"] = evaluate_classifier_on_embeddings(pipe, X_btp, y_btp_macro, macros=macros)
+
+    for corpus_id in cfg.test_corpora_list():
+        try:
+            spec = resolve_test_corpus(corpus_id, anchor=anchor)
             test_cfg = ContrastiveConfig(
                 method_name=cfg.method_name,
-                dataset_path=Path(test_csv),
+                dataset_path=spec.data_csv,
                 text_col=cfg.text_col,
                 label_col=cfg.label_col,
                 group_col=cfg.group_col,
@@ -151,15 +117,46 @@ def evaluate_btp_and_test(
             )
             test_dataset = prepare_text_dataset(test_cfg)
             test_df = test_dataset.metadata_df
-            run_post_eval_on_corpus(
-                cfg,
-                checkpoint_dir,
-                btp_df,
-                test_df,
-                cfg.text_col,
-                device,
-                corpus="test",
-                metrics_dir=test_metrics,
+            X_test = _encode_corpus_df(cfg, test_df, text_col, checkpoint_dir, device)
+            export_projected_embeddings(
+                X_test,
+                _metadata_for_export(test_df, cfg),
+                emb_dir,
+                str(corpus_id),
+                label_col=label_col,
+                group_col=group_col,
+                text_col=text_col,
             )
-            paths["classification_test"] = test_metrics / "metrics_classification_test.csv"
-    return paths
+            y_test = test_df[label_col].astype(str).to_numpy()
+            metrics_by_corpus[str(corpus_id)] = evaluate_classifier_on_embeddings(
+                pipe, X_test, y_test, macros=macros
+            )
+        except Exception as exc:
+            print(f"[{cfg.method_name}] eval corpus {corpus_id} ignorée : {exc}", flush=True)
+
+    if cv_summary is None:
+        kfold_path = metrics_dir / "kfold_summary.csv"
+        cv_path = Path(layout["root"]) / "cv" / "cv_summary.csv"
+        if cv_path.is_file():
+            cv_summary = pd.read_csv(cv_path)
+        elif kfold_path.is_file():
+            cv_summary = build_cv_summary_from_kfold(pd.read_csv(kfold_path), model_name=cfg.method_name)
+        else:
+            cv_summary = pd.DataFrame()
+
+    return save_classification_outputs(
+        Path(layout["root"]),
+        method_name=cfg.method_name,
+        metrics_by_corpus=metrics_by_corpus,
+        cv_summary=cv_summary,
+        classifier=cfg.post_eval_classifier,
+    )
+
+
+def evaluate_btp_and_test(
+    cfg: ContrastiveConfig,
+    checkpoint_dir: Path,
+    output_root: Path,
+) -> Dict[str, Path]:
+    """Alias compat — classification multi-corpus + 3 embeddings."""
+    return run_final_classification_eval(cfg, checkpoint_dir, output_root)

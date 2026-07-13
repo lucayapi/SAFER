@@ -14,11 +14,11 @@ from contrastive_methods.config import (
     merge_config_dict,
 )
 from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset, train_val_metadata
-from contrastive_methods.eval_corpus import evaluate_btp_and_test
-from contrastive_methods.eval_geometry import compute_fold_ipr
+from contrastive_methods.eval_corpus import run_final_classification_eval
 from contrastive_methods.post_eval import CV_CLASSIFICATION_METRIC_KEYS, run_post_eval_on_fold
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.hf_training_common import get_device
+from safer_core.classification_eval import DEFAULT_SELECTION_METRIC
 from safer_core.kfold_eval import (
     KFOLD_AGGREGATE_METRIC_KEYS,
     aggregate_fold_rows,
@@ -57,11 +57,12 @@ def run_kfold_loop(
     save_tables: bool = True,
     metrics_dir: Optional[Path] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Exécute K folds (validation uniquement) → agrégat μ±σ."""
+    """Exécute K folds (validation uniquement) → agrégat μ±σ classification."""
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
     root = Path(layout["root"])
     if metrics_dir is None:
         metrics_dir = Path(layout["metrics"])
+    cv_dir = root / "cv"
 
     dataset = prepare_text_dataset(cfg)
     splits = get_group_kfold_splits(dataset, cfg)
@@ -86,10 +87,11 @@ def run_kfold_loop(
         print(f"[{log_prefix}] fold {fold_id} → {fold_out}", flush=True)
         result = runner(fold_cfg)
         train_df, val_df = train_val_metadata(dataset, train_idx, val_idx)
-        row: Dict[str, Any] = {"fold_id": fold_id, **(result.val_geometry or {})}
-        row.update(compute_fold_ipr(val_df, cfg.label_col, result.val_geometry or {}))
-        row["fold_selection_score"] = result.best_eta2_macro_balanced_perc
-        row["train_wall_time_sec"] = float(result.train_wall_time_sec)
+        row: Dict[str, Any] = {
+            "fold_id": fold_id,
+            "best_train_loss": result.best_train_loss,
+            "train_wall_time_sec": float(result.train_wall_time_sec),
+        }
         ckpt = Path(fold_cfg.output_dir) / "checkpoints" / "best_model"
         if cfg.post_eval_enabled and ckpt.is_dir():
             try:
@@ -109,12 +111,19 @@ def run_kfold_loop(
         except ImportError:
             pass
 
+    selection = f"val_{DEFAULT_SELECTION_METRIC}"
     agg = aggregate_fold_rows(
         fold_rows,
-        metric_keys=KFOLD_AGGREGATE_METRIC_KEYS + CV_CLASSIFICATION_METRIC_KEYS,
+        metric_keys=KFOLD_AGGREGATE_METRIC_KEYS,
+        selection_metric=selection,
     )
     if save_tables:
-        save_kfold_tables(fold_rows, metrics_dir)
+        save_kfold_tables(
+            fold_rows,
+            metrics_dir,
+            selection_metric=selection,
+            cv_dir=cv_dir,
+        )
     return fold_rows, agg
 
 
@@ -126,15 +135,15 @@ def run_contrastive_kfold(cfg: ContrastiveConfig) -> Dict[str, Any]:
     metrics_dir = Path(layout["metrics"])
     print(
         f"[{cfg.method_name}] K-fold val → {metrics_dir / 'kfold_summary.csv'} | "
-        f"mean_eta2_macro_balanced_perc={agg.get('mean_eta2_macro_balanced_perc', float('nan')):.2f} "
-        f"± {agg.get('std_eta2_macro_balanced_perc', float('nan')):.2f}",
+        f"mean_val_balanced_accuracy={agg.get('mean_val_balanced_accuracy', float('nan')):.2f} "
+        f"± {agg.get('std_val_balanced_accuracy', float('nan')):.2f}",
         flush=True,
     )
     return agg
 
 
 def run_contrastive_final_fit_and_eval(cfg: ContrastiveConfig) -> None:
-    """Train simple — étape 2 : fit 100 % BTP puis métriques BTP + test."""
+    """Train simple — étape 2 : fit 100 % BTP puis classification multi-corpus."""
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
     root = Path(layout["root"])
     runner = get_contrastive_runner(cfg.method_name)
@@ -158,12 +167,12 @@ def run_contrastive_final_fit_and_eval(cfg: ContrastiveConfig) -> None:
     if not ckpt.exists():
         print(f"[{cfg.method_name}] Checkpoint final absent : {ckpt}", flush=True)
         return
-    paths = evaluate_btp_and_test(cfg_final, ckpt, result.output_root)
+    paths = run_final_classification_eval(cfg_final, ckpt, result.output_root)
     print(f"[{cfg.method_name}] Fit final — embeddings : {result.embeddings_path}", flush=True)
     if paths.get("btp"):
         print(f"[{cfg.method_name}] Métriques BTP : {paths['btp']}", flush=True)
-    if paths.get("test"):
-        print(f"[{cfg.method_name}] Métriques test : {paths['test']}", flush=True)
+    if paths.get("cross_domain"):
+        print(f"[{cfg.method_name}] Cross-domain : {paths['cross_domain']}", flush=True)
 
 
 def run_tuning_combo_kfold(
@@ -198,7 +207,5 @@ def run_tuning_combo_kfold(
         "combo_id": combo_id,
         "selection_metric": selection_metric,
         "selection_score": agg.get("selection_score", float("nan")),
-        **{f"mean_{k}": v for k, v in agg.items() if k.startswith("mean_")},
-        **{f"std_{k}": v for k, v in agg.items() if k.startswith("std_")},
-        **{k.replace(".", "_"): v for k, v in overrides.items()},
+        **{k: agg.get(k) for k in agg if k.startswith("mean_") or k.startswith("std_")},
     }

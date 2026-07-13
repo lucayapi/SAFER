@@ -1,10 +1,10 @@
 base_config: configs/methods/scgm_text.yaml
 output_dir: output/scgm_text/tuning
 final_output_dir: output/scgm_text
-selection_metric: eta2_macro_balanced_perc
+selection_metric: balanced_accuracy
 n_folds: 5
 seed: 42
-test_corpus: metallurgie
+test_corpora: [metallurgie, caou]
 final_fit_full_data: true
 
 # Grille : notation pointée model.* / training.* (fusionnée sur base_config).

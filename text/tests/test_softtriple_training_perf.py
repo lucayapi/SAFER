@@ -20,7 +20,7 @@ from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.hf_training_common import resolve_autocast_dtype
 from contrastive_methods.training_softtriple import (
     _dataloader_kwargs,
-    _run_val_epoch_with_geometry,
+    _run_val_epoch,
 )
 
 
@@ -58,12 +58,7 @@ def test_dataloader_kwargs_cuda_pin_memory():
     assert kw.get("num_workers", 0) >= 1
 
 
-def test_run_val_epoch_with_geometry_single_pass():
-    cfg = ContrastiveConfig(
-        method_name="softtriple",
-        dataset_path=Path("."),
-        label_col="pred_label",
-    )
+def test_run_val_epoch_single_pass():
     val_df = pd.DataFrame(
         {
             "sentence": ["a", "b"],
@@ -90,13 +85,10 @@ def test_run_val_epoch_with_geometry_single_pass():
     loader = DataLoader(ds, batch_size=2, collate_fn=collate)
     encoder = _FakeEncoder()
     loss_module = _FakeLoss()
-    val_loss, geom = _run_val_epoch_with_geometry(
+    val_loss = _run_val_epoch(
         encoder,  # type: ignore[arg-type]
         loss_module,  # type: ignore[arg-type]
         loader,
-        val_df,
-        cfg,
         torch.device("cpu"),
     )
     assert np.isfinite(val_loss)
-    assert "eta2_macro_balanced_perc" in geom

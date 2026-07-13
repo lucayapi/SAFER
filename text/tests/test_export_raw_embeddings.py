@@ -52,15 +52,14 @@ def test_export_raw_embeddings_method_name(tmp_path, monkeypatch):
 
     export_raw_embeddings.main()
 
-    metrics_csv = out_dir / "metrics" / "metrics_geometry.csv"
+    metrics_csv = out_dir / "metrics" / "metrics_classification_btp.csv"
     assert metrics_csv.is_file()
     df = pd.read_csv(metrics_csv)
-    assert df.iloc[0]["method"] == "Embedding brut (test métallurgie)"
-    assert "eta2_macro_balanced" in df.columns
+    assert "balanced_accuracy" in df.columns
 
 
 def test_export_raw_geometry_job_mentions_btp_and_test():
-    sh = (TEXT_ROOT / "jobs" / "export_raw_geometry.sh").read_text(encoding="utf-8")
+    sh = (TEXT_ROOT / "jobs" / "export_raw_embeddings_eval.sh").read_text(encoding="utf-8")
     assert "export_raw_embeddings.py" in sh
     assert "raw_embedding.yaml" in sh
-    assert "raw_embedding_test.yaml" in sh
+    assert "TEST_CORPORA" in sh

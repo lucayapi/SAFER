@@ -1,4 +1,4 @@
-"""Tests sélection checkpoint SCGM sur eta2_macro_balanced_perc."""
+"""Tests sélection checkpoint SCGM sur train_loss."""
 
 from __future__ import annotations
 
@@ -12,12 +12,7 @@ if str(TEXT_ROOT) not in sys.path:
 from scripts.train_scgm_text import checkpoint_selection_score
 
 
-def test_checkpoint_eta2_macro_balanced_perc():
-    val = {"val_eta2_macro_balanced_perc": 42.5, "val_eta2_macro_balanced": 0.3}
-    assert checkpoint_selection_score(val, "eta2_macro_balanced_perc", 0.01) == 42.5
-
-
-def test_checkpoint_delta_from_eta2_fallback():
-    val = {"val_eta2_macro_balanced": 0.25}
-    score = checkpoint_selection_score(val, "eta2_macro_balanced_perc", 0.01)
-    assert abs(score - 25.0) < 1e-6
+def test_checkpoint_train_loss_minimize():
+    low = {"train_loss": 0.5}
+    high = {"train_loss": 2.0}
+    assert checkpoint_selection_score(low, "train_loss") > checkpoint_selection_score(high, "train_loss")

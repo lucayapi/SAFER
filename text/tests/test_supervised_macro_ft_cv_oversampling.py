@@ -36,12 +36,8 @@ def tiny_btp_csv(tmp_path: Path) -> Path:
 
 
 @patch("supervised_macro_ft.cv.fit_model")
-@patch("supervised_macro_ft.cv.evaluate_fold_geometry")
-@patch("supervised_macro_ft.cv.encode_val_projected")
-def test_cv_applies_oversampling(mock_encode, mock_geom, mock_fit, tiny_btp_csv):
+def test_cv_applies_oversampling(mock_fit, tiny_btp_csv):
     mock_fit.return_value = ({}, {"accuracy": 1.0}, [])
-    mock_encode.return_value = np.zeros((2, 4))
-    mock_geom.return_value = {"ipr": 0.5}
 
     ds = TextRawDataset(str(tiny_btp_csv))
     hidden = np.random.randn(len(ds), 16).astype(np.float32)
@@ -58,7 +54,7 @@ def test_cv_applies_oversampling(mock_encode, mock_geom, mock_fit, tiny_btp_csv)
     }
     train_cfg = {"batch_size": 4, "epochs": 1, "seed": 0}
 
-    fold_rows, _, _, _ = run_group_kfold_cv(
+    fold_rows, _, _ = run_group_kfold_cv(
         ds,
         MagicMock(),
         model_cfg=model_cfg,

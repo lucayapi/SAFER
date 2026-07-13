@@ -331,40 +331,31 @@ def encode_texts(
     return np.vstack(parts)
 
 
-@torch.no_grad()
-def evaluate_val_geometry_from_loader(
-    encoder: ContrastiveEncoder,
-    loader: DataLoader,
-    val_df: pd.DataFrame,
+def encode_contrastive_texts(
     cfg: ContrastiveConfig,
-    device: torch.device,
-) -> Dict[str, Any]:
-    from contrastive_methods.eval_geometry import evaluate_embeddings_geometry
-
-    encoder.eval()
-    autocast_dtype = resolve_autocast_dtype(str(device))
-    use_amp = autocast_dtype is not None and device.type == "cuda"
-    emb_parts: List[np.ndarray] = []
-    for batch in loader:
-        input_ids = batch["input_ids"].to(device, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-        with torch.autocast(
-            device_type=device.type,
-            dtype=autocast_dtype or torch.float32,
-            enabled=use_amp,
-        ):
-            emb = encoder({"input_ids": input_ids, "attention_mask": attention_mask})
-        emb_out = emb.detach()
-        if METRIC_EVAL_NORMALIZE:
-            emb_out = F.normalize(emb_out, p=2, dim=1)
-        emb_parts.append(emb_out.float().cpu().numpy())
-    embeddings = np.vstack(emb_parts) if emb_parts else np.zeros((0, encoder.embedding_dim))
-    labels = val_df[cfg.label_col].to_numpy()
-    return evaluate_embeddings_geometry(
-        embeddings,
-        labels,
-        method="val",
-        embedding_dim=encoder.embedding_dim,
+    texts: List[str],
+    *,
+    checkpoint_dir: Optional[Path] = None,
+    hf_encoder=None,
+    batch_size: Optional[int] = None,
+    device: Optional[str] = None,
+    normalize_embeddings: bool = METRIC_EVAL_NORMALIZE,
+    **_,
+) -> np.ndarray:
+    """Encode un corpus via l'encodeur HF unifié (checkpoint ou instance fournie)."""
+    dev = device or get_device()
+    encoder = hf_encoder
+    if encoder is None:
+        if checkpoint_dir is None:
+            raise ValueError("encode contrastif : checkpoint_dir ou hf_encoder requis")
+        encoder = load_contrastive_checkpoint(cfg, Path(checkpoint_dir), dev)
+    return encode_texts(
+        encoder,
+        texts,
+        cfg,
+        dev,
+        batch_size=batch_size,
+        normalize_embeddings=normalize_embeddings,
     )
 
 

@@ -1,6 +1,7 @@
 method_name: raw_embedding
 dataset_path: dataset/data_btp.csv
 emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+test_corpora: [metallurgie, caou]
 text_col: sentence
 label_col: pred_label
 group_col: accident_id

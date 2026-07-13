@@ -19,13 +19,13 @@ def test_project_embedding_corpus_end2end():
 
     mock_model.side_effect = _forward
 
-    with patch("scgm_text.eval_corpus.load_scgm_checkpoint", return_value=(mock_model, {"backbone_name": "test/model", "hiddim": 16}, {})):
+    with patch("scgm_text.checkpoint_io.load_scgm_checkpoint", return_value=(mock_model, {"backbone_name": "test/model", "hiddim": 16}, {})):
         with patch("scgm_text.eval_corpus.TextRawDataset") as mock_ds:
             mock_ds.return_value.get_metadata_df.return_value = __import__("pandas").DataFrame(
                 {"pred_label": ["A0", "B"]}
             )
             with patch("transformers.AutoTokenizer"):
-                with patch("scgm_text.eval_corpus.make_text_collate_fn") as mock_collate:
+                with patch("scgm_text.collate.make_text_collate_fn") as mock_collate:
                     mock_collate.return_value = lambda items: {
                         "input_ids": torch.ones(len(items), 4, dtype=torch.long),
                         "attention_mask": torch.ones(len(items), 4, dtype=torch.long),
@@ -40,11 +40,11 @@ def test_project_embedding_corpus_end2end():
                         "row_id": i,
                         "index": i,
                     }
-                    proj, labels = project_embedding_corpus(
+                    proj, meta = project_embedding_corpus(
                         "ckpt.pt",
                         "data.csv",
                         batch_size=2,
                         device="cpu",
                     )
     assert proj.shape[0] == 2
-    assert len(labels) == 2
+    assert len(meta) == 2

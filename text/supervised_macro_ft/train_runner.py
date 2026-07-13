@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import numpy as np
@@ -19,11 +19,11 @@ from scgm_text.collate import make_text_collate_fn
 from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 from supervised_macro_ft.checkpoint_io import save_checkpoint
-from supervised_macro_ft.geometry_eval import (
-    METHOD_LABEL_BTP,
-    evaluate_corpus_geometry_with_ipr,
-    save_geometry_kfold_tables,
-    save_geometry_metrics_csv,
+from safer_core.classification_eval import (
+    export_projected_embeddings,
+    resolve_test_corpora,
+    save_classification_outputs,
+    summarize_ood_classification,
 )
 from supervised_macro_ft.class_balance import balanced_oversample_indices
 from supervised_macro_ft.class_balance import resolve_train_balance
@@ -63,6 +63,7 @@ def _resolve_cfg(
     cfg: Optional[Dict[str, Any]] = None,
     training_overrides: Optional[Dict[str, Any]] = None,
     model_overrides: Optional[Dict[str, Any]] = None,
+    test_corpora_override: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     if cfg is None:
         if config_path is None:
@@ -76,6 +77,8 @@ def _resolve_cfg(
         train_section = dict(cfg.get("training") or {})
         train_section.update(training_overrides)
         cfg = {**cfg, "training": train_section}
+    if test_corpora_override:
+        cfg = {**cfg, "test_corpora": list(test_corpora_override)}
     return cfg
 
 
@@ -190,6 +193,7 @@ def run_supervised_macro_ft_training(
     shared_cache_dir: Optional[str | Path] = None,
     training_overrides: Optional[Dict[str, Any]] = None,
     model_overrides: Optional[Dict[str, Any]] = None,
+    test_corpora_override: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     anchor = Path(__file__).resolve().parents[1]
     cfg = _resolve_cfg(
@@ -197,6 +201,7 @@ def run_supervised_macro_ft_training(
         cfg=cfg,
         training_overrides=training_overrides,
         model_overrides=model_overrides,
+        test_corpora_override=test_corpora_override,
     )
     data_cfg = dict(cfg.get("data") or {})
     model_cfg = dict(cfg.get("model") or {})
@@ -253,9 +258,6 @@ def run_supervised_macro_ft_training(
         )
 
     label_col = str(data_cfg.get("label_col", "pred_label"))
-    raw_emb_csv = model_cfg.get("backbone_emb_csv")
-    if raw_emb_csv:
-        raw_emb_csv = str(resolve_repo_path(str(raw_emb_csv), repo_root=anchor))
 
     n_folds = int(train_cfg.get("n_folds", 3))
     seed = int(train_cfg.get("seed", 42))
@@ -266,7 +268,7 @@ def run_supervised_macro_ft_training(
         "Phase 1/3 — CV GroupKFold",
         detail=f"{n_folds} folds, metric={selection_metric}",
     )
-    fold_rows, cv_summary, cv_history, geometry_fold_rows = run_group_kfold_cv(
+    fold_rows, cv_summary, cv_history = run_group_kfold_cv(
         dataset,
         tokenizer,
         model_cfg=model_cfg,
@@ -276,8 +278,6 @@ def run_supervised_macro_ft_training(
         device=device,
         fold_out_root=str(out_dir),
         backbone_hidden=backbone_hidden,
-        label_col=label_col,
-        raw_emb_csv=raw_emb_csv,
         save_fold_checkpoints=not cv_only,
     )
     cv_dir = out_dir / "cv"
@@ -288,9 +288,6 @@ def run_supervised_macro_ft_training(
     if not cv_history.empty:
         cv_history.to_csv(cv_dir / "train_history.csv", index=False)
         logger.info("[macro_ft] Historique CV exporté : %s", cv_dir / "train_history.csv")
-    if geometry_fold_rows:
-        save_geometry_kfold_tables(geometry_fold_rows, metrics_dir)
-        logger.info("[macro_ft] Géométrie CV exportée : %s", metrics_dir)
     log_cv_summary(cv_summary, selection_metric=selection_metric)
 
     if cv_only:
@@ -386,8 +383,6 @@ def run_supervised_macro_ft_training(
 
     exp_cfg = dict(cfg.get("exports") or {})
     if bool(exp_cfg.get("save_btp_embeddings", True)):
-        from macro_transfer.constants import MACRO_NAMES
-
         emb_dir = out_dir / "embeddings"
         emb_dir.mkdir(parents=True, exist_ok=True)
         meta_df = dataset.get_metadata_df()
@@ -398,15 +393,8 @@ def run_supervised_macro_ft_training(
             z_btp = encode_projected_matrix(
                 model, backbone_hidden, batch_size=batch_size, device=device
             )
-            pred_macro, probs, confidence, margin, entropy = predict_from_hidden_matrix(
-                model,
-                backbone_hidden,
-                macros=list(MACRO_NAMES),
-                batch_size=batch_size,
-                device=device,
-            )
         else:
-            from supervised_macro_ft.transfer import encode_texts, predict_corpus
+            from supervised_macro_ft.inference import encode_texts
 
             texts = meta_df[text_col].astype(str).tolist()
             z_btp = encode_texts(
@@ -417,64 +405,76 @@ def run_supervised_macro_ft_training(
                 batch_size=batch_size,
                 device=device,
             )
-            pred_macro, probs, confidence, margin, entropy = predict_corpus(
+
+        export_projected_embeddings(
+            z_btp,
+            meta_df,
+            emb_dir,
+            "btp",
+            label_col=label_col,
+            group_col=group_col,
+            text_col=text_col,
+        )
+        logger.info("[macro_ft] Embeddings BTP exportés : %s", emb_dir)
+
+    test_corpora = resolve_test_corpora(cfg)
+    test_metrics_by_corpus: Dict[str, Any] = {}
+    emb_dir = out_dir / "embeddings"
+    log_phase("Phase 3/3 — Eval classification OOD", detail=", ".join(test_corpora))
+    for corpus_id in test_corpora:
+        try:
+            spec = resolve_test_corpus(corpus_id, anchor=anchor)
+            test_ds = TextRawDataset(
+                str(spec.data_csv),
+                label_col=label_col,
+                pred_ok_col=str(data_cfg.get("pred_ok_col", "pred_ok")),
+                group_col=str(data_cfg.get("group_col", "accident_id")),
+                text_col=data_cfg.get("text_col"),
+            )
+            test_meta = test_ds.get_metadata_df()
+            test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+            from supervised_macro_ft.inference import encode_texts
+
+            texts = test_meta[str(data_cfg.get("text_col", "sentence"))].astype(str).tolist()
+            z_ood = encode_texts(
                 model,
                 tokenizer,
                 texts,
-                macros=list(MACRO_NAMES),
                 max_length=max_length,
                 batch_size=batch_size,
                 device=device,
             )
+            export_projected_embeddings(
+                z_ood,
+                test_meta,
+                emb_dir,
+                str(corpus_id),
+                label_col=label_col,
+                group_col=str(data_cfg.get("group_col", "accident_id")),
+                text_col=str(data_cfg.get("text_col", "sentence")),
+            )
+            corpus_metrics = evaluate_loader(model, test_loader, device)
+            test_metrics_by_corpus[str(corpus_id)] = corpus_metrics
+            log_test_metrics(corpus_metrics, corpus=corpus_id)
+        except Exception as exc:
+            logger.warning("[macro_ft] Eval test corpus %s ignorée : %s", corpus_id, exc)
 
-        btp_preds = pd.DataFrame(
-            {
-                "sentence": meta_df[text_col].astype(str).tolist(),
-                label_col: meta_df[label_col].astype(str).to_numpy(),
-                "pred_macro": pred_macro,
-                "confidence": confidence,
-                "margin": margin,
-                "entropy": entropy,
-            }
+    btp_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    test_metrics_by_corpus["btp"] = evaluate_loader(model, btp_loader, device)
+    cross_domain_summary = pd.DataFrame()
+    if test_metrics_by_corpus:
+        save_classification_outputs(
+            out_dir,
+            method_name=method_name,
+            metrics_by_corpus=test_metrics_by_corpus,
+            cv_summary=cv_summary,
         )
-        if group_col in meta_df.columns:
-            btp_preds[group_col] = meta_df[group_col].to_numpy()
-        for i, m in enumerate(MACRO_NAMES):
-            btp_preds[f"prob_{m}"] = probs[:, i]
-        np.save(emb_dir / "btp_embeddings.npy", z_btp)
-        btp_preds.to_csv(emb_dir / "btp_embeddings_metadata.csv", index=False)
-        logger.info("[macro_ft] Embeddings BTP exportés : %s", emb_dir)
-
-        geom_btp = evaluate_corpus_geometry_with_ipr(
-            z_btp,
-            meta_df,
-            label_col,
-            method=METHOD_LABEL_BTP,
-            raw_emb_csv=raw_emb_csv,
+        cross_domain_summary = summarize_ood_classification(
+            {k: v for k, v in test_metrics_by_corpus.items() if k != "btp"},
+            cv_summary,
+            model_name=method_name,
         )
-        save_geometry_metrics_csv(geom_btp, metrics_dir / "metrics_geometry_btp.csv")
-        logger.info("[macro_ft] Géométrie BTP exportée : %s", metrics_dir / "metrics_geometry_btp.csv")
-
-    # Eval optionnelle corpus test (classification CE)
-    test_metrics: Dict[str, Any] = {}
-    test_corpus = str(cfg.get("test_corpus") or "metallurgie")
-    log_phase("Phase 3/3 — Eval classification test", detail=test_corpus)
-    try:
-        spec = resolve_test_corpus(test_corpus, anchor=anchor)
-        label_col = str(data_cfg.get("label_col", "pred_label"))
-        test_ds = TextRawDataset(
-            str(spec.data_csv),
-            label_col=label_col,
-            pred_ok_col=str(data_cfg.get("pred_ok_col", "pred_ok")),
-            group_col=str(data_cfg.get("group_col", "accident_id")),
-            text_col=data_cfg.get("text_col"),
-        )
-        test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-        test_metrics = evaluate_loader(model, test_loader, device)
-        pd.DataFrame([test_metrics]).to_csv(metrics_dir / "metrics_classification_test.csv", index=False)
-        log_test_metrics(test_metrics, corpus=test_corpus)
-    except Exception as exc:
-        logger.warning("[macro_ft] Eval test corpus ignorée : %s", exc)
+        logger.info("[macro_ft] Synthèse cross-domain : %s", metrics_dir / "cross_domain_generalization.csv")
 
     result = {
         "method_name": method_name,
@@ -482,13 +482,12 @@ def run_supervised_macro_ft_training(
         "checkpoint_dir": str(ckpt_dir),
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
-        "test_metrics": test_metrics,
+        "test_metrics_by_corpus": test_metrics_by_corpus,
+        "cross_domain_summary": cross_domain_summary.to_dict(orient="records"),
         "backbone_cache_used": bool(use_hidden_cache),
         "oversampling": bool(use_oversampling),
         "class_weight": class_weight_mode,
         "standardize_backbone": bool(model.backbone_scaler is not None),
-        "geometry_kfold_summary": str(metrics_dir / "kfold_geometry_summary.csv"),
-        "geometry_btp": str(metrics_dir / "metrics_geometry_btp.csv"),
         "train_history_paths": {
             "cv": str(cv_dir / "train_history.csv") if not cv_history.empty else None,
             "final": str(out_dir / "train_history_final.csv") if final_history else None,

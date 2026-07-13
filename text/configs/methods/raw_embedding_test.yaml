@@ -1,8 +1,0 @@
-method_name: raw_embedding_test
-test_corpus: metallurgie
-text_col: sentence
-label_col: pred_label
-group_col: accident_id
-method_display_name: "Embedding brut (corpus test)"
-use_prompt: false
-seed: 42

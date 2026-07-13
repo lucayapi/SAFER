@@ -1,11 +1,8 @@
-"""Tests sélection checkpoint SCGM (eta², pas F1)."""
+"""Tests sélection checkpoint SCGM (train_loss)."""
 
 from __future__ import annotations
 
-import argparse
-
 import numpy as np
-import pytest
 import torch
 from torch.utils.data import DataLoader, Dataset
 
@@ -57,10 +54,7 @@ def test_evaluate_split_returns_eta2_keys():
         model, _loader(), torch.device("cpu"), tau=0.1, n_class=4, prefix="val"
     )
     assert "val_eta2_macro_balanced" in metrics
-    assert "val_eta2_weighted" in metrics
     assert np.isfinite(metrics["val_eta2_macro_balanced"])
-    assert "val_macro_f1" not in metrics
-    assert "rankme_global" not in metrics
 
 
 def test_evaluate_split_classifier_diagnostics_optional():
@@ -78,9 +72,9 @@ def test_evaluate_split_classifier_diagnostics_optional():
     assert np.isfinite(metrics["val_macro_f1"])
 
 
-def test_checkpoint_selection_prefers_higher_eta2():
-    low = {"val_eta2_macro_balanced": 0.1}
-    high = {"val_eta2_macro_balanced": 0.4}
-    assert checkpoint_selection_score(high, "eta2_macro_balanced") > checkpoint_selection_score(
-        low, "eta2_macro_balanced"
+def test_checkpoint_selection_prefers_lower_train_loss():
+    high_loss = {"train_loss": 2.0}
+    low_loss = {"train_loss": 0.5}
+    assert checkpoint_selection_score(low_loss, "train_loss") > checkpoint_selection_score(
+        high_loss, "train_loss"
     )

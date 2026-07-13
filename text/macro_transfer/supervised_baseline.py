@@ -19,10 +19,7 @@ from sklearn.preprocessing import StandardScaler
 from macro_transfer.bertopic_phase import run_bertopic_phase
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
 from macro_transfer.encode import load_target_metadata
-from macro_transfer.frozen_source_prototypes import (
-    _build_gating_from_predictions,
-    evaluate_macro_predictions,
-)
+from safer_core.classification_metrics import build_gating_from_predictions, evaluate_macro_predictions
 from safer_core.data_loading import load_metadata_with_embeddings
 from macro_transfer.bertopic_config import enrich_run_config_bertopic
 from safer_core.io import load_yaml
@@ -387,6 +384,88 @@ def aggregate_cv_metrics(
             rec[f"std_{key}"] = float(vals.std(ddof=1)) if len(vals) > 1 else 0.0
         records.append(rec)
     return pd.DataFrame(records)
+
+
+def load_ood_balanced_accuracy_by_corpus(
+    corpus_ids: Sequence[str],
+    model_keys: Sequence[str],
+    *,
+    anchor: Optional[Path] = None,
+) -> Dict[str, Dict[str, float]]:
+    """Charge ``balanced_accuracy`` OOD par modèle depuis les sorties étape 4."""
+    root = anchor or TEXT_ROOT
+    out: Dict[str, Dict[str, float]] = {}
+    for corpus_id in corpus_ids:
+        metrics_path = (
+            supervised_baseline_output_dir(corpus_id, anchor=root)
+            / "transfer"
+            / "all_models_test_metrics.csv"
+        )
+        if not metrics_path.is_file():
+            raise FileNotFoundError(
+                f"Métriques OOD absentes pour {corpus_id!r} : {metrics_path}"
+            )
+        summary = pd.read_csv(metrics_path)
+        if "model" not in summary.columns or "balanced_accuracy" not in summary.columns:
+            raise KeyError(
+                f"Colonnes attendues model, balanced_accuracy dans {metrics_path}"
+            )
+        by_model: Dict[str, float] = {}
+        for model_key in model_keys:
+            row = summary.loc[summary["model"].astype(str) == str(model_key)]
+            if row.empty:
+                raise KeyError(
+                    f"Modèle {model_key!r} absent de {metrics_path} (corpus {corpus_id!r})"
+                )
+            by_model[str(model_key)] = float(row.iloc[0]["balanced_accuracy"])
+        out[str(corpus_id)] = by_model
+    return out
+
+
+def summarize_cross_domain_generalization(
+    cv_summary: pd.DataFrame,
+    ood_ba_by_corpus: Mapping[str, Mapping[str, float]],
+    *,
+    model_keys: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Tableau article : CV BA (μ ± σ BTP) + BA_OOD_avg + BA_OOD_worst."""
+    if cv_summary.empty:
+        return pd.DataFrame()
+    corpus_ids = list(ood_ba_by_corpus.keys())
+    models = list(model_keys) if model_keys is not None else list(cv_summary["model"].astype(str))
+    records: List[Dict[str, Any]] = []
+    for model in models:
+        cv_row = cv_summary.loc[cv_summary["model"].astype(str) == str(model)]
+        if cv_row.empty:
+            continue
+        cv_row = cv_row.iloc[0]
+        ba_per_domain = [
+            float(ood_ba_by_corpus[c][str(model)])
+            for c in corpus_ids
+            if str(model) in ood_ba_by_corpus[c]
+        ]
+        if not ba_per_domain:
+            continue
+        cv_mean = float(cv_row["mean_balanced_accuracy"])
+        cv_std = float(cv_row["std_balanced_accuracy"])
+        records.append(
+            {
+                "model": str(model),
+                "cv_ba_mean": cv_mean,
+                "cv_ba_std": cv_std,
+                "cv_ba": f"{cv_mean:.2f} ± {cv_std:.2f}",
+                "ba_ood_avg": float(np.mean(ba_per_domain)),
+                "ba_ood_worst": float(np.min(ba_per_domain)),
+            }
+        )
+    if not records:
+        return pd.DataFrame()
+    df = pd.DataFrame(records)
+    if model_keys:
+        order = {str(m): i for i, m in enumerate(model_keys)}
+        df["_order"] = df["model"].map(order)
+        df = df.sort_values("_order").drop(columns="_order")
+    return df.reset_index(drop=True)
 
 
 def select_best_model(
@@ -852,7 +931,7 @@ def run_supervised_bertopic_phase(
         return {}
     bertopic_cfg_dict = dict(bertopic_cfg)
     judge_cfg = dict(topic_judge_cfg or bertopic_cfg_dict.pop("topic_judge", None) or {})
-    gating = _build_gating_from_predictions(preds, macros)
+    gating = build_gating_from_predictions(preds, macros)
     meta_t = test_meta.copy()
     meta_t["m_hat"] = preds["pred_macro"].astype(str).to_numpy()
     return run_bertopic_phase(

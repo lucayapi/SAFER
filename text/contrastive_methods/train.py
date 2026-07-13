@@ -44,16 +44,12 @@ def run_contrastive_method(method_name: str, argv: Optional[List[str]] = None) -
 
     result = dispatch[method_name](cfg)
     print(f"[{method_name}] Terminé — embeddings : {result.embeddings_path}")
-    if result.val_geometry:
-        print(
-            f"[{method_name}] Meilleur val {cfg.selection_metric}: "
-            f"{result.best_eta2_macro_balanced_perc:.2f}"
-        )
+    print(f"[{method_name}] Meilleur train_loss : {result.best_train_loss:.4f}")
     ckpt = result.output_root / "checkpoints" / "best_model"
-    if ckpt.exists() and cfg.test_data_csv.is_file():
+    if ckpt.exists():
         paths = evaluate_btp_and_test(cfg, ckpt, result.output_root)
-        if paths.get("test"):
-            print(f"[{method_name}] Métriques test : {paths['test']}", flush=True)
+        if paths.get("cross_domain"):
+            print(f"[{method_name}] Cross-domain : {paths['cross_domain']}", flush=True)
     return 0
 
 

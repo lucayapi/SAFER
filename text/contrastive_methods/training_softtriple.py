@@ -14,23 +14,20 @@ from contrastive_methods.center_diagnostics import export_softtriple_center_arti
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.encoder_model import build_contrastive_encoder
-from contrastive_methods.eval_geometry import selection_score
 from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.hf_training_common import (
     build_eval_loader,
     build_optimizer,
     build_train_loader,
     encode_texts,
-    evaluate_val_geometry_from_loader,
     load_contrastive_checkpoint,
     run_training_epoch,
     save_contrastive_checkpoint,
 )
 from contrastive_methods.losses.softtriple import SoftTripleLoss
-from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.hf_training_common import get_device, resolve_autocast_dtype
-from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row
+from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row, print_epoch_line
 from scgm_text.dataset_text_embeddings import ID2LABEL, LABEL2ID
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
@@ -38,37 +35,13 @@ from safer_core.paths import layout_method_output
 from contrastive_methods.hf_training_common import dataloader_kwargs as _dataloader_kwargs
 
 
-def _print_softtriple_epoch(
-    epoch: int,
-    total_epochs: int,
-    train_loss: float,
-    *,
-    val_loss: Optional[float] = None,
-    val_geometry: Optional[Dict[str, Any]] = None,
-    selection_metric: str = "eta2_macro_balanced_perc",
-) -> None:
-    parts = [
-        f"[SoftTriple epoch={epoch}/{total_epochs}]",
-        f"train_loss={train_loss:.4f}",
-    ]
-    if val_loss is not None:
-        parts.append(f"val_loss={val_loss:.4f}")
-    if val_geometry is not None:
-        key = selection_metric
-        if key in val_geometry:
-            parts.append(f"{key}={float(val_geometry[key]):.4f}")
-    print(" | ".join(parts), flush=True)
-
-
 @torch.no_grad()
-def _run_val_epoch_with_geometry(
+def _run_val_epoch(
     encoder,
     loss_module: SoftTripleLoss,
     loader: DataLoader,
-    val_df: pd.DataFrame,
-    cfg: ContrastiveConfig,
     device: torch.device,
-) -> tuple[float, Dict[str, Any]]:
+) -> float:
     encoder.eval()
     loss_module.eval()
     total = 0.0
@@ -81,9 +54,7 @@ def _run_val_epoch_with_geometry(
         loss, _ = loss_module(emb, labels)
         total += float(loss.detach().float().cpu().item())
         n_batches += 1
-    val_loss = total / max(1, n_batches)
-    geom = evaluate_val_geometry_from_loader(encoder, loader, val_df, cfg, device)
-    return val_loss, geom
+    return total / max(1, n_batches)
 
 
 def _softtriple_hyperparams_dict(cfg: ContrastiveConfig) -> Dict[str, Any]:
@@ -194,8 +165,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         else None
     )
     log_rows: List[dict] = []
-    best_score = float("-inf")
-    best_geometry: dict = {}
+    best_train_loss = float("inf")
     best_dir = checkpoints / "best_model"
 
     t_train = time.perf_counter()
@@ -212,35 +182,13 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             autocast_dtype=autocast_dtype,
             scaler=scaler,
         )
-        val_loss = float("nan")
+        val_loss = None
         if val_loader is not None:
-            val_loss, geom = _run_val_epoch_with_geometry(
-                encoder, loss_module, val_loader, val_df, cfg, dev
-            )
-            score = selection_score(geom, cfg.selection_metric)
-            _print_softtriple_epoch(
-                epoch_no,
-                cfg.epochs,
-                train_loss,
-                val_loss=val_loss,
-                val_geometry=geom,
-                selection_metric=cfg.selection_metric,
-            )
-            log_rows.append(
-                build_train_log_row(
-                    epoch_no,
-                    train_loss,
-                    val_geometry=geom,
-                    val_loss=val_loss,
-                )
-            )
-            if score > best_score:
-                best_score = score
-                best_geometry = dict(geom)
-                _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
-        else:
-            _print_softtriple_epoch(epoch_no, cfg.epochs, train_loss)
-            log_rows.append(build_train_log_row(epoch_no, train_loss))
+            val_loss = _run_val_epoch(encoder, loss_module, val_loader, dev)
+        print_epoch_line("SoftTriple", epoch_no, cfg.epochs, train_loss, val_loss=val_loss)
+        log_rows.append(build_train_log_row(epoch_no, train_loss, val_loss=val_loss))
+        if train_loss < best_train_loss:
+            best_train_loss = train_loss
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
 
     train_wall_time_sec = time.perf_counter() - t_train
@@ -272,14 +220,13 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     frame = embeddings_to_dataframe(dataset.metadata_df["doc_id"].to_numpy(), embeddings)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(emb_path, index=False)
-    compute_and_save_geometry_metrics(emb_path, cfg, metrics_dir)
     save_config_resolved(
         {
             **cfg.extra.get("raw", {}),
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
-            "best_eta2_macro_balanced_perc": best_score,
+            "best_train_loss": best_train_loss,
             "embeddings": str(emb_path),
             "center_regularization_type": cfg.center_regularization_type,
         },
@@ -288,8 +235,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     return TrainingResult(
         embeddings_path=emb_path,
         output_root=root,
-        val_geometry=best_geometry,
-        best_eta2_macro_balanced_perc=best_score,
+        best_train_loss=best_train_loss,
         train_wall_time_sec=train_wall_time_sec,
         train_log_path=metrics_dir / "train_log.csv",
     )

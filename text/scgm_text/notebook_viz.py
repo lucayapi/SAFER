@@ -1234,6 +1234,63 @@ def plot_kfold_summary_errorbars(
     return save_fig("kfold_summary_errorbars.png")
 
 
+def load_projected_embeddings_pair(
+    npy_path: PathLike,
+    meta_path: PathLike,
+) -> Optional[tuple[np.ndarray, pd.DataFrame]]:
+    """Charge ``projected_*.npy`` + CSV métadonnées (représentations avant classif. LR)."""
+    npy_p = Path(npy_path)
+    meta_p = Path(meta_path)
+    if not npy_p.is_file() or not meta_p.is_file():
+        return None
+    projected = np.load(npy_p)
+    meta = pd.read_csv(meta_p)
+    if len(meta) != projected.shape[0]:
+        print(f"Attention : meta ({len(meta)}) vs projected ({projected.shape[0]})")
+    return projected, meta
+
+
+def plot_projected_embeddings_pca_tsne(
+    npy_path: PathLike,
+    meta_path: PathLike,
+    label_col: str,
+    *,
+    corpus_name: str,
+    save_fig: Callable[[str], Path],
+    figures_dir: PathLike,
+    max_points: int = 8000,
+    seed: int = 42,
+    png_name: str = "projection_pca_tsne.png",
+    show_macro_centroids: bool = False,
+    show_z_centroids: bool = False,
+    z_col: str = "z_hat",
+    themes_z: Optional[pd.DataFrame] = None,
+) -> Optional[List[Path]]:
+    """PCA + t-SNE 2D sur embeddings projetés (avant régression logistique sklearn)."""
+    pair = load_projected_embeddings_pair(npy_path, meta_path)
+    if pair is None:
+        return None
+    projected, meta = pair
+    if label_col not in meta.columns:
+        print(f"Colonne {label_col} absente de {meta_path}")
+        return None
+    return plot_corpus_projections(
+        projected,
+        meta,
+        label_col,
+        corpus_name=corpus_name,
+        save_fig=save_fig,
+        figures_dir=figures_dir,
+        max_points=max_points,
+        seed=seed,
+        png_name=png_name,
+        show_macro_centroids=show_macro_centroids,
+        show_z_centroids=show_z_centroids,
+        z_col=z_col,
+        themes_z=themes_z,
+    )
+
+
 def plot_corpus_projections(
     projected: np.ndarray,
     meta: pd.DataFrame,

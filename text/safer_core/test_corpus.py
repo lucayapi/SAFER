@@ -197,6 +197,43 @@ def method_btp_results_dir(method: str, *, anchor: Optional[Path] = None) -> Pat
     return (root / "output" / method).resolve()
 
 
+def resolve_projected_embeddings_paths(
+    method: str,
+    stem: str,
+    *,
+    anchor: Optional[Path] = None,
+) -> Optional[tuple[Path, Path]]:
+    """
+    Résout ``projected_<stem>.npy`` + métadonnées sous ``output/<method>/embeddings/``.
+
+    Repli legacy SCGM (``projected_embeddings.npy``) et ancien layout
+    ``output_test/<corpus>/<method>/embeddings/``.
+    """
+    emb_dir = method_btp_results_dir(method, anchor=anchor) / "embeddings"
+    pairs: List[tuple[str, str]] = [
+        (f"projected_{stem}.npy", f"projected_{stem}_metadata.csv"),
+    ]
+    if stem == "btp":
+        pairs.append(("projected_embeddings.npy", "metadata_with_predictions.csv"))
+    for npy_name, meta_name in pairs:
+        npy = emb_dir / npy_name
+        meta = emb_dir / meta_name
+        if npy.is_file() and meta.is_file():
+            return npy.resolve(), meta.resolve()
+
+    if stem != "btp":
+        legacy_emb = method_test_results_dir(method, stem, anchor=anchor) / "embeddings"
+        for npy_name, meta_name in (
+            (f"projected_{stem}.npy", f"projected_{stem}_metadata.csv"),
+            ("projected_embeddings_test.npy", "test_metadata.csv"),
+        ):
+            npy = legacy_emb / npy_name
+            meta = legacy_emb / meta_name
+            if npy.is_file() and meta.is_file():
+                return npy.resolve(), meta.resolve()
+    return None
+
+
 def resolve_contrastive_embeddings_csv(
     method: str,
     corpus: Literal["btp", "test"],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
 
 from safer_core.paths import TEXT_ROOT
 from safer_core.test_corpus import (
@@ -12,6 +13,7 @@ from safer_core.test_corpus import (
     macro_transfer_output_dir,
     method_test_results_dir,
     raw_embedding_test_dir,
+    resolve_projected_embeddings_paths,
     resolve_test_corpus,
 )
 
@@ -69,3 +71,18 @@ def test_output_test_layout():
     assert m.parent.name == "metallurgie"
     raw = raw_embedding_test_dir("metallurgie", anchor=TEXT_ROOT)
     assert raw.name == "raw_embedding"
+
+
+def test_resolve_projected_embeddings_paths(tmp_path):
+    emb_dir = tmp_path / "output" / "supcon" / "embeddings"
+    emb_dir.mkdir(parents=True)
+    npy = emb_dir / "projected_btp.npy"
+    meta = emb_dir / "projected_btp_metadata.csv"
+    npy.write_bytes(b"")
+    meta.write_text("pred_label\nA0\n", encoding="utf-8")
+
+    with patch("safer_core.test_corpus.method_btp_results_dir", return_value=tmp_path / "output" / "supcon"):
+        pair = resolve_projected_embeddings_paths("supcon", "btp", anchor=tmp_path)
+    assert pair is not None
+    assert pair[0].name == "projected_btp.npy"
+    assert pair[1].name == "projected_btp_metadata.csv"

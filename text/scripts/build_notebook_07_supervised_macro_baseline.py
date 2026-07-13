@@ -37,24 +37,68 @@ MODEL_SECTIONS = [
     (
         "logistic_regression",
         "Logistic Regression",
-        "StandardScaler + LogisticRegression — `C=1.0`, `class_weight='balanced'`, `max_iter=2000`, `solver='lbfgs'`.",
+        "StandardScaler + régression logistique multinomiale.",
+        """\
+MODEL_REGISTRY["logistic_regression"] = {
+    "use_scaler": True,
+    "params": {
+        "C": 1.0,
+        "class_weight": "balanced",
+        "max_iter": 2000,
+        "solver": "lbfgs",
+    },
+}""",
     ),
     (
         "random_forest",
         "Random Forest",
-        "Pas de scaling — `n_estimators=300`, `max_depth=None`, `class_weight='balanced'`.",
+        "Forêt aléatoire sans scaling des embeddings.",
+        """\
+MODEL_REGISTRY["random_forest"] = {
+    "use_scaler": False,
+    "params": {
+        "n_estimators": 300,
+        "max_depth": None,
+        "class_weight": "balanced",
+    },
+}""",
     ),
     (
         "xgboost",
         "XGBoost",
-        "Pas de scaling — `n_estimators=300`, `max_depth=6`, `learning_rate=0.1`, `objective='multi:softprob'`. "
-        "Si import échoue : `pip install xgboost`.",
+        "Gradient boosting ; si import échoue : `pip install xgboost`.",
+        """\
+MODEL_REGISTRY["xgboost"] = {
+    "use_scaler": False,
+    "params": {
+        "n_estimators": 300,
+        "max_depth": 6,
+        "learning_rate": 0.1,
+        "objective": "multi:softprob",
+        "eval_metric": "mlogloss",
+    },
+}""",
     ),
     (
         "mlp",
         "MLP",
-        "StandardScaler + MLPClassifier — `hidden_layer_sizes=(256,128)`, `max_iter=500`, `early_stopping=True`.",
+        "StandardScaler + MLPClassifier avec early stopping.",
+        """\
+MODEL_REGISTRY["mlp"] = {
+    "use_scaler": True,
+    "params": {
+        "hidden_layer_sizes": (256, 128),
+        "max_iter": 500,
+        "early_stopping": True,
+        "class_weight": "balanced",
+    },
+}""",
     ),
+]
+
+TEST_CORPUS_SPECS = [
+    ("metallurgie", "Métallurgie"),
+    ("caou", "Caoutchouc / chimie / plastiques"),
 ]
 
 
@@ -64,24 +108,25 @@ def main() -> None:
             r"""
 # 07 — Baseline supervisée (embedding brut Qwen)
 
-Pipeline exécutable sur **embeddings Qwen bruts** (BTP) :
-1. **GroupKFold** (5 folds, `accident_id`) — LR, Random Forest, XGBoost, MLP
+Pipeline sur **embeddings Qwen bruts** (`dataset/data_<id>.csv` + `embeddings/Qwen3-Embedding-0.6B_<id>.csv`) :
+
+1. **GroupKFold** (5 folds, `accident_id`) sur **BTP** — LR, Random Forest, XGBoost, MLP
 2. Synthèse CV (μ ± σ) et sélection du meilleur modèle (`macro_f1`)
-3. Réentraînement 100 % BTP → évaluation **métallurgie** (tous les modèles + meilleur pour BERTopic)
-4. BERTopic intra-macro sur `pred_macro` (config alignée FSP) — **DataMapPlot en cellule séparée** (fin du notebook)
+3. Réentraînement 100 % BTP → évaluation sur **métallurgie** et **caou**
 
-**`RESTIMATE_ML=True`** (défaut) : réentraîne CV + classifieurs + évaluation test.  
-**`RESTIMATE_BERTOPIC=True`** (défaut) : relance BERTopic intra-macro (+ judge LLM si activé).  
-Mettre l’un ou l’autre à **`False`** pour recharger les artefacts déjà produits sous `OUT_DIR`.
+**Configuration** : paramètres généraux et chemins dans la première cellule ; hyperparamètres de chaque modèle dans sa section CV.
 
-**Prérequis** : embeddings BTP et test exportés (`export_raw_geometry.sh`, `export_corpus_embeddings.sh`).
+**`RESTIMATE_ML=True`** : réentraîne CV + classifieurs + évaluation test.  
+**`False`** : recharge les artefacts sous `output_test/<corpus>/supervised_baseline/`.
+
+**Prérequis** : `export_corpus_embeddings.sh` pour BTP, métallurgie et caou.
 """
         ),
+        md("### Paramètres généraux"),
         py(
             NOTEBOOK_PATH_SETUP
             + """
 from pathlib import Path
-import json
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -89,109 +134,129 @@ import pandas as pd
 import seaborn as sns
 
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.notebook_viz import (
-    build_topics_display_dataframe,
-    plot_fsp_confusion_heatmap,
-    show_bertopic_datamaps_inline,
-)
-from macro_transfer.report_tables import load_macro_topic_stats
+from macro_transfer.notebook_viz import plot_fsp_confusion_heatmap
 from macro_transfer.supervised_baseline import (
-    DEFAULT_MODEL_REGISTRY,
     aggregate_cv_metrics,
     evaluate_all_models_on_test,
     export_all_models_test_results,
     export_cv_results,
-    load_supervised_config,
     load_supervised_datasets,
     load_cached_fold_rows_for_model,
     load_cached_cv_results,
     load_cached_all_models_test_results,
     load_cached_test_results,
+    load_ood_balanced_accuracy_by_corpus,
     load_supervised_run_manifest,
-    merge_model_registry,
     require_supervised_cache,
-    run_all_models_group_kfold_cv,
     run_model_group_kfold_cv,
-    run_supervised_bertopic_phase,
     save_supervised_run_manifest,
     select_best_model,
+    summarize_cross_domain_generalization,
     supervised_baseline_output_dir,
     supervised_ml_artifacts_exist,
 )
 from safer_core.test_corpus import resolve_test_corpus
 
-# --- Parameters (modifier ici ou via papermill) ---
-TEST_CORPUS = "metallurgie"
+# --- Général ---
+METHOD_NAME = "supervised_macro_baseline"
 N_FOLDS = 5
 SEED = 42
 SELECTION_METRIC = "macro_f1"
-RESTIMATE_ML = True        # True = CV + réentraînement + test | False = cache ML
-RESTIMATE_BERTOPIC = True  # True = relancer BERTopic (+ judge) | False = cache topics
-CONFIG_PATH = TEXT_ROOT / "configs" / "supervised_macro_baseline.yaml"
-_BASE_CFG = load_supervised_config(CONFIG_PATH)
-BERTOPIC_CFG = dict(_BASE_CFG.get("bertopic") or {})
-TOPICS_EXPORT_CFG = dict(_BASE_CFG.get("topics_export") or {})
-TOPIC_JUDGE_CFG = dict(_BASE_CFG.get("topic_judge") or {})
+RESTIMATE_ML = True  # True = CV + réentraînement + test | False = cache ML
 
-MODEL_REGISTRY = merge_model_registry({
-    "logistic_regression": DEFAULT_MODEL_REGISTRY["logistic_regression"],
-    "random_forest": DEFAULT_MODEL_REGISTRY["random_forest"],
-    "xgboost": DEFAULT_MODEL_REGISTRY["xgboost"],
-    "mlp": DEFAULT_MODEL_REGISTRY["mlp"],
-})
-MODEL_KEYS = list(MODEL_REGISTRY.keys())
+TEST_CORPORA = ["metallurgie", "caou"]  # ids registre test_corpora.yaml
+CV_CORPUS = "metallurgie"  # dossier CV partagée (entraînement BTP)
 
-_spec = resolve_test_corpus(TEST_CORPUS, anchor=TEXT_ROOT)
-OUT_DIR = supervised_baseline_output_dir(_spec.id, anchor=TEXT_ROOT)
-FIG_DIR = OUT_DIR / "figures"
-CV_DIR = OUT_DIR / "cv"
-TRANSFER_DIR = OUT_DIR / "transfer"
-FIG_DIR.mkdir(parents=True, exist_ok=True)
+# --- Chemins source (BTP) ---
+SOURCE_CFG = {
+    "dataset_path": "dataset/data_btp.csv",
+    "emb_csv": "embeddings/Qwen3-Embedding-0.6B_btp.csv",
+    "text_col": "sentence",
+    "label_col": "pred_label",
+    "group_col": "accident_id",
+    "pred_ok_col": "pred_ok",
+}
 
-print(f"Corpus test : {_spec.display_name} ({_spec.id})")
-print("Sorties :", OUT_DIR)
+# --- Cible par défaut (surchargée via registre pour chaque corpus test) ---
+TARGET_CFG = {
+    "dataset_path": "dataset/data_metallurgie.csv",
+    "emb_csv": "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv",
+    "text_col": "sentence",
+    "label_col": "pred_label",
+    "group_col": "accident_id",
+}
+
+MODEL_ORDER = ["logistic_regression", "random_forest", "xgboost", "mlp"]
+MODEL_REGISTRY: dict = {}
+
+
+def build_cfg(corpus_id: str) -> dict:
+    # Assemble la config runtime pour load_supervised_datasets.
+    return {
+        "method_name": METHOD_NAME,
+        "corpus": corpus_id,
+        "n_folds": N_FOLDS,
+        "seed": SEED,
+        "selection_metric": SELECTION_METRIC,
+        "source": dict(SOURCE_CFG),
+        "target": dict(TARGET_CFG),
+    }
+
+
+_cv_spec = resolve_test_corpus(CV_CORPUS, anchor=TEXT_ROOT)
+CV_OUT_DIR = supervised_baseline_output_dir(CV_CORPUS, anchor=TEXT_ROOT)
+CV_FIG_DIR = CV_OUT_DIR / "figures"
+CV_DIR = CV_OUT_DIR / "cv"
+CV_FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+print("Méthode :", METHOD_NAME)
+print("Corpus CV / artefacts partagés :", _cv_spec.display_name, f"({CV_CORPUS})")
+print("Corpus test :", TEST_CORPORA)
+print("CV sorties :", CV_OUT_DIR)
 print("RESTIMATE_ML :", RESTIMATE_ML, ("(réentraînement)" if RESTIMATE_ML else "(cache disque)"))
-print("RESTIMATE_BERTOPIC :", RESTIMATE_BERTOPIC, ("(réentraînement)" if RESTIMATE_BERTOPIC else "(cache disque)"))
 if not RESTIMATE_ML:
-    print("Cache ML OK :", supervised_ml_artifacts_exist(OUT_DIR))
-print("Modèles :", MODEL_KEYS)
-print("BERTopic (HDBSCAN) :", BERTOPIC_CFG.get("hdbscan", {}))
-print("BERTopic (UMAP) :", BERTOPIC_CFG.get("umap", {}))
-print("BERTopic min_topic_size :", BERTOPIC_CFG.get("min_topic_size"))
+    print("Cache ML OK (CV) :", supervised_ml_artifacts_exist(CV_OUT_DIR))
 sns.set_theme(style="whitegrid")
 """
         ),
-        md("## Étape 1 — Chargement BTP + test (Qwen brut)"),
+        md("## Étape 1 — Chargement BTP + corpus test (Qwen brut)"),
         py(
             r"""
-cfg = load_supervised_config(CONFIG_PATH)
-cfg = dict(cfg)
-cfg["corpus"] = TEST_CORPUS
+cfg = build_cfg(CV_CORPUS)
 DATA = load_supervised_datasets(cfg, anchor=TEXT_ROOT)
 
 X_btp = DATA["X_btp"]
 y_btp = DATA["y_btp"]
 groups_btp = DATA["groups_btp"]
-X_test = DATA["X_test"]
-test_meta = DATA["test_meta"]
 MACROS = DATA["macros"]
 
 print("BTP :", X_btp.shape, "| macros :", pd.Series(y_btp).value_counts().to_dict())
-print("Test :", X_test.shape)
-display(test_meta[[DATA["target_text_col"], DATA["target_label_col"]]].head())
+
+for corpus_id in TEST_CORPORA:
+    spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
+    data_c = load_supervised_datasets(build_cfg(corpus_id), anchor=TEXT_ROOT)
+    print(
+        f"\n{spec.display_name} ({corpus_id})",
+        f"\n  data : {spec.data_csv}",
+        f"\n  emb  : {spec.emb_csv}",
+        f"\n  test : {data_c['X_test'].shape}",
+        sep="",
+    )
 """
         ),
-        md("## Étape 2 — CV GroupKFold par modèle"),
+        md("## Étape 2 — CV GroupKFold par modèle (BTP)"),
     ]
 
-    for model_key, title, desc in MODEL_SECTIONS:
+    for model_key, title, desc, model_cfg_block in MODEL_SECTIONS:
         cells.extend(
             [
                 md(f"### {title}\n\n{desc}"),
                 py(
                     f"""
-params = MODEL_REGISTRY[{model_key!r}].get("params", {{}})
-use_scaler = MODEL_REGISTRY[{model_key!r}].get("use_scaler")
+# --- Hyperparamètres {title} ---
+{model_cfg_block}
+params = MODEL_REGISTRY[{model_key!r}]["params"]
+use_scaler = MODEL_REGISTRY[{model_key!r}]["use_scaler"]
 print("Hyperparamètres :", params)
 print("Scaler :", use_scaler)
 
@@ -208,8 +273,8 @@ if RESTIMATE_ML:
     use_scaler=use_scaler,
 )
 else:
-    require_supervised_cache(OUT_DIR, include_bertopic=False)
-    fold_rows_{model_key} = load_cached_fold_rows_for_model(OUT_DIR, {model_key!r})
+    require_supervised_cache(CV_OUT_DIR, include_bertopic=False)
+    fold_rows_{model_key} = load_cached_fold_rows_for_model(CV_OUT_DIR, {model_key!r})
     print("Chargé depuis cache :", CV_DIR / "cv_per_fold.csv")
 display(pd.DataFrame(fold_rows_{model_key}))
 """
@@ -222,6 +287,9 @@ display(pd.DataFrame(fold_rows_{model_key}))
             md("## Étape 3 — Synthèse CV (μ ± σ)"),
             py(
                 r"""
+MODEL_KEYS = [k for k in MODEL_ORDER if k in MODEL_REGISTRY]
+print("Modèles enregistrés :", MODEL_KEYS)
+
 if RESTIMATE_ML:
     all_fold_rows = []
     for key in MODEL_KEYS:
@@ -229,10 +297,10 @@ if RESTIMATE_ML:
 
     cv_per_fold = pd.DataFrame(all_fold_rows)
     cv_summary = aggregate_cv_metrics(all_fold_rows)
-    export_cv_results(OUT_DIR, all_fold_rows, cv_summary)
+    export_cv_results(CV_OUT_DIR, all_fold_rows, cv_summary)
 else:
-    require_supervised_cache(OUT_DIR, include_bertopic=False)
-    all_fold_rows, cv_summary = load_cached_cv_results(OUT_DIR)
+    require_supervised_cache(CV_OUT_DIR, include_bertopic=False)
+    all_fold_rows, cv_summary = load_cached_cv_results(CV_OUT_DIR)
     cv_per_fold = pd.DataFrame(all_fold_rows)
     print("CV rechargée depuis :", CV_DIR)
 
@@ -241,7 +309,7 @@ for m in ("accuracy", "macro_f1", "balanced_accuracy"):
     display_cols.extend([f"mean_{m}", f"std_{m}"])
 display(cv_summary[display_cols])
 
-manifest = load_supervised_run_manifest(OUT_DIR) if not RESTIMATE_ML else {}
+manifest = load_supervised_run_manifest(CV_OUT_DIR) if not RESTIMATE_ML else {}
 best_model = (
     str(manifest.get("best_model"))
     if not RESTIMATE_ML and manifest.get("best_model")
@@ -249,7 +317,6 @@ best_model = (
 )
 print("Meilleur modèle (", SELECTION_METRIC, ") :", best_model)
 
-# Barres comparatives (recalcul ou depuis cache)
 plot_df = cv_summary.melt(
     id_vars=["model"],
     value_vars=[f"mean_{m}" for m in ("accuracy", "macro_f1", "balanced_accuracy")],
@@ -263,20 +330,36 @@ ax.set_title(f"CV GroupKFold ({N_FOLDS} folds) — μ par métrique")
 ax.set_ylabel("score")
 plt.xticks(rotation=20, ha="right")
 plt.tight_layout()
-fig.savefig(FIG_DIR / "cv_comparison.png", dpi=150)
+fig.savefig(CV_FIG_DIR / "cv_comparison.png", dpi=150)
 plt.show()
 """
             ),
-            md("## Étape 4 — Tous les modèles sur métallurgie"),
-            py(
-                r"""
-from macro_transfer.supervised_baseline import (
-    evaluate_all_models_on_test,
-    export_all_models_test_results,
-    load_cached_all_models_test_results,
-    load_cached_test_results,
-    save_supervised_run_manifest,
-)
+        ]
+    )
+
+    for corpus_id, display_name in TEST_CORPUS_SPECS:
+        cells.extend(
+            [
+                md(f"## Étape 4 — Tous les modèles sur {display_name}"),
+                py(
+                    f"""
+corpus_id = {corpus_id!r}
+_spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
+OUT_DIR = supervised_baseline_output_dir(corpus_id, anchor=TEXT_ROOT)
+FIG_DIR = OUT_DIR / "figures"
+TRANSFER_DIR = OUT_DIR / "transfer"
+FIG_DIR.mkdir(parents=True, exist_ok=True)
+
+print(f"Corpus test : {{_spec.display_name}} ({{corpus_id}})")
+print("Sorties :", OUT_DIR)
+
+cfg_c = build_cfg(corpus_id)
+DATA_C = load_supervised_datasets(cfg_c, anchor=TEXT_ROOT)
+X_test = DATA_C["X_test"]
+test_meta = DATA_C["test_meta"]
+
+print("Test :", X_test.shape)
+display(test_meta[[DATA_C["target_text_col"], DATA_C["target_label_col"]]].head())
 
 if RESTIMATE_ML:
     preds_by_model, metrics_by_model = evaluate_all_models_on_test(
@@ -288,10 +371,10 @@ if RESTIMATE_ML:
         test_meta,
         macros=MACROS,
         seed=SEED,
-        text_col=DATA["target_text_col"],
-        group_col=DATA["target_group_col"],
-        label_col=DATA["target_label_col"],
-        method_prefix="supervised_macro_baseline",
+        text_col=DATA_C["target_text_col"],
+        group_col=DATA_C["target_group_col"],
+        label_col=DATA_C["target_label_col"],
+        method_prefix=METHOD_NAME,
     )
     all_models_summary = export_all_models_test_results(
         OUT_DIR,
@@ -306,10 +389,10 @@ if RESTIMATE_ML:
         selection_metric=SELECTION_METRIC,
         seed=SEED,
         n_folds=N_FOLDS,
-        test_corpus=TEST_CORPUS,
+        test_corpus=corpus_id,
         model_keys=MODEL_KEYS,
     )
-    print("Résultats ML sauvegardés sous :", OUT_DIR / "transfer" / "models")
+    print("Résultats ML sauvegardés sous :", TRANSFER_DIR / "models")
 else:
     require_supervised_cache(OUT_DIR, include_bertopic=False)
     try:
@@ -319,23 +402,22 @@ else:
     except FileNotFoundError:
         preds, metrics = load_cached_test_results(OUT_DIR, macros=MACROS)
         manifest = load_supervised_run_manifest(OUT_DIR)
-        best_model = str(manifest.get("best_model", best_model))
-        preds_by_model = {best_model: preds}
-        metrics_by_model = {best_model: metrics}
+        _best = str(manifest.get("best_model", best_model))
+        preds_by_model = {{_best: preds}}
+        metrics_by_model = {{_best: metrics}}
         all_models_summary = pd.DataFrame(
-            [{k: v for k, v in metrics.items() if k in ("accuracy", "macro_f1", "balanced_accuracy")}]
+            [{{k: v for k, v in metrics.items() if k in ("accuracy", "macro_f1", "balanced_accuracy")}}]
         )
-        all_models_summary.insert(0, "model", best_model)
+        all_models_summary.insert(0, "model", _best)
     manifest = load_supervised_run_manifest(OUT_DIR)
-    best_model = str(manifest.get("best_model", best_model))
-    print("Prédictions rechargées (par modèle) :", OUT_DIR / "transfer" / "models")
+    best_model_corpus = str(manifest.get("best_model", best_model))
+    print("Prédictions rechargées (par modèle) :", TRANSFER_DIR / "models")
 
 print("Meilleur modèle (CV,", SELECTION_METRIC, ") :", best_model)
 display(all_models_summary)
 
-# Matrices de confusion — un panneau par modèle
 for model_key in MODEL_KEYS:
-    m = metrics_by_model.get(model_key, {})
+    m = metrics_by_model.get(model_key, {{}})
     if "_confusion_matrix" not in m:
         continue
     cm = np.asarray(m["_confusion_matrix"])
@@ -343,10 +425,10 @@ for model_key in MODEL_KEYS:
     plot_fsp_confusion_heatmap(
         cm_df,
         fig_dir=FIG_DIR,
-        title=f"Confusion test — {model_key}",
-        filename=f"confusion_test_{model_key}.png",
+        title=f"Confusion test — {{corpus_id}} — {{model_key}}",
+        filename=f"confusion_test_{{model_key}}.png",
     )
-    print(f"\n### {model_key}")
+    print(f"\\n### {{model_key}}")
     display(cm_df)
     cls_rep = m.get("_classification_report")
     if cls_rep:
@@ -358,272 +440,81 @@ if "_confusion_matrix" in metrics:
     plot_fsp_confusion_heatmap(
         pd.DataFrame(np.asarray(metrics["_confusion_matrix"]), index=MACROS, columns=MACROS),
         fig_dir=FIG_DIR,
-        title="Confusion test (meilleur modèle)",
+        title=f"Confusion test (meilleur modèle) — {{corpus_id}}",
     )
     import shutil
     src = FIG_DIR / "confusion_heatmap.png"
     if src.is_file():
         shutil.copy(src, FIG_DIR / "confusion_test.png")
 """
-            ),
-            md("## Étape 5 — BERTopic intra-macro"),
-            py(
-                r"""
-import json
-import logging
-
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-
-print("Paramètres BERTopic :")
-display(pd.DataFrame([{
-    "min_topic_size": BERTOPIC_CFG.get("min_topic_size"),
-    "macro_params": "eom / min_cluster=8 (config partagée FSP ↔ supervisé)",
-    "include_ambiguous": BERTOPIC_CFG.get("include_ambiguous", False),
-}]))
-print(json.dumps(BERTOPIC_CFG, indent=2, ensure_ascii=False))
-
-bertopic_cfg = dict(BERTOPIC_CFG)
-bertopic_cfg["topic_judge"] = dict(TOPIC_JUDGE_CFG)
-_diag = dict(bertopic_cfg.get("diagnostics") or {})
-_diag["save_datamap"] = False
-bertopic_cfg["diagnostics"] = _diag
-topics_export_cfg = dict(TOPICS_EXPORT_CFG)
-
-if RESTIMATE_BERTOPIC:
-    bertopic_summary = run_supervised_bertopic_phase(
-        OUT_DIR,
-        test_meta=test_meta,
-        preds=preds,
-        X_test=X_test,
-        macros=MACROS,
-        bertopic_cfg=bertopic_cfg,
-        topics_export_cfg=topics_export_cfg,
-        text_col=DATA["target_text_col"],
-        corpus_id=TEST_CORPUS,
-        method_name=f"supervised_macro_baseline/{best_model}",
-        anchor=TEXT_ROOT,
-    )
-    print("BERTopic terminé :", bertopic_summary.get("topics_dir", OUT_DIR / "topics_bertopic"))
-else:
-    require_supervised_cache(OUT_DIR, include_bertopic=True)
-    bertopic_summary = {"topics_dir": str(OUT_DIR / "topics_bertopic"), "cached": True}
-    print("BERTopic rechargé depuis :", OUT_DIR / "topics_bertopic")
-"""
-            ),
-            md("### Évaluation LLM-judge des topics"),
-            md(
-                r"""
-Chaque topic est noté sur 6 critères (0–5) ; le **score_global** est calculé en Python.
-Verdict : conserver / fusionner / scinder / rejeter. Sorties : `summary/topic_judge_*.csv`.
-"""
-            ),
-            py(
-                r"""
-from macro_transfer.notebook_viz import (
-    load_topic_judge_artifacts,
-    plot_topic_judge_quality,
-)
-from macro_transfer.topic_judge import run_topic_judge_evaluation
-
-_judge_scores_path = OUT_DIR / "summary" / "topic_judge_scores.csv"
-# Le judge est déjà lancé par le pipeline BERTopic si RESTIMATE_BERTOPIC=True.
-# Ici : compléter uniquement si scores absents (ex. run BERTopic antérieur sans judge).
-if TOPIC_JUDGE_CFG.get("enabled", False) and not _judge_scores_path.is_file():
-    themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
-    assign_path = OUT_DIR / "topics_bertopic" / "assignments.csv"
-    if themes_path.is_file() and assign_path.is_file():
-        run_topic_judge_evaluation(
-            OUT_DIR,
-            test_meta,
-            pd.read_csv(assign_path),
-            pd.read_csv(themes_path),
-            cfg=dict(TOPIC_JUDGE_CFG),
-            text_col=DATA["target_text_col"],
-            seed=SEED,
-            force=False,
-        )
-    else:
-        print("BERTopic absent — judge ignoré.")
-
-_judge_art = load_topic_judge_artifacts(OUT_DIR)
-if _judge_art["scores"].empty:
-    print("topic_judge_scores.csv absent.")
-else:
-    display(_judge_art["scores"].head(20))
-    if not _judge_art["macro_summary"].empty:
-        display(_judge_art["macro_summary"])
-plot_topic_judge_quality(OUT_DIR, fig_dir=FIG_DIR, show=True)
-"""
-            ),
-            md("### Tableau topics par étape (Rôle × unités / bruit)"),
-            py(
-                r"""
-df_stats = load_macro_topic_stats(OUT_DIR)
-if df_stats.empty:
-    print("macro_topic_stats.csv absent — relancer la cellule BERTopic ci-dessus.")
-else:
-    table_macro = pd.DataFrame(
-        {
-            "Rôle": df_stats["macro"].astype(str),
-            "Unités": pd.to_numeric(df_stats["n_units"], errors="coerce").fillna(0).astype(int),
-            "Topics": pd.to_numeric(df_stats["n_topics"], errors="coerce").fillna(0).astype(int),
-            "Bruit": pd.to_numeric(df_stats["bruit_pct"], errors="coerce").map(
-                lambda x: f"{x:.1f}%" if pd.notna(x) else "--"
-            ),
-            "Plus gros topic": pd.to_numeric(df_stats["plus_gros_topic_pct"], errors="coerce").map(
-                lambda x: f"{x:.1f}%" if pd.notna(x) else "--"
-            ),
-        }
-    )
-    display(table_macro)
-    latex_macro = table_macro.to_latex(index=False, escape=False, column_format="lcccc")
-    print(latex_macro)
-    tex_out = OUT_DIR / "summary" / "macro_topic_stats_table.tex"
-    tex_out.parent.mkdir(parents=True, exist_ok=True)
-    tex_out.write_text(latex_macro, encoding="utf-8")
-    print("LaTeX écrit :", tex_out)
-"""
-            ),
-            md("### Détail thèmes BERTopic"),
-            py(
-                r"""
-themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
-if themes_path.is_file():
-    themes = pd.read_csv(themes_path)
-    display(themes.head(20))
-    try:
-        meta_for_topics = test_meta.copy()
-        meta_for_topics["m_hat"] = preds["pred_macro"].astype(str).to_numpy()
-        topics_display = build_topics_display_dataframe(OUT_DIR, meta_for_topics)
-        display(topics_display.head(15))
-    except FileNotFoundError as exc:
-        print("Affichage topics détaillé indisponible :", exc)
-else:
-    print("themes_by_macro.csv absent (BERTopic désactivé ou échec).")
-"""
-            ),
-            md("### Explorer un topic — toutes les phrases"),
-            py(
-                r"""
-# --- Modifier ici ---
-TOPIC_MACRO = "A0"   # A0 | A1 | B | C
-TOPIC_NUM = 0        # topic_id BERTopic (entier >= 0)
-
-assign_path = OUT_DIR / "topics_bertopic" / "assignments.csv"
-text_col = DATA["target_text_col"]
-themes_path = OUT_DIR / "topics_bertopic" / "themes_by_macro.csv"
-
-if not assign_path.is_file():
-    print("assignments.csv absent — exécuter la cellule BERTopic ci-dessus.")
-else:
-    assign = pd.read_csv(assign_path)
-    macro_s = str(TOPIC_MACRO).strip()
-    tid = int(TOPIC_NUM)
-    sub = assign[
-        (assign["macro"].astype(str) == macro_s)
-        & (pd.to_numeric(assign["topic_id"], errors="coerce").fillna(-1).astype(int) == tid)
-    ].copy()
-    if sub.empty:
-        known = sorted(
-            pd.to_numeric(
-                assign.loc[assign["macro"].astype(str) == macro_s, "topic_id"],
-                errors="coerce",
-            )
-            .dropna()
-            .astype(int)
-            .unique()
-        )
-        print(f"Aucune phrase pour macro={macro_s!r} topic_id={tid}.")
-        print("Topics disponibles pour cette macro :", known)
-    else:
-        meta_idx = test_meta.reset_index(drop=True)
-        doc_ids = sub["doc_idx"].astype(int).to_numpy()
-        rows = []
-        for j, doc_idx in enumerate(doc_ids):
-            row = {
-                "n": j + 1,
-                "doc_idx": int(doc_idx),
-                "sentence": str(meta_idx.iloc[int(doc_idx)][text_col]),
-            }
-            if "prob" in sub.columns:
-                row["prob_topic"] = float(sub.iloc[j]["prob"])
-            if "p_mk" in sub.columns:
-                row["p_mk"] = float(sub.iloc[j]["p_mk"])
-            rows.append(row)
-        topic_df = pd.DataFrame(rows)
-        if themes_path.is_file():
-            themes = pd.read_csv(themes_path)
-            th_row = themes[
-                (themes["macro"].astype(str) == macro_s)
-                & (pd.to_numeric(themes["topic_id"], errors="coerce").astype(int) == tid)
+                ),
             ]
-            if len(th_row):
-                print("Libellé :", th_row.iloc[0].get("theme_label", ""))
-                print("Mots-clés :", th_row.iloc[0].get("top_words", ""))
-        print(f"Macro {macro_s} · topic {tid} · {len(topic_df)} phrase(s)")
-        display(topic_df[["n", "doc_idx", "sentence"] + [c for c in ("prob_topic", "p_mk") if c in topic_df.columns]])
-        print("\n--- Texte intégral ---")
-        for _, r in topic_df.iterrows():
-            print(f"[{int(r['n'])}] {r['sentence']}\n")
-"""
-            ),
+        )
+
+    cells.extend(
+        [
             md(
                 r"""
-## DataMapPlot BERTopic (optionnel — cellule indépendante)
+## Étape 5 — Synthèse cross-domain (article)
 
-Génère les cartes **après** BERTopic, à partir des modèles sauvegardés sous `bertopic/<macro>/bertopic_model.pkl`.
-Peut prendre **plusieurs minutes** sur A0/A1 (milliers de points). Ne nécessite pas `RESTIMATE_BERTOPIC=True` si les modèles existent déjà.
+Tableau par classifieur : **BA CV** (μ ± σ, GroupKFold BTP) et généralisation OOD
+(moyenne et pire domaine sur les corpus test).
 
-`EXPORT_DATAMAPS=True` pour régénérer ; `False` pour afficher uniquement les PNG déjà produits.
+\[
+\mathrm{BA}_{\mathrm{OOD,avg}} = \frac{1}{M}\sum_{m=1}^{M}\mathrm{BA}_{T_m},
+\qquad
+\mathrm{BA}_{\mathrm{OOD,worst}} = \min_m \mathrm{BA}_{T_m}
+\]
 """
             ),
             py(
                 r"""
-from macro_transfer.bertopic_exports import export_bertopic_datamaps_from_run
-
-EXPORT_DATAMAPS = True  # False = afficher les PNG existants sans recalcul
-
-if EXPORT_DATAMAPS:
-    _datamap_paths = export_bertopic_datamaps_from_run(
-        OUT_DIR,
-        test_meta,
-        X_test,
-        macros=MACROS,
-        text_col=DATA["target_text_col"],
-        fig_dir=FIG_DIR,
-        show_progress=True,
-    )
-    print("DataMapPlot exportés :", _datamap_paths)
-else:
-    print("EXPORT_DATAMAPS=False — affichage des fichiers existants uniquement.")
-
-datamap_paths = show_bertopic_datamaps_inline(OUT_DIR, macros=MACROS)
-if not datamap_paths:
-    print(
-        "Aucune carte — exécuter avec EXPORT_DATAMAPS=True après BERTopic "
-        "(modèles attendus : bertopic/<macro>/bertopic_model.pkl)."
-    )
-"""
-            ),
-            py(
-                r"""
-print("Artefacts :")
-expected = [
-    CV_DIR / "cv_summary.csv",
-    TRANSFER_DIR / "target_macro_predictions.csv",
-    TRANSFER_DIR / "all_models_test_metrics.csv",
-    TRANSFER_DIR / "metrics.json",
-    OUT_DIR / "topics_bertopic" / "themes_by_macro.csv",
-    FIG_DIR / "cv_comparison.png",
-    FIG_DIR / "confusion_test.png",
-]
-for macro in MACRO_NAMES:
-    expected.append(FIG_DIR / f"bertopic_datamap_{macro}.png")
-for p in expected:
-    print(" ", p, "→", "OK" if p.is_file() else "absent")
+ood_ba_by_corpus = load_ood_balanced_accuracy_by_corpus(
+    TEST_CORPORA, MODEL_KEYS, anchor=TEXT_ROOT
+)
+cross_domain_summary = summarize_cross_domain_generalization(
+    cv_summary, ood_ba_by_corpus, model_keys=MODEL_KEYS
+)
+display(
+    cross_domain_summary.rename(
+        columns={
+            "model": "model",
+            "cv_ba": "CV ± std (BTP)",
+            "ba_ood_avg": "BA OOD Avg",
+            "ba_ood_worst": "BA OOD Worst",
+        }
+    )[["model", "CV ± std (BTP)", "BA OOD Avg", "BA OOD Worst"]]
+)
+cross_domain_summary.to_csv(
+    CV_OUT_DIR / "cross_domain_generalization.csv", index=False
+)
+print("Export :", CV_OUT_DIR / "cross_domain_generalization.csv")
 """
             ),
         ]
+    )
+
+    cells.append(
+        py(
+            r"""
+print("Artefacts :")
+expected = [
+    CV_DIR / "cv_summary.csv",
+    CV_FIG_DIR / "cv_comparison.png",
+    CV_OUT_DIR / "cross_domain_generalization.csv",
+]
+for corpus_id in TEST_CORPORA:
+    out_dir = supervised_baseline_output_dir(corpus_id, anchor=TEXT_ROOT)
+    expected.extend([
+        out_dir / "transfer" / "target_macro_predictions.csv",
+        out_dir / "transfer" / "all_models_test_metrics.csv",
+        out_dir / "transfer" / "metrics.json",
+        out_dir / "figures" / "confusion_test.png",
+    ])
+for p in expected:
+    print(" ", p, "→", "OK" if p.is_file() else "absent")
+"""
+        )
     )
 
     nb = {

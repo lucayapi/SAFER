@@ -147,82 +147,6 @@ def load_supervised_macro_ft_train_history(train_out: str | Path) -> pd.DataFram
     return pd.concat(frames, ignore_index=True)
 
 
-def load_supervised_macro_ft_geometry_tables(
-    train_out: str | Path,
-    transfer_out: str | Path,
-) -> Dict[str, pd.DataFrame]:
-    """Charge tableaux géométrie η² / IPR (CV, BTP final, test)."""
-    from supervised_macro_ft.geometry_eval import geometry_summary_for_notebook
-
-    train_root = Path(train_out).resolve()
-    xfer_root = Path(transfer_out).resolve()
-    out: Dict[str, pd.DataFrame] = {}
-    kfold_summary = train_root / "metrics" / "kfold_geometry_summary.csv"
-    kfold_per_fold = train_root / "metrics" / "kfold_geometry_per_fold.csv"
-    btp_geom = train_root / "metrics" / "metrics_geometry_btp.csv"
-    test_geom = xfer_root / "transfer" / "metrics_geometry.csv"
-    raw_test_geom = xfer_root.parent.parent / "raw_embedding" / "metrics" / "metrics_geometry.csv"
-    if kfold_summary.is_file():
-        out["kfold_summary"] = geometry_summary_for_notebook(kfold_summary)
-    if kfold_per_fold.is_file():
-        out["kfold_per_fold"] = pd.read_csv(kfold_per_fold)
-    if btp_geom.is_file():
-        out["btp_final"] = pd.read_csv(btp_geom)
-    if test_geom.is_file():
-        out["test"] = pd.read_csv(test_geom)
-    if raw_test_geom.is_file():
-        out["test_raw"] = pd.read_csv(raw_test_geom)
-    return out
-
-
-def load_supervised_macro_ft_vs_baseline07_metrics(
-    corpus_id: str,
-    *,
-    anchor: Path,
-    method_slug: str = "supervised_macro_ft",
-    method_label: str = "Supervised macro FT (CE)",
-) -> pd.DataFrame:
-    """Compare métriques FT neural vs baseline 07 sklearn."""
-    from supervised_macro_ft.paths import resolve_supervised_macro_output_dir
-
-    rows: list[dict[str, Any]] = []
-
-    ft_root = resolve_supervised_macro_output_dir(method_slug, corpus_id, anchor=anchor)
-    ft_metrics = _load_fsp_metrics_json(ft_root)
-    rows.append(
-        {
-            "Méthode": method_label,
-            "Bal. Acc.": _fsp_metric_to_float(ft_metrics.get("balanced_accuracy")),
-            "F1 (étapes)": _fsp_metric_to_float(ft_metrics.get("macro_f1")),
-            "Confiance moy.": _fsp_metric_to_float(ft_metrics.get("mean_confidence")),
-            "Entropie moy.": _fsp_metric_to_float(ft_metrics.get("mean_entropy")),
-            "metrics_available": bool(ft_metrics),
-        }
-    )
-
-    base_root = anchor / "output_test" / corpus_id / "supervised_baseline"
-    base_metrics: dict[str, Any] = {}
-    manifest_path = base_root / "run_manifest.json"
-    if manifest_path.is_file():
-        with open(manifest_path, encoding="utf-8") as f:
-            best = json.load(f).get("best_model")
-        best_path = base_root / "transfer" / "models" / str(best) / "metrics.json"
-        if best_path.is_file():
-            with open(best_path, encoding="utf-8") as f:
-                base_metrics = json.load(f)
-    rows.append(
-        {
-            "Méthode": "Baseline 07 (sklearn Qwen brut)",
-            "Bal. Acc.": _fsp_metric_to_float(base_metrics.get("balanced_accuracy")),
-            "F1 (étapes)": _fsp_metric_to_float(base_metrics.get("macro_f1")),
-            "Confiance moy.": _fsp_metric_to_float(base_metrics.get("mean_confidence")),
-            "Entropie moy.": _fsp_metric_to_float(base_metrics.get("mean_entropy")),
-            "metrics_available": bool(base_metrics),
-        }
-    )
-    return pd.DataFrame(rows)
-
-
 def _fsp_metric_to_float(value: Any) -> float:
     try:
         x = float(value)
@@ -1715,7 +1639,7 @@ RAW_TEST_EMBEDDING_SECTION_MD = (
     "Vecteurs encodeur Qwen du registre test (`configs/test_corpora.yaml`), "
     "couleur = **étape** de la chaîne accidentelle. "
     "Métriques géométrie : `output_test/<corpus>/raw_embedding/metrics/metrics_geometry.csv` "
-    "(job `export_raw_geometry.sh`)."
+    "(job `export_raw_embeddings_eval.sh`)."
 )
 
 

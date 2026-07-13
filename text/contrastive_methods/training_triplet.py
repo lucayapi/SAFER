@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List
 
 import pandas as pd
 import torch
@@ -13,16 +13,13 @@ from torch.utils.data import DataLoader
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.data import prepare_text_dataset, split_train_val, train_val_metadata
 from contrastive_methods.encoder_model import build_contrastive_encoder
-from contrastive_methods.eval_geometry import selection_score
 from contrastive_methods.export import embeddings_to_dataframe
 from contrastive_methods.hf_training_common import (
     TextLabelDataset,
-    build_eval_loader,
     build_optimizer,
     build_train_loader,
     dataloader_kwargs,
     encode_texts,
-    evaluate_val_geometry_from_loader,
     load_contrastive_checkpoint,
     run_training_epoch,
     save_contrastive_checkpoint,
@@ -30,30 +27,13 @@ from contrastive_methods.hf_training_common import (
 )
 from contrastive_methods.losses.softtriple import make_collate_fn
 from contrastive_methods.losses.triplet_st import build_batch_triplet_embedding_loss
-from contrastive_methods.metrics import compute_and_save_geometry_metrics
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.samplers.pk_batch_sampler import build_pk_batch_sampler, resolve_balanced_pk_params
 from contrastive_methods.hf_training_common import get_device, resolve_autocast_dtype
-from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row
+from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row, print_epoch_line
 from contrastive_methods.triplet_diagnostics import TripletDiagnosticLogger
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
-
-
-def _print_triplet_epoch(
-    epoch: int,
-    total_epochs: int,
-    train_loss: float,
-    *,
-    val_geometry: Optional[Dict[str, Any]] = None,
-    selection_metric: str = "eta2_macro_balanced_perc",
-) -> None:
-    parts = [f"[BatchTriplet epoch={epoch}/{total_epochs}]", f"train_loss={train_loss:.4f}"]
-    if val_geometry is not None:
-        key = selection_metric
-        if key in val_geometry:
-            parts.append(f"{key}={float(val_geometry[key]):.4f}")
-    print(" | ".join(parts), flush=True)
 
 
 def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
@@ -102,10 +82,6 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
         )
         use_cache = False
 
-    val_loader = None
-    if len(val_df) > 0 and not cfg.final_fit_full_data:
-        val_loader = build_eval_loader(cfg, val_df, dataset.text_col, encoder, dev)
-
     optimizer = build_optimizer(encoder, [loss_module], cfg.learning_rate)
     autocast_dtype = resolve_autocast_dtype(device)
     scaler = (
@@ -114,8 +90,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
         else None
     )
     log_rows: List[dict] = []
-    best_score = float("-inf")
-    best_geometry: dict = {}
+    best_train_loss = float("inf")
     best_dir = checkpoints / "best_model"
 
     t_train = time.perf_counter()
@@ -135,24 +110,10 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
             scaler=scaler,
             loss_fn=lambda emb, labels: loss_module(emb, labels),
         )
-        if val_loader is not None:
-            geom = evaluate_val_geometry_from_loader(encoder, val_loader, val_df, cfg, dev)
-            score = selection_score(geom, cfg.selection_metric)
-            _print_triplet_epoch(
-                epoch_no,
-                cfg.epochs,
-                train_loss,
-                val_geometry=geom,
-                selection_metric=cfg.selection_metric,
-            )
-            log_rows.append(build_train_log_row(epoch_no, train_loss, val_geometry=geom))
-            if score > best_score:
-                best_score = score
-                best_geometry = dict(geom)
-                save_contrastive_checkpoint(encoder, best_dir)
-        else:
-            _print_triplet_epoch(epoch_no, cfg.epochs, train_loss)
-            log_rows.append(build_train_log_row(epoch_no, train_loss))
+        print_epoch_line("BatchTriplet", epoch_no, cfg.epochs, train_loss)
+        log_rows.append(build_train_log_row(epoch_no, train_loss))
+        if train_loss < best_train_loss:
+            best_train_loss = train_loss
             save_contrastive_checkpoint(encoder, best_dir)
 
     train_wall_time_sec = time.perf_counter() - t_train
@@ -174,14 +135,13 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     frame = embeddings_to_dataframe(dataset.metadata_df["doc_id"].to_numpy(), embeddings)
     emb_path.parent.mkdir(parents=True, exist_ok=True)
     frame.to_csv(emb_path, index=False)
-    compute_and_save_geometry_metrics(emb_path, cfg, metrics_dir)
     save_config_resolved(
         {
             **cfg.extra.get("raw", {}),
             "method_name": cfg.method_name,
             "train_rows": len(train_df),
             "val_rows": len(val_df),
-            "best_eta2_macro_balanced_perc": best_score,
+            "best_train_loss": best_train_loss,
             "embeddings": str(emb_path),
         },
         root,
@@ -189,8 +149,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
     return TrainingResult(
         embeddings_path=emb_path,
         output_root=root,
-        val_geometry=best_geometry,
-        best_eta2_macro_balanced_perc=best_score,
+        best_train_loss=best_train_loss,
         train_wall_time_sec=train_wall_time_sec,
         train_log_path=metrics_dir / "train_log.csv",
     )

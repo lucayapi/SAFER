@@ -1,4 +1,4 @@
-"""Tests config BERTopic partagée FSP / supervisé."""
+"""Tests config BERTopic partagée (supervisé)."""
 
 from __future__ import annotations
 
@@ -35,33 +35,14 @@ def test_shared_bertopic_uses_eom_and_nr_docs_50():
     assert shared["bertopic"]["diagnostics"]["save_model"] is True
 
 
-def test_supervised_and_fsp_resolve_same_bertopic():
-    fsp_raw = yaml.safe_load(
-        (TEXT_ROOT / "configs" / "frozen_source_prototypes.yaml").read_text(encoding="utf-8")
-    )
+def test_supervised_baseline_resolves_bertopic():
     sup_raw = yaml.safe_load(
         (TEXT_ROOT / "configs" / "supervised_macro_baseline.yaml").read_text(encoding="utf-8")
     )
-    fsp_bertopic, fsp_topics, fsp_judge = resolve_bertopic_run_config(fsp_raw, anchor=TEXT_ROOT)
     sup_bertopic, sup_topics, sup_judge = resolve_bertopic_run_config(sup_raw, anchor=TEXT_ROOT)
-    assert fsp_bertopic == sup_bertopic
-    assert fsp_topics == sup_topics
-    assert fsp_judge == sup_judge
-
-
-def test_supervised_macro_ft_transfer_yaml_has_run_bertopic():
-    raw = yaml.safe_load(
-        (TEXT_ROOT / "configs" / "supervised_macro_ft_transfer.yaml").read_text(encoding="utf-8")
-    )
-    assert "run_bertopic" in raw
-    assert raw["run_bertopic"] is True
-    raw = yaml.safe_load(
-        (TEXT_ROOT / "configs" / "frozen_source_prototypes_softtriple_native.yaml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "run_bertopic" in raw
-    assert raw["run_bertopic"] is True
+    assert sup_bertopic["macro_params"]["A0"]["cluster_selection_method"] == "eom"
+    assert sup_topics["top_k_words"] == 12
+    assert sup_judge["model"] == "gpt-5-mini"
 
 
 def test_enrich_run_config_injects_bertopic():

@@ -4,8 +4,8 @@ output_dir: output/softtriple_merge_l21
 use_prompt: false
 seed: 42
 n_folds: 5
-selection_metric: eta2_macro_balanced_perc
-test_corpus: metallurgie
+selection_metric: balanced_accuracy
+test_corpora: [metallurgie, caou]
 
 data:
   dataset_path: dataset/data_btp.csv

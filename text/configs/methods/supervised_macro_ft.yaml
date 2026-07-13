@@ -17,7 +17,9 @@
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
-test_corpus: metallurgie
+test_corpora:
+  - metallurgie
+  - caou
 
 data:
   data_csv: dataset/data_btp.csv

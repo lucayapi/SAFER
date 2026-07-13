@@ -41,11 +41,9 @@ def test_explicit_topic_judge_enabled_wins_over_judge_enable():
     assert topic_judge["enabled"] is True
 
 
-def test_transfer_yaml_loads_judge_enable():
+def test_supervised_baseline_yaml_loads_judge_enable():
     from safer_core.io import load_yaml
 
-    spec = load_yaml(TEXT_ROOT / "configs/supervised_macro_ft_transfer.yaml")
+    spec = load_yaml(TEXT_ROOT / "configs" / "supervised_macro_baseline.yaml")
     enriched = enrich_run_config_bertopic(spec, anchor=TEXT_ROOT)
-    assert spec["run_bertopic"] is True
-    assert spec["judge_enable"] is True
     assert enriched["topic_judge"]["enabled"] is True
