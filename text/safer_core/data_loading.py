@@ -43,3 +43,22 @@ def load_metadata_with_embeddings(
     emb_path = resolve_dataset_path(emb_csv)
     merged, dim_cols = merge_metadata_with_embeddings(meta, str(emb_path))
     return merged, dim_cols
+
+
+def embedding_coverage_report(
+    data_csv: str | Path,
+    emb_csv: str | Path,
+    **kwargs,
+) -> dict[str, int]:
+    """Compte les lignes metadata vs embeddings (diagnostic avant merge strict)."""
+    meta = load_filtered_metadata(data_csv=str(resolve_dataset_path(data_csv)), **kwargs)
+    emb_path = resolve_dataset_path(emb_csv)
+    emb_ids = pd.read_csv(emb_path, usecols=["doc_id"])["doc_id"]
+    meta_ids = meta["doc_id"]
+    matched = int(meta_ids.isin(set(emb_ids)).sum())
+    return {
+        "metadata_rows": len(meta),
+        "embedding_rows": int(len(emb_ids)),
+        "matched_rows": matched,
+        "missing_embeddings": len(meta) - matched,
+    }

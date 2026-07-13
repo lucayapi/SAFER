@@ -23,8 +23,17 @@ def merge_metadata_with_embeddings(
     emb_df = pd.read_csv(emb_csv, usecols=["doc_id"] + dim_columns)
     merged = metadata_df.merge(emb_df, on="doc_id", how="inner", validate="one_to_one")
     if len(merged) != len(metadata_df):
+        n_meta = len(metadata_df)
+        n_emb = len(emb_df)
+        n_merged = len(merged)
+        n_missing = n_meta - n_merged
         raise ValueError(
-            f"Embedding merge dropped rows: metadata={len(metadata_df)}, merged={len(merged)}"
+            f"Embedding merge dropped rows: metadata={n_meta}, embeddings={n_emb}, merged={n_merged} "
+            f"({n_missing} doc_id sans vecteur). "
+            f"Le CSV d'embeddings est probablement obsolète par rapport à {emb_csv!r}. "
+            "Relancer l'export encodeur, par ex. :\n"
+            "  python scripts/export_corpus_embeddings.py --corpus btp --force\n"
+            "  # ou : FORCE=1 CORPUS=btp bash jobs/export_corpus_embeddings.sh"
         )
     merged.reset_index(drop=True, inplace=True)
     return merged, dim_columns

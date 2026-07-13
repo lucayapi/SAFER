@@ -110,7 +110,7 @@ def main() -> None:
 
 Pipeline sur **embeddings Qwen bruts** (`dataset/data_<id>.csv` + `embeddings/Qwen3-Embedding-0.6B_<id>.csv`) :
 
-1. **GroupKFold** (5 folds, `accident_id`) sur **BTP** — LR, Random Forest, XGBoost, MLP
+1. **GroupKFold** (`N_FOLDS` splits, `accident_id`) sur **BTP** — LR, Random Forest, XGBoost, MLP
 2. Synthèse CV (μ ± σ) et sélection du meilleur modèle (`macro_f1`)
 3. Réentraînement 100 % BTP → évaluation sur **métallurgie** et **caou**
 
@@ -159,7 +159,7 @@ from safer_core.test_corpus import resolve_test_corpus
 
 # --- Général ---
 METHOD_NAME = "supervised_macro_baseline"
-N_FOLDS = 5
+N_FOLDS = 7  # nombre de splits GroupKFold (CV in-domain BTP)
 SEED = 42
 SELECTION_METRIC = "macro_f1"
 RESTIMATE_ML = True  # True = CV + réentraînement + test | False = cache ML
@@ -184,6 +184,7 @@ TARGET_CFG = {
     "text_col": "sentence",
     "label_col": "pred_label",
     "group_col": "accident_id",
+    "pred_ok_col": "pred_ok",
 }
 
 MODEL_ORDER = ["logistic_regression", "random_forest", "xgboost", "mlp"]
@@ -210,6 +211,7 @@ CV_DIR = CV_OUT_DIR / "cv"
 CV_FIG_DIR.mkdir(parents=True, exist_ok=True)
 
 print("Méthode :", METHOD_NAME)
+print("CV folds :", N_FOLDS)
 print("Corpus CV / artefacts partagés :", _cv_spec.display_name, f"({CV_CORPUS})")
 print("Corpus test :", TEST_CORPORA)
 print("CV sorties :", CV_OUT_DIR)
@@ -222,6 +224,27 @@ sns.set_theme(style="whitegrid")
         md("## Étape 1 — Chargement BTP + corpus test (Qwen brut)"),
         py(
             r"""
+from safer_core.data_loading import embedding_coverage_report
+
+for label, data_path, emb_path in [
+    ("BTP", SOURCE_CFG["dataset_path"], SOURCE_CFG["emb_csv"]),
+    *[
+        (
+            resolve_test_corpus(cid, anchor=TEXT_ROOT).display_name,
+            str(resolve_test_corpus(cid, anchor=TEXT_ROOT).data_csv.relative_to(TEXT_ROOT)).replace("\\", "/"),
+            str(resolve_test_corpus(cid, anchor=TEXT_ROOT).emb_csv.relative_to(TEXT_ROOT)).replace("\\", "/"),
+        )
+        for cid in TEST_CORPORA
+    ],
+]:
+    rep = embedding_coverage_report(data_path, emb_path, label_col=SOURCE_CFG["label_col"])
+    print(f"{label}: metadata={rep['metadata_rows']} | emb={rep['embedding_rows']} | manquants={rep['missing_embeddings']}")
+    if rep["missing_embeddings"] > 0:
+        print(
+            f"  → python scripts/export_corpus_embeddings.py --corpus <id> --force "
+            f"(BTP: --corpus btp)"
+        )
+
 cfg = build_cfg(CV_CORPUS)
 DATA = load_supervised_datasets(cfg, anchor=TEXT_ROOT)
 

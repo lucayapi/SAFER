@@ -18,7 +18,6 @@ from sklearn.preprocessing import StandardScaler
 
 from macro_transfer.bertopic_phase import run_bertopic_phase
 from macro_transfer.constants import LABEL2ID, MACRO_NAMES
-from macro_transfer.encode import load_target_metadata
 from safer_core.classification_metrics import build_gating_from_predictions, evaluate_macro_predictions
 from safer_core.data_loading import load_metadata_with_embeddings
 from macro_transfer.bertopic_config import enrich_run_config_bertopic
@@ -26,8 +25,6 @@ from safer_core.io import load_yaml
 from safer_core.kfold_eval import group_kfold_splits
 from safer_core.paths import TEXT_ROOT, resolve_repo_path
 from safer_core.test_corpus import default_test_corpus_id, resolve_test_corpus
-from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
-from scgm_text.utils_io import create_doc_id_if_missing
 from supervised_macro_ft.class_balance import balanced_oversample_arrays
 
 logger = logging.getLogger(__name__)
@@ -263,18 +260,17 @@ def load_supervised_datasets(
     target_text_col = str(target_cfg.get("text_col", text_col))
     target_label_col = str(target_cfg.get("label_col", label_col))
     target_group_col = str(target_cfg.get("group_col", group_col))
+    pred_ok_col = str(target_cfg.get("pred_ok_col") or source_cfg.get("pred_ok_col", "pred_ok"))
 
-    test_meta = load_target_metadata(str(target_data), text_col=target_text_col)
-    test_meta = create_doc_id_if_missing(test_meta)
-    if target_group_col and target_group_col not in test_meta.columns:
-        test_meta[target_group_col] = np.arange(len(test_meta))
-    test_meta = test_meta[test_meta[target_text_col].astype(str).str.strip().ne("")].reset_index(drop=True)
-    slim = test_meta.drop(columns=[c for c in test_meta.columns if c.startswith("dim_")], errors="ignore")
-    test_merged, test_dim_cols = merge_metadata_with_embeddings(slim, str(target_emb))
-    if len(test_merged) != len(test_meta):
-        raise ValueError(
-            f"Alignement embeddings test : metadata={len(test_meta)}, merged={len(test_merged)}"
-        )
+    # Même filtre que l'export encodeur (pred_ok + labels valides) — aligné sur embeddings CSV.
+    test_merged, test_dim_cols = load_metadata_with_embeddings(
+        target_data,
+        target_emb,
+        label_col=target_label_col,
+        pred_ok_col=pred_ok_col,
+        group_col=target_group_col,
+        text_col=target_text_col,
+    )
     X_test = test_merged[test_dim_cols].to_numpy(dtype=np.float64)
 
     return {
