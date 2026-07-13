@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -11,6 +12,7 @@ import pandas as pd
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 
 from contrastive_methods.config import ContrastiveConfig
 from contrastive_methods.encoder_model import (
@@ -286,6 +288,8 @@ def encode_texts(
     *,
     batch_size: Optional[int] = None,
     normalize_embeddings: bool = METRIC_EVAL_NORMALIZE,
+    show_progress: bool = False,
+    progress_desc: Optional[str] = None,
 ) -> np.ndarray:
     if encoder.tokenizer is None:
         raise ValueError("Tokenizer requis pour encoder des textes.")
@@ -298,7 +302,18 @@ def encode_texts(
     autocast_dtype = resolve_autocast_dtype(str(device))
     use_amp = autocast_dtype is not None and dev.type == "cuda"
     parts: List[np.ndarray] = []
-    for batch in loader:
+    batch_iter: Any = loader
+    if show_progress:
+        batch_iter = tqdm(
+            loader,
+            total=len(loader),
+            desc=progress_desc or "encode",
+            unit="batch",
+            file=sys.stdout,
+            mininterval=10.0,
+            dynamic_ncols=True,
+        )
+    for batch in batch_iter:
         input_ids = batch["input_ids"].to(dev, non_blocking=True)
         attention_mask = batch["attention_mask"].to(dev, non_blocking=True)
         with torch.autocast(

@@ -53,6 +53,8 @@ def export_text_embeddings(
         cfg,
         device,
         batch_size=batch_size or cfg.encode_batch_size,
+        show_progress=show_progress,
+        progress_desc=dest_csv.stem if show_progress else None,
     )
     doc_ids = dataset.metadata_df["doc_id"].to_numpy()
     frame = embeddings_to_dataframe(doc_ids, np.asarray(embeddings))
