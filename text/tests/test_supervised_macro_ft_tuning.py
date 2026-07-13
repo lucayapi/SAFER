@@ -160,18 +160,6 @@ def test_filter_accepts_trainable_partial_backbone():
     )
 
 
-def test_geo_grid_yaml_loads():
-    from safer_core.io import load_yaml
-
-    spec = load_yaml(TEXT_ROOT / "configs/tuning/supervised_macro_geo_ft_grid.yaml")
-    assert "supervised_macro_geo_ft" in spec["base_config"]
-    assert spec["output_dir"] == "output/supervised_macro_geo_ft/tuning"
-    validate_macro_ft_grid_keys(spec["grid"])
-    assert 0.1 in spec["grid"]["training.lambda_geo"]
-    combos = expand_grid(spec["grid"])
-    assert len(combos) == 480
-
-
 def test_run_group_kfold_cv_save_fold_checkpoints_default():
     import inspect
 

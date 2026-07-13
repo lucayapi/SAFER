@@ -187,7 +187,7 @@ def run_supervised_macro_ft_transfer(config_path: str | Path) -> Dict[str, Any]:
     if raw_emb_csv:
         raw_emb_csv = str(resolve_repo_path(str(raw_emb_csv), repo_root=anchor))
     else:
-        default_test_emb = anchor / "embeddings" / "test" / f"Qwen3-Embedding-0.6B_{corpus}.csv"
+        default_test_emb = anchor / "embeddings" / f"Qwen3-Embedding-0.6B_{corpus}.csv"
         raw_emb_csv = str(default_test_emb) if default_test_emb.is_file() else None
 
     geom_test: Dict[str, Any] = {}

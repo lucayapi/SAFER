@@ -480,8 +480,6 @@ def run_supervised_macro_ft_training(
         "method_name": method_name,
         "output_dir": str(out_dir),
         "checkpoint_dir": str(ckpt_dir),
-        "lambda_geo": float(train_cfg.get("lambda_geo", 0.0)),
-        "geo_remove_diag": bool(train_cfg.get("geo_remove_diag", True)),
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
         "test_metrics": test_metrics,

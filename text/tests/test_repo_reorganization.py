@@ -92,6 +92,7 @@ def test_jobs_exist():
     for name in (
         "train_scgm_text.sh",
         "export_raw_geometry.sh",
+        "export_corpus_embeddings.sh",
         "export_test_embeddings.sh",
         "train_batch_triplet.sh",
         "train_softtriple.sh",

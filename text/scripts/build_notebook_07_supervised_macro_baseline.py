@@ -74,7 +74,7 @@ Pipeline exécutable sur **embeddings Qwen bruts** (BTP) :
 **`RESTIMATE_BERTOPIC=True`** (défaut) : relance BERTopic intra-macro (+ judge LLM si activé).  
 Mettre l’un ou l’autre à **`False`** pour recharger les artefacts déjà produits sous `OUT_DIR`.
 
-**Prérequis** : embeddings BTP et test exportés (`export_raw_geometry.sh`, `export_test_embeddings.sh`).
+**Prérequis** : embeddings BTP et test exportés (`export_raw_geometry.sh`, `export_corpus_embeddings.sh`).
 """
         ),
         py(

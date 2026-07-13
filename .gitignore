@@ -27,11 +27,20 @@ text/notebooks/**
 
 # Artefacts texte (lourds / régénérables)
 text/embeddings/
+text/dataset/*.csv
+text/dataset/**/*.csv
+text/dataset/test/
 text/runs/
 text/outputs/
 text/output/
 text/output_test/
 text/resultats/
+text/annotation/outputs/**
+!text/annotation/outputs/.gitkeep
+text/annotation/data/*.csv
+text/annotation/data/*.xlsx
+!text/annotation/data/.gitkeep
+!text/annotation/data/README.md
 !text/output/comparisons/topics_legacy/stopwords_domain.txt
 text/**/*.pt
 text/**/*.pth

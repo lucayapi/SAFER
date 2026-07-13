@@ -13,11 +13,11 @@ run_bertopic: true
 judge_enable: true
 
 target:
-  dataset_path: dataset/test/data_metallurgie.csv
+  dataset_path: dataset/data_metallurgie.csv
   text_col: sentence
   label_col: pred_label
   group_col: accident_id
-  raw_emb_csv: embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv
+  raw_emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
 
 model:
   max_seq_length: 256

@@ -6,6 +6,7 @@ import pytest
 
 from safer_core.paths import TEXT_ROOT
 from safer_core.test_corpus import (
+    conventional_test_paths,
     default_test_corpus_id,
     list_test_corpus_ids,
     macro_transfer_output_dir,
@@ -19,17 +20,26 @@ def test_default_corpus_is_metallurgie():
     assert default_test_corpus_id() == "metallurgie"
 
 
-def test_list_includes_metallurgie():
-    assert "metallurgie" in list_test_corpus_ids()
+def test_list_includes_metallurgie_and_btp():
+    ids = list_test_corpus_ids()
+    assert "metallurgie" in ids
+    assert "btp" in ids
+    assert "caou" in ids
 
 
 def test_resolve_metallurgie_paths():
     spec = resolve_test_corpus("metallurgie", anchor=TEXT_ROOT)
     assert spec.id == "metallurgie"
     assert spec.data_csv.name == "data_metallurgie.csv"
-    assert spec.emb_csv.name == "Qwen3-Embedding-0.6B__metallurgie.csv"
-    assert spec.emb_csv.is_file()
+    assert spec.emb_csv.name == "Qwen3-Embedding-0.6B_metallurgie.csv"
     assert spec.data_csv.is_absolute()
+    assert "test" not in str(spec.data_csv)
+
+
+def test_conventional_paths_flat():
+    data_rel, emb_rel = conventional_test_paths("caou")
+    assert data_rel.endswith("data_caou.csv")
+    assert emb_rel.endswith("Qwen3-Embedding-0.6B_caou.csv")
 
 
 def test_unknown_corpus_raises():

@@ -1,0 +1,26 @@
+# Configuration annotation Batch OpenAI (Chat Completions).
+# Lancer : python scripts/run_annotation_batch.py submit --config configs/annotation_batch.yaml
+
+input_csv: btp_sentence_accidents.csv
+output_basename: btp_v10_batch
+openai_model: gpt-5.4-mini
+prompt_version: v10_macro_labels_independent_outcomes
+prompt_cache_key: null
+use_prompt_cache_key: true
+
+n_accidents: all
+units_per_accident: all
+accident_sample_seed: 42
+
+temperature: 0.0
+reasoning_effort: medium
+max_output_tokens: 4000
+summary_col: accident_summary
+skip_cache: false
+
+completion_window: 24h
+batch_endpoint: /v1/chat/completions
+status_poll_interval_sec: 60
+
+# null = nouveau run_id horodaté ; ou reprendre une run existante
+run_id: null

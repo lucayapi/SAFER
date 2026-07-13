@@ -64,10 +64,6 @@ def test_scgm_grid_keys_and_combos_merge():
     "grid_name,allowed_projections",
     [
         ("supervised_macro_ft_grid.yaml", ("linear", "mlp_sklearn")),
-        (
-            "supervised_macro_geo_ft_grid.yaml",
-            ("linear", "ln_gelu", "residual", "mlp_sklearn"),
-        ),
     ],
 )
 def test_macro_ft_grid_keys_and_combos_merge(grid_name, allowed_projections):
@@ -81,5 +77,3 @@ def test_macro_ft_grid_keys_and_combos_merge(grid_name, allowed_projections):
         merged = merge_config_dict(base, overrides)
         assert merged["model"]["projection"] in allowed_projections
         assert float(merged["training"]["lr_projector"]) > 0
-        if "training.lambda_geo" in overrides:
-            assert float(merged["training"]["lambda_geo"]) > 0

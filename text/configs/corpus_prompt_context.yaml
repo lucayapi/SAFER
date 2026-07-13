@@ -21,3 +21,12 @@ contexts:
       chantier BTP par défaut si les documents ne le justifient pas).
       Vocabulaire fréquent : four, lingot, moule, ligne de production, convoyeur, presse,
       maintenance machine, EPI thermique, brûlure, projection de métal en fusion.
+
+  caou:
+    title: "Caoutchouc, chimie et plastiques (corpus de test)"
+    description: |
+      Corpus de test hors domaine BTP : récits d'accidents dans les secteurs caoutchouc,
+      chimie et plastiques (production, formulation, extrusion, maintenance industrielle,
+      manutention de matières et produits chimiques, zones ATEX ou thermiques).
+      Vocabulaire fréquent : presse, extrudeuse, réacteur, mélangeur, résine, solvant,
+      EPI chimique, projection, brûlure, intoxication.

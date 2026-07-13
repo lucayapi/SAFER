@@ -1,18 +1,24 @@
-# Registre des corpus de test (hors domaine BTP).
-# Convention : dataset/test/data_<id>.csv
-# Embeddings test : embeddings/test/Qwen3-Embedding-0.6B__<id>.csv (double _ avant l'id)
+# Registre des corpus annotés (BTP + corpus hors domaine).
+# Convention : dataset/data_<id>.csv
+# Embeddings : embeddings/Qwen3-Embedding-0.6B_<id>.csv
 
 default: metallurgie
 
 corpora:
+  btp:
+    display_name: BTP
+    data_csv: dataset/data_btp.csv
+    emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+    prompt_context: btp
+
   metallurgie:
     display_name: Métallurgie
-    data_csv: dataset/test/data_metallurgie.csv
-    emb_csv: embeddings/test/Qwen3-Embedding-0.6B__metallurgie.csv
+    data_csv: dataset/data_metallurgie.csv
+    emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
     prompt_context: metallurgie
 
-  # Exemple pour un second corpus (décommenter après ajout des fichiers) :
-  # chimie:
-  #   display_name: Chimie
-  #   data_csv: dataset/test/data_chimie.csv
-  #   emb_csv: embeddings/test/Qwen3-Embedding-0.6B__chimie.csv
+  caou:
+    display_name: Caoutchouc / chimie / plastiques
+    data_csv: dataset/data_caou.csv
+    emb_csv: embeddings/Qwen3-Embedding-0.6B_caou.csv
+    prompt_context: caou

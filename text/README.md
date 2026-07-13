@@ -24,14 +24,13 @@ Installation manuelle : `pip install -r requirements.txt -c constraints.txt`
 
 **Qwen3-Embedding** exige **transformers ≥ 4.51**. Ne pas faire seulement `pip install datasets` ou `pip install -U transformers` sans `-c constraints.txt` (risque numpy 2.x ou retour à transformers 4.46).
 
-Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (modèles Hugging Face). `OPENAI_API_KEY` optionnel (enrichissement de thèmes). Ne jamais committer `.env`.
+Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (modèles Hugging Face). `OPENAI_API_KEY` pour l'enrichissement de thèmes et l'annotation (`annotation/`). Ne jamais committer `.env`.
 
 ## Organisation
 
 | Dossier | Rôle |
 |---------|------|
-| `dataset/` | CSV métadonnées BTP |
-| `dataset/test/` | Corpus test hors domaine (registre `configs/test_corpora.yaml`) |
+| `dataset/` | CSV métadonnées annotées (`data_btp.csv`, `data_metallurgie.csv`, `data_caou.csv`) |
 | `embeddings/` | Embeddings pré-calculés (local, gitignored) |
 | `configs/` | `paths.yaml`, `methods/*.yaml`, configs SCGM / contrastifs |
 | `safer_core/` | Chemins centralisés → `output/` |
@@ -39,10 +38,90 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `contrastive_methods/` | Batch Triplet, SoftTriple, SupCon |
 | `bn_pipeline/` | Réseaux bayésiens (pgmpy, exports SCGM) |
 | `macro_transfer/` | Transfert macro-guidé + topics intra-macro (cible test) |
+| `annotation/` | Annotation unités factuelles via API OpenAI (notebook + cache JSONL + prompt caching) |
 | `scripts/` | CLI entraînement, export, évaluation, agrégation |
 | `jobs/` | Scripts SLURM Mésocentre |
 | `notebooks/` | Analyse (**.ipynb gitignored**, régénération locale via `scripts/build_*.py`) |
 | `output/` | **Toutes les sorties** (gitignored) |
+
+## Annotation (API OpenAI)
+
+Notebook interactif pour annoter des unités factuelles (A0/A1/B/C + injury/hospitalized/fatal) avec reprise sur cache JSONL et **prompt caching OpenAI** pour réduire le coût du préfixe système répété.
+
+| Étape | Commande / fichier |
+|-------|-------------------|
+| Données d'entrée | Placer un CSV dans `annotation/data/` (colonnes : `accident_id`, `sentence`, `fact_id`, `accident_summary`) |
+| Notebook | `annotation/annotate_factual_units.ipynb` (régénérer : `python scripts/build_notebook_annotation.py`) |
+| Sorties | `annotation/outputs/<run_id>/` — JSONL cache, XLSX annoté, summary, accident_outcomes |
+| Clé API | `OPENAI_API_KEY` dans `text/.env` |
+
+**Deux types de cache (distincts) :**
+
+| Mécanisme | Rôle | Contrôle |
+|-----------|------|----------|
+| **Cache JSONL local** | Reprendre une run sans rappeler l'API pour les lignes déjà annotées | `SKIP_CACHE`, `RUN_ID`, fichier `*.jsonl` dans `outputs/` |
+| **Prompt caching OpenAI** | Réutiliser côté serveur le préfixe identique (`SYSTEM_PROMPT`) via `prompt_cache_key` | `USE_PROMPT_CACHE_KEY`, `PROMPT_CACHE_KEY` (défaut : `safer-annotation:{PROMPT_VERSION}`) |
+
+Le runner loggue `cached_tokens` (depuis `usage.prompt_tokens_details`) et le taux `cached_tokens / prompt_tokens` en fin de run. Modèle par défaut : `gpt-5.4-mini` (`reasoning_effort=medium`, `max_output_tokens=4000`).
+
+Paramètres principaux (cellule dédiée du notebook) : `INPUT_CSV`, `OPENAI_MODEL`, `PROMPT_CACHE_KEY`, `USE_PROMPT_CACHE_KEY`, `N_ACCIDENTS`, `UNITS_PER_ACCIDENT`, `SKIP_CACHE`, `DRY_RUN`, `MIN_DELAY_BETWEEN_CALLS_SEC`, `RUN_ID` (reprise d'une run existante).
+
+### Mode Batch OpenAI (asynchrone, moins cher)
+
+Pour de gros volumes, utiliser l'**API Batch** (`/v1/chat/completions`) avec config YAML et CLI :
+
+| Étape | Commande / fichier |
+|-------|-------------------|
+| Config | `configs/annotation_batch.yaml` (mêmes paramètres que le notebook synchrone) |
+| Soumission | `python scripts/run_annotation_batch.py submit --config configs/annotation_batch.yaml` |
+| Suivi statut | `python scripts/run_annotation_batch.py status --run-id <RUN_ID>` ou notebook `annotation/check_batch_status.ipynb` |
+| Téléchargement | `python scripts/run_annotation_batch.py download --run-id <RUN_ID>` (quand `status=completed`) |
+| Ingestion XLSX | `python scripts/run_annotation_batch.py ingest --run-id <RUN_ID>` |
+| Pipeline complet | `python scripts/run_annotation_batch.py pipeline --config configs/annotation_batch.yaml` |
+
+Fichiers batch dans `annotation/outputs/<run_id>/` :
+
+| Fichier | Rôle |
+|---------|------|
+| `batch_state.json` | `batch_id`, statut, compteurs OpenAI |
+| `{model}__{prompt}__batch_input.jsonl` | Requêtes soumises (`custom_id = accident_id\|\|fact_id`) |
+| `batch_output.jsonl` | Réponses OpenAI |
+| `batch_errors.jsonl` | Échecs (si présent) |
+| `*__annotated.xlsx`, cache `*.jsonl` | Produits finaux après `ingest` (identiques au mode synchrone) |
+
+Régénérer le notebook de suivi : `python scripts/build_notebook_annotation_batch_status.py`
+
+### Annotation deux passes v13
+
+Workflow pour annoter ~43k unités avec détection d'ambiguïté puis désambiguïsation ciblée :
+
+| Passe | Mode | Fichier / commande |
+|-------|------|-------------------|
+| **1** | Batch (unité seule, sans récit) | `python scripts/run_annotation_batch.py pipeline --config configs/annotation_batch_pass1_v13.yaml` |
+| Suivi batch | — | `annotation/check_batch_status.ipynb` avec le `RUN_ID` passe 1 |
+| **2** | Notebook synchrone (récit complet pour ambigus) | `annotation/annotate_pass2_ambiguous.ipynb` (régénérer : `python scripts/build_notebook_annotation_pass2.py`) |
+
+**Passe 1** produit notamment : `pred_ambiguous`, `pred_context_needed`, `pred_alternative_label`, `pred_ambiguity_type`, `pred_ambiguity_reason`.
+
+**Passe 2** filtre via `should_run_second_pass()` (unités où `context_needed`, `ambiguous` ou `alternative_label != NONE`), ré-annote avec `accident_summary`, puis fusionne dans `*__annotated_final.xlsx`. Les champs `injury_mentioned` / `hospitalized` / `fatal` restent ceux de la passe 1.
+
+Config passe 1 : `configs/annotation_batch_pass1_v13.yaml` (`prompt_version: v13_two_pass_ambiguity_context`, `pass_mode: pass1`).
+
+Dans le notebook passe 2, renseigner `PASS1_RUN_ID` avec le run batch ingéré.
+
+### Migration vers `dataset/`
+
+Après ingest batch (ou passe 2), exporter les XLSX annotés vers les CSV du pipeline :
+
+```bash
+cd text
+python scripts/migrate_annotation_to_dataset.py --dry-run
+python scripts/migrate_annotation_to_dataset.py --validate-load
+# Passe 1 seulement :
+python scripts/migrate_annotation_to_dataset.py --pass1-only --run-id run_all_btp
+```
+
+Mapping : `run_all_btp` → `dataset/data_btp.csv`, `run_all_metallurgie` → `data_metallurgie.csv`, `run_all_caou_chimie_plas` → `data_caou.csv`. Préfère `*__annotated_final.xlsx` si présent. Puis relancer `export_corpus_embeddings.sh` (`FORCE=1` si embeddings déjà présents).
 
 ## Sorties (`output/`)
 
@@ -63,11 +142,11 @@ sbatch jobs/export_raw_geometry.sh
 
 # 2. SCGM BTP (+ eval test → output_test/ en fin de train)
 sbatch jobs/train_scgm_text.sh
-sbatch jobs/export_test_embeddings.sh   # CSV Qwen test si absent
+sbatch jobs/export_corpus_embeddings.sh   # embeddings Qwen (btp + metallurgie + caou)
 # Sorties clés : output/raw_embedding/metrics/metrics_geometry.csv,
 #   output_test/<corpus>/raw_embedding/metrics/metrics_geometry.csv,
 #   output_test/<corpus>/scgm_text/metrics/metrics_geometry_test.csv,
-#   embeddings/test/Qwen3-Embedding-0.6B_<corpus>.csv
+#   embeddings/Qwen3-Embedding-0.6B_<corpus>.csv
 
 # 3. Méthodes contrastives (entraînement natif, YAML configs/methods/*.yaml)
 python scripts/train_batch_triplet.py   # → output/<method>/embeddings/final_embeddings.csv
@@ -76,9 +155,10 @@ python scripts/train_supcon.py
 # Recalcul métriques uniquement si besoin :
 python scripts/postprocess_contrastive_results.py --method batch_triplet
 
-# 4. Embeddings test (Qwen figé) — job ou CLI :
-sbatch jobs/export_test_embeddings.sh
-# python scripts/export_test_embeddings.py --corpus metallurgie
+# 4. Embeddings encodeur figé (Qwen) — job ou CLI :
+sbatch jobs/export_corpus_embeddings.sh
+# CORPUS=metallurgie sbatch jobs/export_corpus_embeddings.sh
+# python scripts/export_corpus_embeddings.py --config configs/export_embeddings.yaml --corpus metallurgie
 
 # 5. Tuning K-fold (sélection sur mean eta2_macro_balanced_perc)
 cd jobs && bash submit_tuning_all.sh
@@ -99,8 +179,9 @@ python scripts/compare_methods.py --corpus test
 
 | Corpus | Chemin | Encodeur |
 |--------|--------|----------|
-| BTP (entraînement) | `dataset/data_btp.csv` | Best model fine-tuné (contrastifs) ou tête SCGM + embeddings Qwen figés |
-| Test métallurgie | `dataset/test/data_metallurgie.csv` | SCGM : `embeddings/test/Qwen3-Embedding-0.6B_metallurgie.csv` ; métriques raw : `output_test/metallurgie/raw_embedding/` |
+| BTP (entraînement) | `dataset/data_btp.csv` | Best model fine-tuné (contrastifs) ou tête SCGM + `embeddings/Qwen3-Embedding-0.6B_btp.csv` |
+| Métallurgie (test) | `dataset/data_metallurgie.csv` | `embeddings/Qwen3-Embedding-0.6B_metallurgie.csv` ; métriques raw : `output_test/metallurgie/raw_embedding/` |
+| Caou (test) | `dataset/data_caou.csv` | `embeddings/Qwen3-Embedding-0.6B_caou.csv` |
 
 **Train simple** (`jobs/train_*.sh`, `n_folds: 5`) : (1) K-fold → `kfold_summary.csv` (validation in-domain, **mean/std** sur toutes les métriques géométriques et sur `train_wall_time_sec` par fold) sous `folds/fold_{k}/` ; (2) **fit final 100 % BTP** → `checkpoints/best_model` + colonne `final_fit_wall_time_sec` dans `kfold_summary.csv` ; (3) évaluation **BTP + test** → `metrics_geometry_btp.csv`, `metrics_geometry_test.csv` (un seul modèle, pas d’éval test par fold).
 
@@ -112,7 +193,7 @@ python scripts/compare_methods.py --corpus test
 cd jobs
 sbatch export_raw_geometry.sh       # métriques embedding brut BTP + test (parallèle au train OK)
 sbatch train_scgm_text.sh         # inclut eval BTP + test
-sbatch export_test_embeddings.sh  # CSV Qwen test si besoin
+sbatch export_corpus_embeddings.sh  # CSV Qwen si absents
 sbatch train_batch_triplet.sh
 # … ou : bash submit_all.sh
 BASE_METHOD=scgm_text CORPUS=metallurgie bash run_frozen_source_prototypes.sh
@@ -143,11 +224,12 @@ sbatch jobs/train_scgm_text.sh
 
 Registre : [`configs/test_corpora.yaml`](configs/test_corpora.yaml) — chaque entrée définit `data_csv`, `emb_csv`, `display_name`. Défaut : **`metallurgie`**.
 
-**Ajouter un corpus** : fichiers `dataset/test/data_<id>.csv` + `embeddings/test/Qwen3-Embedding-0.6B_<id>.csv`, entrée dans le registre, puis :
+**Ajouter un corpus** : `dataset/data_<id>.csv` + entrée dans le registre, puis :
 
 ```bash
 export TEST_CORPUS=<id>   # ou CORPUS= pour macro_transfer
-python scripts/export_test_embeddings.py --corpus <id>
+python scripts/export_corpus_embeddings.py --corpus <id>
+# ou : CORPUS=<id> sbatch jobs/export_corpus_embeddings.sh
 ```
 
 Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 01 / 05 / 06 / 07 (`TEST_CORPUS`).
@@ -168,7 +250,7 @@ Les sorties vivent sous `output/` et `output_test/` (voir `configs/paths.yaml`).
 
 Pipeline **`macro_transfer/`** — **Frozen Source Prototypes (FSP)** uniquement : encodeur source **figé** (SCGM, contrastif ou embedding brut Qwen) → prototypes source → assignation cible par distances → **BERTopic** intra-macro (toujours exécuté dans le job nominal).
 
-**Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`, `batch_triplet`). Pour `raw_embedding`, embeddings pré-calculés : `embeddings/Qwen3-Embedding-0.6B_btp.csv` + export test (`jobs/export_test_embeddings.sh`).
+**Checkpoints source** (BTP) : `output/<encodeur>/checkpoints/` (ex. `softtriple`, `scgm_text`, `supcon`, `batch_triplet`). Pour `raw_embedding`, embeddings pré-calculés : `embeddings/Qwen3-Embedding-0.6B_btp.csv` + export multi-corpus (`jobs/export_corpus_embeddings.sh`).
 
 Paramètres : [`configs/frozen_source_prototypes.yaml`](configs/frozen_source_prototypes.yaml) (**config unique**). Encodeur choisi via `BASE_METHOD` dans `jobs/run_frozen_source_prototypes.sh`.
 
@@ -227,23 +309,6 @@ Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervise
 
 Sorties : `output/supervised_macro_ft/` (train, `metrics/kfold_geometry_*.csv`, `metrics_geometry_btp.csv`) ; tuning : `output/supervised_macro_ft/tuning/grid_summary.csv`, `best_combo.json` ; `output_test/<corpus>/macro_transfer/supervised_macro_ft/` (`transfer/metrics_geometry.csv`). BERTopic utilise les embeddings **z** projetés.
 
-### Variante geo (CE + λ·L_geo)
-
-Loss : **L = L_CE + λ·L_geo** avec préservation des similarités cosinus Qwen (hors diagonale). Sorties séparées du baseline CE-only.
-
-| Étape | Commande |
-|-------|----------|
-| Entraînement BTP | `bash jobs/train_supervised_macro_geo_ft.sh` |
-| Sweep λ (manuel) | `LAMBDA_GEO=0.05 bash jobs/train_supervised_macro_geo_ft.sh` |
-| Grid search CV | `MAX_COMBOS=4 SKIP_FINAL_FIT=1 bash jobs/tune_supervised_macro_geo_ft.sh` |
-| Grille complète + fit final | `bash jobs/tune_supervised_macro_geo_ft.sh` |
-| Transfert metallurgie | `CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
-| Classif seule | `RUN_BERTOPIC=false CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
-| BERTopic sans juge LLM | `JUDGE_ENABLE=false CORPUS=metallurgie bash jobs/run_supervised_macro_geo_ft_transfer.sh` |
-| Notebook 11 | `python scripts/build_notebook_11_supervised_macro_geo_ft.py` |
-
-Configs : [`configs/methods/supervised_macro_geo_ft.yaml`](configs/methods/supervised_macro_geo_ft.yaml), [`configs/supervised_macro_geo_ft_transfer.yaml`](configs/supervised_macro_geo_ft_transfer.yaml), grille [`configs/tuning/supervised_macro_geo_ft_grid.yaml`](configs/tuning/supervised_macro_geo_ft_grid.yaml). Sorties : `output/supervised_macro_geo_ft/` (tuning : `tuning/grid_summary.csv`, `best_combo.json`) ; `output_test/<corpus>/macro_transfer/supervised_macro_geo_ft/`.
-
 Sorties principales :
 - `transfer/source_prototypes.csv`
 - `transfer/target_macro_predictions.csv`
@@ -273,7 +338,6 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `06_macro_transfer_topics.ipynb` | **Lecture seule** — FSP (probas/distances macro, BERTopic inputs, calibration/erreurs) |
 | `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (GroupKFold BTP → test métallurgie → BERTopic) |
 | `10_supervised_macro_ft_results.ipynb` | **Lecture** — fine-tuning CE (θ + tête softmax) ; BERTopic sur h_t adapté (voir jobs dédiés) |
-| `11_supervised_macro_geo_ft_results.ipynb` | **Lecture** — CE + λ·L_geo (préservation similarités Qwen) ; métriques géométrie + t-SNE |
 | `08_fsp_macro_transfer_results.ipynb` | **Lecture seule** — diagnostics FSP (raw vs encodeur, confusion/report, distances, BERTopic) |
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.

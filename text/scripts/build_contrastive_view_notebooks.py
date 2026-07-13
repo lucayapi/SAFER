@@ -333,7 +333,7 @@ if METHOD_KEY == "softtriple" and emb_test is not None:
 
 RAW_TEST_MD = """### Embedding brut — test métallurgie (PCA / t-SNE / UMAP)
 
-Vecteurs **encodeur Qwen** (`embeddings/test/…`), couleur = **`pred_label`** (étape chaîne accidentelle). Référence avant/après fine-tuning {display_name} — indépendant de `output/<method>/`.
+Vecteurs **encodeur Qwen** (`embeddings/Qwen3-Embedding-0.6B_<corpus>.csv`), couleur = **`pred_label`** (étape chaîne accidentelle). Référence avant/après fine-tuning {display_name} — indépendant de `output/<method>/`.
 """
 
 RAW_TEST_CODE = '''
@@ -355,8 +355,8 @@ _raw_emb = plot_test_corpus_raw_embeddings(
 )
 if _raw_emb.missing:
     print("Embedding brut test — fichiers manquants :", ", ".join(_raw_emb.missing))
-    print("  → embeddings/test/Qwen3-Embedding-0.6B__<corpus>.csv")
-    print("  → dataset/test/data_<corpus>.csv (colonne pred_label)")
+    print("  → embeddings/Qwen3-Embedding-0.6B_<corpus>.csv")
+    print("  → dataset/data_<corpus>.csv (colonne pred_label)")
 else:
     print(
         "Figures embedding brut :",

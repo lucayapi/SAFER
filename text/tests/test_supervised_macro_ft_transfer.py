@@ -48,7 +48,7 @@ def test_encode_and_predict_shapes():
 def test_resolve_supervised_macro_output_dir_legacy_fallback(tmp_path):
     anchor = tmp_path
     corpus = "metallurgie"
-    method = "supervised_macro_geo_ft"
+    method = "supervised_macro_ft"
     legacy = anchor / "output_test" / corpus / method / "transfer"
     legacy.mkdir(parents=True)
     (legacy / "target_macro_predictions.csv").write_text("x\n", encoding="utf-8")

@@ -686,11 +686,8 @@ def plot_supervised_macro_ft_train_history(
         cv = history_df[history_df.get("fold", -1) >= 0].copy() if "fold" in history_df.columns else history_df.copy()
         final = history_df[history_df.get("fold", -1) == -1].copy() if "fold" in history_df.columns else pd.DataFrame()
 
-    has_geo = "train_loss_ce" in history_df.columns and "train_loss_geo" in history_df.columns
-    nrows = 2 if has_geo else 1
-    fig, axes = plt.subplots(nrows, 2, figsize=(12, 4.5 * nrows))
-    if nrows == 1:
-        axes = np.asarray([axes])
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
+    axes = np.asarray([axes])
 
     ax = axes[0, 0]
     if not cv.empty and "train_loss" in cv.columns:
@@ -741,31 +738,6 @@ def plot_supervised_macro_ft_train_history(
     ax.set_ylabel("Macro F1")
     ax.set_ylim(0, 1)
     ax.legend(fontsize=8)
-
-    if has_geo:
-        for col, title, color in (
-            ("train_loss_ce", "Train loss CE", "#ff7f0e"),
-            ("train_loss_geo", "Train loss L_geo", "#9467bd"),
-        ):
-            ax = axes[1, 0] if col == "train_loss_ce" else axes[1, 1]
-            if not cv.empty and col in cv.columns:
-                for _, sub in cv.groupby("fold"):
-                    ax.plot(sub["epoch"], sub[col], alpha=0.35, linewidth=1, color=color)
-                mean_col = cv.groupby("epoch")[col].mean()
-                ax.plot(mean_col.index, mean_col.values, color=color, linewidth=2, label="CV moyenne")
-            if not final.empty and col in final.columns:
-                ax.plot(
-                    final["epoch"],
-                    final[col],
-                    color=color,
-                    linewidth=2,
-                    linestyle="--",
-                    label="fit final",
-                )
-            ax.set_title(title)
-            ax.set_xlabel("Epoch")
-            ax.set_ylabel("Loss")
-            ax.legend(fontsize=8)
 
     fig.tight_layout()
     out_path: Optional[Path] = None

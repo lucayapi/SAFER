@@ -37,12 +37,6 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=str, default="configs/methods/supervised_macro_ft.yaml")
     p.add_argument(
-        "--lambda-geo",
-        type=float,
-        default=None,
-        help="Override training.lambda_geo (ex. sweep 0.01–1.0)",
-    )
-    p.add_argument(
         "--standardize-backbone",
         type=_parse_bool_flag,
         nargs="?",
@@ -82,8 +76,6 @@ def main() -> None:
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
     training_overrides: dict[str, float] = {}
     model_overrides: dict[str, object] = {}
-    if args.lambda_geo is not None:
-        training_overrides["lambda_geo"] = float(args.lambda_geo)
     if args.standardize_backbone is not None:
         model_overrides["standardize_backbone"] = bool(args.standardize_backbone)
     if args.oversampling is not None:

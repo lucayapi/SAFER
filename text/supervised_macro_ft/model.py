@@ -181,7 +181,7 @@ class SupervisedMacroModel(nn.Module):
         return self.backbone_scaler.transform_tensor(hidden)
 
     def encode_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:
-        """z = ψ(h) à partir d'embeddings backbone déjà calculés (h brut si L_geo)."""
+        """z = ψ(h) à partir d'embeddings backbone déjà calculés."""
         return self.projector(self._prepare_hidden_for_projector(hidden))
 
     def forward_logits_from_hidden(self, hidden: torch.Tensor) -> torch.Tensor:

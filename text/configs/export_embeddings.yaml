@@ -1,0 +1,18 @@
+# Export embeddings encodeur figé (multi-corpus).
+# Usage : python scripts/export_corpus_embeddings.py --config configs/export_embeddings.yaml
+
+backbone_name: Qwen/Qwen3-Embedding-0.6B
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+pred_ok_col: pred_ok
+encode_batch_size: 16
+max_seq_length: 256
+use_prompt: false
+skip_existing: true
+
+# Identifiants du registre configs/test_corpora.yaml (ou "all" pour tous)
+corpora:
+  - btp
+  - metallurgie
+  - caou

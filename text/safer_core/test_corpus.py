@@ -11,6 +11,7 @@ from safer_core.io import load_yaml
 from safer_core.paths import CONFIG_DIR, RESULTS_ROOT, TEXT_ROOT, resolve_repo_path
 
 REGISTRY_PATH = CONFIG_DIR / "test_corpora.yaml"
+DEFAULT_BACKBONE_ID = "Qwen3-Embedding-0.6B"
 
 
 @dataclass(frozen=True)
@@ -110,12 +111,23 @@ def resolve_test_corpus(
     return TestCorpusSpec(id=cid, display_name=display, data_csv=data_csv, emb_csv=emb_csv)
 
 
-def conventional_test_paths(corpus_id: str, *, anchor: Optional[Path] = None) -> tuple[str, str]:
-    """Chemins relatifs par convention ``data_<id>`` / ``Qwen3-Embedding-0.6B__<id>``."""
+def backbone_short_id(backbone_name: str) -> str:
+    """Identifiant court HF pour nommer les CSV d'embeddings (ex. ``Qwen3-Embedding-0.6B``)."""
+    return str(backbone_name).strip().split("/")[-1]
+
+
+def conventional_test_paths(
+    corpus_id: str,
+    *,
+    backbone_id: str = DEFAULT_BACKBONE_ID,
+    anchor: Optional[Path] = None,
+) -> tuple[str, str]:
+    """Chemins relatifs par convention ``dataset/data_<id>.csv`` / ``embeddings/<backbone>_<id>.csv``."""
     cid = str(corpus_id)
+    bid = backbone_id or DEFAULT_BACKBONE_ID
     return (
-        f"dataset/test/data_{cid}.csv",
-        f"embeddings/test/Qwen3-Embedding-0.6B__{cid}.csv",
+        f"dataset/data_{cid}.csv",
+        f"embeddings/{bid}_{cid}.csv",
     )
 
 
@@ -124,16 +136,24 @@ def _resolve_test_emb_csv(
     corpus_id: str,
     *,
     anchor: Path,
+    backbone_id: str = DEFAULT_BACKBONE_ID,
 ) -> Path:
-    """Résout le CSV d'embeddings test (double ou simple underscore avant l'id)."""
+    """Résout le CSV d'embeddings (chemins plats + rétrocompat ``embeddings/test/``)."""
     cid = str(corpus_id)
+    bid = backbone_id or DEFAULT_BACKBONE_ID
+    if emb_rel:
+        explicit = resolve_repo_path(str(emb_rel), repo_root=anchor).resolve()
+        if explicit.is_file():
+            return explicit
     rel_candidates = []
     if emb_rel:
         rel_candidates.append(str(emb_rel))
     rel_candidates.extend(
         [
-            f"embeddings/test/Qwen3-Embedding-0.6B__{cid}.csv",
-            f"embeddings/test/Qwen3-Embedding-0.6B_{cid}.csv",
+            f"embeddings/{bid}_{cid}.csv",
+            f"embeddings/{bid}__{cid}.csv",
+            f"embeddings/test/{bid}_{cid}.csv",
+            f"embeddings/test/{bid}__{cid}.csv",
         ]
     )
     seen: set[Path] = set()
@@ -146,7 +166,9 @@ def _resolve_test_emb_csv(
     for p in ordered:
         if p.is_file():
             return p
-    return ordered[0] if ordered else anchor / "embeddings" / "test" / f"missing_{cid}.csv"
+    if emb_rel:
+        return resolve_repo_path(str(emb_rel), repo_root=anchor).resolve()
+    return ordered[0] if ordered else anchor / "embeddings" / f"{bid}_{cid}.csv"
 
 
 def output_test_root(*, anchor: Optional[Path] = None) -> Path:
