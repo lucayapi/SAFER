@@ -77,11 +77,13 @@ def resolve_test_corpus(
     registry_path: Optional[Path | str] = None,
     anchor: Optional[Path] = None,
     require_files: bool = False,
+    require_emb_csv: Optional[bool] = None,
 ) -> TestCorpusSpec:
     """
     Résout un identifiant de corpus en chemins absolus sous ``text/``.
 
     ``corpus_id`` : id explicite, sinon ``TEST_CORPUS`` env, sinon ``default`` du registre.
+    ``require_files`` : vérifie ``data_csv`` (et ``emb_csv`` sauf si ``require_emb_csv=False``).
     """
     root = anchor or TEXT_ROOT
     reg = load_test_corpora_registry(registry_path, anchor=root)
@@ -103,11 +105,12 @@ def resolve_test_corpus(
     data_csv = resolve_repo_path(data_rel, repo_root=root)
     emb_csv = _resolve_test_emb_csv(emb_rel, cid, anchor=root)
     display = str(entry.get("display_name") or cid)
+    check_emb = require_emb_csv if require_emb_csv is not None else require_files
     if require_files:
         if not data_csv.is_file():
             raise FileNotFoundError(f"Corpus {cid} : data_csv absent : {data_csv}")
-        if emb_rel and not emb_csv.is_file():
-            raise FileNotFoundError(f"Corpus {cid} : emb_csv absent : {emb_csv}")
+    if check_emb and emb_rel and not emb_csv.is_file():
+        raise FileNotFoundError(f"Corpus {cid} : emb_csv absent : {emb_csv}")
     return TestCorpusSpec(id=cid, display_name=display, data_csv=data_csv, emb_csv=emb_csv)
 
 

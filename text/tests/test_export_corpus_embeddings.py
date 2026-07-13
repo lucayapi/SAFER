@@ -130,3 +130,33 @@ def test_force_reencode_calls_export(tmp_path):
             with patch("scripts.export_corpus_embeddings.export_text_embeddings") as mock_export:
                 export_corpus("mini", cfg, force=True, anchor=tmp_path)
                 mock_export.assert_called_once()
+
+
+def test_resolve_does_not_require_emb_when_disabled(tmp_path):
+    registry = {
+        "default": "mini",
+        "corpora": {
+            "mini": {
+                "display_name": "Mini",
+                "data_csv": "data.csv",
+                "emb_csv": "emb.csv",
+            }
+        },
+    }
+    reg_path = tmp_path / "test_corpora.yaml"
+    reg_path.write_text(yaml.safe_dump(registry), encoding="utf-8")
+    data_csv = tmp_path / "data.csv"
+    data_csv.write_text(
+        "accident_id,sentence,pred_label,pred_ok\na,s,A0,true\n",
+        encoding="utf-8",
+    )
+
+    spec = resolve_test_corpus(
+        "mini",
+        registry_path=reg_path,
+        anchor=tmp_path,
+        require_files=True,
+        require_emb_csv=False,
+    )
+    assert spec.data_csv.is_file()
+    assert not spec.emb_csv.is_file()

@@ -75,7 +75,12 @@ def export_corpus(
     force: bool = False,
     anchor: Optional[Path] = None,
 ) -> Path:
-    spec = resolve_test_corpus(corpus_id, anchor=anchor or ROOT_DIR, require_files=True)
+    spec = resolve_test_corpus(
+        corpus_id,
+        anchor=anchor or ROOT_DIR,
+        require_files=True,
+        require_emb_csv=False,
+    )
     dest = spec.emb_csv
     skip_existing = bool(cfg.get("skip_existing", True))
     if dest.is_file() and skip_existing and not force:
