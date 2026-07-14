@@ -84,6 +84,16 @@ def test_select_best_model_by_macro_f1():
     assert select_best_model(summary, selection_metric="macro_f1") == "b"
 
 
+def test_select_best_model_accepts_mean_prefix():
+    summary = pd.DataFrame(
+        [
+            {"model": "a", "mean_balanced_accuracy": 0.4},
+            {"model": "b", "mean_balanced_accuracy": 0.55},
+        ]
+    )
+    assert select_best_model(summary, selection_metric="mean_balanced_accuracy") == "b"
+
+
 def test_build_classifier_pipeline_logistic():
     pipe = build_classifier_pipeline("logistic_regression", seed=0)
     assert "scaler" in pipe.named_steps

@@ -161,7 +161,7 @@ from safer_core.test_corpus import resolve_test_corpus
 METHOD_NAME = "supervised_macro_baseline"
 N_FOLDS = 7  # nombre de splits GroupKFold (CV in-domain BTP)
 SEED = 42
-SELECTION_METRIC = "macro_f1"
+SELECTION_METRIC = "balanced_accuracy"  # sans préfixe mean_ (colonne CV : mean_<metric>)
 RESTIMATE_ML = True  # True = CV + réentraînement + test | False = cache ML
 
 TEST_CORPORA = ["metallurgie", "caou"]  # ids registre test_corpora.yaml

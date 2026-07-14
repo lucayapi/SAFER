@@ -115,14 +115,29 @@ def evaluate_loader(
     model: SupervisedMacroModel,
     loader: DataLoader,
     device: torch.device,
+    *,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
 ) -> Dict[str, float]:
+    from supervised_macro_ft.run_logging import batched_progress, log_step_done, log_step_start
+
     model.eval()
+    n_samples = len(loader.dataset) if hasattr(loader, "dataset") else None
+    desc = progress_desc or "eval"
+    if show_progress and n_samples is not None:
+        log_step_start(
+            desc,
+            n_samples=n_samples,
+            batch_size=int(loader.batch_size or 1),
+            detail="classification",
+        )
     y_true: list[int] = []
     y_pred: list[int] = []
     total_loss = 0.0
     n_batches = 0
     criterion = nn.CrossEntropyLoss()
-    for batch in loader:
+    batch_iter = batched_progress(loader, desc=desc, show_progress=show_progress)
+    for batch in batch_iter:
         batch = batch_to_device(batch, device)
         logits = model(batch)
         loss = criterion(logits, batch["label_ids"])
@@ -131,6 +146,8 @@ def evaluate_loader(
         pred = logits.argmax(dim=-1)
         y_true.extend(batch["label_ids"].cpu().tolist())
         y_pred.extend(pred.cpu().tolist())
+    if show_progress and n_samples is not None:
+        log_step_done(desc, n_samples=n_samples)
     yt = np.asarray(y_true, dtype=np.int64)
     yp = np.asarray(y_pred, dtype=np.int64)
     return {

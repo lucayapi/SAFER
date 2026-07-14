@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Mapping, Optional, Sequence
+import sys
+from typing import Any, Iterable, Iterator, Mapping, Optional, Sequence
 
 import pandas as pd
 import torch
@@ -14,6 +15,53 @@ from supervised_macro_ft.model import model_kwargs_from_cfg, validate_macro_ft_p
 logger = logging.getLogger(__name__)
 
 _PREFIX = "[macro_ft]"
+
+
+def log_step_start(
+    step: str,
+    *,
+    n_samples: int,
+    batch_size: int,
+    detail: Optional[str] = None,
+) -> None:
+    """Annonce le début d'une passe batchée (encodage, eval, export)."""
+    n_batches = max((n_samples + batch_size - 1) // batch_size, 1) if batch_size > 0 else 1
+    msg = f"{_PREFIX} {step} — {n_samples} exemples, batch_size={batch_size} (~{n_batches} batches)"
+    if detail:
+        msg += f" | {detail}"
+    logger.info(msg)
+
+
+def batched_progress(
+    loader: Iterable[Any],
+    *,
+    desc: str,
+    total: Optional[int] = None,
+    show_progress: bool = True,
+) -> Iterator[Any]:
+    """Itère sur un DataLoader avec barre tqdm (stdout, mininterval=10s) si activé."""
+    if not show_progress:
+        yield from loader
+        return
+    from tqdm import tqdm
+
+    n_total = total if total is not None else (len(loader) if hasattr(loader, "__len__") else None)
+    yield from tqdm(
+        loader,
+        total=n_total,
+        desc=desc,
+        unit="batch",
+        file=sys.stdout,
+        mininterval=10.0,
+        dynamic_ncols=True,
+    )
+
+
+def log_step_done(step: str, *, n_samples: int, detail: Optional[str] = None) -> None:
+    msg = f"{_PREFIX} {step} terminé — {n_samples} exemples"
+    if detail:
+        msg += f" | {detail}"
+    logger.info(msg)
 
 
 def log_phase(title: str, *, detail: Optional[str] = None) -> None:

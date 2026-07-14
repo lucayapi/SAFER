@@ -464,6 +464,14 @@ def summarize_cross_domain_generalization(
     return df.reset_index(drop=True)
 
 
+def _normalize_selection_metric(selection_metric: str) -> str:
+    """Accepte ``balanced_accuracy`` ou ``mean_balanced_accuracy`` (colonne CV = mean_<metric>)."""
+    metric = str(selection_metric).strip()
+    if metric.startswith("mean_"):
+        metric = metric[len("mean_") :]
+    return metric
+
+
 def select_best_model(
     cv_summary: pd.DataFrame,
     *,
@@ -472,7 +480,8 @@ def select_best_model(
     """Sélectionne le modèle avec le meilleur ``mean_<selection_metric>``."""
     if cv_summary.empty:
         raise ValueError("cv_summary vide : impossible de sélectionner un modèle.")
-    col = f"mean_{selection_metric}"
+    metric = _normalize_selection_metric(selection_metric)
+    col = f"mean_{metric}"
     if col not in cv_summary.columns:
         raise KeyError(f"Colonne {col!r} absente du résumé CV.")
     idx = cv_summary[col].astype(float).idxmax()

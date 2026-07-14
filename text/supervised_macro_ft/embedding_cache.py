@@ -46,23 +46,82 @@ def encode_backbone_matrix(
     max_length: int,
     batch_size: int,
     device: torch.device,
+    show_progress: bool = True,
+    progress_desc: str | None = None,
 ) -> np.ndarray:
     """Encode une seule fois h = pool(Qwen(u)) pour tout le corpus."""
     from scgm_text.collate import make_text_collate_fn
+    from supervised_macro_ft.run_logging import batched_progress, log_step_done, log_step_start
 
     model.eval()
     collate_fn = make_text_collate_fn(tokenizer, max_length)
     items = [{"text": t, "label": 0, "index": i} for i, t in enumerate(texts)]
     loader = DataLoader(items, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    desc = progress_desc or "encode_backbone"
+    log_step_start(desc, n_samples=len(texts), batch_size=batch_size, detail="Qwen gelé")
     chunks: list[np.ndarray] = []
-    for batch in loader:
+    for batch in batched_progress(loader, desc=desc, show_progress=show_progress):
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         h = model._encode_backbone(input_ids, attention_mask)
         chunks.append(h.detach().cpu().numpy().astype(np.float32))
     if not chunks:
         return np.zeros((0, 1), dtype=np.float32)
-    return np.vstack(chunks)
+    out = np.vstack(chunks)
+    log_step_done(desc, n_samples=len(out))
+    return out
+
+
+def load_backbone_hidden_for_corpus(
+    *,
+    meta_df: pd.DataFrame,
+    texts: Sequence[str],
+    emb_csv: str | Path | None,
+    cache_path: Path | None,
+    model: SupervisedMacroModel,
+    tokenizer,
+    max_length: int,
+    batch_size: int,
+    device: torch.device,
+) -> np.ndarray:
+    """
+    Charge h depuis CSV, cache .npy local, ou encode Qwen une fois puis sauvegarde.
+    """
+    n = len(meta_df)
+    if emb_csv:
+        emb_path = Path(str(emb_csv))
+        if emb_path.is_file():
+            logger.info("Chargement embeddings backbone depuis CSV : %s", emb_path)
+            return _load_hidden_from_csv(meta_df, emb_path)
+
+    if cache_path is not None and cache_path.is_file():
+        arr = np.load(cache_path)
+        if arr.ndim == 2 and arr.shape[0] == n:
+            logger.info("Cache backbone réutilisé : %s", cache_path)
+            return np.asarray(arr, dtype=np.float32)
+        logger.warning(
+            "Cache backbone ignoré (shape %s, attendu n=%d) : %s",
+            arr.shape,
+            n,
+            cache_path,
+        )
+
+    logger.info("Encodage backbone unique (%d phrases) — peut prendre un moment…", n)
+    hidden = encode_backbone_matrix(
+        model,
+        tokenizer,
+        texts,
+        max_length=max_length,
+        batch_size=batch_size,
+        device=device,
+    )
+    if hidden.shape[0] != n:
+        raise ValueError(f"Encodage backbone : attendu {n} lignes, obtenu {hidden.shape[0]}")
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        np.save(cache_path, hidden)
+        logger.info("Cache backbone sauvegardé : %s", cache_path)
+    return hidden
 
 
 def load_or_build_backbone_hidden(
@@ -79,47 +138,21 @@ def load_or_build_backbone_hidden(
     """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = cache_dir / "backbone_hidden.npy"
-    n = len(dataset)
     meta_df = dataset.get_metadata_df()
-
-    emb_csv = model_cfg.get("backbone_emb_csv")
-    if emb_csv:
-        emb_path = Path(str(emb_csv))
-        if emb_path.is_file():
-            logger.info("Chargement embeddings backbone depuis CSV : %s", emb_path)
-            return _load_hidden_from_csv(meta_df, emb_path)
-
-    if cache_path.is_file():
-        arr = np.load(cache_path)
-        if arr.ndim == 2 and arr.shape[0] == n:
-            logger.info("Cache backbone réutilisé : %s", cache_path)
-            return np.asarray(arr, dtype=np.float32)
-        logger.warning(
-            "Cache backbone ignoré (shape %s, attendu n=%d) : %s",
-            arr.shape,
-            n,
-            cache_path,
-        )
-
     max_length = int(model_cfg.get("max_seq_length", 256))
     batch_size = int(model_cfg.get("encode_batch_size", model_cfg.get("batch_size", 32)))
-    text_col = dataset.text_col
-    texts = meta_df[text_col].astype(str).tolist()
-    logger.info("Encodage backbone unique (%d phrases) — peut prendre un moment…", n)
-    hidden = encode_backbone_matrix(
-        model,
-        tokenizer,
-        texts,
+    texts = meta_df[dataset.text_col].astype(str).tolist()
+    return load_backbone_hidden_for_corpus(
+        meta_df=meta_df,
+        texts=texts,
+        emb_csv=model_cfg.get("backbone_emb_csv"),
+        cache_path=cache_dir / "backbone_hidden.npy",
+        model=model,
+        tokenizer=tokenizer,
         max_length=max_length,
         batch_size=batch_size,
         device=device,
     )
-    if hidden.shape[0] != n:
-        raise ValueError(f"Encodage backbone : attendu {n} lignes, obtenu {hidden.shape[0]}")
-    np.save(cache_path, hidden)
-    logger.info("Cache backbone sauvegardé : %s", cache_path)
-    return hidden
 
 
 class BackboneHiddenDataset(Dataset):
@@ -164,18 +197,37 @@ def encode_projected_matrix(
     *,
     batch_size: int,
     device: torch.device,
+    show_progress: bool = True,
+    progress_desc: str | None = None,
 ) -> np.ndarray:
     """z = ψ(h) par batch (export rapide sans repasser Qwen)."""
+    from supervised_macro_ft.run_logging import log_step_done, log_step_start
+
     model.eval()
-    chunks: list[np.ndarray] = []
+    desc = progress_desc or "encode_projected"
     n = len(hidden)
-    for start in range(0, n, batch_size):
+    n_batches = max((n + batch_size - 1) // batch_size, 1)
+    log_step_start(desc, n_samples=n, batch_size=batch_size, detail="projecteur ψ")
+    chunks: list[np.ndarray] = []
+    for batch_idx, start in enumerate(range(0, n, batch_size)):
+        if show_progress and (
+            batch_idx == 0 or batch_idx == n_batches - 1 or (batch_idx + 1) % 50 == 0
+        ):
+            logger.info(
+                "[macro_ft] %s — batch %d/%d (%.1f%%)",
+                desc,
+                batch_idx + 1,
+                n_batches,
+                100.0 * (batch_idx + 1) / n_batches,
+            )
         h = torch.from_numpy(hidden[start : start + batch_size]).to(device)
         z = model.encode_from_hidden(h)
         chunks.append(z.detach().cpu().numpy().astype(np.float64))
     if not chunks:
         return np.zeros((0, model.hiddim), dtype=np.float64)
-    return np.vstack(chunks)
+    out = np.vstack(chunks)
+    log_step_done(desc, n_samples=len(out))
+    return out
 
 
 @torch.no_grad()

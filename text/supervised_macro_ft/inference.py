@@ -20,20 +20,28 @@ def encode_texts(
     max_length: int,
     batch_size: int,
     device: torch.device,
+    show_progress: bool = True,
+    progress_desc: str | None = None,
 ) -> np.ndarray:
+    from supervised_macro_ft.run_logging import batched_progress, log_step_done, log_step_start
+
     model.eval()
     collate_fn = make_text_collate_fn(tokenizer, max_length)
     dummy_labels = [{"text": t, "label": 0, "index": i} for i, t in enumerate(texts)]
     loader = DataLoader(dummy_labels, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    desc = progress_desc or "encode_z"
+    log_step_start(desc, n_samples=len(texts), batch_size=batch_size, detail="Qwen + projecteur")
     chunks: list[np.ndarray] = []
-    for batch in loader:
+    for batch in batched_progress(loader, desc=desc, show_progress=show_progress):
         input_ids = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         h = model.encode(input_ids, attention_mask)
         chunks.append(h.detach().cpu().numpy())
     if not chunks:
         return np.zeros((0, 1), dtype=np.float64)
-    return np.vstack(chunks).astype(np.float64)
+    out = np.vstack(chunks).astype(np.float64)
+    log_step_done(desc, n_samples=len(out))
+    return out
 
 
 @torch.no_grad()

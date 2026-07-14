@@ -33,8 +33,8 @@ from supervised_macro_ft.embedding_cache import (
     BackboneHiddenDataset,
     collate_hidden_batch,
     encode_projected_matrix,
+    load_backbone_hidden_for_corpus,
     load_or_build_backbone_hidden,
-    predict_from_hidden_matrix,
     should_cache_backbone_embeddings,
 )
 from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cfg
@@ -391,7 +391,12 @@ def run_supervised_macro_ft_training(
 
         if use_hidden_cache and backbone_hidden is not None:
             z_btp = encode_projected_matrix(
-                model, backbone_hidden, batch_size=batch_size, device=device
+                model,
+                backbone_hidden,
+                batch_size=batch_size,
+                device=device,
+                show_progress=True,
+                progress_desc="export_btp_z",
             )
         else:
             from supervised_macro_ft.inference import encode_texts
@@ -404,6 +409,8 @@ def run_supervised_macro_ft_training(
                 max_length=max_length,
                 batch_size=batch_size,
                 device=device,
+                show_progress=True,
+                progress_desc="export_btp_z",
             )
 
         export_projected_embeddings(
@@ -420,10 +427,17 @@ def run_supervised_macro_ft_training(
     test_corpora = resolve_test_corpora(cfg)
     test_metrics_by_corpus: Dict[str, Any] = {}
     emb_dir = out_dir / "embeddings"
+    cache_dir = out_dir / "cache"
+    text_col = str(data_cfg.get("text_col", "sentence"))
     log_phase("Phase 3/3 — Eval classification OOD", detail=", ".join(test_corpora))
     for corpus_id in test_corpora:
         try:
             spec = resolve_test_corpus(corpus_id, anchor=anchor)
+            logger.info(
+                "[macro_ft] Phase 3 — corpus %s (%s)",
+                corpus_id,
+                spec.display_name,
+            )
             test_ds = TextRawDataset(
                 str(spec.data_csv),
                 label_col=label_col,
@@ -432,18 +446,62 @@ def run_supervised_macro_ft_training(
                 text_col=data_cfg.get("text_col"),
             )
             test_meta = test_ds.get_metadata_df()
-            test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-            from supervised_macro_ft.inference import encode_texts
+            texts = test_meta[text_col].astype(str).tolist()
+            n_test = len(texts)
+            logger.info("[macro_ft] Phase 3 %s — %d exemples à traiter", corpus_id, n_test)
 
-            texts = test_meta[str(data_cfg.get("text_col", "sentence"))].astype(str).tolist()
-            z_ood = encode_texts(
-                model,
-                tokenizer,
-                texts,
-                max_length=max_length,
-                batch_size=batch_size,
-                device=device,
-            )
+            if use_hidden_cache:
+                logger.info(
+                    "[macro_ft] Phase 3 %s — chargement h (CSV ou cache, pas de forward Qwen si CSV présent)",
+                    corpus_id,
+                )
+                h_ood = load_backbone_hidden_for_corpus(
+                    meta_df=test_meta,
+                    texts=texts,
+                    emb_csv=spec.emb_csv,
+                    cache_path=cache_dir / f"backbone_hidden_{corpus_id}.npy",
+                    model=model,
+                    tokenizer=tokenizer,
+                    max_length=max_length,
+                    batch_size=batch_size,
+                    device=device,
+                )
+                z_ood = encode_projected_matrix(
+                    model,
+                    h_ood,
+                    batch_size=batch_size,
+                    device=device,
+                    show_progress=True,
+                    progress_desc=f"export_{corpus_id}_z",
+                )
+                eval_loader = DataLoader(
+                    BackboneHiddenDataset(h_ood, test_ds.label_ids),
+                    batch_size=batch_size,
+                    shuffle=False,
+                    collate_fn=collate_hidden_batch,
+                )
+            else:
+                logger.info(
+                    "[macro_ft] Phase 3 %s — encodage z puis eval (2 passes Qwen+ψ)",
+                    corpus_id,
+                )
+                from supervised_macro_ft.inference import encode_texts
+
+                z_ood = encode_texts(
+                    model,
+                    tokenizer,
+                    texts,
+                    max_length=max_length,
+                    batch_size=batch_size,
+                    device=device,
+                    show_progress=True,
+                    progress_desc=f"export_{corpus_id}_z",
+                )
+                eval_loader = DataLoader(
+                    test_ds, batch_size=batch_size, shuffle=False, collate_fn=collate_fn
+                )
+
+            logger.info("[macro_ft] Phase 3 %s — export projected embeddings", corpus_id)
             export_projected_embeddings(
                 z_ood,
                 test_meta,
@@ -451,16 +509,37 @@ def run_supervised_macro_ft_training(
                 str(corpus_id),
                 label_col=label_col,
                 group_col=str(data_cfg.get("group_col", "accident_id")),
-                text_col=str(data_cfg.get("text_col", "sentence")),
+                text_col=text_col,
             )
-            corpus_metrics = evaluate_loader(model, test_loader, device)
+            corpus_metrics = evaluate_loader(
+                model,
+                eval_loader,
+                device,
+                show_progress=True,
+                progress_desc=f"eval_{corpus_id}",
+            )
             test_metrics_by_corpus[str(corpus_id)] = corpus_metrics
             log_test_metrics(corpus_metrics, corpus=corpus_id)
         except Exception as exc:
             logger.warning("[macro_ft] Eval test corpus %s ignorée : %s", corpus_id, exc)
 
-    btp_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    test_metrics_by_corpus["btp"] = evaluate_loader(model, btp_loader, device)
+    logger.info("[macro_ft] Phase 3 — eval BTP in-domain (holdout final)")
+    if use_hidden_cache and backbone_hidden is not None:
+        btp_loader = DataLoader(
+            BackboneHiddenDataset(backbone_hidden, dataset.label_ids),
+            batch_size=batch_size,
+            shuffle=False,
+            collate_fn=collate_hidden_batch,
+        )
+    else:
+        btp_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+    test_metrics_by_corpus["btp"] = evaluate_loader(
+        model,
+        btp_loader,
+        device,
+        show_progress=True,
+        progress_desc="eval_btp",
+    )
     cross_domain_summary = pd.DataFrame()
     if test_metrics_by_corpus:
         save_classification_outputs(
