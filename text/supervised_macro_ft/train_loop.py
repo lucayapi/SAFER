@@ -78,6 +78,20 @@ def _resolve_use_amp(train_cfg: Dict[str, Any], model: SupervisedMacroModel, dev
     return bool(model.has_trainable_backbone and device.type == "cuda")
 
 
+def _autocast_context(enabled: bool):
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        return torch.amp.autocast("cuda", enabled=enabled)
+    return torch.cuda.amp.autocast(enabled=enabled)
+
+
+def _make_grad_scaler(use_amp: bool):
+    if not use_amp:
+        return None
+    if hasattr(torch, "amp") and hasattr(torch.amp, "GradScaler"):
+        return torch.amp.GradScaler("cuda")
+    return torch.cuda.amp.GradScaler()
+
+
 def train_one_epoch(
     model: SupervisedMacroModel,
     loader: DataLoader,
@@ -90,14 +104,14 @@ def train_one_epoch(
     model.train()
     total_loss = 0.0
     n_batches = 0
-    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+    scaler = _make_grad_scaler(use_amp)
     for batch in loader:
         batch = batch_to_device(batch, device)
         optimizer.zero_grad(set_to_none=True)
-        with torch.cuda.amp.autocast(enabled=use_amp):
+        with _autocast_context(use_amp):
             logits = model(batch)
             loss = criterion(logits, batch["label_ids"])
-        if use_amp:
+        if use_amp and scaler is not None:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()

@@ -8,6 +8,7 @@
 
 #SBATCH --job-name=raw_emb_eval
 #SBATCH --partition=normal
+#SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=04:00:00

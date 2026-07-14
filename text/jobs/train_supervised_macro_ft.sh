@@ -10,6 +10,7 @@
 
 #SBATCH --job-name=sup-macro-ft
 #SBATCH --partition=gpu
+#SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G

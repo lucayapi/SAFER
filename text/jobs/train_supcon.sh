@@ -1,6 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=supcon
 #SBATCH --partition=gpu
+#SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 #SBATCH --gres=gpu:1
 #SBATCH --constraint='a100|h100'
 #SBATCH --cpus-per-task=8

@@ -177,10 +177,8 @@ SOURCE_CFG = {
     "pred_ok_col": "pred_ok",
 }
 
-# --- Cible par défaut (surchargée via registre pour chaque corpus test) ---
-TARGET_CFG = {
-    "dataset_path": "dataset/data_metallurgie.csv",
-    "emb_csv": "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv",
+# --- Colonnes cible (chemins data/emb résolus via registre dans build_cfg) ---
+TARGET_COL_CFG = {
     "text_col": "sentence",
     "label_col": "pred_label",
     "group_col": "accident_id",
@@ -192,7 +190,13 @@ MODEL_REGISTRY: dict = {}
 
 
 def build_cfg(corpus_id: str) -> dict:
-    # Assemble la config runtime pour load_supervised_datasets.
+    # Assemble la config runtime ; data/emb du corpus via test_corpora.yaml.
+    spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
+    target = {
+        **TARGET_COL_CFG,
+        "dataset_path": str(spec.data_csv.relative_to(TEXT_ROOT)).replace("\\\\", "/"),
+        "emb_csv": str(spec.emb_csv.relative_to(TEXT_ROOT)).replace("\\\\", "/"),
+    }
     return {
         "method_name": METHOD_NAME,
         "corpus": corpus_id,
@@ -200,7 +204,7 @@ def build_cfg(corpus_id: str) -> dict:
         "seed": SEED,
         "selection_metric": SELECTION_METRIC,
         "source": dict(SOURCE_CFG),
-        "target": dict(TARGET_CFG),
+        "target": target,
     }
 
 

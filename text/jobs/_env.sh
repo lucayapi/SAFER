@@ -1,5 +1,6 @@
 # Helpers partagés par les jobs SLURM (sourcer depuis text/jobs/*.sh).
-# Charge text/.env sans « source » bash (compatible KEY=value et KEY: valeur).
+# Nœuds à exclure — recopiés en #SBATCH --exclude dans chaque script sbatch.
+SAFER_SLURM_EXCLUDE_NODES="${SAFER_SLURM_EXCLUDE_NODES:-hpcnode39,piafgpu01,iccfgpu01}"
 
 load_text_dotenv() {
   local env_file="${1:-.env}"

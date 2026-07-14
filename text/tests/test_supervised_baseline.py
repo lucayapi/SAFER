@@ -270,6 +270,46 @@ def test_summarize_all_models_test_metrics():
     assert summary.loc[1, "macro_f1"] == pytest.approx(0.55)
 
 
+def test_load_supervised_datasets_target_paths_differ_by_corpus():
+    """Chaque corpus test doit charger son propre data_csv / emb_csv (pas un TARGET_CFG figé)."""
+    from macro_transfer.supervised_baseline import load_supervised_datasets
+    from safer_core.test_corpus import resolve_test_corpus
+
+    anchor = Path(__file__).resolve().parents[1]
+    source = {
+        "dataset_path": "dataset/data_btp.csv",
+        "emb_csv": "embeddings/Qwen3-Embedding-0.6B_btp.csv",
+        "text_col": "sentence",
+        "label_col": "pred_label",
+        "group_col": "accident_id",
+        "pred_ok_col": "pred_ok",
+    }
+    col_cfg = {
+        "text_col": "sentence",
+        "label_col": "pred_label",
+        "group_col": "accident_id",
+        "pred_ok_col": "pred_ok",
+    }
+    sizes: dict[str, int] = {}
+    for corpus_id in ("metallurgie", "caou"):
+        spec = resolve_test_corpus(
+            corpus_id, anchor=anchor, require_files=True, require_emb_csv=True
+        )
+        cfg = {
+            "corpus": corpus_id,
+            "source": source,
+            "target": {
+                **col_cfg,
+                "dataset_path": str(spec.data_csv.relative_to(anchor)).replace("\\", "/"),
+                "emb_csv": str(spec.emb_csv.relative_to(anchor)).replace("\\", "/"),
+            },
+        }
+        data = load_supervised_datasets(cfg, anchor=anchor)
+        assert data["corpus_id"] == corpus_id
+        sizes[corpus_id] = len(data["X_test"])
+    assert sizes["metallurgie"] != sizes["caou"]
+
+
 def test_summarize_cross_domain_generalization():
     cv_summary = pd.DataFrame(
         [

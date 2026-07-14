@@ -3,6 +3,7 @@
 #SBATCH --job-name=scgm_text
 
 #SBATCH --partition=gpu
+#SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 
 #SBATCH --gres=gpu:1
 
