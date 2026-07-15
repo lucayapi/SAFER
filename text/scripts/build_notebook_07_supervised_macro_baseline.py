@@ -37,7 +37,8 @@ MODEL_SECTIONS = [
     (
         "logistic_regression",
         "Logistic Regression",
-        "StandardScaler + régression logistique multinomiale.",
+        "Régression logistique multinomiale sur embeddings **standardisés** (StandardScaler). "
+        "Référence linéaire rapide, interprétable via les coefficients.",
         """\
 MODEL_REGISTRY["logistic_regression"] = {
     "use_scaler": True,
@@ -52,7 +53,8 @@ MODEL_REGISTRY["logistic_regression"] = {
     (
         "random_forest",
         "Random Forest",
-        "Forêt aléatoire sans scaling des embeddings.",
+        "Forêt aléatoire **sans** scaling — les arbres sont insensibles à l'échelle des features. "
+        "Capture des interactions non linéaires entre dimensions d'embedding.",
         """\
 MODEL_REGISTRY["random_forest"] = {
     "use_scaler": False,
@@ -66,7 +68,7 @@ MODEL_REGISTRY["random_forest"] = {
     (
         "xgboost",
         "XGBoost",
-        "Gradient boosting ; si import échoue : `pip install xgboost`.",
+        "Gradient boosting sur embeddings bruts. Si import échoue : `pip install xgboost`.",
         """\
 MODEL_REGISTRY["xgboost"] = {
     "use_scaler": False,
@@ -82,7 +84,8 @@ MODEL_REGISTRY["xgboost"] = {
     (
         "mlp",
         "MLP",
-        "StandardScaler + MLPClassifier avec early stopping.",
+        "Perceptron multicouche (256→128, ReLU) sur embeddings **standardisés**, avec early stopping. "
+        "Architecture alignée sur le projecteur `mlp_sklearn` du notebook **08** (supervised_macro_ft).",
         """\
 MODEL_REGISTRY["mlp"] = {
     "use_scaler": True,
@@ -101,28 +104,140 @@ TEST_CORPUS_SPECS = [
     ("caou", "Caoutchouc / chimie / plastiques"),
 ]
 
+INTRO_MD = r"""
+# 07 — Baseline supervisée (embedding brut Qwen)
+
+## Objectif
+
+Établir une **ligne de base sklearn** sur les embeddings Qwen **pré-calculés** (sans fine-tuning de l'encodeur) pour la classification macro **A0 / A1 / B / C**.
+
+Ce notebook répond à la question : *« Que vaut un classifieur classique sur les vecteurs Qwen bruts ? »* — point de comparaison pour les méthodes contrastives (05) et le fine-tuning CE (08).
+
+## Données
+
+| Rôle | Fichiers | Description |
+|------|----------|-------------|
+| **Entraînement / CV** | `dataset/data_btp.csv` + `embeddings/Qwen3-Embedding-0.6B_btp.csv` | Corpus BTP in-domain |
+| **Test OOD** | `dataset/data_<corpus>.csv` + `embeddings/Qwen3-Embedding-0.6B_<corpus>.csv` | Métallurgie, caou (registre `configs/test_corpora.yaml`) |
+
+Chaque ligne = une **unité factuelle** (`sentence`) avec `pred_label` (macro) et `accident_id` (groupe pour le CV).
+
+## Protocole
+
+1. **GroupKFold** (`N_FOLDS`, groupes = `accident_id`) sur BTP — un accident ne peut pas être à la fois en train et en validation.
+2. **Quatre classifieurs** : Logistic Regression, Random Forest, XGBoost, MLP.
+3. **Sélection** du meilleur modèle sur **balanced accuracy** moyenne en CV (`SELECTION_METRIC`).
+4. **Réentraînement** sur 100 % BTP → évaluation sur chaque corpus test OOD.
+5. **Synthèse cross-domain** : BA CV vs BA OOD (moyenne et pire corpus).
+
+## Métriques affichées
+
+- **accuracy** — exactitude globale
+- **balanced_accuracy** — moyenne des rappels par classe (métrique principale, déséquilibre macro)
+
+> `macro_f1` est calculée en interne mais **non affichée** dans ce notebook (focus article sur la BA).
+
+## Modes d'exécution
+
+| `RESTIMATE` | Comportement |
+|-------------|--------------|
+| `False` *(défaut)* | **Cache** — saute CV / test si les fichiers existent déjà |
+| `True` | **Force** — réentraîne tout, même si le cache est présent |
+
+La cellule paramètres calcule automatiquement `RUN_CV` et `RUN_TEST` par corpus.
+
+## Sorties
+
+```
+output_test/<corpus>/supervised_baseline/
+├── cv/                    # CV partagée (dossier CV_CORPUS)
+│   ├── cv_per_fold.csv
+│   └── cv_summary.csv
+├── transfer/
+│   ├── target_macro_predictions.csv
+│   ├── all_models_test_metrics.csv
+│   └── models/<model_key>/
+├── figures/               # matrices de confusion
+└── cross_domain_generalization.csv
+```
+
+**Prérequis** : embeddings exportés pour BTP et corpus test (`jobs/export_corpus_embeddings.sh` ou `scripts/export_corpus_embeddings.py`).
+"""
+
+PARAMS_MD = r"""
+### Paramètres généraux
+
+**`RESTIMATE`** — contrôle unique du réentraînement :
+- `False` : recharge le disque si `cv/cv_summary.csv`, `transfer/all_models_test_metrics.csv`, etc. sont déjà là ;
+- `True` : relance CV + évaluation test même si les fichiers existent.
+
+Les hyperparamètres de **chaque classifieur** restent dans les sections dédiées (étape 2).
+"""
+
+STEP1_MD = r"""
+## Étape 1 — Chargement des données
+
+Vérifie la **couverture embeddings** (chaque unité du CSV a bien un vecteur Qwen) puis charge les matrices \(X\) (dim embedding) et \(y\) (macro entière).
+
+Le GroupKFold utilise `accident_id` : toutes les unités d'un même accident partagent le même fold.
+"""
+
+STEP2_MD = r"""
+## Étape 2 — CV GroupKFold par modèle (BTP)
+
+Pour chaque classifieur :
+
+- entraînement sur \(K-1\) folds, évaluation sur le fold tenu à l'écart ;
+- métriques **accuracy** et **balanced_accuracy** par fold ;
+- les lignes sont agrégées à l'étape 3 (μ ± σ).
+
+**StandardScaler** : appliqué avant LR et MLP (fit sur le train du fold uniquement).
+"""
+
+STEP3_MD = r"""
+## Étape 3 — Synthèse CV et sélection du modèle
+
+Tableau **μ ± σ** par modèle. Le meilleur modèle est celui qui maximise `mean_balanced_accuracy` (paramètre `SELECTION_METRIC`).
+
+La figure barres compare les modèles sur les métriques affichées (sans `macro_f1`).
+"""
+
+STEP4_TEMPLATE = r"""
+## Étape 4 — Évaluation OOD : {display_name}
+
+Entraîne **chaque** classifieur sur 100 % BTP, prédit sur le corpus test **{display_name}** (`{corpus_id}`).
+
+Affichage :
+- tableau des métriques test (accuracy, balanced_accuracy) ;
+- matrice de confusion par modèle ;
+- copie de la confusion du **meilleur modèle CV** vers `figures/confusion_test.png`.
+"""
+
+STEP5_MD = r"""
+## Étape 5 — Synthèse cross-domain (article)
+
+Compare la **BA en CV BTP** (μ ± σ) à la généralisation **hors domaine** :
+
+\[
+\mathrm{BA}_{\mathrm{OOD,avg}} = \frac{1}{M}\sum_{m=1}^{M}\mathrm{BA}_{T_m},
+\qquad
+\mathrm{BA}_{\mathrm{OOD,worst}} = \min_m \mathrm{BA}_{T_m}
+\]
+
+Export : `cross_domain_generalization.csv` (dossier CV partagé).
+"""
+
+ARTIFACTS_MD = r"""
+## Artefacts attendus
+
+Liste de contrôle des fichiers produits (ou rechargés en mode cache).
+"""
+
 
 def main() -> None:
     cells = [
-        md(
-            r"""
-# 07 — Baseline supervisée (embedding brut Qwen)
-
-Pipeline sur **embeddings Qwen bruts** (`dataset/data_<id>.csv` + `embeddings/Qwen3-Embedding-0.6B_<id>.csv`) :
-
-1. **GroupKFold** (`N_FOLDS` splits, `accident_id`) sur **BTP** — LR, Random Forest, XGBoost, MLP
-2. Synthèse CV (μ ± σ) et sélection du meilleur modèle (`macro_f1`)
-3. Réentraînement 100 % BTP → évaluation sur **métallurgie** et **caou**
-
-**Configuration** : paramètres généraux et chemins dans la première cellule ; hyperparamètres de chaque modèle dans sa section CV.
-
-**`RESTIMATE_ML=True`** : réentraîne CV + classifieurs + évaluation test.  
-**`False`** : recharge les artefacts sous `output_test/<corpus>/supervised_baseline/`.
-
-**Prérequis** : `export_corpus_embeddings.sh` pour BTP, métallurgie et caou.
-"""
-        ),
-        md("### Paramètres généraux"),
+        md(INTRO_MD),
+        md(PARAMS_MD),
         py(
             NOTEBOOK_PATH_SETUP
             + """
@@ -159,15 +274,20 @@ from safer_core.test_corpus import resolve_test_corpus
 
 # --- Général ---
 METHOD_NAME = "supervised_macro_baseline"
-N_FOLDS = 7  # nombre de splits GroupKFold (CV in-domain BTP)
+N_FOLDS = 7
 SEED = 42
-SELECTION_METRIC = "balanced_accuracy"  # sans préfixe mean_ (colonne CV : mean_<metric>)
-RESTIMATE_ML = True  # True = CV + réentraînement + test | False = cache ML
+SELECTION_METRIC = "balanced_accuracy"
 
-TEST_CORPORA = ["metallurgie", "caou"]  # ids registre test_corpora.yaml
-CV_CORPUS = "metallurgie"  # dossier CV partagée (entraînement BTP)
+# True  → force réentraînement (CV + test), même si cache présent
+# False → recharge le cache lorsque les fichiers existent ; sinon entraîne
+RESTIMATE = False
 
-# --- Chemins source (BTP) ---
+# Métriques affichées dans tableaux et graphiques (macro_f1 exclue volontairement)
+DISPLAY_METRICS = ("accuracy", "balanced_accuracy")
+
+TEST_CORPORA = ["metallurgie", "caou"]
+CV_CORPUS = "metallurgie"
+
 SOURCE_CFG = {
     "dataset_path": "dataset/data_btp.csv",
     "emb_csv": "embeddings/Qwen3-Embedding-0.6B_btp.csv",
@@ -177,7 +297,6 @@ SOURCE_CFG = {
     "pred_ok_col": "pred_ok",
 }
 
-# --- Colonnes cible (chemins data/emb résolus via registre dans build_cfg) ---
 TARGET_COL_CFG = {
     "text_col": "sentence",
     "label_col": "pred_label",
@@ -190,7 +309,6 @@ MODEL_REGISTRY: dict = {}
 
 
 def build_cfg(corpus_id: str) -> dict:
-    # Assemble la config runtime ; data/emb du corpus via test_corpora.yaml.
     spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
     target = {
         **TARGET_COL_CFG,
@@ -214,18 +332,33 @@ CV_FIG_DIR = CV_OUT_DIR / "figures"
 CV_DIR = CV_OUT_DIR / "cv"
 CV_FIG_DIR.mkdir(parents=True, exist_ok=True)
 
+
+def _cv_cache_ready() -> bool:
+    return (CV_DIR / "cv_summary.csv").is_file() and (CV_DIR / "cv_per_fold.csv").is_file()
+
+
+def _test_cache_ready(out_dir: Path) -> bool:
+    transfer = Path(out_dir) / "transfer"
+    return (
+        (transfer / "all_models_test_metrics.csv").is_file()
+        and (transfer / "target_macro_predictions.csv").is_file()
+    )
+
+
+RUN_CV = bool(RESTIMATE) or not _cv_cache_ready()
+
 print("Méthode :", METHOD_NAME)
-print("CV folds :", N_FOLDS)
-print("Corpus CV / artefacts partagés :", _cv_spec.display_name, f"({CV_CORPUS})")
-print("Corpus test :", TEST_CORPORA)
-print("CV sorties :", CV_OUT_DIR)
-print("RESTIMATE_ML :", RESTIMATE_ML, ("(réentraînement)" if RESTIMATE_ML else "(cache disque)"))
-if not RESTIMATE_ML:
-    print("Cache ML OK (CV) :", supervised_ml_artifacts_exist(CV_OUT_DIR))
+print("CV folds :", N_FOLDS, "| sélection :", SELECTION_METRIC)
+print("Métriques affichées :", DISPLAY_METRICS)
+print("Corpus CV / artefacts :", _cv_spec.display_name, f"({CV_CORPUS})")
+print("Corpus test OOD :", TEST_CORPORA)
+print("Sorties CV :", CV_OUT_DIR)
+print("RESTIMATE :", RESTIMATE, ("(force réentraînement)" if RESTIMATE else "(cache si présent)"))
+print("RUN_CV :", RUN_CV, "| cache CV prêt :", _cv_cache_ready())
 sns.set_theme(style="whitegrid")
 """
         ),
-        md("## Étape 1 — Chargement BTP + corpus test (Qwen brut)"),
+        md(STEP1_MD),
         py(
             r"""
 from safer_core.data_loading import embedding_coverage_report
@@ -257,7 +390,9 @@ y_btp = DATA["y_btp"]
 groups_btp = DATA["groups_btp"]
 MACROS = DATA["macros"]
 
-print("BTP :", X_btp.shape, "| macros :", pd.Series(y_btp).value_counts().to_dict())
+print("BTP :", X_btp.shape, "| dim embedding :", X_btp.shape[1])
+print("Distribution macros BTP :")
+display(pd.Series(y_btp).value_counts().rename("effectif"))
 
 for corpus_id in TEST_CORPORA:
     spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
@@ -271,7 +406,7 @@ for corpus_id in TEST_CORPORA:
     )
 """
         ),
-        md("## Étape 2 — CV GroupKFold par modèle (BTP)"),
+        md(STEP2_MD),
     ]
 
     for model_key, title, desc, model_cfg_block in MODEL_SECTIONS:
@@ -285,9 +420,9 @@ for corpus_id in TEST_CORPORA:
 params = MODEL_REGISTRY[{model_key!r}]["params"]
 use_scaler = MODEL_REGISTRY[{model_key!r}]["use_scaler"]
 print("Hyperparamètres :", params)
-print("Scaler :", use_scaler)
+print("StandardScaler avant classifieur :", use_scaler)
 
-if RESTIMATE_ML:
+if RUN_CV:
     fold_rows_{model_key} = run_model_group_kfold_cv(
     {model_key!r},
     X_btp,
@@ -303,7 +438,8 @@ else:
     require_supervised_cache(CV_OUT_DIR, include_bertopic=False)
     fold_rows_{model_key} = load_cached_fold_rows_for_model(CV_OUT_DIR, {model_key!r})
     print("Chargé depuis cache :", CV_DIR / "cv_per_fold.csv")
-display(pd.DataFrame(fold_rows_{model_key}))
+fold_df = pd.DataFrame(fold_rows_{model_key})
+display(fold_df[[c for c in fold_df.columns if c in ("model", "fold", *DISPLAY_METRICS)]])
 """
                 ),
             ]
@@ -311,13 +447,13 @@ display(pd.DataFrame(fold_rows_{model_key}))
 
     cells.extend(
         [
-            md("## Étape 3 — Synthèse CV (μ ± σ)"),
+            md(STEP3_MD),
             py(
                 r"""
 MODEL_KEYS = [k for k in MODEL_ORDER if k in MODEL_REGISTRY]
 print("Modèles enregistrés :", MODEL_KEYS)
 
-if RESTIMATE_ML:
+if RUN_CV:
     all_fold_rows = []
     for key in MODEL_KEYS:
         all_fold_rows.extend(globals()[f"fold_rows_{key}"])
@@ -332,29 +468,30 @@ else:
     print("CV rechargée depuis :", CV_DIR)
 
 display_cols = ["model"]
-for m in ("accuracy", "macro_f1", "balanced_accuracy"):
+for m in DISPLAY_METRICS:
     display_cols.extend([f"mean_{m}", f"std_{m}"])
 display(cv_summary[display_cols])
 
-manifest = load_supervised_run_manifest(CV_OUT_DIR) if not RESTIMATE_ML else {}
+manifest = load_supervised_run_manifest(CV_OUT_DIR) if not RUN_CV else {}
 best_model = (
     str(manifest.get("best_model"))
-    if not RESTIMATE_ML and manifest.get("best_model")
+    if not RUN_CV and manifest.get("best_model")
     else select_best_model(cv_summary, selection_metric=SELECTION_METRIC)
 )
 print("Meilleur modèle (", SELECTION_METRIC, ") :", best_model)
 
 plot_df = cv_summary.melt(
     id_vars=["model"],
-    value_vars=[f"mean_{m}" for m in ("accuracy", "macro_f1", "balanced_accuracy")],
+    value_vars=[f"mean_{m}" for m in DISPLAY_METRICS],
     var_name="metric",
     value_name="mean",
 )
 plot_df["metric"] = plot_df["metric"].str.replace("mean_", "")
-fig, ax = plt.subplots(figsize=(9, 4))
+fig, ax = plt.subplots(figsize=(10, 4))
 sns.barplot(data=plot_df, x="model", y="mean", hue="metric", ax=ax)
 ax.set_title(f"CV GroupKFold ({N_FOLDS} folds) — μ par métrique")
 ax.set_ylabel("score")
+ax.set_ylim(0, 1)
 plt.xticks(rotation=20, ha="right")
 plt.tight_layout()
 fig.savefig(CV_FIG_DIR / "cv_comparison.png", dpi=150)
@@ -367,7 +504,7 @@ plt.show()
     for corpus_id, display_name in TEST_CORPUS_SPECS:
         cells.extend(
             [
-                md(f"## Étape 4 — Tous les modèles sur {display_name}"),
+                md(STEP4_TEMPLATE.format(display_name=display_name, corpus_id=corpus_id)),
                 py(
                     f"""
 corpus_id = {corpus_id!r}
@@ -388,7 +525,10 @@ test_meta = DATA_C["test_meta"]
 print("Test :", X_test.shape)
 display(test_meta[[DATA_C["target_text_col"], DATA_C["target_label_col"]]].head())
 
-if RESTIMATE_ML:
+RUN_TEST = bool(RESTIMATE) or not _test_cache_ready(OUT_DIR)
+print("RUN_TEST :", RUN_TEST, "| cache test prêt :", _test_cache_ready(OUT_DIR))
+
+if RUN_TEST:
     preds_by_model, metrics_by_model = evaluate_all_models_on_test(
         MODEL_KEYS,
         MODEL_REGISTRY,
@@ -433,7 +573,7 @@ else:
         preds_by_model = {{_best: preds}}
         metrics_by_model = {{_best: metrics}}
         all_models_summary = pd.DataFrame(
-            [{{k: v for k, v in metrics.items() if k in ("accuracy", "macro_f1", "balanced_accuracy")}}]
+            [{{k: v for k, v in metrics.items() if k in DISPLAY_METRICS}}]
         )
         all_models_summary.insert(0, "model", _best)
     manifest = load_supervised_run_manifest(OUT_DIR)
@@ -441,7 +581,8 @@ else:
     print("Prédictions rechargées (par modèle) :", TRANSFER_DIR / "models")
 
 print("Meilleur modèle (CV,", SELECTION_METRIC, ") :", best_model)
-display(all_models_summary)
+summary_cols = ["model"] + [c for c in all_models_summary.columns if c in DISPLAY_METRICS]
+display(all_models_summary[summary_cols])
 
 for model_key in MODEL_KEYS:
     m = metrics_by_model.get(model_key, {{}})
@@ -455,11 +596,8 @@ for model_key in MODEL_KEYS:
         title=f"Confusion test — {{corpus_id}} — {{model_key}}",
         filename=f"confusion_test_{{model_key}}.png",
     )
-    print(f"\\n### {{model_key}}")
+    print(f"\\n### {{model_key}} — balanced_accuracy = {{m.get('balanced_accuracy', float('nan')):.3f}}")
     display(cm_df)
-    cls_rep = m.get("_classification_report")
-    if cls_rep:
-        display(pd.DataFrame(cls_rep).T)
 
 preds = preds_by_model[best_model]
 metrics = metrics_by_model[best_model]
@@ -475,81 +613,12 @@ if "_confusion_matrix" in metrics:
         shutil.copy(src, FIG_DIR / "confusion_test.png")
 """
                 ),
-                md(f"### Étape 4b — BERTopic intra-macro ({display_name})"),
-                py(
-                    f"""
-BERTOPIC_CORPUS = corpus_id
-BERTOPIC_SEGMENT_MODE = "predicted"
-RESTIMATE_BERTOPIC = False
-BERTOPIC_UMAP_ENABLED = None
-BERTOPIC_MIN_TOPIC_SIZE = None
-
-from macro_transfer.notebook_bertopic import (
-    bertopic_run_dir,
-    display_notebook_bertopic_results,
-    load_notebook_bertopic_config,
-    run_notebook_bertopic,
-)
-
-cfg_full = load_notebook_bertopic_config(anchor=TEXT_ROOT)
-nb_cfg = cfg_full.get("notebook") or {{}}
-bertopic_out = bertopic_run_dir(
-    OUT_DIR,
-    BERTOPIC_CORPUS,
-    output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")),
-)
-preds_bertopic = pd.read_csv(TRANSFER_DIR / "target_macro_predictions.csv")
-_assign = bertopic_out / "topics_bertopic" / "assignments.csv"
-if RESTIMATE_BERTOPIC or not _assign.is_file():
-    bt_cfg = dict(cfg_full)
-    if BERTOPIC_UMAP_ENABLED is not None:
-        bt_cfg.setdefault("bertopic", {{}}).setdefault("umap", {{}})["enabled"] = bool(BERTOPIC_UMAP_ENABLED)
-    if BERTOPIC_MIN_TOPIC_SIZE is not None:
-        bt_cfg.setdefault("bertopic", {{}})["min_topic_size"] = int(BERTOPIC_MIN_TOPIC_SIZE)
-    run_notebook_bertopic(
-        OUT_DIR,
-        BERTOPIC_CORPUS,
-        method_name=METHOD_NAME,
-        view_kind="baseline",
-        segment_mode=BERTOPIC_SEGMENT_MODE or str(nb_cfg.get("segment_mode", "predicted")),
-        label_col=DATA_C["target_label_col"],
-        text_col=DATA_C["target_text_col"],
-        preds=preds_bertopic,
-        bertopic_cfg=bt_cfg.get("bertopic"),
-        topics_export_cfg=bt_cfg.get("topics_export"),
-        topic_judge_cfg=bt_cfg.get("topic_judge"),
-        anchor=TEXT_ROOT,
-        method_key=METHOD_NAME,
-        seed=SEED,
-        export_for_bn=bool(nb_cfg.get("export_for_bn", True)),
-    )
-    print("BERTopic terminé :", bertopic_out)
-else:
-    print("Cache BERTopic :", bertopic_out)
-
-display_notebook_bertopic_results(bertopic_out)
-print("→ Entrée notebook 06 BN :", bertopic_out)
-"""
-                ),
             ]
         )
 
     cells.extend(
         [
-            md(
-                r"""
-## Étape 5 — Synthèse cross-domain (article)
-
-Tableau par classifieur : **BA CV** (μ ± σ, GroupKFold BTP) et généralisation OOD
-(moyenne et pire domaine sur les corpus test).
-
-\[
-\mathrm{BA}_{\mathrm{OOD,avg}} = \frac{1}{M}\sum_{m=1}^{M}\mathrm{BA}_{T_m},
-\qquad
-\mathrm{BA}_{\mathrm{OOD,worst}} = \min_m \mathrm{BA}_{T_m}
-\]
-"""
-            ),
+            md(STEP5_MD),
             py(
                 r"""
 ood_ba_by_corpus = load_ood_balanced_accuracy_by_corpus(
@@ -574,12 +643,9 @@ cross_domain_summary.to_csv(
 print("Export :", CV_OUT_DIR / "cross_domain_generalization.csv")
 """
             ),
-        ]
-    )
-
-    cells.append(
-        py(
-            r"""
+            md(ARTIFACTS_MD),
+            py(
+                r"""
 print("Artefacts :")
 expected = [
     CV_DIR / "cv_summary.csv",
@@ -597,7 +663,8 @@ for corpus_id in TEST_CORPORA:
 for p in expected:
     print(" ", p, "→", "OK" if p.is_file() else "absent")
 """
-        )
+            ),
+        ]
     )
 
     nb = {

@@ -15,6 +15,7 @@ from contrastive_methods.post_eval import (
     fit_classifier_on_embeddings,
 )
 from safer_core.classification_eval import (
+    build_and_save_predictions,
     build_cv_summary_from_kfold,
     export_projected_embeddings,
     resolve_test_corpora,
@@ -56,10 +57,11 @@ def run_final_classification_eval(
     *,
     cv_summary: Optional[pd.DataFrame] = None,
 ) -> Dict[str, Path]:
-    """Encode BTP + corpus test, export embeddings, LR sklearn, CSV classification."""
+    """Encode BTP + corpus test, export embeddings, LR sklearn, CSV classification + prédictions."""
     layout = layout_method_output(cfg.method_name, str(output_root))
     metrics_dir = Path(layout["metrics"])
     emb_dir = Path(layout["embeddings"])
+    out_root = Path(layout["root"])
     metrics_dir.mkdir(parents=True, exist_ok=True)
     emb_dir.mkdir(parents=True, exist_ok=True)
     device = get_device()
@@ -72,9 +74,10 @@ def run_final_classification_eval(
     group_col = cfg.group_col
 
     X_btp = _encode_corpus_df(cfg, btp_df, text_col, checkpoint_dir, device)
+    btp_meta = _metadata_for_export(btp_df, cfg)
     export_projected_embeddings(
         X_btp,
-        _metadata_for_export(btp_df, cfg),
+        btp_meta,
         emb_dir,
         "btp",
         label_col=label_col,
@@ -88,9 +91,23 @@ def run_final_classification_eval(
 
     metrics_by_corpus: Dict[str, Mapping[str, Any]] = {}
     y_btp_macro = btp_df[label_col].astype(str).to_numpy()
-    metrics_by_corpus["btp"] = evaluate_classifier_on_embeddings(pipe, X_btp, y_btp_macro, macros=macros)
+    metrics_btp, details_btp = evaluate_classifier_on_embeddings(
+        pipe, X_btp, y_btp_macro, macros=macros, return_details=True
+    )
+    metrics_by_corpus["btp"] = metrics_btp
+    build_and_save_predictions(
+        btp_meta,
+        details_btp,
+        out_root,
+        "btp",
+        method_name=cfg.method_name,
+        text_col=text_col,
+        group_col=group_col,
+        label_col=label_col,
+    )
 
-    for corpus_id in cfg.test_corpora_list():
+    ood_corpora = list(cfg.test_corpora_list())
+    for idx, corpus_id in enumerate(ood_corpora):
         try:
             spec = resolve_test_corpus(corpus_id, anchor=anchor)
             test_cfg = ContrastiveConfig(
@@ -118,9 +135,10 @@ def run_final_classification_eval(
             test_dataset = prepare_text_dataset(test_cfg)
             test_df = test_dataset.metadata_df
             X_test = _encode_corpus_df(cfg, test_df, text_col, checkpoint_dir, device)
+            test_meta = _metadata_for_export(test_df, cfg)
             export_projected_embeddings(
                 X_test,
-                _metadata_for_export(test_df, cfg),
+                test_meta,
                 emb_dir,
                 str(corpus_id),
                 label_col=label_col,
@@ -128,8 +146,21 @@ def run_final_classification_eval(
                 text_col=text_col,
             )
             y_test = test_df[label_col].astype(str).to_numpy()
-            metrics_by_corpus[str(corpus_id)] = evaluate_classifier_on_embeddings(
-                pipe, X_test, y_test, macros=macros
+            metrics_c, details_c = evaluate_classifier_on_embeddings(
+                pipe, X_test, y_test, macros=macros, return_details=True
+            )
+            metrics_by_corpus[str(corpus_id)] = metrics_c
+            is_last_ood = idx == len(ood_corpora) - 1
+            build_and_save_predictions(
+                test_meta,
+                details_c,
+                out_root,
+                str(corpus_id),
+                method_name=cfg.method_name,
+                text_col=text_col,
+                group_col=group_col,
+                label_col=label_col,
+                also_transfer_alias=is_last_ood,
             )
         except Exception as exc:
             print(f"[{cfg.method_name}] eval corpus {corpus_id} ignorée : {exc}", flush=True)
@@ -145,7 +176,7 @@ def run_final_classification_eval(
             cv_summary = pd.DataFrame()
 
     return save_classification_outputs(
-        Path(layout["root"]),
+        out_root,
         method_name=cfg.method_name,
         metrics_by_corpus=metrics_by_corpus,
         cv_summary=cv_summary,

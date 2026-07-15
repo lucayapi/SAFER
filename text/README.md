@@ -143,7 +143,8 @@ sbatch jobs/export_raw_embeddings_eval.sh
 sbatch jobs/train_scgm_text.sh
 sbatch jobs/export_corpus_embeddings.sh   # embeddings Qwen (btp + metallurgie + caou)
 # Sorties clés : output/<method>/metrics/metrics_classification_*.csv, cross_domain_generalization.csv,
-#   embeddings/projected_{btp,metallurgie,caou}.npy
+#   embeddings/projected_{btp,metallurgie,caou}.npy,
+#   predictions/predictions_{btp,metallurgie,caou}.csv (+ transfer/target_macro_predictions.csv)
 #   embeddings/Qwen3-Embedding-0.6B_<corpus>.csv
 
 # 3. Méthodes contrastives (entraînement natif, YAML configs/methods/*.yaml)
@@ -180,7 +181,7 @@ python scripts/build_notebook_07_supervised_macro_baseline.py
 | Métallurgie (test) | `dataset/data_metallurgie.csv` | `embeddings/Qwen3-Embedding-0.6B_metallurgie.csv` ; métriques raw : `output_test/metallurgie/raw_embedding/` |
 | Caou (test) | `dataset/data_caou.csv` | `embeddings/Qwen3-Embedding-0.6B_caou.csv` |
 
-**Train simple** (`jobs/train_*.sh`, `n_folds: 5`) : (1) K-fold → `cv/cv_summary.csv` + `kfold_summary.csv` (CV classification LR : `val_balanced_accuracy`, etc.) ; (2) **fit final 100 % BTP** → `checkpoints/best_model` (sélection **train_loss**) ; (3) eval **BTP + métallurgie + caou** → `metrics_classification_*.csv`, `cross_domain_generalization.csv`, embeddings `projected_*.npy`.
+**Train simple** (`jobs/train_*.sh`, `n_folds: 5`) : (1) K-fold → `cv/cv_summary.csv` + `kfold_summary.csv` (CV classification LR : `val_balanced_accuracy`, etc.) ; (2) **fit final 100 % BTP** → `checkpoints/best_model` (sélection **train_loss**) ; (3) eval **BTP + métallurgie + caou** → `metrics_classification_*.csv`, `cross_domain_generalization.csv`, embeddings `projected_*.npy`, prédictions ligne à ligne `predictions/predictions_<corpus>.csv`.
 
 **Tuning** (`jobs/tune_*.sh`) : même K-fold par combo → `grid_summary.csv` reprend les colonnes `mean_*` / `std_*` (géométrie + temps fold) ; le fit final n’est pas rejoué par combo (sélection puis fit final du meilleur combo).
 
@@ -213,7 +214,7 @@ python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 sbatch jobs/train_scgm_text.sh
 ```
 
-**Topics BERTopic** : section homogène dans les notebooks **05_view**, **07** et **08** (config `configs/bertopic_notebook.yaml` + `configs/bertopic_macro_shared.yaml`). Sorties sous `{RESULTS_DIR}/bertopic_notebook/<corpus>/` (assignments, thèmes LLM, prédictions macro pour le BN). Prérequis représentation LLM : `OPENAI_API_KEY`.
+**Topics BERTopic** : section homogène dans les notebooks **05_view** et **08** (config `configs/bertopic_notebook.yaml` + `configs/bertopic_macro_shared.yaml`). Sorties sous `{RESULTS_DIR}/bertopic_notebook/<corpus>/` (assignments, thèmes LLM, prédictions macro pour le BN). Prérequis représentation LLM : `OPENAI_API_KEY`.
 
 **Réseau bayésien macro-contraint** : notebook **06** (`scripts/build_notebook_06_bn_macro_constrained.py`) consomme ces exports via `bn_pipeline.staging_macro_transfer.stage_bn_exports_from_bertopic_run` — pas d'arcs entre classes macro différentes (ordre A0 → A1 → B → C).
 
@@ -237,6 +238,7 @@ Utilisé par : entraînement SCGM, contrastifs, jobs raw/test emb, notebooks 05 
 |--------|---------|
 | `output/<method>/` | **BTP uniquement** : checkpoints, métriques BTP, exports BTP (sans topics test) |
 | `output/<method>/metrics/` | Classification BTP + OOD (`metrics_classification_*.csv`, `cross_domain_generalization.csv`) |
+| `output/<method>/predictions/` | Prédictions ligne à ligne (`predictions_<corpus>.csv` : `pred_macro`, `prob_*`, `confidence`, …) |
 | `output_test/<corpus>/raw_embedding/` | Embedding brut test (legacy) |
 
 Les sorties vivent sous `output/` et `output_test/` (voir `configs/paths.yaml`).
@@ -268,7 +270,7 @@ Override corpus test : `TEST_CORPORA=metallurgie,caou bash jobs/train_supervised
 
 Configs : [`configs/methods/supervised_macro_ft.yaml`](configs/methods/supervised_macro_ft.yaml), grille [`configs/tuning/supervised_macro_ft_grid.yaml`](configs/tuning/supervised_macro_ft_grid.yaml).
 
-Sorties : `output/supervised_macro_ft/` — CV BTP (`cv/`), fit final (`checkpoints/best_model/`), eval OOD (`metrics/metrics_classification_test_<corpus>.csv`, `metrics/all_test_corpora_metrics.csv`, `metrics/cross_domain_generalization.csv` avec `ba_ood_avg` / `ba_ood_worst`) ; tuning : `output/supervised_macro_ft/tuning/grid_summary.csv`, `best_combo.json`.
+Sorties : `output/supervised_macro_ft/` — CV BTP (`cv/`), fit final (`checkpoints/best_model/`), eval OOD (`metrics/metrics_classification_test_<corpus>.csv`, `metrics/all_test_corpora_metrics.csv`, `metrics/cross_domain_generalization.csv` avec `ba_ood_avg` / `ba_ood_worst`), prédictions CE `predictions/predictions_<corpus>.csv` ; tuning : `output/supervised_macro_ft/tuning/grid_summary.csv`, `best_combo.json`.
 
 ## Notebooks
 
@@ -282,10 +284,11 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 | `05_view_softtriple_results.ipynb` | **Lecture seule** — SoftTriple (idem + centres effectifs) |
 | `05_view_supcon_results.ipynb` | **Lecture seule** — SupCon (idem) |
 | `06_bn_macro_constrained.ipynb` | **Exécutable** — BN pgmpy sur topics BERTopic intra-macro (contraintes A0→C), entrée `bertopic_notebook/<corpus>/` |
-| `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (CV BTP → eval métallurgie + caou) + BERTopic |
+| `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn (LR, RF, XGBoost, MLP) sur Qwen brut : CV GroupKFold BTP → eval OOD |
 | `08_view_supervised_macro_ft_results.ipynb` | **Lecture seule** — fine-tuning CE macro_ft : tableau métriques unifié, courbes, PCA/t-SNE global, vraie vs prédite (`RESULTS_DIR` configurable) |
+| `09_geometry_comparison.ipynb` | **Exécutable** — comparaison η² macro balanced (%) entre méthodes : Qwen brut + runs projetés (`METHOD_SPECS`), tableau global + barplots par corpus |
 
-Les notebooks `05_view_*` et `08_view_*` acceptent un dossier de run custom via `RESULTS_DIR` en tête de notebook (run standard, combo tuning, chemin absolu).
+Les notebooks `05_view_*` et `08_view_*` acceptent un dossier de run custom via `RESULTS_DIR` en tête de notebook (run standard, combo tuning, chemin absolu). Le notebook **09** configure un dossier par méthode via `METHOD_SPECS` (`kind`: `raw` | `projected`).
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.
 
@@ -299,11 +302,13 @@ python scripts/build_notebook_02_scgm_results.py  # 02_scgm_text_results
 python scripts/build_notebook_06_bn_macro_constrained.py  # 06 BN macro-contraint
 python scripts/build_notebook_07_supervised_macro_baseline.py
 python scripts/build_notebook_08_supervised_macro_ft_results.py  # 08 macro_ft viz
+python scripts/build_notebook_09_geometry_comparison.py  # 09 comparaison η²
 ```
 
 ## Métriques principales
 
 - **accuracy**, **macro_f1**, **balanced_accuracy** — classification LR sur embeddings projetés
+- **eta2_macro_balanced_perc** — séparation géométrique macro (η² balanced, %) sur embeddings ; notebook **09** (`METHOD_SPECS`)
 - **ba_ood_avg**, **ba_ood_worst** — agrégation cross-domain (`cross_domain_generalization.csv`)
 - **val_balanced_accuracy** — sélection checkpoint / tuning (K-fold)
 
@@ -317,7 +322,7 @@ Pipeline principal : `text_col=sentence`, `use_prompt: false` dans toutes les co
 
 **Projecteur** (`model.use_projector`, `projection: linear | mlp_sklearn`, `hiddim`) : entraîné avec la loss contrastive ; désactivable (`use_projector: false`).
 
-**Post-évaluation classification** (`post_eval:`) : LR sklearn sur embeddings projetés. **Sélection checkpoint** : `train_loss` minimal pendant l'entraînement ; agrégation CV/tuning sur `val_balanced_accuracy`. Sorties : `metrics_classification_*.csv`, `cross_domain_generalization.csv`, `embeddings/projected_*.npy`.
+**Post-évaluation classification** (`post_eval:`) : LR sklearn sur embeddings projetés. **Sélection checkpoint** : `train_loss` minimal pendant l'entraînement ; agrégation CV/tuning sur `val_balanced_accuracy`. Sorties : `metrics_classification_*.csv`, `cross_domain_generalization.csv`, `embeddings/projected_*.npy`, `predictions/predictions_<corpus>.csv`.
 
 **Losses d'entraînement** (boucle PyTorch HF unifiée) :
 - **Batch triplet** : batch-hard triplet sur embeddings + `PKBatchSampler` ; `training.distance_metric` = euclidien par défaut.

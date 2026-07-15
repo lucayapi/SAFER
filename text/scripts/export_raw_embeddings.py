@@ -16,6 +16,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from safer_core.classification_eval import (
+    build_and_save_predictions,
     build_cv_summary_from_kfold,
     export_projected_embeddings,
     fit_logistic_on_embeddings,
@@ -131,13 +132,24 @@ def main() -> None:
 
     y_train = btp_meta[args.label_col].astype(str).map(LABEL2ID).astype(int).to_numpy()
     pipe = fit_logistic_on_embeddings(X_btp, y_train)
-    metrics_by_corpus = {
-        "btp": evaluate_classifier_on_embeddings(
-            pipe, X_btp, btp_meta[args.label_col].astype(str).to_numpy()
-        ),
-    }
+    out_root = Path(layout["root"])
+    metrics_btp, details_btp = evaluate_classifier_on_embeddings(
+        pipe,
+        X_btp,
+        btp_meta[args.label_col].astype(str).to_numpy(),
+        return_details=True,
+    )
+    metrics_by_corpus = {"btp": metrics_btp}
+    build_and_save_predictions(
+        btp_meta,
+        details_btp,
+        out_root,
+        "btp",
+        method_name=str(args.method_name),
+        label_col=args.label_col,
+    )
 
-    for corpus_id in test_corpora:
+    for idx, corpus_id in enumerate(test_corpora):
         try:
             spec = resolve_test_corpus(corpus_id)
             X_test, test_meta = _export_corpus(
@@ -147,10 +159,21 @@ def main() -> None:
                 str(corpus_id),
                 args.label_col,
             )
-            metrics_by_corpus[str(corpus_id)] = evaluate_classifier_on_embeddings(
+            metrics_c, details_c = evaluate_classifier_on_embeddings(
                 pipe,
                 X_test,
                 test_meta[args.label_col].astype(str).to_numpy(),
+                return_details=True,
+            )
+            metrics_by_corpus[str(corpus_id)] = metrics_c
+            build_and_save_predictions(
+                test_meta,
+                details_c,
+                out_root,
+                str(corpus_id),
+                method_name=str(args.method_name),
+                label_col=args.label_col,
+                also_transfer_alias=(idx == len(test_corpora) - 1),
             )
         except Exception as exc:
             print(f"[raw_embedding] corpus {corpus_id} ignoré : {exc}", flush=True)
@@ -161,12 +184,13 @@ def main() -> None:
         cv_summary = build_cv_summary_from_kfold(pd.read_csv(kfold_path), model_name=args.method_slug)
 
     paths = save_classification_outputs(
-        Path(layout["root"]),
+        out_root,
         method_name=str(args.method_slug),
         metrics_by_corpus=metrics_by_corpus,
         cv_summary=cv_summary,
     )
     print(f"Métriques classification : {paths.get('btp')}")
+    print(f"Prédictions : {out_root / 'predictions'}")
     if paths.get("cross_domain"):
         print(f"Cross-domain : {paths['cross_domain']}")
 

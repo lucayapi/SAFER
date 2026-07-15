@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from safer_core.classification_eval import (
+    build_and_save_predictions,
     build_cv_summary_from_kfold,
     export_projected_embeddings,
     fit_logistic_on_embeddings,
@@ -194,11 +195,23 @@ def run_final_classification_eval(
         y_train_int = btp_meta["label_id"].astype(int).to_numpy()
     pipe = fit_logistic_on_embeddings(X_btp, y_train_int)
     y_btp = btp_meta[label_col].astype(str).to_numpy()
-    metrics_by_corpus: Dict[str, Mapping[str, Any]] = {
-        "btp": evaluate_classifier_on_embeddings(pipe, X_btp, y_btp),
-    }
+    metrics_btp, details_btp = evaluate_classifier_on_embeddings(
+        pipe, X_btp, y_btp, return_details=True
+    )
+    metrics_by_corpus: Dict[str, Mapping[str, Any]] = {"btp": metrics_btp}
+    out_root = Path(layout["root"])
+    build_and_save_predictions(
+        btp_meta,
+        details_btp,
+        out_root,
+        "btp",
+        method_name="scgm_text",
+        text_col=eff_text,
+        group_col=group_col,
+        label_col=label_col,
+    )
 
-    for corpus_id in corpora:
+    for idx, corpus_id in enumerate(corpora):
         try:
             spec = resolve_test_corpus(corpus_id)
             X_test, test_meta = project_embedding_corpus(
@@ -221,12 +234,26 @@ def run_final_classification_eval(
                 text_col=eff_text,
             )
             y_test = test_meta[label_col].astype(str).to_numpy()
-            metrics_by_corpus[str(corpus_id)] = evaluate_classifier_on_embeddings(pipe, X_test, y_test)
+            metrics_c, details_c = evaluate_classifier_on_embeddings(
+                pipe, X_test, y_test, return_details=True
+            )
+            metrics_by_corpus[str(corpus_id)] = metrics_c
+            build_and_save_predictions(
+                test_meta,
+                details_c,
+                out_root,
+                str(corpus_id),
+                method_name="scgm_text",
+                text_col=eff_text,
+                group_col=group_col,
+                label_col=label_col,
+                also_transfer_alias=(idx == len(corpora) - 1),
+            )
         except Exception as exc:
             print(f"[scgm] eval corpus {corpus_id} ignorée : {exc}", flush=True)
 
     kfold_path = metrics_dir / "kfold_summary.csv"
-    cv_path = Path(layout["root"]) / "cv" / "cv_summary.csv"
+    cv_path = out_root / "cv" / "cv_summary.csv"
     if cv_path.is_file():
         cv_summary = pd.read_csv(cv_path)
     elif kfold_path.is_file():
@@ -235,7 +262,7 @@ def run_final_classification_eval(
         cv_summary = pd.DataFrame()
 
     return save_classification_outputs(
-        Path(layout["root"]),
+        out_root,
         method_name="scgm_text",
         metrics_by_corpus=metrics_by_corpus,
         cv_summary=cv_summary,

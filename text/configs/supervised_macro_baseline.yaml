@@ -1,11 +1,11 @@
 # Référence optionnelle — le notebook 07 embarque sa config (voir notebooks/07_supervised_macro_baseline.ipynb).
-# Conservé pour run_supervised_baseline_from_config() et tests d'alignement BERTopic legacy.
+# Conservé pour run_supervised_baseline_from_config().
 method_name: supervised_macro_baseline
 corpus: metallurgie
 
 n_folds: 5
 seed: 42
-selection_metric: macro_f1
+selection_metric: balanced_accuracy
 
 # output_test/<corpus>/supervised_baseline/
 
@@ -54,5 +54,3 @@ models:
       max_iter: 500
       early_stopping: true
       class_weight: balanced
-
-# bertopic_shared : non utilisé par le notebook 07 (éval sklearn uniquement)

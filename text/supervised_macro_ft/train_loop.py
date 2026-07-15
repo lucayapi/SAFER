@@ -133,8 +133,31 @@ def evaluate_loader(
     show_progress: bool = False,
     progress_desc: str | None = None,
 ) -> Dict[str, float]:
+    metrics, _ = evaluate_loader_with_predictions(
+        model,
+        loader,
+        device,
+        show_progress=show_progress,
+        progress_desc=progress_desc,
+    )
+    return metrics
+
+
+@torch.no_grad()
+def evaluate_loader_with_predictions(
+    model: SupervisedMacroModel,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    macros: Optional[Sequence[str]] = None,
+    show_progress: bool = False,
+    progress_desc: str | None = None,
+) -> Tuple[Dict[str, float], Dict[str, Any]]:
+    """Évalue le loader et retourne (métriques, détails prédictions)."""
+    from scgm_text.dataset_text_embeddings import ID2LABEL
     from supervised_macro_ft.run_logging import batched_progress, log_step_done, log_step_start
 
+    macros_list = list(macros) if macros is not None else [ID2LABEL[i] for i in range(len(ID2LABEL))]
     model.eval()
     n_samples = len(loader.dataset) if hasattr(loader, "dataset") else None
     desc = progress_desc or "eval"
@@ -147,6 +170,7 @@ def evaluate_loader(
         )
     y_true: list[int] = []
     y_pred: list[int] = []
+    prob_chunks: list[np.ndarray] = []
     total_loss = 0.0
     n_batches = 0
     criterion = nn.CrossEntropyLoss()
@@ -157,19 +181,49 @@ def evaluate_loader(
         loss = criterion(logits, batch["label_ids"])
         total_loss += float(loss.item())
         n_batches += 1
-        pred = logits.argmax(dim=-1)
+        probs = torch.softmax(logits, dim=-1).cpu().numpy()
+        pred = probs.argmax(axis=1)
         y_true.extend(batch["label_ids"].cpu().tolist())
-        y_pred.extend(pred.cpu().tolist())
+        y_pred.extend(pred.tolist())
+        prob_chunks.append(probs)
     if show_progress and n_samples is not None:
         log_step_done(desc, n_samples=n_samples)
     yt = np.asarray(y_true, dtype=np.int64)
     yp = np.asarray(y_pred, dtype=np.int64)
-    return {
+    probs_all = np.vstack(prob_chunks) if prob_chunks else np.zeros((0, len(macros_list)))
+    confidence = probs_all.max(axis=1) if len(probs_all) else np.array([])
+    sort_p = np.sort(probs_all, axis=1) if len(probs_all) else np.zeros((0, 0))
+    margin = (
+        sort_p[:, -1] - sort_p[:, -2]
+        if probs_all.shape[1] >= 2
+        else np.zeros(len(probs_all))
+    )
+    entropy = (
+        -(probs_all * np.log(np.clip(probs_all, 1e-12, None))).sum(axis=1)
+        if len(probs_all)
+        else np.array([])
+    )
+    pred_macro = np.array(
+        [str(macros_list[i]) if i < len(macros_list) else str(i) for i in yp],
+        dtype=object,
+    )
+    metrics = {
         "loss": total_loss / max(n_batches, 1),
         "accuracy": accuracy(yt, yp),
         "macro_f1": macro_f1(yt, yp),
         "balanced_accuracy": balanced_accuracy(yt, yp),
     }
+    details: Dict[str, Any] = {
+        "pred_macro": pred_macro,
+        "probs": probs_all,
+        "confidence": confidence,
+        "margin": margin,
+        "entropy": entropy,
+        "macros": macros_list,
+        "y_true_int": yt,
+        "y_pred_int": yp,
+    }
+    return metrics, details
 
 
 def fit_model(

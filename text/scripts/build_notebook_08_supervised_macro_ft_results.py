@@ -203,10 +203,12 @@ for stem in ART.projected_corpora or discover_projected_corpora(RESULTS_DIR):
 
 INFERENCE_MD = """## 4. Vraie classe vs prédite (tête CE)
 
-Inférence via `checkpoints/best_model/`. Désactiver avec `RUN_INFERENCE = False` pour une revue rapide.
+Charge d'abord `predictions/predictions_<corpus>.csv` produit par le job.
+Sinon inférence via `checkpoints/best_model/` si `RUN_INFERENCE = True`.
 """
 
-INFERENCE_CODE = """from safer_core.test_corpus import resolve_test_corpus
+INFERENCE_CODE = """from safer_core.classification_eval import load_saved_predictions
+from safer_core.test_corpus import resolve_test_corpus
 from supervised_macro_ft.notebook_viz import (
     build_prediction_df,
     get_misclassification_sample,
@@ -216,15 +218,20 @@ from supervised_macro_ft.notebook_viz import (
 )
 from scgm_text.notebook_viz import load_projected_embeddings_pair
 
-if not RUN_INFERENCE:
-    print("RUN_INFERENCE=False — section inférence ignorée.")
-elif ART.checkpoint_dir is None:
-    print("(absent) checkpoints/best_model — inférence impossible.")
-else:
-    corpora_to_run = [("btp", DATA_CSV)] + [
-        (cid, resolve_test_corpus(cid, anchor=ROOT).data_csv) for cid in TEST_CORPORA
-    ]
-    for corpus_id, data_path in corpora_to_run:
+corpora_to_run = [("btp", DATA_CSV)] + [
+    (cid, resolve_test_corpus(cid, anchor=ROOT).data_csv) for cid in TEST_CORPORA
+]
+for corpus_id, data_path in corpora_to_run:
+    pred_df = load_saved_predictions(RESULTS_DIR, corpus_id)
+    if pred_df is not None:
+        print(f"\\n=== Prédictions job — {corpus_id} (n={len(pred_df)}) ===")
+    elif not RUN_INFERENCE:
+        print(f"(skip) {corpus_id} — pas de predictions/ et RUN_INFERENCE=False")
+        continue
+    elif ART.checkpoint_dir is None:
+        print(f"(absent) checkpoints/best_model — inférence impossible pour {corpus_id}")
+        continue
+    else:
         if not Path(data_path).is_file():
             print(f"(absent) {data_path}")
             continue
@@ -247,40 +254,43 @@ else:
             anchor=ROOT,
             backbone_emb_csv=BACKBONE_EMB_CSV,
         )
-        plot_confusion_matrix_brand(
-            pred_df["true_macro"],
-            pred_df["pred_macro"],
-            title=f"Confusion — {corpus_id}",
-            fig_dir=FIGURES_DIR,
-            filename=f"03_confusion_{corpus_id}.png",
+    if "true_macro" not in pred_df.columns and LABEL_COL in pred_df.columns:
+        pred_df = pred_df.copy()
+        pred_df["true_macro"] = pred_df[LABEL_COL].astype(str)
+    plot_confusion_matrix_brand(
+        pred_df["true_macro"],
+        pred_df["pred_macro"],
+        title=f"Confusion — {corpus_id}",
+        fig_dir=FIGURES_DIR,
+        filename=f"03_confusion_{corpus_id}.png",
+    )
+    plot_calibration_histograms(
+        pred_df,
+        fig_dir=FIGURES_DIR,
+        filename=f"03_calibration_{corpus_id}.png",
+    )
+    err_sample = get_misclassification_sample(pred_df, text_col=TEXT_COL, n=12)
+    if not err_sample.empty:
+        print("Erreurs (marge faible) :")
+        display(err_sample)
+    npy = RESULTS_DIR / "embeddings" / f"projected_{corpus_id}.npy"
+    if npy.is_file():
+        emb, _ = load_projected_embeddings_pair(
+            npy,
+            RESULTS_DIR / "embeddings" / f"projected_{corpus_id}_metadata.csv",
         )
-        plot_calibration_histograms(
-            pred_df,
-            fig_dir=FIGURES_DIR,
-            filename=f"03_calibration_{corpus_id}.png",
-        )
-        err_sample = get_misclassification_sample(pred_df, text_col=TEXT_COL, n=12)
-        if not err_sample.empty:
-            print("Erreurs (marge faible) :")
-            display(err_sample)
-        npy = RESULTS_DIR / "embeddings" / f"projected_{corpus_id}.npy"
-        if npy.is_file():
-            emb, _ = load_projected_embeddings_pair(
-                npy,
-                RESULTS_DIR / "embeddings" / f"projected_{corpus_id}_metadata.csv",
+        if len(emb) == len(pred_df):
+            plot_tsne_true_vs_pred_brand(
+                emb,
+                pred_df,
+                true_col="true_macro",
+                pred_col="pred_macro",
+                title=corpus_id,
+                fig_dir=FIGURES_DIR,
+                filename=f"03_tsne_true_vs_pred_{corpus_id}.png",
+                max_points=TSNE_SAMPLE_SIZE,
+                seed=SEED,
             )
-            if len(emb) == len(pred_df):
-                plot_tsne_true_vs_pred_brand(
-                    emb,
-                    pred_df,
-                    true_col="true_macro",
-                    pred_col="pred_macro",
-                    title=corpus_id,
-                    fig_dir=FIGURES_DIR,
-                    filename=f"03_tsne_true_vs_pred_{corpus_id}.png",
-                    max_points=TSNE_SAMPLE_SIZE,
-                    seed=SEED,
-                )
 """
 
 RAW_MD = """## 5. Embeddings bruts Qwen — comparaison avec vraies classes
@@ -399,6 +409,7 @@ RESTIMATE_BERTOPIC = False
 BERTOPIC_UMAP_ENABLED = None
 BERTOPIC_MIN_TOPIC_SIZE = None
 
+from safer_core.classification_eval import load_saved_predictions
 from macro_transfer.notebook_bertopic import (
     bertopic_run_dir,
     display_notebook_bertopic_results,
@@ -410,12 +421,17 @@ cfg_full = load_notebook_bertopic_config(anchor=ROOT)
 nb_cfg = cfg_full.get("notebook") or {}
 bertopic_out = bertopic_run_dir(RESULTS_DIR, BERTOPIC_CORPUS, output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")))
 
-preds_bertopic = None
-_pred_cache = RESULTS_DIR / "transfer" / "target_macro_predictions.csv"
-if _pred_cache.is_file():
-    _cached = pd.read_csv(_pred_cache)
-    if "pred_macro" in _cached.columns:
-        preds_bertopic = _cached
+preds_bertopic = load_saved_predictions(RESULTS_DIR, BERTOPIC_CORPUS)
+if preds_bertopic is None:
+    _pred_cache = RESULTS_DIR / "transfer" / "target_macro_predictions.csv"
+    if _pred_cache.is_file():
+        _cached = pd.read_csv(_pred_cache)
+        if "pred_macro" in _cached.columns:
+            preds_bertopic = _cached
+            print("Prédictions transfer/ :", _pred_cache)
+else:
+    print("Prédictions job :", RESULTS_DIR / "predictions" / f"predictions_{BERTOPIC_CORPUS}.csv")
+
 if preds_bertopic is None and RUN_INFERENCE and ART.checkpoint_dir is not None:
     from supervised_macro_ft.notebook_viz import build_prediction_df
     from safer_core.test_corpus import resolve_test_corpus

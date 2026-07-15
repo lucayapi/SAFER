@@ -9,11 +9,16 @@ import pandas as pd
 import pytest
 
 from safer_core.classification_eval import (
+    build_and_save_predictions,
     build_cv_summary_from_kfold,
+    evaluate_classifier_on_embeddings,
     export_projected_embeddings,
     fit_logistic_and_evaluate,
+    fit_logistic_on_embeddings,
+    load_saved_predictions,
     resolve_test_corpora,
     save_classification_outputs,
+    save_corpus_predictions,
     summarize_ood_classification,
 )
 
@@ -78,3 +83,57 @@ def test_save_classification_outputs(tmp_path: Path):
     )
     assert paths["cross_domain"].is_file()
     assert (tmp_path / "metrics" / "metrics_classification_test_metallurgie.csv").is_file()
+
+
+def test_evaluate_classifier_return_details_and_save_predictions(tmp_path: Path):
+    rng = np.random.RandomState(0)
+    X_train = rng.randn(40, 8)
+    y_train = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10)
+    for i, c in enumerate(y_train):
+        X_train[i, c] += 4.0
+    X_eval = X_train.copy()
+    y_eval = np.array(["A0"] * 10 + ["A1"] * 10 + ["B"] * 10 + ["C"] * 10)
+    meta = pd.DataFrame(
+        {
+            "sentence": [f"t{i}" for i in range(40)],
+            "pred_label": y_eval,
+            "accident_id": list(range(40)),
+        }
+    )
+    pipe = fit_logistic_on_embeddings(X_train, y_train, seed=0)
+    metrics, details = evaluate_classifier_on_embeddings(
+        pipe, X_eval, y_eval, return_details=True
+    )
+    assert "balanced_accuracy" in metrics
+    assert "pred_macro" in details
+    assert details["probs"].shape == (40, 4)
+
+    preds, path = build_and_save_predictions(
+        meta,
+        details,
+        tmp_path,
+        "btp",
+        method_name="test_method",
+        also_transfer_alias=True,
+    )
+    assert path.is_file()
+    assert (tmp_path / "transfer" / "target_macro_predictions.csv").is_file()
+    loaded = load_saved_predictions(tmp_path, "btp")
+    assert loaded is not None
+    assert len(loaded) == 40
+    assert "pred_macro" in loaded.columns
+    assert load_saved_predictions(tmp_path, "missing") is None
+
+
+def test_save_corpus_predictions_adds_corpus_column(tmp_path: Path):
+    df = pd.DataFrame(
+        {
+            "pred_macro": ["A0", "A1"],
+            "confidence": [0.9, 0.8],
+            "sentence": ["a", "b"],
+        }
+    )
+    path = save_corpus_predictions(df, tmp_path, "metallurgie")
+    assert path.name == "predictions_metallurgie.csv"
+    out = pd.read_csv(path)
+    assert list(out["corpus"]) == ["metallurgie", "metallurgie"]

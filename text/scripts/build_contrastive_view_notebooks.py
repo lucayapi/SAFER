@@ -41,6 +41,8 @@ import pandas as pd
 import yaml
 from IPython.display import display
 
+ROOT = TEXT_ROOT  # défini par la cellule bootstrap
+
 from safer_core.brand_style import apply_matplotlib_brand
 
 apply_matplotlib_brand()
@@ -57,7 +59,8 @@ _model = cfg.get("model") or {{}}
 DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
 DEFAULT_OUTPUT = ROOT / cfg.get("output_dir", f"output/{{METHOD_KEY}}")
 
-# Dossier de résultats (relatif à ROOT ou chemin absolu)
+# Dossier de résultats à considérer (relatif à ROOT ou chemin absolu)
+# Modifier RESULTS_DIR pour pointer vers un run spécifique (standard, combo tuning, WP3, …)
 RESULTS_DIR = DEFAULT_OUTPUT
 # Exemples :
 # RESULTS_DIR = ROOT / "output/{method_key}/tuning/combos/projectionlinear_hiddim128_abc12345"
@@ -287,6 +290,7 @@ RESTIMATE_BERTOPIC = False
 BERTOPIC_UMAP_ENABLED = None
 BERTOPIC_MIN_TOPIC_SIZE = None
 
+from safer_core.classification_eval import load_saved_predictions
 from macro_transfer.notebook_bertopic import (
     bertopic_run_dir,
     display_notebook_bertopic_results,
@@ -298,6 +302,13 @@ cfg_full = load_notebook_bertopic_config(anchor=ROOT)
 nb_cfg = cfg_full.get("notebook") or {}
 bertopic_out = bertopic_run_dir(RESULTS_DIR, BERTOPIC_CORPUS, output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")))
 _assign = bertopic_out / "topics_bertopic" / "assignments.csv"
+
+preds_bertopic = load_saved_predictions(RESULTS_DIR, BERTOPIC_CORPUS)
+if preds_bertopic is not None:
+    print("Prédictions job :", RESULTS_DIR / "predictions" / f"predictions_{BERTOPIC_CORPUS}.csv")
+else:
+    print("Pas de predictions/ en cache — LR sur embeddings projetés si besoin.")
+
 if RESTIMATE_BERTOPIC or not _assign.is_file():
     bt_cfg = dict(cfg_full)
     if BERTOPIC_UMAP_ENABLED is not None:
@@ -311,6 +322,7 @@ if RESTIMATE_BERTOPIC or not _assign.is_file():
         view_kind="contrastive",
         segment_mode=BERTOPIC_SEGMENT_MODE or str(nb_cfg.get("segment_mode", "predicted")),
         label_col=LABEL_COL,
+        preds=preds_bertopic,
         bertopic_cfg=bt_cfg.get("bertopic"),
         topics_export_cfg=bt_cfg.get("topics_export"),
         topic_judge_cfg=bt_cfg.get("topic_judge"),

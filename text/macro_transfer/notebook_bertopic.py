@@ -237,9 +237,18 @@ def run_notebook_bertopic(
         z, meta = load_projected_corpus_pair(results_dir, corpus_id, method_key=method_key, anchor=root)
 
     if segment_mode == "predicted" and preds is None and view_kind != "baseline":
-        preds = predictions_from_lr_on_projected(
-            results_dir, corpus_id, method_key=method_key or method_name, anchor=root, label_col=label_col, seed=seed
-        )
+        from safer_core.classification_eval import load_saved_predictions
+
+        preds = load_saved_predictions(results_dir, corpus_id)
+        if preds is None:
+            preds = predictions_from_lr_on_projected(
+                results_dir,
+                corpus_id,
+                method_key=method_key or method_name,
+                anchor=root,
+                label_col=label_col,
+                seed=seed,
+            )
     if preds is None and segment_mode == "predicted" and view_kind == "baseline":
         raise ValueError("Mode predicted en baseline : fournir ``preds`` (sortie classifieur sklearn).")
 

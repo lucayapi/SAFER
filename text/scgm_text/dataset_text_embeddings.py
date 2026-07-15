@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -14,11 +15,20 @@ from scgm_text.data_metadata import ID2LABEL, LABEL2ID, VALID_LABELS, load_filte
 from scgm_text.utils_io import get_dim_columns
 
 
+def _infer_corpus_from_emb_csv(emb_csv: str) -> Optional[str]:
+    """Déduit l'id corpus depuis ``..._<corpus>.csv`` (convention registre test)."""
+    stem = Path(emb_csv).stem
+    if "_" not in stem:
+        return None
+    return stem.rsplit("_", 1)[-1]
+
+
 def merge_metadata_with_embeddings(
     metadata_df: pd.DataFrame,
     emb_csv: str,
     *,
     strict: bool = True,
+    corpus_id: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, List[str]]:
     header = pd.read_csv(emb_csv, nrows=0)
     dim_columns = get_dim_columns(header)
@@ -29,13 +39,14 @@ def merge_metadata_with_embeddings(
         n_emb = len(emb_df)
         n_merged = len(merged)
         n_missing = n_meta - n_merged
+        cid = corpus_id or _infer_corpus_from_emb_csv(emb_csv) or "<corpus>"
         msg = (
             f"Embedding merge dropped rows: metadata={n_meta}, embeddings={n_emb}, merged={n_merged} "
             f"({n_missing} doc_id sans vecteur). "
             f"Le CSV d'embeddings est probablement obsolète par rapport à {emb_csv!r}. "
             "Relancer l'export encodeur, par ex. :\n"
-            "  python scripts/export_corpus_embeddings.py --corpus btp --force\n"
-            "  # ou : FORCE=1 CORPUS=btp bash jobs/export_corpus_embeddings.sh"
+            f"  python scripts/export_corpus_embeddings.py --corpus {cid} --force\n"
+            f"  # ou : FORCE=1 CORPUS={cid} bash jobs/export_corpus_embeddings.sh"
         )
         if strict:
             raise ValueError(msg)

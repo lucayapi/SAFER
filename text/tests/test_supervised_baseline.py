@@ -282,7 +282,22 @@ def test_merge_metadata_with_embeddings_non_strict(tmp_path, capsys):
     merged, dim_cols = merge_metadata_with_embeddings(meta, str(emb_csv), strict=False)
     assert len(merged) == 2
     assert dim_cols == ["dim_0", "dim_1"]
-    assert "Attention" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Attention" in out
+
+
+def test_merge_metadata_with_embeddings_corpus_hint_from_filename(tmp_path, capsys):
+    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+
+    meta = pd.DataFrame({"doc_id": [1, 2], "pred_label": ["A0", "A1"]})
+    emb_csv = tmp_path / "Qwen3-Embedding-0.6B_metallurgie.csv"
+    pd.DataFrame({"doc_id": [1], "dim_0": [1.0]}).to_csv(emb_csv, index=False)
+
+    merged, _ = merge_metadata_with_embeddings(meta, str(emb_csv), strict=False)
+    assert len(merged) == 1
+    out = capsys.readouterr().out
+    assert "--corpus metallurgie" in out
+    assert "CORPUS=metallurgie" in out
 
 
 def test_summarize_all_models_test_metrics():

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Sequence
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -13,6 +13,7 @@ from macro_transfer.supervised_baseline import (
     _fit_pipeline,
     _predict_with_probs,
     build_classifier_pipeline,
+    build_predictions_dataframe,
 )
 from scgm_text.dataset_text_embeddings import ID2LABEL, LABEL2ID
 from supervised_macro_ft.class_balance import balanced_oversample_arrays
@@ -24,6 +25,8 @@ DEFAULT_CLASSIFIER = "logistic_regression"
 DEFAULT_SELECTION_METRIC = "balanced_accuracy"
 
 EMBEDDING_STEMS: tuple[str, ...] = ("btp", "metallurgie", "caou")
+
+PredictionDetails = Dict[str, Any]
 
 
 def resolve_test_corpora(cfg: Mapping[str, Any]) -> list[str]:
@@ -71,20 +74,119 @@ def evaluate_classifier_on_embeddings(
     y_macro: Sequence[str],
     *,
     macros: Optional[Sequence[str]] = None,
-) -> dict[str, Any]:
+    return_details: bool = False,
+) -> Union[dict[str, Any], Tuple[dict[str, Any], PredictionDetails]]:
     macros_list = list(macros or macro_names())
-    pred_macro, probs, _, _, _ = _predict_with_probs(pipe, np.asarray(X, dtype=np.float64), macros_list)
-    metrics = evaluate_macro_predictions(
+    pred_macro, probs, confidence, margin, entropy = _predict_with_probs(
+        pipe, np.asarray(X, dtype=np.float64), macros_list
+    )
+    metrics_full = evaluate_macro_predictions(
         np.asarray(y_macro, dtype=object).astype(str),
         pred_macro,
         probs,
         macros_list,
     )
-    return {
-        k: float(metrics.get(k, float("nan")))
+    metrics = {
+        k: float(metrics_full.get(k, float("nan")))
         for k in CLASSIFICATION_METRIC_KEYS
-        if k in metrics
+        if k in metrics_full
     }
+    if not return_details:
+        return metrics
+    details: PredictionDetails = {
+        "pred_macro": pred_macro,
+        "probs": probs,
+        "confidence": confidence,
+        "margin": margin,
+        "entropy": entropy,
+        "macros": macros_list,
+    }
+    return metrics, details
+
+
+def predictions_path(out_dir: Path, corpus_id: str) -> Path:
+    """Chemin canonique ``predictions/predictions_<corpus>.csv``."""
+    return Path(out_dir) / "predictions" / f"predictions_{corpus_id}.csv"
+
+
+def save_corpus_predictions(
+    preds_df: pd.DataFrame,
+    out_dir: Path,
+    corpus_id: str,
+    *,
+    also_transfer_alias: bool = False,
+) -> Path:
+    """Écrit ``predictions/predictions_<corpus>.csv`` (+ alias transfer optionnel)."""
+    out = Path(out_dir)
+    path = predictions_path(out, corpus_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = preds_df.copy()
+    if "corpus" not in df.columns:
+        df.insert(0, "corpus", str(corpus_id))
+    df.to_csv(path, index=False)
+    if also_transfer_alias:
+        save_transfer_predictions_alias(df, out)
+    return path
+
+
+def save_transfer_predictions_alias(preds_df: pd.DataFrame, out_dir: Path) -> Path:
+    """Écrit ``transfer/target_macro_predictions.csv`` (compatible BERTopic / BN)."""
+    transfer = Path(out_dir) / "transfer"
+    transfer.mkdir(parents=True, exist_ok=True)
+    path = transfer / "target_macro_predictions.csv"
+    df = preds_df.copy()
+    if "pred_macro" in df.columns and "m_hat" not in df.columns:
+        df["m_hat"] = df["pred_macro"].astype(str)
+    if "confidence" in df.columns and "q_conf" not in df.columns:
+        df["q_conf"] = pd.to_numeric(df["confidence"], errors="coerce")
+    df.to_csv(path, index=False)
+    return path
+
+
+def load_saved_predictions(
+    results_dir: Union[str, Path],
+    corpus_id: str,
+) -> Optional[pd.DataFrame]:
+    """Charge ``predictions/predictions_<corpus>.csv`` si présent."""
+    path = predictions_path(Path(results_dir), corpus_id)
+    if not path.is_file():
+        return None
+    return pd.read_csv(path)
+
+
+def build_and_save_predictions(
+    meta: pd.DataFrame,
+    details: PredictionDetails,
+    out_dir: Path,
+    corpus_id: str,
+    *,
+    method_name: str,
+    text_col: str = "sentence",
+    group_col: str = "accident_id",
+    label_col: Optional[str] = "pred_label",
+    also_transfer_alias: bool = False,
+) -> Tuple[pd.DataFrame, Path]:
+    """Construit le DataFrame standard et l'écrit sous ``predictions/``."""
+    macros = list(details.get("macros") or macro_names())
+    preds = build_predictions_dataframe(
+        meta,
+        details["pred_macro"],
+        details["probs"],
+        details["confidence"],
+        details["margin"],
+        details["entropy"],
+        macros=macros,
+        method_name=method_name,
+        text_col=text_col if text_col in meta.columns else (
+            "sentence" if "sentence" in meta.columns else meta.columns[0]
+        ),
+        group_col=group_col,
+        label_col=label_col,
+    )
+    path = save_corpus_predictions(
+        preds, out_dir, corpus_id, also_transfer_alias=also_transfer_alias
+    )
+    return preds, path
 
 
 def fit_logistic_and_evaluate(

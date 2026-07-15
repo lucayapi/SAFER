@@ -20,6 +20,7 @@ from scgm_text.dataset_text_raw import TextRawDataset
 from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 from supervised_macro_ft.checkpoint_io import save_checkpoint
 from safer_core.classification_eval import (
+    build_and_save_predictions,
     export_projected_embeddings,
     resolve_test_corpora,
     save_classification_outputs,
@@ -41,7 +42,7 @@ from supervised_macro_ft.model import SupervisedMacroModel, model_kwargs_from_cf
 from supervised_macro_ft.run_logging import log_cv_summary, log_phase, log_run_complete, log_test_metrics
 from supervised_macro_ft.train_loop import (
     build_class_weights,
-    evaluate_loader,
+    evaluate_loader_with_predictions,
     fit_model,
 )
 
@@ -430,7 +431,7 @@ def run_supervised_macro_ft_training(
     cache_dir = out_dir / "cache"
     text_col = str(data_cfg.get("text_col", "sentence"))
     log_phase("Phase 3/3 — Eval classification OOD", detail=", ".join(test_corpora))
-    for corpus_id in test_corpora:
+    for idx, corpus_id in enumerate(test_corpora):
         try:
             spec = resolve_test_corpus(corpus_id, anchor=anchor)
             logger.info(
@@ -511,7 +512,7 @@ def run_supervised_macro_ft_training(
                 group_col=str(data_cfg.get("group_col", "accident_id")),
                 text_col=text_col,
             )
-            corpus_metrics = evaluate_loader(
+            corpus_metrics, corpus_details = evaluate_loader_with_predictions(
                 model,
                 eval_loader,
                 device,
@@ -519,6 +520,17 @@ def run_supervised_macro_ft_training(
                 progress_desc=f"eval_{corpus_id}",
             )
             test_metrics_by_corpus[str(corpus_id)] = corpus_metrics
+            build_and_save_predictions(
+                test_meta,
+                corpus_details,
+                out_dir,
+                str(corpus_id),
+                method_name=method_name,
+                text_col=text_col,
+                group_col=str(data_cfg.get("group_col", "accident_id")),
+                label_col=label_col,
+                also_transfer_alias=(idx == len(test_corpora) - 1),
+            )
             log_test_metrics(corpus_metrics, corpus=corpus_id)
         except Exception as exc:
             logger.warning("[macro_ft] Eval test corpus %s ignorée : %s", corpus_id, exc)
@@ -533,13 +545,26 @@ def run_supervised_macro_ft_training(
         )
     else:
         btp_loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
-    test_metrics_by_corpus["btp"] = evaluate_loader(
+    btp_metrics, btp_details = evaluate_loader_with_predictions(
         model,
         btp_loader,
         device,
         show_progress=True,
         progress_desc="eval_btp",
     )
+    test_metrics_by_corpus["btp"] = btp_metrics
+    btp_meta_for_preds = dataset.get_metadata_df()
+    build_and_save_predictions(
+        btp_meta_for_preds,
+        btp_details,
+        out_dir,
+        "btp",
+        method_name=method_name,
+        text_col=text_col,
+        group_col=str(data_cfg.get("group_col", "accident_id")),
+        label_col=label_col,
+    )
+
     cross_domain_summary = pd.DataFrame()
     if test_metrics_by_corpus:
         save_classification_outputs(
