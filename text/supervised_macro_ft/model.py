@@ -17,15 +17,20 @@ from scgm_text.projection import (
 from supervised_macro_ft.backbone_scaler import BackboneScaler, should_standardize_backbone
 
 MACRO_FT_PROJECTIONS = ("linear", "mlp_sklearn")
+_NO_PROJECTOR_ALIASES = frozenset({"none", "null", "", "legacy"})
 
 
-def validate_macro_ft_projection(projection: Optional[str]) -> str:
-    """Valide et normalise la projection FT (linear | mlp_sklearn uniquement)."""
-    raw = str(projection or "mlp_sklearn").strip().lower()
+def validate_macro_ft_projection(projection: Optional[str]) -> Optional[str]:
+    """Valide projection FT : ``linear`` | ``mlp_sklearn`` | ``null``/``none`` (sans ψ)."""
+    if projection is None:
+        return None
+    raw = str(projection).strip().lower()
+    if raw in _NO_PROJECTOR_ALIASES:
+        return None
     if raw in ("sklearn_mlp",):
         raw = "mlp_sklearn"
     if raw not in MACRO_FT_PROJECTIONS:
-        allowed = ", ".join(MACRO_FT_PROJECTIONS)
+        allowed = ", ".join((*MACRO_FT_PROJECTIONS, "null"))
         raise ValueError(
             f"projection FT non supportée : {projection!r}. "
             f"Valeurs autorisées : {allowed}."

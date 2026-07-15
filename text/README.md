@@ -168,6 +168,7 @@ cd jobs && bash submit_tuning_all.sh
 # 4. Notebooks de lecture (résultats par méthode)
 python scripts/build_analysis_notebooks.py        # 00 + 05_view_*
 python scripts/build_notebook_02_scgm_results.py  # SCGM
+python scripts/build_notebook_06_bn_macro_constrained.py
 python scripts/build_notebook_07_supervised_macro_baseline.py
 ```
 
@@ -212,7 +213,9 @@ python scripts/train_scgm_text.py --config configs/methods/scgm_text.yaml
 sbatch jobs/train_scgm_text.sh
 ```
 
-**Topics BERTopic** : baseline supervisée notebook **07** (`macro_transfer/supervised_baseline.py`). Export SCGM BTP complet (`export_scgm_text_outputs.py`) reste en CLI manuelle si besoin.
+**Topics BERTopic** : section homogène dans les notebooks **05_view**, **07** et **08** (config `configs/bertopic_notebook.yaml` + `configs/bertopic_macro_shared.yaml`). Sorties sous `{RESULTS_DIR}/bertopic_notebook/<corpus>/` (assignments, thèmes LLM, prédictions macro pour le BN). Prérequis représentation LLM : `OPENAI_API_KEY`.
+
+**Réseau bayésien macro-contraint** : notebook **06** (`scripts/build_notebook_06_bn_macro_constrained.py`) consomme ces exports via `bn_pipeline.staging_macro_transfer.stage_bn_exports_from_bertopic_run` — pas d'arcs entre classes macro différentes (ordre A0 → A1 → B → C).
 
 ## Corpus de test (configurable)
 
@@ -275,10 +278,14 @@ Le **corpus** (BTP, métallurgie, etc.) est défini dans les cellules *Parameter
 |----------|------|
 | `00_check_data.ipynb` | Aperçu du CSV configuré |
 | `02_scgm_text_results.ipynb` | **Lecture seule** — SCGM BTP + OOD (`output/scgm_text`) : métriques classification + t-SNE sur `projected_*.npy` |
-| `05_view_batch_triplet_results.ipynb` | Résultats Batch Triplet — métriques + PCA/t-SNE (embeddings projetés avant LR) |
-| `05_view_softtriple_results.ipynb` | Résultats SoftTriple (idem) |
-| `05_view_supcon_results.ipynb` | Résultats SupCon (idem) |
-| `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (CV BTP → eval métallurgie + caou) |
+| `05_view_batch_triplet_results.ipynb` | **Lecture seule** — Batch Triplet : tableau métriques unifié (CV + BTP + OOD), PCA/t-SNE global (`RESULTS_DIR` configurable) |
+| `05_view_softtriple_results.ipynb` | **Lecture seule** — SoftTriple (idem + centres effectifs) |
+| `05_view_supcon_results.ipynb` | **Lecture seule** — SupCon (idem) |
+| `06_bn_macro_constrained.ipynb` | **Exécutable** — BN pgmpy sur topics BERTopic intra-macro (contraintes A0→C), entrée `bertopic_notebook/<corpus>/` |
+| `07_supervised_macro_baseline.ipynb` | **Exécutable** — classifieurs sklearn sur Qwen brut (CV BTP → eval métallurgie + caou) + BERTopic |
+| `08_view_supervised_macro_ft_results.ipynb` | **Lecture seule** — fine-tuning CE macro_ft : tableau métriques unifié, courbes, PCA/t-SNE global, vraie vs prédite (`RESULTS_DIR` configurable) |
+
+Les notebooks `05_view_*` et `08_view_*` acceptent un dossier de run custom via `RESULTS_DIR` en tête de notebook (run standard, combo tuning, chemin absolu).
 
 Entraînement **hors notebook** : `scripts/train_scgm_text.py` ou `jobs/*.sh` (SLURM). Les notebooks chargent checkpoints, `train_log.csv` et exports déjà produits.
 
@@ -289,7 +296,9 @@ Les fichiers `notebooks/*.ipynb` ne sont **pas versionnés** (restent sur la mac
 ```bash
 python scripts/build_analysis_notebooks.py        # 00 + 05_view_*
 python scripts/build_notebook_02_scgm_results.py  # 02_scgm_text_results
+python scripts/build_notebook_06_bn_macro_constrained.py  # 06 BN macro-contraint
 python scripts/build_notebook_07_supervised_macro_baseline.py
+python scripts/build_notebook_08_supervised_macro_ft_results.py  # 08 macro_ft viz
 ```
 
 ## Métriques principales

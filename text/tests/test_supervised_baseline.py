@@ -259,6 +259,32 @@ def test_test_corpus_merge_requires_doc_id(tmp_path):
     assert dim_cols == ["dim_0", "dim_1"]
 
 
+def test_merge_metadata_with_embeddings_non_strict(tmp_path, capsys):
+    from scgm_text.dataset_text_embeddings import merge_metadata_with_embeddings
+
+    meta_csv = tmp_path / "data.csv"
+    pd.DataFrame(
+        {
+            "doc_id": [1, 2, 3],
+            "pred_label": ["A0", "A1", "B"],
+        }
+    ).to_csv(meta_csv, index=False)
+    emb_csv = tmp_path / "emb.csv"
+    pd.DataFrame(
+        {
+            "doc_id": [1, 2],
+            "dim_0": [1.0, 0.0],
+            "dim_1": [0.0, 1.0],
+        }
+    ).to_csv(emb_csv, index=False)
+
+    meta = pd.read_csv(meta_csv)
+    merged, dim_cols = merge_metadata_with_embeddings(meta, str(emb_csv), strict=False)
+    assert len(merged) == 2
+    assert dim_cols == ["dim_0", "dim_1"]
+    assert "Attention" in capsys.readouterr().out
+
+
 def test_summarize_all_models_test_metrics():
     summary = summarize_all_models_test_metrics(
         {

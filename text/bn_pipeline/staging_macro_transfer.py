@@ -44,6 +44,10 @@ BN_STAGING_SUBDIR_BY_METHOD: dict[str, str] = {
     "frozen_source_prototypes/supcon": "frozen_source_prototypes_supcon",
     "frozen_source_prototypes/batch_triplet": "frozen_source_prototypes_batch_triplet",
     "supervised_macro_ft": "supervised_macro_ft",
+    "batch_triplet": "batch_triplet",
+    "softtriple": "softtriple",
+    "supcon": "supcon",
+    "supervised_macro_baseline": "supervised_macro_baseline",
 }
 
 # Seul pt_y_given_z est copié tel quel (matrice n_z × 4). pt_z / pt_y viennent du CSV (même n lignes).
@@ -218,6 +222,66 @@ def stage_bn_exports_from_macro_transfer(
         "method": method,
         "corpus_id": corpus_id,
         "macro_transfer_dir": str(mt),
+        "topic_source": "bertopic",
+        "bn_exports": str(exports),
+    }
+    (exports / "staging_manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return exports
+
+
+def stage_bn_exports_from_bertopic_run(
+    bertopic_run_dir: str | Path,
+    method: str,
+    corpus_id: Optional[str] = None,
+    *,
+    output_dir: Optional[str | Path] = None,
+    repo_root: Optional[Path] = None,
+) -> Path:
+    """
+    Staging BN depuis un run BERTopic notebook (``bertopic_notebook/<corpus>/``).
+
+    Entrées : ``topics_bertopic/assignments.csv``, ``themes_by_macro.csv``,
+    ``transfer/target_macro_predictions.csv``.
+    """
+    root = repo_root or find_repo_root()
+    run_dir = Path(bertopic_run_dir).resolve()
+    topics_dir = run_dir / topics_subdir()
+    transfer_meta = run_dir / "transfer" / "target_macro_predictions.csv"
+    if not transfer_meta.is_file():
+        raise FileNotFoundError(f"Prédictions transfert manquantes : {transfer_meta}")
+    assign_src = topics_dir / "assignments.csv"
+    if not assign_src.is_file():
+        raise FileNotFoundError(f"assignments.csv manquant : {assign_src}")
+
+    norm_method = _normalize_staging_method(method)
+    if output_dir is not None:
+        out_root = resolve_repo_path(output_dir, root)
+    else:
+        out_root = bn_results_dir(corpus_id, anchor=root)
+        sub = BN_STAGING_SUBDIR_BY_METHOD.get(norm_method) or BN_STAGING_SUBDIR_BY_METHOD.get(method)
+        if sub:
+            out_root = out_root / sub
+    exports = out_root / "staging" / "bn_exports"
+    exports.mkdir(parents=True, exist_ok=True)
+
+    meta_src_df = pd.read_csv(transfer_meta, low_memory=False)
+    meta_src_df = _normalize_fsp_metadata_for_bn(meta_src_df)
+    meta_src_df.to_csv(exports / "metadata_with_predictions.csv", index=False)
+    shutil.copy2(assign_src, exports / "macro_topic_assignments.csv")
+    themes_src = topics_dir / "themes_by_macro.csv"
+    if themes_src.is_file():
+        shutil.copy2(themes_src, exports / "themes_by_macro.csv")
+
+    meta = pd.read_csv(exports / "metadata_with_predictions.csv", low_memory=False)
+    write_bn_compat_arrays(exports, meta)
+
+    manifest = {
+        "method": method,
+        "corpus_id": corpus_id,
+        "bertopic_run_dir": str(run_dir),
         "topic_source": "bertopic",
         "bn_exports": str(exports),
     }

@@ -52,6 +52,22 @@ def test_validate_macro_ft_projection_rejects_ln_gelu():
         validate_macro_ft_projection("ln_gelu")
 
 
+def test_validate_macro_ft_projection_null_disables_projector():
+    assert validate_macro_ft_projection(None) is None
+    assert validate_macro_ft_projection("null") is None
+    assert validate_macro_ft_projection("none") is None
+
+
+def test_model_kwargs_from_cfg_null_projection():
+    kw = model_kwargs_from_cfg(
+        {
+            "backbone_name": "x",
+            "projection": "null",
+        }
+    )
+    assert kw["projection"] is None
+
+
 def test_model_kwargs_from_cfg_mlp_sklearn_forces_hiddim_128():
     kw = model_kwargs_from_cfg(
         {

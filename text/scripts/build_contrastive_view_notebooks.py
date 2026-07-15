@@ -13,431 +13,6 @@ METHODS = (
     ("supcon", "SupCon", "supcon"),
 )
 
-VIEW_CODE_TEMPLATE = '''
-import json
-from pathlib import Path
-
-import matplotlib.pyplot as plt
-import pandas as pd
-import yaml
-
-METHOD_KEY = "{method_key}"
-DISPLAY_NAME = "{display_name}"
-CONFIG_PATH = ROOT / "configs/methods" / "{method_key}.yaml"
-
-cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-_data = cfg.get("data") or {{}}
-_model = cfg.get("model") or {{}}
-DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
-OUTPUT_DIR = cfg.get("output_dir", f"output/{{METHOD_KEY}}")
-RESULTS = ROOT / OUTPUT_DIR
-LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
-BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
-_test_corpora = _data.get("test_corpora") or cfg.get("test_corpora") or ["metallurgie", "caou"]
-
-print("Méthode :", DISPLAY_NAME)
-print("Config   :", CONFIG_PATH.relative_to(ROOT))
-print("Dataset  :", DATASET_CSV)
-print("Sorties  :", RESULTS)
-print("Label    :", LABEL_COL)
-print("Backbone :", BACKBONE)
-print("Corpus OOD :", _test_corpora)
-
-if not RESULTS.is_dir():
-    raise FileNotFoundError(
-        f"Dossier absent : {{RESULTS}}\\n"
-        f"Lancez : python scripts/train_{{METHOD_KEY}}.py"
-    )
-
-# Arborescence (2 niveaux)
-for p in sorted(RESULTS.rglob("*"))[:80]:
-    if p.is_file() and p.stat().st_size < 5_000_000:
-        print(p.relative_to(RESULTS))
-if len(list(RESULTS.rglob("*"))) > 80:
-    print("…")
-
-train_log = RESULTS / "metrics" / "train_log.csv"
-if train_log.is_file():
-    tl = pd.read_csv(train_log)
-    display(tl.tail(10))
-    ycol = next(
-        (c for c in ("val_balanced_accuracy", "val_balanced_acc", "val_eta2_macro_balanced_perc", "val_loss") if c in tl.columns),
-        None,
-    )
-    if ycol is not None:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        ax.plot(tl["epoch"], tl[ycol], marker="o", label=ycol)
-        if "train_loss" in tl.columns:
-            ax.plot(tl["epoch"], tl["train_loss"], marker="o", label="train_loss")
-        ax.set_xlabel("epoch")
-        ax.set_title(f"{{DISPLAY_NAME}} — courbe d'apprentissage")
-        ax.legend()
-        plt.tight_layout()
-        plt.show()
-else:
-    print("Pas de metrics/train_log.csv (entraînement non lancé).")
-
-tuning_summary = RESULTS / "tuning" / "grid_summary.csv"
-if tuning_summary.is_file():
-    print("\\n=== Tuning grid_summary ===")
-    tdf = pd.read_csv(tuning_summary)
-    display(tdf.sort_values("selection_score", ascending=False).head(15))
-    if "selection_score" in tdf.columns:
-        fig, ax = plt.subplots(figsize=(8, 4))
-        top = tdf.sort_values("selection_score", ascending=False).head(min(12, len(tdf)))
-        ax.barh(top["combo_id"].astype(str), top["selection_score"].astype(float))
-        ax.set_xlabel("balanced_accuracy (selection_score)")
-        ax.set_title(f"{{DISPLAY_NAME}} — grille tuning")
-        plt.tight_layout()
-        plt.show()
-
-resolved_cfg = RESULTS / "configs" / "config_resolved.yaml"
-if resolved_cfg.is_file():
-    print("\\n=== config_resolved.yaml ===")
-    display(yaml.safe_load(resolved_cfg.read_text(encoding="utf-8")))
-
-from safer_core.test_corpus import resolve_test_corpus
-
-print(
-    "\\nNote : les corpus OOD utilisent le modèle entraîné sur 100 % BTP "
-    "(checkpoints/best_model), pas les checkpoints des folds."
-)
-
-kfold_summary = RESULTS / "metrics" / "kfold_summary.csv"
-kfold_per_fold = RESULTS / "metrics" / "kfold_per_fold.csv"
-
-if kfold_per_fold.is_file():
-    print("\\n=== K-fold validation (par fold) ===")
-    display(pd.read_csv(kfold_per_fold))
-
-if kfold_summary.is_file():
-    print("\\n=== K-fold validation (μ±σ) ===")
-    kval = pd.read_csv(kfold_summary)
-    display(kval)
-    for mean_key, std_key, label in (
-        ("mean_val_balanced_accuracy", "std_val_balanced_accuracy", "balanced accuracy val"),
-        ("mean_eta2_macro_balanced_perc", "std_eta2_macro_balanced_perc", "η² macro balanced (%) val"),
-    ):
-        if mean_key in kval.columns:
-            m = float(kval[mean_key].iloc[0])
-            s = float(kval.get(std_key, pd.Series([0])).iloc[0])
-            print(f"{{label}} : {{m:.4f}} ± {{s:.4f}}")
-            break
-
-# --- Métriques classification ---
-_cls_cols = ("balanced_accuracy", "macro_f1", "accuracy", "ba_ood_avg", "ba_ood_worst")
-
-btp_cls = RESULTS / "metrics" / "metrics_classification_btp.csv"
-if btp_cls.is_file():
-    print("\\n=== Classification BTP (in-domain) ===")
-    btp_df = pd.read_csv(btp_cls)
-    display(btp_df)
-    for col in _cls_cols:
-        if col in btp_df.columns and btp_df[col].notna().any():
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.bar(btp_df["method"].astype(str), btp_df[col].astype(float))
-            ax.set_title(f"{{DISPLAY_NAME}} — {{col}} (BTP)")
-            plt.xticks(rotation=20, ha="right")
-            plt.tight_layout()
-            plt.show()
-else:
-    print(f"Pas de {{btp_cls.name}} — relancer eval_corpus.")
-
-cross_csv = RESULTS / "metrics" / "cross_domain_generalization.csv"
-if cross_csv.is_file():
-    print("\\n=== Généralisation cross-domain ===")
-    cross_df = pd.read_csv(cross_csv)
-    display(cross_df)
-    for col in _cls_cols:
-        if col in cross_df.columns and cross_df[col].notna().any():
-            fig, ax = plt.subplots(figsize=(6, 3))
-            ax.bar(cross_df["method"].astype(str), cross_df[col].astype(float))
-            ax.set_title(f"{{DISPLAY_NAME}} — {{col}} (cross-domain)")
-            plt.xticks(rotation=20, ha="right")
-            plt.tight_layout()
-            plt.show()
-
-all_test = RESULTS / "metrics" / "all_test_corpora_metrics.csv"
-if all_test.is_file():
-    print("\\n=== Tous les corpus test (OOD) ===")
-    display(pd.read_csv(all_test))
-
-for corpus_id in _test_corpora:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    cls_csv = RESULTS / "metrics" / f"metrics_classification_test_{{corpus_id}}.csv"
-    if cls_csv.is_file():
-        print(f"\\n=== Classification test — {{spec.display_name}} ({{corpus_id}}) ===")
-        cdf = pd.read_csv(cls_csv)
-        display(cdf)
-        for col in _cls_cols:
-            if col in cdf.columns and cdf[col].notna().any():
-                fig, ax = plt.subplots(figsize=(6, 3))
-                ax.bar(cdf["method"].astype(str), cdf[col].astype(float))
-                ax.set_title(f"{{DISPLAY_NAME}} — {{col}} ({{corpus_id}})")
-                plt.xticks(rotation=20, ha="right")
-                plt.tight_layout()
-                plt.show()
-    else:
-        print(f"Pas de metrics_classification_test_{{corpus_id}}.csv")
-
-# Lecture seule — pas d'entraînement dans ce notebook.
-'''
-
-PCA_BTP_MD = """### PCA / t-SNE — BTP (embeddings projetés avant classification LR)
-
-Carte 2D sur `output/<method>/embeddings/projected_btp.npy` + `projected_btp_metadata.csv`, couleur = macro (`pred_label`).
-"""
-
-PCA_BTP_CODE = '''
-import numpy as np
-
-from scgm_text.notebook_viz import (
-    plot_corpus_projections,
-    plot_projected_embeddings_pca_tsne,
-    plot_tsne_per_macro_grid,
-    sample_projection_indices,
-)
-from safer_core.test_corpus import method_btp_results_dir, resolve_contrastive_embeddings_csv, resolve_projected_embeddings_paths
-
-FIGURES_DIR = method_btp_results_dir(METHOD_KEY, anchor=ROOT) / "figures"
-FIGURES_DIR.mkdir(parents=True, exist_ok=True)
-
-def save_fig(name: str) -> Path:
-    path = FIGURES_DIR / name
-    plt.tight_layout()
-    plt.savefig(path, dpi=160, bbox_inches="tight")
-    plt.show()
-    return path
-
-proj_btp = resolve_projected_embeddings_paths(METHOD_KEY, "btp", anchor=ROOT)
-projected_btp = meta_btp = None
-if proj_btp is not None:
-    projected_btp = np.load(proj_btp[0])
-    meta_btp = pd.read_csv(proj_btp[1])
-    paths = plot_projected_embeddings_pca_tsne(
-        proj_btp[0],
-        proj_btp[1],
-        LABEL_COL,
-        corpus_name=f"{DISPLAY_NAME} — BTP (avant classif. LR)",
-        save_fig=save_fig,
-        figures_dir=FIGURES_DIR,
-        png_name=f"{METHOD_KEY}_btp_pca_tsne.png",
-        max_points=8000,
-        seed=42,
-    )
-    if paths:
-        print(paths)
-else:
-    print(f"(absent) projected_btp — relancer : python scripts/train_{METHOD_KEY}.py")
-
-emb_btp = resolve_contrastive_embeddings_csv(METHOD_KEY, "btp", anchor=ROOT)
-'''
-
-TSNE_PER_MACRO_BTP_MD = """### t-SNE par macro — BTP
-
-Grille 2×2 (A0, A1, B, C) : t-SNE recalculé **séparément** sur chaque macro pour visualiser la structure intra-rôle.
-"""
-
-TSNE_PER_MACRO_BTP_CODE = '''
-if projected_btp is None or meta_btp is None:
-    print("(absent) t-SNE par macro BTP — mêmes prérequis que PCA/t-SNE global")
-else:
-    idx = sample_projection_indices(meta_btp, LABEL_COL, max_points=8000, seed=42)
-    p_btp_pm = plot_tsne_per_macro_grid(
-        projected_btp[idx],
-        meta_btp.loc[idx, LABEL_COL].astype(str).to_numpy(),
-        corpus_name=f"{DISPLAY_NAME} — BTP (avant classif. LR)",
-        save_fig=save_fig,
-        png_name=f"{METHOD_KEY}_btp_tsne_per_macro.png",
-        seed=42,
-    )
-    if p_btp_pm is not None:
-        print(p_btp_pm)
-'''
-
-PCA_TEST_MD = """### PCA / t-SNE — Corpus test OOD (embeddings projetés avant classification LR)
-
-Cartes 2D sur `output/<method>/embeddings/projected_<corpus>.npy` pour chaque corpus configuré (`test_corpora`).
-"""
-
-PCA_TEST_CODE = '''
-for corpus_id in _test_corpora:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    pair = resolve_projected_embeddings_paths(METHOD_KEY, corpus_id, anchor=ROOT)
-    if pair is None:
-        print(f"(absent) projected_{corpus_id}.npy sous {RESULTS / 'embeddings'}")
-        continue
-    fig_dir = FIGURES_DIR / f"ood_{corpus_id}"
-    fig_dir.mkdir(parents=True, exist_ok=True)
-
-    def _save_fig_ood(name: str, _dir=fig_dir) -> Path:
-        path = _dir / name
-        plt.tight_layout()
-        plt.savefig(path, dpi=160, bbox_inches="tight")
-        plt.show()
-        return path
-
-    paths = plot_projected_embeddings_pca_tsne(
-        pair[0],
-        pair[1],
-        LABEL_COL,
-        corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (avant classif. LR)",
-        save_fig=_save_fig_ood,
-        figures_dir=fig_dir,
-        png_name=f"{METHOD_KEY}_{corpus_id}_pca_tsne.png",
-        max_points=8000,
-        seed=42,
-    )
-    if paths:
-        print(f"{corpus_id}:", paths)
-'''
-
-TSNE_PER_MACRO_TEST_MD = """### t-SNE par macro — Corpus test OOD
-
-Grille 2×2 par étape (A0, A1, B, C) sur les embeddings projetés de chaque corpus test.
-"""
-
-TSNE_PER_MACRO_TEST_CODE = '''
-import numpy as np
-
-for corpus_id in _test_corpora:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    pair = resolve_projected_embeddings_paths(METHOD_KEY, corpus_id, anchor=ROOT)
-    if pair is None:
-        print(f"(absent) t-SNE par macro — projected_{corpus_id}")
-        continue
-    projected = np.load(pair[0])
-    meta = pd.read_csv(pair[1])
-    fig_dir = FIGURES_DIR / f"ood_{corpus_id}"
-    fig_dir.mkdir(parents=True, exist_ok=True)
-
-    def _save_fig_ood(name: str, _dir=fig_dir) -> Path:
-        path = _dir / name
-        plt.tight_layout()
-        plt.savefig(path, dpi=160, bbox_inches="tight")
-        plt.show()
-        return path
-
-    idx = sample_projection_indices(meta, LABEL_COL, max_points=8000, seed=42)
-    p_test_pm = plot_tsne_per_macro_grid(
-        projected[idx],
-        meta.loc[idx, LABEL_COL].astype(str).to_numpy(),
-        corpus_name=f"{DISPLAY_NAME} — {spec.display_name}",
-        save_fig=_save_fig_ood,
-        png_name=f"{METHOD_KEY}_{corpus_id}_tsne_per_macro.png",
-        seed=42,
-    )
-    if p_test_pm is not None:
-        print(f"{corpus_id}:", p_test_pm)
-'''
-
-SOFTTRIPLE_CENTERS_MD = """### Centres SoftTriple effectifs
-
-Tableau des centres (`centers/softtriple_effective_centers.csv`) et projection PCA/t-SNE sur les embeddings BTP et test (losanges `A0#0`, …).
-
-Prérequis : `export_effective_centers: true` et `center_regularization_type` ≠ `none` dans la config (défaut : `diversity`).
-"""
-
-SOFTTRIPLE_CENTERS_BTP_CODE = '''
-if METHOD_KEY == "softtriple":
-    from scgm_text.notebook_viz import (
-        plot_embeddings_csv_pca_tsne_with_softtriple_centers,
-        resolve_softtriple_centers_csv,
-        softtriple_centers_summary_table,
-    )
-
-    centers_csv = resolve_softtriple_centers_csv(RESULTS)
-    if centers_csv is None:
-        print("(absent) centres SoftTriple — relancer train_softtriple.py avec export_effective_centers")
-    else:
-        print("Centres :", centers_csv.relative_to(ROOT))
-        display(softtriple_centers_summary_table(centers_csv))
-        p_centers = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
-            emb_btp,
-            DATASET_CSV,
-            LABEL_COL,
-            results_dir=RESULTS,
-            corpus_name=f"{DISPLAY_NAME} — BTP (centres)",
-            save_fig=save_fig,
-            png_name="softtriple_btp_pca_tsne_centers.png",
-            max_points=8000,
-            seed=42,
-        )
-        if p_centers is not None:
-            print(p_centers)
-'''
-
-SOFTTRIPLE_CENTERS_TEST_CODE = '''
-if METHOD_KEY == "softtriple":
-    from scgm_text.notebook_viz import plot_embeddings_csv_pca_tsne_with_softtriple_centers
-
-    for corpus_id in _test_corpora:
-        spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-        emb_test_csv = resolve_contrastive_embeddings_csv(
-            METHOD_KEY, "test", corpus_id=corpus_id, anchor=ROOT
-        )
-        if not emb_test_csv.is_file():
-            print(f"(absent) final_embeddings test {corpus_id}")
-            continue
-        fig_dir = FIGURES_DIR / f"ood_{corpus_id}"
-        fig_dir.mkdir(parents=True, exist_ok=True)
-
-        def _save_fig_ood(name: str, _dir=fig_dir) -> Path:
-            path = _dir / name
-            plt.tight_layout()
-            plt.savefig(path, dpi=160, bbox_inches="tight")
-            plt.show()
-            return path
-
-        p_centers_test = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
-            emb_test_csv,
-            spec.data_csv,
-            LABEL_COL,
-            results_dir=RESULTS,
-            corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (centres)",
-            save_fig=_save_fig_ood,
-            png_name=f"softtriple_{corpus_id}_pca_tsne_centers.png",
-            max_points=8000,
-            seed=42,
-        )
-        if p_centers_test is not None:
-            print(f"{corpus_id}:", p_centers_test)
-'''
-
-RAW_TEST_MD = """### Embedding brut — corpus test OOD (PCA / t-SNE / UMAP)
-
-Vecteurs **encodeur Qwen** (`embeddings/Qwen3-Embedding-0.6B_<corpus>.csv`), couleur = **`pred_label`** (étape chaîne accidentelle). Référence avant fine-tuning {display_name}.
-"""
-
-RAW_TEST_CODE = '''
-from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
-
-for corpus_id in _test_corpora:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    fig_dir = RESULTS / "figures" / f"raw_{corpus_id}"
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    _raw_emb = plot_test_corpus_raw_embeddings(
-        corpus_id,
-        fig_dir=fig_dir,
-        anchor=ROOT,
-        label_col=LABEL_COL,
-        max_points=12000,
-        seed=42,
-        prefix=f"raw_{corpus_id}",
-        show=True,
-        display_metrics=True,
-    )
-    if _raw_emb.missing:
-        print(f"Embedding brut {corpus_id} — fichiers manquants :", ", ".join(_raw_emb.missing))
-    else:
-        print(
-            f"{spec.display_name} — figures embedding brut :",
-            _raw_emb.pca_tsne_path,
-            _raw_emb.tsne_per_macro_path,
-            _raw_emb.umap_png_path,
-        )
-'''
-
 
 def _cell(code: str, cell_type: str = "code") -> dict:
     return {
@@ -457,75 +32,334 @@ def _nb(cells: list) -> dict:
     }
 
 
-def _setup_cell() -> str:
-    return """
-import sys
+def _config_code(method_key: str, display_name: str) -> str:
+    return f'''# --- Paramètres (modifier ici) ---
 from pathlib import Path
 
-ROOT = Path.cwd().resolve()
-for _ in range(6):
-    if (ROOT / "configs" / "methods").is_dir():
-        break
-    nested = ROOT / "text" / "configs" / "methods"
-    if nested.is_dir():
-        ROOT = (ROOT / "text").resolve()
-        break
-    if ROOT.parent == ROOT:
-        break
-    ROOT = ROOT.parent
-if not (ROOT / "configs" / "methods").is_dir():
-    raise FileNotFoundError(
-        "Racine projet introuvable (configs/methods/). "
-        "Lancez Jupyter depuis text/ ou SAFER/, ou placez le notebook sous text/notebooks/."
-    )
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+import matplotlib.pyplot as plt
+import pandas as pd
+import yaml
+from IPython.display import display
+
+from safer_core.brand_style import apply_matplotlib_brand
+
+apply_matplotlib_brand()
+plt.rcParams["figure.dpi"] = 96
+plt.rcParams["figure.autolayout"] = True
+
+METHOD_KEY = "{method_key}"
+DISPLAY_NAME = "{display_name}"
+CONFIG_PATH = ROOT / "configs/methods" / "{method_key}.yaml"
+
+cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+_data = cfg.get("data") or {{}}
+_model = cfg.get("model") or {{}}
+DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
+DEFAULT_OUTPUT = ROOT / cfg.get("output_dir", f"output/{{METHOD_KEY}}")
+
+# Dossier de résultats (relatif à ROOT ou chemin absolu)
+RESULTS_DIR = DEFAULT_OUTPUT
+# Exemples :
+# RESULTS_DIR = ROOT / "output/{method_key}/tuning/combos/projectionlinear_hiddim128_abc12345"
+# RESULTS_DIR = Path("/chemin/vers/mon_experience")
+
+LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
+BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
+TEST_CORPORA = list(_data.get("test_corpora") or cfg.get("test_corpora") or ["metallurgie", "caou"])
+FIGURES_DIR = RESULTS_DIR / "figures_notebook"
+FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+
+print("Méthode  :", DISPLAY_NAME)
+print("Config   :", CONFIG_PATH.relative_to(ROOT))
+print("Résultats:", RESULTS_DIR)
+print("Figures  :", FIGURES_DIR)
+print("Corpus OOD:", TEST_CORPORA)
+'''
+
+
+METRICS_MD = """## 1. Métriques de classification
+
+Tableau unique : CV BTP (μ±σ), évaluation LR in-domain (BTP) et OOD (métallurgie, caou).
 """
+
+METRICS_CODE = '''from contrastive_methods.view_metrics import (
+    build_view_classification_summary_table,
+    format_ood_summary_line,
+    validate_contrastive_results_dir,
+)
+from supervised_macro_ft.notebook_viz import style_metrics_table
+
+validate_contrastive_results_dir(RESULTS_DIR)
+summary = build_view_classification_summary_table(RESULTS_DIR, test_corpora=TEST_CORPORA)
+display(style_metrics_table(summary, ("balanced_accuracy", "macro_f1", "accuracy")))
+ood_line = format_ood_summary_line(RESULTS_DIR)
+if ood_line:
+    print(ood_line)
+'''
+
+PROJECTED_BTP_MD = """## 2. Embeddings projetés — BTP (PCA / t-SNE)
+
+Couleur = macro (`pred_label`). Figures dans `figures_notebook/`.
+"""
+
+PROJECTED_BTP_CODE = '''from scgm_text.notebook_viz import plot_projected_embeddings_pca_tsne
+from safer_core.test_corpus import resolve_projected_embeddings_paths
+
+def save_fig(name: str) -> Path:
+    path = FIGURES_DIR / name
+    plt.tight_layout()
+    plt.savefig(path, dpi=160, bbox_inches="tight")
+    plt.show()
+    return path
+
+pair_btp = resolve_projected_embeddings_paths(
+    METHOD_KEY, "btp", anchor=ROOT, results_dir=RESULTS_DIR
+)
+if pair_btp is None:
+    print("(absent) projected_btp — relancer eval_corpus")
+else:
+    paths = plot_projected_embeddings_pca_tsne(
+        pair_btp[0],
+        pair_btp[1],
+        LABEL_COL,
+        corpus_name=f"{DISPLAY_NAME} — BTP (avant classif. LR)",
+        save_fig=save_fig,
+        figures_dir=FIGURES_DIR,
+        png_name=f"{METHOD_KEY}_btp_pca_tsne.png",
+        max_points=8000,
+        seed=42,
+        include_plotly=False,
+    )
+    if paths:
+        print(paths)
+'''
+
+PROJECTED_OOD_MD = """## 3. Embeddings projetés — corpus test OOD (PCA / t-SNE)
+
+Un graphique par corpus configuré (`test_corpora`).
+"""
+
+PROJECTED_OOD_CODE = '''from safer_core.test_corpus import resolve_projected_embeddings_paths, resolve_test_corpus
+
+for corpus_id in TEST_CORPORA:
+    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
+    pair = resolve_projected_embeddings_paths(
+        METHOD_KEY, corpus_id, anchor=ROOT, results_dir=RESULTS_DIR
+    )
+    if pair is None:
+        print(f"(absent) projected_{corpus_id}")
+        continue
+
+    def _save_fig_ood(name: str, _dir=FIGURES_DIR / f"ood_{corpus_id}") -> Path:
+        _dir.mkdir(parents=True, exist_ok=True)
+        path = _dir / name
+        plt.tight_layout()
+        plt.savefig(path, dpi=160, bbox_inches="tight")
+        plt.show()
+        return path
+
+    paths = plot_projected_embeddings_pca_tsne(
+        pair[0],
+        pair[1],
+        LABEL_COL,
+        corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (avant classif. LR)",
+        save_fig=_save_fig_ood,
+        figures_dir=FIGURES_DIR / f"ood_{corpus_id}",
+        png_name=f"{METHOD_KEY}_{corpus_id}_pca_tsne.png",
+        max_points=8000,
+        seed=42,
+        include_plotly=False,
+    )
+    if paths:
+        print(f"{corpus_id}:", paths)
+'''
+
+SOFTTRIPLE_CENTERS_MD = """## 4. Centres SoftTriple effectifs (softtriple uniquement)
+
+Tableau des centres + PCA/t-SNE avec losanges `A0#0`, …
+"""
+
+SOFTTRIPLE_CENTERS_CODE = '''if METHOD_KEY == "softtriple":
+    from scgm_text.notebook_viz import (
+        plot_embeddings_csv_pca_tsne_with_softtriple_centers,
+        resolve_softtriple_centers_csv,
+        softtriple_centers_summary_table,
+    )
+    from safer_core.test_corpus import resolve_final_embeddings_csv_in_dir, resolve_test_corpus
+
+    centers_csv = resolve_softtriple_centers_csv(RESULTS_DIR)
+    if centers_csv is None:
+        print("(absent) centres SoftTriple")
+    else:
+        display(softtriple_centers_summary_table(centers_csv))
+        emb_btp = resolve_final_embeddings_csv_in_dir(
+            RESULTS_DIR, "btp", method=METHOD_KEY, anchor=ROOT
+        )
+        if emb_btp.is_file():
+            p = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+                emb_btp,
+                DATASET_CSV,
+                LABEL_COL,
+                results_dir=RESULTS_DIR,
+                corpus_name=f"{DISPLAY_NAME} — BTP (centres)",
+                save_fig=save_fig,
+                png_name="softtriple_btp_pca_tsne_centers.png",
+                max_points=8000,
+                seed=42,
+            )
+            if p is not None:
+                print(p)
+        for corpus_id in TEST_CORPORA:
+            spec = resolve_test_corpus(corpus_id, anchor=ROOT)
+            emb_test = resolve_final_embeddings_csv_in_dir(
+                RESULTS_DIR, "test", corpus_id=corpus_id, method=METHOD_KEY, anchor=ROOT
+            )
+            if not emb_test.is_file():
+                print(f"(absent) final_embeddings test {corpus_id}")
+                continue
+            fig_dir = FIGURES_DIR / f"ood_{corpus_id}"
+            fig_dir.mkdir(parents=True, exist_ok=True)
+
+            def _save_centers(name: str, _dir=fig_dir) -> Path:
+                path = _dir / name
+                plt.tight_layout()
+                plt.savefig(path, dpi=160, bbox_inches="tight")
+                plt.show()
+                return path
+
+            p_test = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
+                emb_test,
+                spec.data_csv,
+                LABEL_COL,
+                results_dir=RESULTS_DIR,
+                corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (centres)",
+                save_fig=_save_centers,
+                png_name=f"softtriple_{corpus_id}_pca_tsne_centers.png",
+                max_points=8000,
+                seed=42,
+            )
+            if p_test is not None:
+                print(f"{corpus_id}:", p_test)
+'''
+
+RAW_TEST_MD = """## 5. Embeddings bruts OOD (référence Qwen)
+
+Vecteurs encodeur avant fine-tuning contrastif — PCA / t-SNE / UMAP (PNG statiques).
+"""
+
+RAW_TEST_CODE = '''from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
+
+for corpus_id in TEST_CORPORA:
+    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
+    fig_dir = FIGURES_DIR / f"raw_{corpus_id}"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+    _raw = plot_test_corpus_raw_embeddings(
+        corpus_id,
+        fig_dir=fig_dir,
+        anchor=ROOT,
+        label_col=LABEL_COL,
+        max_points=12000,
+        seed=42,
+        prefix=f"raw_{corpus_id}",
+        show=True,
+        display_metrics=False,
+        include_plotly=False,
+        include_tsne_per_macro=False,
+    )
+    if _raw.missing:
+        print(f"{corpus_id} — manquant :", ", ".join(_raw.missing))
+    elif _raw.pca_tsne_path:
+        print(f"{spec.display_name} :", _raw.pca_tsne_path, _raw.umap_png_path)
+'''
+
+BERTOPIC_MD = """## 6. Topic modeling BERTopic (intra-macro)
+
+Segmentation du corpus choisi en sous-corpus **A0 / A1 / B / C** (classe prédite par défaut).
+Embeddings = projection contrastive (`projected_*.npy`).
+Hyperparamètres : `configs/bertopic_notebook.yaml`.
+
+Sorties : `{RESULTS_DIR}/bertopic_notebook/<corpus>/` (consommées par le notebook **06** BN).
+"""
+
+BERTOPIC_CODE = '''BERTOPIC_CORPUS = "metallurgie"
+BERTOPIC_SEGMENT_MODE = "predicted"
+RESTIMATE_BERTOPIC = False
+BERTOPIC_UMAP_ENABLED = None
+BERTOPIC_MIN_TOPIC_SIZE = None
+
+from macro_transfer.notebook_bertopic import (
+    bertopic_run_dir,
+    display_notebook_bertopic_results,
+    load_notebook_bertopic_config,
+    run_notebook_bertopic,
+)
+
+cfg_full = load_notebook_bertopic_config(anchor=ROOT)
+nb_cfg = cfg_full.get("notebook") or {}
+bertopic_out = bertopic_run_dir(RESULTS_DIR, BERTOPIC_CORPUS, output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")))
+_assign = bertopic_out / "topics_bertopic" / "assignments.csv"
+if RESTIMATE_BERTOPIC or not _assign.is_file():
+    bt_cfg = dict(cfg_full)
+    if BERTOPIC_UMAP_ENABLED is not None:
+        bt_cfg.setdefault("bertopic", {}).setdefault("umap", {})["enabled"] = bool(BERTOPIC_UMAP_ENABLED)
+    if BERTOPIC_MIN_TOPIC_SIZE is not None:
+        bt_cfg.setdefault("bertopic", {})["min_topic_size"] = int(BERTOPIC_MIN_TOPIC_SIZE)
+    run_notebook_bertopic(
+        RESULTS_DIR,
+        BERTOPIC_CORPUS,
+        method_name=METHOD_KEY,
+        view_kind="contrastive",
+        segment_mode=BERTOPIC_SEGMENT_MODE or str(nb_cfg.get("segment_mode", "predicted")),
+        label_col=LABEL_COL,
+        bertopic_cfg=bt_cfg.get("bertopic"),
+        topics_export_cfg=bt_cfg.get("topics_export"),
+        topic_judge_cfg=bt_cfg.get("topic_judge"),
+        anchor=ROOT,
+        method_key=METHOD_KEY,
+        seed=42,
+        export_for_bn=bool(nb_cfg.get("export_for_bn", True)),
+    )
+    print("BERTopic terminé :", bertopic_out)
+else:
+    print("Cache BERTopic :", bertopic_out)
+
+display_notebook_bertopic_results(bertopic_out)
+print("→ Entrée notebook 06 BN :", bertopic_out)
+'''
 
 
 def main() -> None:
+    import sys
+
+    repo = Path(__file__).resolve().parents[1]
+    if str(repo) not in sys.path:
+        sys.path.insert(0, str(repo))
+    from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
+
     NB.mkdir(parents=True, exist_ok=True)
-    for method_key, display_name, config_file in METHODS:
+    for method_key, display_name, _config_file in METHODS:
         nb_name = f"05_view_{method_key}_results.ipynb"
-        md = (
+        title_md = (
             f"# Résultats — {display_name}\n\n"
-            f"Lecture des sorties sous `output/{method_key}/` (chemins définis dans "
-            f"`configs/methods/{method_key}.yaml`). **Pas d'entraînement** — métriques "
-            f"de classification LR et t-SNE sur embeddings projetés (`projected_*.npy`) "
-            f"avant la régression logistique.\n"
-        )
-        view_code = VIEW_CODE_TEMPLATE.format(
-            method_key=method_key,
-            display_name=display_name,
+            f"**Lecture seule** — métriques LR + projections sur embeddings projetés "
+            f"(`projected_*.npy`).\n\n"
+            f"Modifiez `RESULTS_DIR` pour pointer vers un autre run (standard, combo tuning, etc.).\n"
         )
         cells = [
-            _cell(md, "markdown"),
-            _cell(_setup_cell()),
-            _cell(view_code),
-            _cell(PCA_BTP_MD, "markdown"),
-            _cell(PCA_BTP_CODE),
-            _cell(TSNE_PER_MACRO_BTP_MD, "markdown"),
-            _cell(TSNE_PER_MACRO_BTP_CODE),
+            _cell(title_md, "markdown"),
+            _cell(NOTEBOOK_PATH_SETUP),
+            _cell(_config_code(method_key, display_name)),
+            _cell(METRICS_MD, "markdown"),
+            _cell(METRICS_CODE),
+            _cell(PROJECTED_BTP_MD, "markdown"),
+            _cell(PROJECTED_BTP_CODE),
+            _cell(PROJECTED_OOD_MD, "markdown"),
+            _cell(PROJECTED_OOD_CODE),
         ]
         if method_key == "softtriple":
-            cells.extend(
-                [
-                    _cell(SOFTTRIPLE_CENTERS_MD, "markdown"),
-                    _cell(SOFTTRIPLE_CENTERS_BTP_CODE),
-                ]
-            )
-        cells.extend(
-            [
-                _cell(RAW_TEST_MD.format(display_name=display_name), "markdown"),
-                _cell(RAW_TEST_CODE),
-                _cell(PCA_TEST_MD, "markdown"),
-                _cell(PCA_TEST_CODE),
-                _cell(TSNE_PER_MACRO_TEST_MD, "markdown"),
-                _cell(TSNE_PER_MACRO_TEST_CODE),
-            ]
-        )
-        if method_key == "softtriple":
-            cells.append(_cell(SOFTTRIPLE_CENTERS_TEST_CODE))
+            cells.extend([_cell(SOFTTRIPLE_CENTERS_MD, "markdown"), _cell(SOFTTRIPLE_CENTERS_CODE)])
+        cells.extend([_cell(RAW_TEST_MD, "markdown"), _cell(RAW_TEST_CODE)])
+        cells.extend([_cell(BERTOPIC_MD, "markdown"), _cell(BERTOPIC_CODE)])
         out = NB / nb_name
         out.write_text(json.dumps(_nb(cells), indent=1), encoding="utf-8")
         print("Écrit", out)

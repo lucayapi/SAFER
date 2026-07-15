@@ -5,9 +5,10 @@
 #   B partiel           : backbone_trainable: true, train_last_n_layers: 4
 #   C complet           : backbone_trainable: true, train_last_n_layers: null
 #
-# Projecteur (model.projection) : linear | mlp_sklearn uniquement
+# Projecteur (model.projection) : linear | mlp_sklearn | null
 #   linear      — Linear(d_in → hiddim)
 #   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128)
+#   null        — pas de ψ : z = h, tête Linear(d_backbone → n_classes)
 #
 # Rééquilibrage (mutuellement exclusif si les deux activés → erreur) :
 #   oversampling: false — pas de sur-échantillonnage (défaut)

@@ -20,6 +20,7 @@ if str(TEXT_ROOT) not in sys.path:
 from scgm_text.notebook_viz import (
     macro_counts_per_z,
     macro_centroids_2d,
+    plot_corpus_projections,
     plot_embeddings_csv_pca_tsne,
     plot_embeddings_csv_tsne_per_macro,
     plot_kfold_metrics_bars,
@@ -482,3 +483,38 @@ def test_load_projected_embeddings_pair(tmp_path):
     assert x.shape == (4, 8)
     assert len(meta) == 4
     assert load_projected_embeddings_pair(tmp_path / "missing.npy", meta_path) is None
+
+
+def test_plot_corpus_projections_without_plotly(tmp_path):
+    n = 40
+    rng = np.random.default_rng(0)
+    projected = rng.standard_normal((n, 16))
+    labels = (["A0", "A1", "B", "C"] * (n // 4 + 1))[:n]
+    meta = pd.DataFrame({"pred_label": labels, "doc_id": [f"d{i}" for i in range(n)]})
+    fig_dir = tmp_path / "figures"
+    fig_dir.mkdir()
+
+    def _save(name: str) -> Path:
+        p = fig_dir / name
+        import matplotlib.pyplot as plt
+
+        plt.savefig(p, dpi=80)
+        plt.close("all")
+        return p
+
+    paths = plot_corpus_projections(
+        projected,
+        meta,
+        "pred_label",
+        corpus_name="Test",
+        save_fig=_save,
+        figures_dir=fig_dir,
+        png_name="proj.png",
+        max_points=n,
+        seed=0,
+        include_plotly=False,
+    )
+    assert len(paths) == 1
+    assert paths[0].suffix == ".png"
+    assert not any(p.suffix == ".html" for p in paths)
+    assert not list(fig_dir.glob("*.html"))

@@ -134,17 +134,9 @@ def load_supervised_macro_ft_run_artifacts(out_dir: str | Path) -> FSPRunArtifac
 
 def load_supervised_macro_ft_train_history(train_out: str | Path) -> pd.DataFrame:
     """Charge l'historique epoch par epoch (CV + fit final BTP)."""
-    root = Path(train_out).resolve()
-    frames: list[pd.DataFrame] = []
-    cv_path = root / "cv" / "train_history.csv"
-    final_path = root / "train_history_final.csv"
-    if cv_path.is_file():
-        frames.append(pd.read_csv(cv_path))
-    if final_path.is_file():
-        frames.append(pd.read_csv(final_path))
-    if not frames:
-        return pd.DataFrame()
-    return pd.concat(frames, ignore_index=True)
+    from supervised_macro_ft.notebook_viz import load_supervised_macro_ft_train_history as _load
+
+    return _load(train_out)
 
 
 def _fsp_metric_to_float(value: Any) -> float:
@@ -600,81 +592,9 @@ def plot_supervised_macro_ft_train_history(
     show: bool = True,
 ) -> Optional[Path]:
     """Courbes train_loss et val macro F1 par epoch (CV + fit final)."""
-    if history_df.empty or "epoch" not in history_df.columns:
-        return None
+    from supervised_macro_ft.notebook_viz import plot_supervised_macro_ft_train_history as _plot
 
-    if "phase" in history_df.columns:
-        cv = history_df[history_df["phase"] == "cv"].copy()
-        final = history_df[history_df["phase"] == "final"].copy()
-    else:
-        cv = history_df[history_df.get("fold", -1) >= 0].copy() if "fold" in history_df.columns else history_df.copy()
-        final = history_df[history_df.get("fold", -1) == -1].copy() if "fold" in history_df.columns else pd.DataFrame()
-
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.5))
-    axes = np.asarray([axes])
-
-    ax = axes[0, 0]
-    if not cv.empty and "train_loss" in cv.columns:
-        for fold_id, sub in cv.groupby("fold"):
-            ax.plot(
-                sub["epoch"],
-                sub["train_loss"],
-                alpha=0.35,
-                linewidth=1,
-                color="#4c78a8",
-            )
-        mean_loss = cv.groupby("epoch")["train_loss"].mean()
-        ax.plot(mean_loss.index, mean_loss.values, color="#d62728", linewidth=2, label="CV moyenne")
-    if not final.empty and "train_loss" in final.columns:
-        ax.plot(
-            final["epoch"],
-            final["train_loss"],
-            color="#2ca02c",
-            linewidth=2,
-            linestyle="--",
-            label="fit final (100 % BTP)",
-        )
-    ax.set_title("Train loss (total)")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Loss")
-    ax.legend(fontsize=8)
-
-    ax = axes[0, 1]
-    if not cv.empty and "val_macro_f1" in cv.columns:
-        val_cv = cv.dropna(subset=["val_macro_f1"])
-        if not val_cv.empty:
-            for _, sub in val_cv.groupby("fold"):
-                ax.plot(sub["epoch"], sub["val_macro_f1"], alpha=0.35, linewidth=1, color="#9ecae9")
-            grp = val_cv.groupby("epoch")["val_macro_f1"]
-            mean_f1 = grp.mean()
-            std_f1 = grp.std(ddof=0).fillna(0.0)
-            ax.plot(mean_f1.index, mean_f1.values, color="#1f77b4", linewidth=2, label="CV moyenne")
-            ax.fill_between(
-                mean_f1.index,
-                mean_f1 - std_f1,
-                mean_f1 + std_f1,
-                color="#1f77b4",
-                alpha=0.15,
-                label="±1 écart-type",
-            )
-    ax.set_title("Val macro F1 (CV)")
-    ax.set_xlabel("Epoch")
-    ax.set_ylabel("Macro F1")
-    ax.set_ylim(0, 1)
-    ax.legend(fontsize=8)
-
-    fig.tight_layout()
-    out_path: Optional[Path] = None
-    if fig_dir is not None:
-        out = Path(fig_dir)
-        out.mkdir(parents=True, exist_ok=True)
-        out_path = out / filename
-        fig.savefig(out_path, dpi=140, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-    return out_path
+    return _plot(history_df, fig_dir=fig_dir, filename=filename, show=show)
 
 
 def plot_fsp_distance_boxplot(
@@ -1453,6 +1373,8 @@ def plot_test_corpus_raw_embeddings(
     prefix: str = "raw_test_embedding",
     show: bool = True,
     include_umap: bool = True,
+    include_plotly: bool = True,
+    include_tsne_per_macro: bool = True,
     display_metrics: bool = True,
 ) -> RawTestEmbeddingVizResult:
     """
@@ -1537,15 +1459,16 @@ def plot_test_corpus_raw_embeddings(
         show_macro_centroids=True,
         show_z_centroids=False,
     )
-    result.tsne_per_macro_path = plot_tsne_per_macro_grid(
-        sample_x,
-        sample_df[resolved_label].astype(str).to_numpy(),
-        corpus_name=f"{corpus_label} (embedding brut)",
-        save_fig=save_fig,
-        png_name=f"{prefix}_tsne_per_macro.png",
-        seed=seed,
-        max_points_per_macro=min(2000, max(10, max_points // 4)),
-    )
+    if include_tsne_per_macro:
+        result.tsne_per_macro_path = plot_tsne_per_macro_grid(
+            sample_x,
+            sample_df[resolved_label].astype(str).to_numpy(),
+            corpus_name=f"{corpus_label} (embedding brut)",
+            save_fig=save_fig,
+            png_name=f"{prefix}_tsne_per_macro.png",
+            seed=seed,
+            max_points_per_macro=min(2000, max(10, max_points // 4)),
+        )
 
     if include_umap:
         umap_paths = plot_embedding_umap_by_macro(
@@ -1559,6 +1482,7 @@ def plot_test_corpus_raw_embeddings(
             title=f"UMAP — {corpus_label} (embedding brut, couleur = étape)",
             png_name=f"{prefix}_umap.png",
             html_name=f"{prefix}_umap_interactive.html",
+            include_plotly=include_plotly,
         )
         for p in umap_paths:
             if p.suffix.lower() == ".png":

@@ -475,6 +475,62 @@ if "_confusion_matrix" in metrics:
         shutil.copy(src, FIG_DIR / "confusion_test.png")
 """
                 ),
+                md(f"### Étape 4b — BERTopic intra-macro ({display_name})"),
+                py(
+                    f"""
+BERTOPIC_CORPUS = corpus_id
+BERTOPIC_SEGMENT_MODE = "predicted"
+RESTIMATE_BERTOPIC = False
+BERTOPIC_UMAP_ENABLED = None
+BERTOPIC_MIN_TOPIC_SIZE = None
+
+from macro_transfer.notebook_bertopic import (
+    bertopic_run_dir,
+    display_notebook_bertopic_results,
+    load_notebook_bertopic_config,
+    run_notebook_bertopic,
+)
+
+cfg_full = load_notebook_bertopic_config(anchor=TEXT_ROOT)
+nb_cfg = cfg_full.get("notebook") or {{}}
+bertopic_out = bertopic_run_dir(
+    OUT_DIR,
+    BERTOPIC_CORPUS,
+    output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")),
+)
+preds_bertopic = pd.read_csv(TRANSFER_DIR / "target_macro_predictions.csv")
+_assign = bertopic_out / "topics_bertopic" / "assignments.csv"
+if RESTIMATE_BERTOPIC or not _assign.is_file():
+    bt_cfg = dict(cfg_full)
+    if BERTOPIC_UMAP_ENABLED is not None:
+        bt_cfg.setdefault("bertopic", {{}}).setdefault("umap", {{}})["enabled"] = bool(BERTOPIC_UMAP_ENABLED)
+    if BERTOPIC_MIN_TOPIC_SIZE is not None:
+        bt_cfg.setdefault("bertopic", {{}})["min_topic_size"] = int(BERTOPIC_MIN_TOPIC_SIZE)
+    run_notebook_bertopic(
+        OUT_DIR,
+        BERTOPIC_CORPUS,
+        method_name=METHOD_NAME,
+        view_kind="baseline",
+        segment_mode=BERTOPIC_SEGMENT_MODE or str(nb_cfg.get("segment_mode", "predicted")),
+        label_col=DATA_C["target_label_col"],
+        text_col=DATA_C["target_text_col"],
+        preds=preds_bertopic,
+        bertopic_cfg=bt_cfg.get("bertopic"),
+        topics_export_cfg=bt_cfg.get("topics_export"),
+        topic_judge_cfg=bt_cfg.get("topic_judge"),
+        anchor=TEXT_ROOT,
+        method_key=METHOD_NAME,
+        seed=SEED,
+        export_for_bn=bool(nb_cfg.get("export_for_bn", True)),
+    )
+    print("BERTopic terminé :", bertopic_out)
+else:
+    print("Cache BERTopic :", bertopic_out)
+
+display_notebook_bertopic_results(bertopic_out)
+print("→ Entrée notebook 06 BN :", bertopic_out)
+"""
+                ),
             ]
         )
 

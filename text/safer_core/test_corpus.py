@@ -202,13 +202,21 @@ def resolve_projected_embeddings_paths(
     stem: str,
     *,
     anchor: Optional[Path] = None,
+    results_dir: Optional[Path] = None,
 ) -> Optional[tuple[Path, Path]]:
     """
-    Résout ``projected_<stem>.npy`` + métadonnées sous ``output/<method>/embeddings/``.
+    Résout ``projected_<stem>.npy`` + métadonnées.
 
-    Repli legacy SCGM (``projected_embeddings.npy``) et ancien layout
-    ``output_test/<corpus>/<method>/embeddings/``.
+    Priorité : ``results_dir/embeddings/`` si fourni, sinon ``output/<method>/embeddings/``
+    et repli legacy ``output_test/<corpus>/<method>/embeddings/``.
     """
+    if results_dir is not None:
+        pair = resolve_projected_embeddings_in_dir(
+            results_dir, stem, method=method, anchor=anchor
+        )
+        if pair is not None:
+            return pair
+
     emb_dir = method_btp_results_dir(method, anchor=anchor) / "embeddings"
     pairs: List[tuple[str, str]] = [
         (f"projected_{stem}.npy", f"projected_{stem}_metadata.csv"),
@@ -232,6 +240,74 @@ def resolve_projected_embeddings_paths(
             if npy.is_file() and meta.is_file():
                 return npy.resolve(), meta.resolve()
     return None
+
+
+def resolve_projected_embeddings_in_dir(
+    results_dir: Path,
+    stem: str,
+    *,
+    method: Optional[str] = None,
+    anchor: Optional[Path] = None,
+) -> Optional[tuple[Path, Path]]:
+    """Résout ``projected_<stem>`` sous un dossier de run arbitraire."""
+    emb_dir = Path(results_dir).resolve() / "embeddings"
+    pairs: List[tuple[str, str]] = [
+        (f"projected_{stem}.npy", f"projected_{stem}_metadata.csv"),
+    ]
+    if stem == "btp":
+        pairs.append(("projected_embeddings.npy", "metadata_with_predictions.csv"))
+    for npy_name, meta_name in pairs:
+        npy = emb_dir / npy_name
+        meta = emb_dir / meta_name
+        if npy.is_file() and meta.is_file():
+            return npy.resolve(), meta.resolve()
+
+    if method and stem != "btp":
+        legacy_emb = method_test_results_dir(method, stem, anchor=anchor) / "embeddings"
+        for npy_name, meta_name in (
+            (f"projected_{stem}.npy", f"projected_{stem}_metadata.csv"),
+            ("projected_embeddings_test.npy", "test_metadata.csv"),
+        ):
+            npy = legacy_emb / npy_name
+            meta = legacy_emb / meta_name
+            if npy.is_file() and meta.is_file():
+                return npy.resolve(), meta.resolve()
+    return None
+
+
+def resolve_final_embeddings_csv_in_dir(
+    results_dir: Path,
+    corpus: Literal["btp", "test"],
+    *,
+    corpus_id: Optional[str] = None,
+    method: Optional[str] = None,
+    anchor: Optional[Path] = None,
+) -> Path:
+    """Chemin ``final_embeddings_*.csv`` depuis un dossier de run ou layout legacy."""
+    root = Path(results_dir).resolve()
+    emb_dir = root / "embeddings"
+    if corpus == "btp":
+        for name in ("final_embeddings_btp.csv", "final_embeddings.csv"):
+            candidate = emb_dir / name
+            if candidate.is_file():
+                return candidate.resolve()
+        if method:
+            return resolve_contrastive_embeddings_csv(method, "btp", anchor=anchor)
+        return (emb_dir / "final_embeddings_btp.csv").resolve()
+
+    for name in (
+        f"final_embeddings_test_{corpus_id}.csv" if corpus_id else None,
+        "final_embeddings_test.csv",
+    ):
+        if name:
+            candidate = emb_dir / name
+            if candidate.is_file():
+                return candidate.resolve()
+    if method and corpus_id:
+        return resolve_contrastive_embeddings_csv(
+            method, "test", corpus_id=corpus_id, anchor=anchor
+        )
+    return (emb_dir / "final_embeddings_test.csv").resolve()
 
 
 def resolve_contrastive_embeddings_csv(

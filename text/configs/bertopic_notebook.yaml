@@ -1,0 +1,29 @@
+# Config BERTopic pour notebooks de vue (05/07/08) — fusionnée avec bertopic_macro_shared.yaml
+
+bertopic_shared: configs/bertopic_macro_shared.yaml
+
+notebook:
+  default_corpus: btp
+  segment_mode: predicted
+  embedding_source: auto
+  output_subdir: bertopic_notebook
+  restimate: false
+  save_datamap: true
+  show_topic_judge: false
+  export_for_bn: true
+
+bertopic:
+  umap:
+    enabled: true
+  min_topic_size: 10
+  representation:
+    enabled: true
+    include_corpus_context: true
+  diagnostics:
+    save_datamap: true
+    save_model: true
+    save_representative_docs: true
+
+topics_export:
+  top_k_words: 12
+  top_k_sentences: 5

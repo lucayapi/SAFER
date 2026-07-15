@@ -369,7 +369,7 @@ def plot_embeddings_csv_pca_tsne(
         pred_ok_col=pred_ok_col,
         group_col=group_col,
     )
-    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path), strict=False)
     sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
 
     idx = sample_projection_indices(merged, label_col, max_points=max_points, seed=seed)
@@ -420,6 +420,8 @@ def plot_tsne_per_macro_grid(
     max_points_per_macro: int = 2000,
     min_points: int = 10,
     macros_order: Sequence[str] = ("A0", "A1", "B", "C"),
+    point_size: float = 5.0,
+    figsize: Tuple[float, float] = (9.0, 8.0),
 ) -> Optional[Path]:
     """Grille 2×2 : t-SNE recalculé séparément sur chaque macro (structure intra-rôle)."""
     from sklearn.manifold import TSNE
@@ -432,7 +434,7 @@ def plot_tsne_per_macro_grid(
         raise ValueError("X et macro_labels doivent avoir la même longueur")
 
     macro_colors = _macro_color_map(macros_order)
-    fig, axes = plt.subplots(2, 2, figsize=(10, 9))
+    fig, axes = plt.subplots(2, 2, figsize=figsize)
     axes_flat = axes.ravel()
     rng = np.random.default_rng(seed)
 
@@ -456,13 +458,13 @@ def plot_tsne_per_macro_grid(
             perplexity=min(30, n - 1),
         ).fit_transform(z_m)
         color = macro_colors.get(macro, "#888888")
-        ax.scatter(tsne_xy[:, 0], tsne_xy[:, 1], s=10, alpha=0.55, c=color)
-        ax.set_title(f"t-SNE — {macro} (n={n})")
+        ax.scatter(tsne_xy[:, 0], tsne_xy[:, 1], s=point_size, alpha=0.5, c=color)
+        ax.set_title(f"t-SNE — {macro} (n={n})", fontsize=10)
         ax.set_xticks([])
         ax.set_yticks([])
 
-    fig.suptitle(f"{corpus_name} — t-SNE par macro", y=1.02)
-    plt.tight_layout()
+    fig.suptitle(f"{corpus_name} — t-SNE par macro", y=0.995, fontsize=12)
+    plt.tight_layout(pad=1.2)
 
     if save_fig is None:
         plt.show()
@@ -499,7 +501,7 @@ def plot_embeddings_csv_tsne_per_macro(
         pred_ok_col=pred_ok_col,
         group_col=group_col,
     )
-    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path), strict=False)
     sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
 
     idx = sample_projection_indices(merged, label_col, max_points=max_points, seed=seed)
@@ -686,7 +688,7 @@ def plot_embeddings_csv_pca_tsne_with_softtriple_centers(
         pred_ok_col=pred_ok_col,
         group_col=group_col,
     )
-    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path))
+    merged, dim_cols = merge_metadata_with_embeddings(meta_df, str(emb_path), strict=False)
     center_vectors, centers_meta = load_softtriple_centers_matrix(centers_csv)
     sample_x = merged[dim_cols].to_numpy(dtype=np.float64)
 
@@ -744,21 +746,27 @@ def plot_projection_matplotlib(
     softtriple_centers_pca: Optional[np.ndarray] = None,
     softtriple_centers_tsne: Optional[np.ndarray] = None,
     softtriple_centers_meta: Optional[pd.DataFrame] = None,
+    point_size: float = 4.0,
+    figsize: Tuple[float, float] = (11.0, 4.0),
 ) -> Path:
     """PCA + t-SNE côte à côte (matplotlib statique)."""
     import matplotlib.pyplot as plt
 
     macros_order = ["A0", "A1", "B", "C"]
     macro_colors = _macro_color_map(macros_order)
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
     sample_reset = sample_df.reset_index(drop=True)
     for label in macros_order:
         color = macro_colors[label]
         mask = sample_reset[label_col].values == label
-        axes[0].scatter(pca_xy[mask, 0], pca_xy[mask, 1], s=8, alpha=0.5, label=label, c=[color])
-        axes[1].scatter(tsne_xy[mask, 0], tsne_xy[mask, 1], s=8, alpha=0.5, label=label, c=[color])
-    axes[0].set_title(pca_title)
-    axes[1].set_title(tsne_title)
+        axes[0].scatter(
+            pca_xy[mask, 0], pca_xy[mask, 1], s=point_size, alpha=0.45, label=label, c=[color]
+        )
+        axes[1].scatter(
+            tsne_xy[mask, 0], tsne_xy[mask, 1], s=point_size, alpha=0.45, label=label, c=[color]
+        )
+    axes[0].set_title(pca_title, fontsize=11)
+    axes[1].set_title(tsne_title, fontsize=11)
     if show_macro_centroids or show_z_centroids:
         overlay_projection_centroids(
             axes[0],
@@ -785,8 +793,9 @@ def plot_projection_matplotlib(
     if softtriple_centers_tsne is not None and softtriple_centers_meta is not None:
         overlay_softtriple_centers(axes[1], softtriple_centers_tsne, softtriple_centers_meta)
     if not (show_macro_centroids or show_z_centroids or softtriple_centers_pca is not None):
-        axes[0].legend(fontsize=8)
-        axes[1].legend(fontsize=8)
+        axes[0].legend(fontsize=8, loc="best", markerscale=2)
+        axes[1].legend(fontsize=8, loc="best", markerscale=2)
+    fig.tight_layout(pad=1.2)
     return save_fig(png_name)
 
 
@@ -818,10 +827,10 @@ def plot_projection_plotly(
             color_discrete_map=pal,
             hover_data=[c for c in ["z_hat", "doc_id"] if c in d.columns],
             title=f"{method} 2D — segments (macro {label_col})",
-            opacity=0.6,
-            height=650,
+            opacity=0.55,
+            height=480,
         )
-        fig.update_traces(marker=dict(size=6))
+        fig.update_traces(marker=dict(size=4))
         path = figures_dir / fname
         fig.write_html(str(path), include_plotlyjs="cdn")
         return fig, path
@@ -1008,8 +1017,9 @@ def plot_embedding_umap_by_macro(
     png_name: str = "09_raw_embedding_umap.png",
     html_name: str = "09_raw_embedding_umap_interactive.html",
     show_macro_centroids: bool = True,
+    include_plotly: bool = True,
 ) -> List[Path]:
-    """UMAP 2D d'un nuage d'embeddings, coloré par macro (matplotlib + Plotly)."""
+    """UMAP 2D d'un nuage d'embeddings, coloré par macro (matplotlib + Plotly optionnel)."""
     import matplotlib.pyplot as plt
     import seaborn as sns
     from umap import UMAP
@@ -1071,17 +1081,18 @@ def plot_embedding_umap_by_macro(
     ax.legend(title=label_col, markerscale=2)
     saved.append(save_fig(png_name))
 
-    html_path = figures_dir / html_name
-    plot_umap_plotly(
-        coords,
-        sample_df,
-        label_col=label_col,
-        title=title,
-        out_html=html_path,
-        hover_label=label_col,
-        max_legend=10,
-    )
-    saved.append(html_path)
+    if include_plotly:
+        html_path = figures_dir / html_name
+        plot_umap_plotly(
+            coords,
+            sample_df,
+            label_col=label_col,
+            title=title,
+            out_html=html_path,
+            hover_label=label_col,
+            max_legend=10,
+        )
+        saved.append(html_path)
     return saved
 
 
@@ -1265,6 +1276,9 @@ def plot_projected_embeddings_pca_tsne(
     show_z_centroids: bool = False,
     z_col: str = "z_hat",
     themes_z: Optional[pd.DataFrame] = None,
+    point_size: float = 4.0,
+    figsize: Tuple[float, float] = (11.0, 4.0),
+    include_plotly: bool = True,
 ) -> Optional[List[Path]]:
     """PCA + t-SNE 2D sur embeddings projetés (avant régression logistique sklearn)."""
     pair = load_projected_embeddings_pair(npy_path, meta_path)
@@ -1288,6 +1302,9 @@ def plot_projected_embeddings_pca_tsne(
         show_z_centroids=show_z_centroids,
         z_col=z_col,
         themes_z=themes_z,
+        point_size=point_size,
+        figsize=figsize,
+        include_plotly=include_plotly,
     )
 
 
@@ -1306,8 +1323,11 @@ def plot_corpus_projections(
     show_z_centroids: bool = True,
     z_col: str = "z_hat",
     themes_z: Optional[pd.DataFrame] = None,
+    point_size: float = 4.0,
+    figsize: Tuple[float, float] = (11.0, 4.0),
+    include_plotly: bool = True,
 ) -> List[Path]:
-    """PCA + t-SNE 2D sur embeddings SCGM projetés (matplotlib + Plotly)."""
+    """PCA + t-SNE 2D sur embeddings SCGM projetés (matplotlib + Plotly optionnel)."""
     from sklearn.decomposition import PCA
     from sklearn.manifold import TSNE
 
@@ -1340,10 +1360,15 @@ def plot_corpus_projections(
             show_z_centroids=show_z_centroids,
             z_col=z_col,
             themes_z=themes_z,
+            point_size=point_size,
+            figsize=figsize,
         )
     )
-    pca_pair, tsne_pair = plot_projection_plotly(pca_xy, tsne_xy, sample_df, label_col, figures_dir=figures_dir)
-    saved.extend([pca_pair[1], tsne_pair[1]])
+    if include_plotly:
+        pca_pair, tsne_pair = plot_projection_plotly(
+            pca_xy, tsne_xy, sample_df, label_col, figures_dir=figures_dir
+        )
+        saved.extend([pca_pair[1], tsne_pair[1]])
     return saved
 
 
