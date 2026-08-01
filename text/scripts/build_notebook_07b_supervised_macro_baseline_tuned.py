@@ -56,6 +56,10 @@ et la généralisation hors domaine.
 ## Lancer le tuning (hors notebook, recommandé)
 
 ```bash
+# Cluster
+cd ~/SAFER/text && sbatch jobs/tune_supervised_macro_baseline.sh
+
+# Local
 python scripts/tune_supervised_macro_baseline.py \
   --config configs/tuning/supervised_macro_baseline_grid.yaml
 ```
@@ -65,12 +69,21 @@ python scripts/tune_supervised_macro_baseline.py \
 ```
 output_test/metallurgie/supervised_baseline/tuning/
 ├── grid_summary.csv
-└── best_combo.json
+├── results_summary.csv          # tableau final best HP + BA CV/OOD
+├── best_combo.json
+└── best_hyperparams.json
+
+output_test/btp/supervised_baseline_tuned/transfer/
+├── source_macro_predictions.csv           # best model (train BTP)
+└── models/<model>/source_macro_predictions.csv
 
 output_test/<corpus>/supervised_baseline_tuned/
 ├── cv/ …
-├── transfer/ …
-└── cross_domain_generalization.csv   # sous cv_corpus
+├── transfer/
+│   ├── target_macro_predictions.csv       # best model (test)
+│   ├── all_models_test_metrics.csv
+│   └── models/<model>/target_macro_predictions.csv
+└── cross_domain_generalization.csv        # sous cv_corpus
 ```
 
 Le notebook **07** (`supervised_baseline/`) n'est **pas** écrasé.
@@ -389,13 +402,19 @@ for corpus_id in TEST_CORPORA:
             r"""
 expected = [
     TUNING_DIR / "grid_summary.csv",
+    TUNING_DIR / "results_summary.csv",
     TUNING_DIR / "best_combo.json",
+    TUNING_DIR / "best_hyperparams.json",
     TUNED_CV_DIR / "cv" / "cv_summary.csv",
     TUNED_CV_DIR / "cross_domain_generalization.csv",
+    supervised_baseline_tuned_output_dir("btp", anchor=TEXT_ROOT)
+    / "transfer"
+    / "source_macro_predictions.csv",
 ]
 for corpus_id in TEST_CORPORA:
     out_dir = supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
     expected.append(out_dir / "transfer" / "all_models_test_metrics.csv")
+    expected.append(out_dir / "transfer" / "target_macro_predictions.csv")
 print("Artefacts :")
 for p in expected:
     print(" ", p, "→", "OK" if p.is_file() else "absent")

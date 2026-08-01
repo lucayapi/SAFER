@@ -21,6 +21,7 @@ from macro_transfer.supervised_baseline import (
     aggregate_cv_metrics,
     evaluate_all_models_on_test,
     export_all_models_test_results,
+    fit_final_and_predict_test,
     load_supervised_datasets,
     merge_model_registry,
     run_model_group_kfold_cv,
@@ -292,6 +293,164 @@ def compare_default_vs_tuned_cv(
     return pd.DataFrame(rows)
 
 
+def export_final_results_table(
+    tuning_dir: Path,
+    best_by_model: Mapping[str, Mapping[str, Any]],
+    *,
+    best_model: str,
+    ood_ba_by_corpus: Mapping[str, Mapping[str, float]],
+    cross_domain: Optional[pd.DataFrame] = None,
+) -> pd.DataFrame:
+    """Tableau final : meilleur HP par modèle + BA CV + BA OOD.
+
+    Écrit ``results_summary.csv`` et ``best_hyperparams.json`` sous ``tuning_dir``.
+    """
+    ensure_dir(tuning_dir)
+    rows: List[Dict[str, Any]] = []
+    corpora = list(ood_ba_by_corpus.keys())
+
+    cross_by_model: Dict[str, Mapping[str, Any]] = {}
+    if cross_domain is not None and not cross_domain.empty and "model" in cross_domain.columns:
+        for _, crow in cross_domain.iterrows():
+            cross_by_model[str(crow["model"])] = crow.to_dict()
+
+    for model_key, row in best_by_model.items():
+        params = row.get("best_params") or row.get("params") or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+        params = normalize_param_overrides(dict(params))
+        out_row: Dict[str, Any] = {
+            "model": model_key,
+            "is_best_overall": str(model_key) == str(best_model),
+            "combo_id": row.get("combo_id"),
+            "best_params": json.dumps(params, ensure_ascii=False, default=str),
+            "cv_balanced_accuracy": float(row.get("selection_score", float("nan"))),
+            "cv_ba_std": float(row.get("std_balanced_accuracy", float("nan"))),
+            "cv_accuracy": float(row.get("mean_accuracy", float("nan"))),
+        }
+        ood_vals: List[float] = []
+        for corpus_id in corpora:
+            ba = float(ood_ba_by_corpus.get(corpus_id, {}).get(model_key, float("nan")))
+            out_row[f"ba_ood_{corpus_id}"] = ba
+            if ba == ba:
+                ood_vals.append(ba)
+        out_row["ba_ood_avg"] = float(sum(ood_vals) / len(ood_vals)) if ood_vals else float("nan")
+        out_row["ba_ood_worst"] = float(min(ood_vals)) if ood_vals else float("nan")
+        cref = cross_by_model.get(str(model_key))
+        if cref:
+            if "ba_ood_avg" in cref and out_row["ba_ood_avg"] != out_row["ba_ood_avg"]:
+                out_row["ba_ood_avg"] = float(cref["ba_ood_avg"])
+            if "ba_ood_worst" in cref and out_row["ba_ood_worst"] != out_row["ba_ood_worst"]:
+                out_row["ba_ood_worst"] = float(cref["ba_ood_worst"])
+        rows.append(out_row)
+
+    summary = pd.DataFrame(rows)
+    if not summary.empty and "cv_balanced_accuracy" in summary.columns:
+        summary = summary.sort_values(
+            "cv_balanced_accuracy", ascending=False, kind="mergesort"
+        ).reset_index(drop=True)
+    summary_path = tuning_dir / "results_summary.csv"
+    summary.to_csv(summary_path, index=False)
+
+    best_hp = {
+        str(mk): normalize_param_overrides(
+            json.loads(row["best_params"])
+            if isinstance(row.get("best_params"), str)
+            else dict(row.get("best_params") or row.get("params") or {})
+        )
+        for mk, row in best_by_model.items()
+    }
+    (tuning_dir / "best_hyperparams.json").write_text(
+        json.dumps(
+            {
+                "best_model": best_model,
+                "best_hyperparams_by_model": best_hp,
+                "results_summary_csv": str(summary_path),
+            },
+            indent=2,
+            ensure_ascii=False,
+            default=str,
+        ),
+        encoding="utf-8",
+    )
+    logger.info("Tableau final → %s", summary_path)
+    return summary
+
+
+def export_source_predictions_for_tuned_models(
+    out_dir: Path,
+    model_keys: Sequence[str],
+    model_registry: Mapping[str, Mapping[str, Any]],
+    X_btp,
+    y_btp,
+    btp_meta: pd.DataFrame,
+    *,
+    macros: Sequence[str],
+    seed: int,
+    text_col: str,
+    group_col: str,
+    label_col: str,
+    method_prefix: str = "supervised_macro_baseline_tuned",
+    best_model: Optional[str] = None,
+) -> Dict[str, pd.DataFrame]:
+    """Fit final 100 % BTP → prédictions **train** (source) par modèle.
+
+    Écrit :
+    - ``transfer/models/<model>/source_macro_predictions.csv``
+    - ``transfer/models/<model>/source_metrics.json`` (+ confusion si labels)
+    - ``transfer/source_macro_predictions.csv`` pour le best model
+    """
+    ensure_dir(out_dir)
+    transfer = Path(out_dir) / "transfer"
+    models_root = transfer / "models"
+    preds_by_model: Dict[str, pd.DataFrame] = {}
+
+    for model_key in model_keys:
+        spec = model_registry[model_key]
+        _, preds, metrics = fit_final_and_predict_test(
+            str(model_key),
+            X_btp,
+            y_btp,
+            X_btp,
+            btp_meta,
+            macros=macros,
+            seed=seed,
+            params=spec.get("params"),
+            use_scaler=spec.get("use_scaler"),
+            method_name=f"{method_prefix}/{model_key}/train",
+            text_col=text_col,
+            group_col=group_col,
+            label_col=label_col,
+        )
+        preds_by_model[str(model_key)] = preds
+        model_dir = models_root / str(model_key)
+        ensure_dir(model_dir)
+        preds.to_csv(model_dir / "source_macro_predictions.csv", index=False)
+        metrics_json = {k: v for k, v in metrics.items() if not str(k).startswith("_")}
+        (model_dir / "source_metrics.json").write_text(
+            json.dumps(metrics_json, indent=2, ensure_ascii=False, default=str),
+            encoding="utf-8",
+        )
+        cm = metrics.get("_confusion_matrix")
+        if cm is not None:
+            pd.DataFrame(cm, index=list(macros), columns=list(macros)).to_csv(
+                model_dir / "source_confusion_matrix.csv"
+            )
+        logger.info(
+            "Preds train %s → %s (%d lignes)",
+            model_key,
+            model_dir / "source_macro_predictions.csv",
+            len(preds),
+        )
+
+    if best_model and str(best_model) in preds_by_model:
+        ensure_dir(transfer)
+        preds_by_model[str(best_model)].to_csv(
+            transfer / "source_macro_predictions.csv", index=False
+        )
+    return preds_by_model
+
+
 def run_supervised_baseline_tuning(
     config_path: str | Path,
     *,
@@ -450,15 +609,64 @@ def run_supervised_baseline_tuning(
             model_keys=MODEL_KEYS,
         )
 
+    export_train = bool(tune_cfg.get("export_train_predictions", True))
+    train_preds: Dict[str, pd.DataFrame] = {}
+    if export_train:
+        train_out = supervised_baseline_tuned_output_dir("btp", anchor=root)
+        train_preds = export_source_predictions_for_tuned_models(
+            train_out,
+            MODEL_KEYS,
+            tuned_registry,
+            X_btp,
+            y_btp,
+            data["btp_meta"],
+            macros=macros,
+            seed=seed,
+            text_col=str(data["text_col"]),
+            group_col=str(data["group_col"]),
+            label_col=str(data["label_col"]),
+            method_prefix="supervised_macro_baseline_tuned",
+            best_model=best_model,
+        )
+        save_supervised_run_manifest(
+            train_out,
+            best_model=best_model,
+            selection_metric=selection_metric,
+            seed=seed,
+            n_folds=n_folds,
+            test_corpus="btp",
+            model_keys=MODEL_KEYS,
+        )
+        (train_out / "tuning_ref.json").write_text(
+            json.dumps(
+                {"tuned": True, "tuning_dir": str(tuning_dir), "split": "train_source"},
+                indent=2,
+                ensure_ascii=False,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+
     ood_ba = _load_ood_ba_tuned(test_corpora, MODEL_KEYS, anchor=root)
     cross = summarize_cross_domain_generalization(
         cv_summary, ood_ba, model_keys=MODEL_KEYS
     )
     cross_path = cv_out / "cross_domain_generalization.csv"
     cross.to_csv(cross_path, index=False)
+    # Copie aussi sous tuning_dir pour un seul point d'entrée job.
+    cross.to_csv(tuning_dir / "cross_domain_generalization.csv", index=False)
+
+    results_summary = export_final_results_table(
+        tuning_dir,
+        best_by_model,
+        best_model=best_model,
+        ood_ba_by_corpus=ood_ba,
+        cross_domain=cross,
+    )
 
     logger.info("Tuning terminé. Grille : %s", tuning_dir)
     logger.info("Meilleur modèle : %s", best_model)
+    logger.info("Résultats : %s", tuning_dir / "results_summary.csv")
     return {
         "tuning_dir": tuning_dir,
         "grid_summary": grid_summary,
@@ -467,6 +675,8 @@ def run_supervised_baseline_tuning(
         "best_model": best_model,
         "tuned_registry": tuned_registry,
         "cross_domain": cross,
+        "results_summary": results_summary,
+        "train_predictions": train_preds,
     }
 
 
@@ -504,10 +714,40 @@ def run_supervised_baseline_tuning_cli(argv: Optional[Sequence[str]] = None) -> 
     parser = argparse.ArgumentParser(description="Tune baseline supervisée sklearn (07b).")
     parser.add_argument(
         "--config",
+        "--grid-config",
+        dest="config",
         default="configs/tuning/supervised_macro_baseline_grid.yaml",
-        help="YAML de grille",
+        help="YAML de grille (alias --grid-config pour jobs/_tune_common.sh)",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    run_supervised_baseline_tuning(args.config)
+    result = run_supervised_baseline_tuning(args.config)
+    summary = result.get("results_summary")
+    if isinstance(summary, pd.DataFrame) and not summary.empty:
+        print("\n=== Résultats finaux (best HP / modèle) ===", flush=True)
+        cols = [
+            c
+            for c in (
+                "model",
+                "is_best_overall",
+                "cv_balanced_accuracy",
+                "ba_ood_avg",
+                "ba_ood_worst",
+                "best_params",
+            )
+            if c in summary.columns
+        ]
+        print(summary[cols].to_string(index=False), flush=True)
+        print(f"\nArtefacts : {result['tuning_dir']}", flush=True)
+        print(f"  - grid_summary.csv", flush=True)
+        print(f"  - results_summary.csv", flush=True)
+        print(f"  - best_combo.json / best_hyperparams.json", flush=True)
+        print(
+            "  - preds train : output_test/btp/supervised_baseline_tuned/transfer/",
+            flush=True,
+        )
+        print(
+            "  - preds OOD  : output_test/<corpus>/supervised_baseline_tuned/transfer/",
+            flush=True,
+        )
     return 0

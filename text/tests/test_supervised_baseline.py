@@ -407,3 +407,15 @@ def test_load_ood_balanced_accuracy_by_corpus(tmp_path):
     )
     assert loaded["metallurgie"]["a"] == pytest.approx(0.55)
     assert loaded["caou"]["b"] == pytest.approx(0.25)
+
+    partial = load_ood_balanced_accuracy_by_corpus(
+        ["metallurgie", "nicollin"],
+        ["a", "b"],
+        anchor=tmp_path,
+        skip_missing=True,
+    )
+    assert set(partial) == {"metallurgie"}
+    with pytest.raises(FileNotFoundError, match="nicollin"):
+        load_ood_balanced_accuracy_by_corpus(
+            ["metallurgie", "nicollin"], ["a", "b"], anchor=tmp_path
+        )

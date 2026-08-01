@@ -86,6 +86,7 @@ MODEL_REGISTRY["xgboost"] = {
 TEST_CORPUS_SPECS = [
     ("metallurgie", "Métallurgie"),
     ("caou", "Caoutchouc / chimie / plastiques"),
+    ("nicollin", "Company corpus"),
 ]
 
 INTRO_MD = r"""
@@ -102,7 +103,7 @@ Ce notebook répond à la question : *« Que vaut un classifieur classique sur l
 | Rôle | Fichiers | Description |
 |------|----------|-------------|
 | **Entraînement / CV** | `dataset/data_btp.csv` + `embeddings/Qwen3-Embedding-0.6B_btp.csv` | Corpus BTP in-domain |
-| **Test OOD** | `dataset/data_<corpus>.csv` + `embeddings/Qwen3-Embedding-0.6B_<corpus>.csv` | Métallurgie, caou (registre `configs/test_corpora.yaml`) |
+| **Test OOD** | `dataset/data_<corpus>.csv` + `embeddings/Qwen3-Embedding-0.6B_<corpus>.csv` | Métallurgie, caou, nicollin (registre `configs/test_corpora.yaml`) |
 
 Chaque ligne = une **unité factuelle** (`sentence`) avec `pred_label` (macro) et `accident_id` (groupe pour le CV).
 
@@ -247,6 +248,7 @@ from macro_transfer.supervised_baseline import (
     load_ood_balanced_accuracy_by_corpus,
     load_supervised_run_manifest,
     require_supervised_cache,
+    require_supervised_test_cache,
     run_model_group_kfold_cv,
     save_supervised_run_manifest,
     select_best_model,
@@ -419,7 +421,7 @@ if RUN_CV:
     use_scaler=use_scaler,
 )
 else:
-    require_supervised_cache(CV_OUT_DIR, include_bertopic=False)
+    require_supervised_cache(CV_OUT_DIR)
     fold_rows_{model_key} = load_cached_fold_rows_for_model(CV_OUT_DIR, {model_key!r})
     print("Chargé depuis cache :", CV_DIR / "cv_per_fold.csv")
 fold_df = pd.DataFrame(fold_rows_{model_key})
@@ -446,7 +448,7 @@ if RUN_CV:
     cv_summary = aggregate_cv_metrics(all_fold_rows)
     export_cv_results(CV_OUT_DIR, all_fold_rows, cv_summary)
 else:
-    require_supervised_cache(CV_OUT_DIR, include_bertopic=False)
+    require_supervised_cache(CV_OUT_DIR)
     all_fold_rows, cv_summary = load_cached_cv_results(CV_OUT_DIR)
     cv_per_fold = pd.DataFrame(all_fold_rows)
     print("CV rechargée depuis :", CV_DIR)
@@ -454,17 +456,31 @@ else:
 display_cols = ["model"]
 for m in DISPLAY_METRICS:
     display_cols.extend([f"mean_{m}", f"std_{m}"])
-display(cv_summary[display_cols])
+# Limite l'affichage / la sélection aux modèles encore dans le notebook
+# (évite un ``best_model`` stale type ``mlp`` dans un ancien manifeste).
+cv_summary_active = cv_summary[cv_summary["model"].isin(MODEL_KEYS)].copy()
+if cv_summary_active.empty:
+    raise ValueError(
+        f"Aucun modèle de MODEL_KEYS={MODEL_KEYS} dans cv_summary. "
+        "Relancez avec RESTIMATE=True (ou RUN_CV=True)."
+    )
+display(cv_summary_active[display_cols])
 
 manifest = load_supervised_run_manifest(CV_OUT_DIR) if not RUN_CV else {}
 best_model = (
     str(manifest.get("best_model"))
     if not RUN_CV and manifest.get("best_model")
-    else select_best_model(cv_summary, selection_metric=SELECTION_METRIC)
+    else select_best_model(cv_summary_active, selection_metric=SELECTION_METRIC)
 )
+if best_model not in MODEL_KEYS:
+    print(
+        f"[warn] best_model={best_model!r} absent de MODEL_KEYS={MODEL_KEYS} "
+        "→ re-sélection sur le résumé CV actuel."
+    )
+    best_model = select_best_model(cv_summary_active, selection_metric=SELECTION_METRIC)
 print("Meilleur modèle (", SELECTION_METRIC, ") :", best_model)
 
-plot_df = cv_summary.melt(
+plot_df = cv_summary_active.melt(
     id_vars=["model"],
     value_vars=[f"mean_{m}" for m in DISPLAY_METRICS],
     var_name="metric",
@@ -545,7 +561,7 @@ if RUN_TEST:
     )
     print("Résultats ML sauvegardés sous :", TRANSFER_DIR / "models")
 else:
-    require_supervised_cache(OUT_DIR, include_bertopic=False)
+    require_supervised_test_cache(OUT_DIR)
     try:
         preds_by_model, metrics_by_model, all_models_summary = load_cached_all_models_test_results(
             OUT_DIR, MODEL_KEYS, macros=MACROS
@@ -583,6 +599,18 @@ for model_key in MODEL_KEYS:
     print(f"\\n### {{model_key}} — balanced_accuracy = {{m.get('balanced_accuracy', float('nan')):.3f}}")
     display(cm_df)
 
+if best_model not in preds_by_model:
+    available = [k for k in MODEL_KEYS if k in preds_by_model]
+    if not available:
+        raise KeyError(
+            f"best_model={{best_model!r}} introuvable et aucun modèle dans preds_by_model."
+        )
+    print(
+        f"[warn] best_model={{best_model!r}} absent des prédictions test "
+        f"(clés={{list(preds_by_model)}}) → fallback {{available[0]!r}}."
+    )
+    best_model = available[0]
+
 preds = preds_by_model[best_model]
 metrics = metrics_by_model[best_model]
 if "_confusion_matrix" in metrics:
@@ -606,7 +634,7 @@ if "_confusion_matrix" in metrics:
             py(
                 r"""
 ood_ba_by_corpus = load_ood_balanced_accuracy_by_corpus(
-    TEST_CORPORA, MODEL_KEYS, anchor=TEXT_ROOT
+    TEST_CORPORA, MODEL_KEYS, anchor=TEXT_ROOT, skip_missing=True
 )
 cross_domain_summary = summarize_cross_domain_generalization(
     cv_summary, ood_ba_by_corpus, model_keys=MODEL_KEYS

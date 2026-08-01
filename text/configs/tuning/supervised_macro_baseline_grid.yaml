@@ -1,9 +1,15 @@
-# Grille hyperparamètres — baseline sklearn (notebook 07b).
-# Lancer :
+# Grille hyperparamètres — baseline sklearn (job + notebook 07b).
+#
+# Lancer (cluster) :
+#   cd ~/SAFER/text && sbatch jobs/tune_supervised_macro_baseline.sh
+# Local :
 #   python scripts/tune_supervised_macro_baseline.py --config configs/tuning/supervised_macro_baseline_grid.yaml
 #
-# Sélection : balanced_accuracy moyenne en GroupKFold sur BTP.
+# Sélection : balanced_accuracy moyenne en GroupKFold (accident_id) sur BTP.
 # Une grille **par modèle** (pas de produit croisé LR×RF×XGB).
+#
+# Combos approximatifs : LR=8, RF=18, XGB=36 → ~62 × n_folds fits CV,
+# puis fit final 100 % BTP + prédictions train + OOD (métallurgie, caou, nicollin).
 
 base_config: configs/supervised_macro_baseline.yaml
 output_dir: output_test/metallurgie/supervised_baseline/tuning
@@ -12,19 +18,27 @@ selection_metric: balanced_accuracy
 n_folds: 5
 seed: 42
 test_corpora: [metallurgie, caou, nicollin]
+# Aussi écrire les prédictions sur le train BTP (fit final 100 %).
+export_train_predictions: true
 
 # Params fixés dans base_config (non balayés) :
-#   LR : class_weight=balanced, solver=lbfgs, max_iter=2000
-#   RF : class_weight=balanced
+#   LR  : class_weight=balanced, solver=lbfgs, max_iter=2000
+#   RF  : class_weight=balanced
 #   XGB : objective=multi:softprob, eval_metric=mlogloss
 
 grids:
   logistic_regression:
-    C: [0.1, 1.0, 10.0]
+    # Régularisation L2 : large éventail log-scale autour du défaut C=1
+    C: [0.01, 0.05, 0.1, 0.5, 1.0, 3.0, 10.0, 30.0]
+
   random_forest:
-    n_estimators: [200, 500]
-    max_depth: [null, 20, 40]
+    n_estimators: [200, 400, 800]
+    max_depth: [null, 20, 40]          # null = arbres non bornés
+    min_samples_leaf: [1, 4]
+
   xgboost:
-    n_estimators: [100, 200, 400]
+    n_estimators: [150, 300, 500]
     max_depth: [4, 6, 8]
-    learning_rate: [0.05, 0.1]
+    learning_rate: [0.03, 0.1]
+    subsample: [0.8, 1.0]
+    # min_child_weight / colsample restent aux défauts XGB (base_config)

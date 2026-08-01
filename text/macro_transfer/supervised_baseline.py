@@ -1,4 +1,4 @@
-"""Baseline supervisée macro sur embeddings Qwen bruts (GroupKFold + BERTopic)."""
+"""Baseline supervisée macro sur embeddings Qwen bruts (GroupKFold + OOD)."""
 
 from __future__ import annotations
 
@@ -387,8 +387,13 @@ def load_ood_balanced_accuracy_by_corpus(
     model_keys: Sequence[str],
     *,
     anchor: Optional[Path] = None,
+    skip_missing: bool = False,
 ) -> Dict[str, Dict[str, float]]:
-    """Charge ``balanced_accuracy`` OOD par modèle depuis les sorties étape 4."""
+    """Charge ``balanced_accuracy`` OOD par modèle depuis les sorties étape 4.
+
+    Si ``skip_missing=True``, ignore les corpus sans ``all_models_test_metrics.csv``
+    (utile quand un id est listé dans ``TEST_CORPORA`` mais pas encore évalué).
+    """
     root = anchor or TEXT_ROOT
     out: Dict[str, Dict[str, float]] = {}
     for corpus_id in corpus_ids:
@@ -398,6 +403,12 @@ def load_ood_balanced_accuracy_by_corpus(
             / "all_models_test_metrics.csv"
         )
         if not metrics_path.is_file():
+            if skip_missing:
+                print(
+                    f"[skip] métriques OOD absentes pour {corpus_id!r} : {metrics_path}",
+                    flush=True,
+                )
+                continue
             raise FileNotFoundError(
                 f"Métriques OOD absentes pour {corpus_id!r} : {metrics_path}"
             )
@@ -415,6 +426,11 @@ def load_ood_balanced_accuracy_by_corpus(
                 )
             by_model[str(model_key)] = float(row.iloc[0]["balanced_accuracy"])
         out[str(corpus_id)] = by_model
+    if not out:
+        raise FileNotFoundError(
+            "Aucune métrique OOD trouvée pour "
+            f"{list(corpus_ids)}. Lancez l'étape 4 (évaluation test) d'abord."
+        )
     return out
 
 
@@ -502,7 +518,7 @@ def build_predictions_dataframe(
     group_col: str,
     label_col: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Export compatible FSP / BERTopic gating."""
+    """Export compatible FSP / gating aval."""
     preds = pd.DataFrame(
         {
             "method": method_name,
@@ -605,6 +621,7 @@ def export_test_results(
     metrics: Mapping[str, Any],
     *,
     macros: Sequence[str],
+    write_bertopic_inputs: bool = False,
 ) -> Path:
     """Écrit transfer/target_macro_predictions.csv, metrics.json, etc."""
     transfer_dir = Path(out_dir) / "transfer"
@@ -624,16 +641,19 @@ def export_test_results(
     if cls_rep:
         pd.DataFrame(cls_rep).T.to_csv(transfer_dir / "classification_report.csv", index=True)
 
-    bertopic_cols = ["pred_macro", "confidence"] + [f"prob_{m}" for m in macros]
-    group_col = "accident_id" if "accident_id" in preds.columns else None
-    base_cols = [c for c in [group_col, "fact_id", "sentence"] if c and c in preds.columns]
-    bertopic_df = preds[base_cols + bertopic_cols]
-    bertopic_df.to_csv(transfer_dir / "bertopic_input_all.csv", index=False)
-    for m in macros:
-        bertopic_df[bertopic_df["pred_macro"] == m].to_csv(
-            transfer_dir / f"bertopic_input_{m}.csv",
-            index=False,
-        )
+    if write_bertopic_inputs:
+        bertopic_cols = ["pred_macro", "confidence"] + [f"prob_{m}" for m in macros]
+        group_col = "accident_id" if "accident_id" in preds.columns else None
+        base_cols = [
+            c for c in [group_col, "fact_id", "sentence"] if c and c in preds.columns
+        ]
+        bertopic_df = preds[base_cols + bertopic_cols]
+        bertopic_df.to_csv(transfer_dir / "bertopic_input_all.csv", index=False)
+        for m in macros:
+            bertopic_df[bertopic_df["pred_macro"] == m].to_csv(
+                transfer_dir / f"bertopic_input_{m}.csv",
+                index=False,
+            )
     return transfer_dir
 
 
@@ -903,8 +923,12 @@ def load_cached_test_results(
     return preds, metrics
 
 
-def require_supervised_cache(out_dir: Path, *, include_bertopic: bool = True) -> None:
-    """Lève si le cache disque est incomplet."""
+def require_supervised_cache(out_dir: Path, *, include_bertopic: bool = False) -> None:
+    """Lève si le cache ML disque est incomplet.
+
+    ``include_bertopic`` est conservé pour compatibilité ; défaut ``False``
+    (la baseline 07 n'utilise plus BERTopic).
+    """
     if not supervised_ml_artifacts_exist(out_dir):
         raise FileNotFoundError(
             f"Cache ML incomplet sous {out_dir}. Lancez avec RESTIMATE=True."
@@ -912,6 +936,23 @@ def require_supervised_cache(out_dir: Path, *, include_bertopic: bool = True) ->
     if include_bertopic and not supervised_bertopic_artifacts_exist(out_dir):
         raise FileNotFoundError(
             f"BERTopic cache absent sous {out_dir / 'topics_bertopic'}. "
+            "Lancez avec RESTIMATE=True."
+        )
+
+
+def require_supervised_test_cache(out_dir: Path) -> None:
+    """Lève si le cache test OOD (transfer/) est incomplet — sans exiger ``cv/``."""
+    transfer = Path(out_dir) / "transfer"
+    required = (
+        transfer / "all_models_test_metrics.csv",
+        transfer / "target_macro_predictions.csv",
+        transfer / "metrics.json",
+    )
+    missing = [p for p in required if not p.is_file()]
+    if missing:
+        raise FileNotFoundError(
+            "Cache test incomplet sous "
+            f"{transfer} (manquants : {[p.name for p in missing]}). "
             "Lancez avec RESTIMATE=True."
         )
 
