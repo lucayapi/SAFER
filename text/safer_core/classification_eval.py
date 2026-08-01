@@ -24,9 +24,27 @@ KFOLD_CLASSIFICATION_AGGREGATE_KEYS: tuple[str, ...] = CV_CLASSIFICATION_METRIC_
 DEFAULT_CLASSIFIER = "logistic_regression"
 DEFAULT_SELECTION_METRIC = "balanced_accuracy"
 
-EMBEDDING_STEMS: tuple[str, ...] = ("btp", "metallurgie", "caou")
+EMBEDDING_STEMS: tuple[str, ...] = ("btp", "metallurgie", "caou", "nicollin")
 
 PredictionDetails = Dict[str, Any]
+
+__all__ = [
+    "CLASSIFICATION_METRIC_KEYS",
+    "CV_CLASSIFICATION_METRIC_KEYS",
+    "KFOLD_CLASSIFICATION_AGGREGATE_KEYS",
+    "DEFAULT_CLASSIFIER",
+    "DEFAULT_SELECTION_METRIC",
+    "EMBEDDING_STEMS",
+    "PredictionDetails",
+    "resolve_test_corpora",
+    "predictions_path",
+    "save_corpus_predictions",
+    "save_transfer_predictions_alias",
+    "load_saved_predictions",
+    "build_and_save_predictions",
+    "evaluate_classifier_on_embeddings",
+    "build_cv_summary_from_kfold",
+]
 
 
 def resolve_test_corpora(cfg: Mapping[str, Any]) -> list[str]:

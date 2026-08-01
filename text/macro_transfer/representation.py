@@ -11,8 +11,7 @@ from scgm_text.openai_theme_labels import _get_client, load_openai_dotenv
 
 DEFAULT_FR_CHAT_PROMPT = """Contexte — accidents du travail
 
-Corpus analysé (unités du run en cours) :
-[CORPUS_CONTEXT]
+[Sector_CONTEXT]
 
 Macro obligatoire pour ce topic :
 [MACRO_CONTEXT]
@@ -27,6 +26,20 @@ Consignes :
 - Les exemples fournis sont illustratifs : ne pas les recopier ni extrapoler hors du topic.
 Réponds au format :
 topic: <libellé en français>"""
+
+
+def _include_macro_context(rep_cfg: Dict[str, Any]) -> bool:
+    """
+    ``include_corpus_context`` (défaut True) : injecte la sémantique macro A0–C
+    (contexte de travail, facteurs contributifs, événement, conséquences) depuis
+    ``configs/accident_macros.yaml`` — pas le secteur métallurgie/BTP.
+    """
+    return bool(rep_cfg.get("include_corpus_context", True))
+
+
+def _include_sector_context(rep_cfg: Dict[str, Any]) -> bool:
+    """``include_sector_context`` (défaut False) : contexte sectoriel BTP/métallurgie/caou."""
+    return bool(rep_cfg.get("include_sector_context", False))
 
 
 def build_tiktoken_tokenizer(model_name: str):
@@ -58,31 +71,36 @@ def _resolve_prompt(
     else:
         template = DEFAULT_FR_CHAT_PROMPT
 
-    include_corpus = rep_cfg.get("include_corpus_context", True)
-    corpus_block = ""
-    if include_corpus and corpus_id:
+    include_macro = _include_macro_context(rep_cfg)
+    include_sector = _include_sector_context(rep_cfg)
+
+    sector_block = ""
+    if include_sector and corpus_id:
         ctx_yaml = rep_cfg.get("corpus_context_file")
-        ctx_corpus = format_corpus_context_for_prompt(
+        ctx_sector = format_corpus_context_for_prompt(
             corpus_id,
             context_yaml_path=ctx_yaml,
             anchor=anchor,
         )
-        if ctx_corpus:
-            corpus_block = ctx_corpus
+        if ctx_sector:
+            sector_block = f"Corpus analysé (unités du run en cours) :\n{ctx_sector}"
         else:
-            corpus_block = f"Corpus : {corpus_id}"
-    elif include_corpus and corpus_id is None:
-        corpus_block = "(non spécifié)"
+            sector_block = f"Corpus analysé : {corpus_id}"
+    elif include_sector and corpus_id is None:
+        sector_block = "Corpus analysé : (non spécifié)"
 
     macro_block = ""
-    if macro:
+    if include_macro and macro:
         ctx = format_macro_context_for_prompt(macro, anchor=anchor)
         if ctx:
             macro_block = ctx
         else:
             macro_block = f"Macro : {macro}"
+    elif macro and not include_macro:
+        macro_block = f"Macro : {macro}"
 
-    out = template.replace("[CORPUS_CONTEXT]", corpus_block)
+    out = template.replace("[Sector_CONTEXT]", sector_block)
+    out = out.replace("[CORPUS_CONTEXT]", sector_block)  # rétrocompat templates custom
     return out.replace("[MACRO_CONTEXT]", macro_block)
 
 

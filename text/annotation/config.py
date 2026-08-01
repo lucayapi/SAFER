@@ -59,6 +59,7 @@ class AnnotationConfig:
     n_accidents: IntOrAll = "all"
     units_per_accident: IntOrAll = "all"
     accident_sample_seed: int = 42
+    accident_sample_frac: Optional[float] = None
     temperature: float = 0.0
     reasoning_effort: ReasoningEffort = "medium"
     max_output_tokens: int = 4000
@@ -81,6 +82,13 @@ class AnnotationConfig:
         self.units_per_accident = _normalize_int_or_all(self.units_per_accident)
         self.reasoning_effort = _normalize_reasoning_effort(self.reasoning_effort)
         self.pass_mode = _normalize_pass_mode(self.pass_mode)
+        if self.accident_sample_frac is not None:
+            frac = float(self.accident_sample_frac)
+            if not (0.0 < frac <= 1.0):
+                raise ValueError(
+                    f"accident_sample_frac doit être dans (0, 1], reçu : {frac!r}"
+                )
+            self.accident_sample_frac = frac
         self.input_csv = Path(self.input_csv)
         if self.annotation_root is None:
             self.annotation_root = Path(__file__).resolve().parent

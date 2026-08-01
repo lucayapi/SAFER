@@ -91,7 +91,7 @@ OUTPUT_DIR = "output/scgm_text"
 CHECKPOINT_PATH = None  # None → OUTPUT_DIR/checkpoints/best_model.pt
 
 DATA_CSV = "dataset/data_btp.csv"
-TEST_CORPORA = ["metallurgie", "caou"]  # configs/test_corpora.yaml
+TEST_CORPORA = ["metallurgie", "caou", "nicollin"]  # configs/test_corpora.yaml
 TEST_CORPUS = TEST_CORPORA[0]  # défaut affichage / raw viz
 
 from safer_core.paths import TEXT_ROOT

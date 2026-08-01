@@ -40,19 +40,29 @@ def test_resolve_prompt_injects_macro():
     assert "[CORPUS_CONTEXT]" not in prompt
 
 
-def test_resolve_prompt_injects_corpus_and_macro():
+def test_resolve_prompt_injects_macro_semantic_context():
     prompt = _resolve_prompt(
-        {"include_corpus_context": True},
+        {"include_corpus_context": True, "include_sector_context": False},
+        macro="A0",
+        corpus_id="metallurgie",
+        anchor=TEXT_ROOT,
+    )
+    assert "Métallurgie" not in prompt
+    assert "non exhaustifs" in prompt
+    assert "illustratifs" in prompt
+    assert "[Sector_CONTEXT]" not in prompt
+    assert "[MACRO_CONTEXT]" not in prompt
+
+
+def test_resolve_prompt_injects_sector_context():
+    prompt = _resolve_prompt(
+        {"include_sector_context": True},
         macro="A0",
         corpus_id="metallurgie",
         anchor=TEXT_ROOT,
     )
     assert "Métallurgie" in prompt
-    assert "Macro : A0" in prompt
-    assert "non exhaustifs" in prompt
-    assert "illustratifs" in prompt
-    assert "[CORPUS_CONTEXT]" not in prompt
-    assert "[MACRO_CONTEXT]" not in prompt
+    assert "[Sector_CONTEXT]" not in prompt
 
 
 def test_build_representation_model_disabled():
@@ -151,5 +161,5 @@ def test_format_topic_words_prefers_ctfidf_over_llm_label():
 def test_default_fr_prompt_has_tags():
     assert "[DOCUMENTS]" in DEFAULT_FR_CHAT_PROMPT
     assert "[KEYWORDS]" in DEFAULT_FR_CHAT_PROMPT
-    assert "[CORPUS_CONTEXT]" in DEFAULT_FR_CHAT_PROMPT
+    assert "[Sector_CONTEXT]" in DEFAULT_FR_CHAT_PROMPT
     assert "[MACRO_CONTEXT]" in DEFAULT_FR_CHAT_PROMPT

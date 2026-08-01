@@ -158,6 +158,7 @@ def prepare_annotation_frame(cfg: AnnotationConfig, df: pd.DataFrame) -> pd.Data
         n_accidents=cfg.n_accidents,
         units_per_accident=cfg.units_per_accident,
         seed=cfg.accident_sample_seed,
+        accident_sample_frac=cfg.accident_sample_frac,
     )
     return sampled.reset_index(drop=True)
 

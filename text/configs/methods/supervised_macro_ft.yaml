@@ -21,6 +21,7 @@ output_dir: output/supervised_macro_ft
 test_corpora:
   - metallurgie
   - caou
+  - nicollin
 
 data:
   data_csv: dataset/data_btp.csv

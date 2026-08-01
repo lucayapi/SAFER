@@ -1,0 +1,30 @@
+# Grille hyperparamètres — baseline sklearn (notebook 07b).
+# Lancer :
+#   python scripts/tune_supervised_macro_baseline.py --config configs/tuning/supervised_macro_baseline_grid.yaml
+#
+# Sélection : balanced_accuracy moyenne en GroupKFold sur BTP.
+# Une grille **par modèle** (pas de produit croisé LR×RF×XGB).
+
+base_config: configs/supervised_macro_baseline.yaml
+output_dir: output_test/metallurgie/supervised_baseline/tuning
+cv_corpus: metallurgie
+selection_metric: balanced_accuracy
+n_folds: 5
+seed: 42
+test_corpora: [metallurgie, caou, nicollin]
+
+# Params fixés dans base_config (non balayés) :
+#   LR : class_weight=balanced, solver=lbfgs, max_iter=2000
+#   RF : class_weight=balanced
+#   XGB : objective=multi:softprob, eval_metric=mlogloss
+
+grids:
+  logistic_regression:
+    C: [0.1, 1.0, 10.0]
+  random_forest:
+    n_estimators: [200, 500]
+    max_depth: [null, 20, 40]
+  xgboost:
+    n_estimators: [100, 200, 400]
+    max_depth: [4, 6, 8]
+    learning_rate: [0.05, 0.1]

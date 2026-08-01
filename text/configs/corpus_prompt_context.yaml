@@ -30,3 +30,13 @@ contexts:
       manutention de matières et produits chimiques, zones ATEX ou thermiques).
       Vocabulaire fréquent : presse, extrudeuse, réacteur, mélangeur, résine, solvant,
       EPI chimique, projection, brûlure, intoxication.
+
+  nicollin:
+    title: "Company corpus (Nicollin — corpus de test)"
+    description: |
+      Corpus de test hors domaine BTP : récits d'accidents d'une entreprise de services
+      (collecte, propreté, logistique, interventions terrain multi-sites).
+      Les libellés de topics doivent rester cohérents avec ce contexte opérationnel
+      (pas de vocabulaire chantier BTP par défaut si les documents ne le justifient pas).
+      Vocabulaire fréquent : collecte, benne, quai, manutention, voiries, EPI, véhicule,
+      intervention, maintenance, coactivité.

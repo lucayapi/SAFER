@@ -47,10 +47,3 @@ models:
       learning_rate: 0.1
       objective: multi:softprob
       eval_metric: mlogloss
-  mlp:
-    use_scaler: true
-    params:
-      hidden_layer_sizes: [256, 128]
-      max_iter: 500
-      early_stopping: true
-      class_weight: balanced

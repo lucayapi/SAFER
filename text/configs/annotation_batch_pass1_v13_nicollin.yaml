@@ -1,0 +1,28 @@
+# Configuration annotation Batch OpenAI — passe 1 v13 — corpus Nicollin.
+# Lancer : python scripts/run_annotation_batch.py pipeline --config configs/annotation_batch_pass1_v13_nicollin.yaml
+
+input_csv: nicollin_sentence_accidents.csv
+output_basename: nicollin_v13_pass1
+openai_model: gpt-5.4-nano
+prompt_version: v13_two_pass_ambiguity_context
+pass_mode: pass1
+prompt_cache_key: null
+use_prompt_cache_key: true
+
+n_accidents: all
+units_per_accident: all
+accident_sample_seed: 42
+
+temperature: 0.0
+reasoning_effort: medium
+max_output_tokens: 4000
+summary_col: accident_summary
+skip_cache: false
+
+completion_window: 24h
+batch_endpoint: /v1/chat/completions
+status_poll_interval_sec: 60
+max_requests_per_batch: 10000
+max_batch_retries: 1
+
+run_id: run_all_nicollin

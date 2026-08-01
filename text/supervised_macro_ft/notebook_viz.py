@@ -29,6 +29,24 @@ from safer_core.classification_eval import EMBEDDING_STEMS
 MACRO_COLOR_HEX: Dict[str, str] = macro_color_map()
 
 
+def load_saved_predictions(
+    results_dir: str | Path,
+    corpus_id: str,
+) -> Optional[pd.DataFrame]:
+    """
+    Charge ``predictions/predictions_<corpus>.csv`` si présent.
+
+    Réexporte ``safer_core.classification_eval`` avec repli fichier si le kernel
+    Jupyter n'a pas rechargé le module après mise à jour.
+    """
+    try:
+        from safer_core.classification_eval import load_saved_predictions as _load
+    except ImportError:
+        path = Path(results_dir) / "predictions" / f"predictions_{corpus_id}.csv"
+        return pd.read_csv(path) if path.is_file() else None
+    return _load(results_dir, corpus_id)
+
+
 @dataclass
 class MacroFtArtifacts:
     """Artefacts d'un run supervised_macro_ft (train BTP)."""
@@ -316,7 +334,7 @@ def plot_cv_metrics_bars(
 def plot_cross_domain_bars(
     cross_domain: pd.DataFrame,
     *,
-    test_corpora: Sequence[str] = ("metallurgie", "caou"),
+    test_corpora: Sequence[str] = ("metallurgie", "caou", "nicollin"),
     fig_dir: Optional[Path] = None,
     filename: str = "cross_domain_bars.png",
     show: bool = True,

@@ -72,7 +72,7 @@ RESULTS_DIR = ROOT / "output/supervised_macro_ft"
 # RESULTS_DIR = ROOT / "output/supervised_macro_ft/tuning/combos/projectionlinear_hiddim128_abc12345"
 # RESULTS_DIR = Path("/chemin/vers/mon_experience")
 
-RUN_INFERENCE = True   # False = saute inférence CE (sections lourdes)
+RUN_INFERENCE = True  # défaut : si predictions/ absent, lance l'inférence CE ; False = cache uniquement
 SEED = 42
 TSNE_SAMPLE_SIZE = 8000
 RAW_TSNE_MAX_POINTS = 12000
@@ -89,17 +89,17 @@ if DEFAULT_CFG.is_file():
     _cfg = yaml.safe_load(DEFAULT_CFG.read_text(encoding="utf-8"))
     _data = _cfg.get("data") or {}
     _model = _cfg.get("model") or {}
-    TEST_CORPORA = list(_cfg.get("test_corpora") or ["metallurgie", "caou"])
+    TEST_CORPORA = list(_cfg.get("test_corpora") or ["metallurgie", "caou", "nicollin"])
     BACKBONE_EMB_CSV = _model.get("backbone_emb_csv")
     DATA_CSV = ROOT / _data.get("data_csv", "dataset/data_btp.csv")
 else:
-    TEST_CORPORA = ["metallurgie", "caou"]
+    TEST_CORPORA = ["metallurgie", "caou", "nicollin"]
     BACKBONE_EMB_CSV = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
     DATA_CSV = ROOT / "dataset/data_btp.csv"
 
 print("Résultats :", RESULTS_DIR)
 print("Figures   :", FIGURES_DIR)
-print("Inférence :", RUN_INFERENCE, "| device =", INFER_DEVICE)
+print("Inférence :", RUN_INFERENCE, "(défaut True)", "| device =", INFER_DEVICE)
 """
 
 LOAD_ARTIFACTS_CODE = """from supervised_macro_ft.notebook_viz import (
@@ -207,11 +207,11 @@ Charge d'abord `predictions/predictions_<corpus>.csv` produit par le job.
 Sinon inférence via `checkpoints/best_model/` si `RUN_INFERENCE = True`.
 """
 
-INFERENCE_CODE = """from safer_core.classification_eval import load_saved_predictions
-from safer_core.test_corpus import resolve_test_corpus
+INFERENCE_CODE = """from safer_core.test_corpus import resolve_test_corpus
 from supervised_macro_ft.notebook_viz import (
     build_prediction_df,
     get_misclassification_sample,
+    load_saved_predictions,
     plot_calibration_histograms,
     plot_confusion_matrix_brand,
     plot_tsne_true_vs_pred_brand,
@@ -409,7 +409,7 @@ RESTIMATE_BERTOPIC = False
 BERTOPIC_UMAP_ENABLED = None
 BERTOPIC_MIN_TOPIC_SIZE = None
 
-from safer_core.classification_eval import load_saved_predictions
+from supervised_macro_ft.notebook_viz import load_saved_predictions
 from macro_transfer.notebook_bertopic import (
     bertopic_run_dir,
     display_notebook_bertopic_results,

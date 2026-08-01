@@ -118,7 +118,7 @@ METHOD_SPECS = [
     },
 ]
 
-CORPORA = ["btp", "metallurgie", "caou"]
+CORPORA = ["btp", "metallurgie", "caou", "nicollin"]
 LABEL_COL = "pred_label"
 GEOMETRY_METRIC = "eta2_macro_balanced_perc"
 L2_NORMALIZE = False  # True = normaliser L2 avant η² (comme certaines évaluations val)

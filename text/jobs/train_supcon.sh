@@ -25,7 +25,7 @@ fi
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
-export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
 SUPCON_CONFIG="${SUPCON_CONFIG:-configs/methods/supcon.yaml}"

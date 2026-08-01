@@ -38,7 +38,10 @@ bertopic:
     model: gpt-5-mini
     chat: true
     nr_docs: 50
+    # Contexte macro A0–C (contexte / facteurs / événement / conséquences) — configs/accident_macros.yaml
     include_corpus_context: true
+    # Contexte sectoriel BTP / métallurgie / caou (désactivé par défaut)
+    include_sector_context: false
     fallback_on_error: true
     exponential_backoff: true
     delay_in_seconds: 0.75

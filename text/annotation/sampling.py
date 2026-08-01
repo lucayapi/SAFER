@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Union
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -17,6 +17,7 @@ def sample_accidents_and_units(
     units_per_accident: IntOrAll = "all",
     seed: int = 42,
     accident_col: str = "accident_id",
+    accident_sample_frac: Optional[float] = None,
 ) -> pd.DataFrame:
     if accident_col not in df.columns:
         raise ValueError(f"Colonne {accident_col!r} absente du DataFrame.")
@@ -24,7 +25,16 @@ def sample_accidents_and_units(
     rng = np.random.RandomState(int(seed))
     accident_ids = df[accident_col].astype(str).unique().tolist()
 
-    if n_accidents != "all":
+    if accident_sample_frac is not None:
+        frac = float(accident_sample_frac)
+        if not (0.0 < frac <= 1.0):
+            raise ValueError(
+                f"accident_sample_frac doit être dans (0, 1], reçu : {frac!r}"
+            )
+        n = max(1, int(round(frac * len(accident_ids))))
+        n = min(n, len(accident_ids))
+        accident_ids = rng.choice(accident_ids, size=n, replace=False).tolist()
+    elif n_accidents != "all":
         n = min(int(n_accidents), len(accident_ids))
         accident_ids = rng.choice(accident_ids, size=n, replace=False).tolist()
 

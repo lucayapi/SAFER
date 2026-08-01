@@ -6,7 +6,7 @@
 #   STANDARDIZE_BACKBONE=true bash jobs/train_supervised_macro_ft.sh
 #   OVERSAMPLING=true bash jobs/train_supervised_macro_ft.sh
 #   BACKBONE_TRAINABLE=true TRAIN_LAST_N_LAYERS=4 bash jobs/train_supervised_macro_ft.sh
-#   TEST_CORPORA=metallurgie,caou bash jobs/train_supervised_macro_ft.sh
+#   TEST_CORPORA=metallurgie,caou,nicollin bash jobs/train_supervised_macro_ft.sh
 
 #SBATCH --job-name=sup-macro-ft
 #SBATCH --partition=gpu
@@ -28,7 +28,7 @@ else
 fi
 
 CONFIG="${CONFIG:-configs/methods/supervised_macro_ft.yaml}"
-export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 
 ARGS=(--config "${CONFIG}" --test-corpora "${TEST_CORPORA}")
 if [[ -n "${STANDARDIZE_BACKBONE:-}" ]]; then

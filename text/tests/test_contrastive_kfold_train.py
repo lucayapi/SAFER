@@ -66,4 +66,4 @@ def test_methods_yaml_n_folds_is_five():
     )
     assert cfg.n_folds == 5
     assert cfg.selection_metric == "balanced_accuracy"
-    assert cfg.test_corpora_list() == ["metallurgie", "caou"]
+    assert cfg.test_corpora_list() == ["metallurgie", "caou", "nicollin"]

@@ -1,0 +1,30 @@
+# Configuration annotation Batch OpenAI — passe 1 v13 — métallurgie full corpus IAA v2.
+# Lancer : python scripts/run_annotation_batch.py pipeline --config configs/annotation_batch_pass1_v13_partial_metallurgie.yaml
+# Apparié avec run_all_metallurgie (gpt-5.4-nano) pour Observed agreement / Cohen's κ.
+# Annotator 2 : gpt-5-nano, n_accidents=all (full corpus).
+
+input_csv: metallurgie_sentence_accidents.csv
+output_basename: metallurgie_v13_full_v2
+openai_model: gpt-5-nano
+prompt_version: v13_two_pass_ambiguity_context
+pass_mode: pass1
+prompt_cache_key: null
+use_prompt_cache_key: true
+
+n_accidents: all
+units_per_accident: all
+accident_sample_seed: 42
+
+temperature: 0.0
+reasoning_effort: medium
+max_output_tokens: 4000
+summary_col: accident_summary
+skip_cache: false
+
+completion_window: 24h
+batch_endpoint: /v1/chat/completions
+status_poll_interval_sec: 60
+max_requests_per_batch: 10000
+max_batch_retries: 1
+
+run_id: run_partial_metallurgie

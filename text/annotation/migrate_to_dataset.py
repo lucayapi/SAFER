@@ -30,6 +30,7 @@ RUN_ID_TO_DATASET: dict[str, str] = {
     "run_all_btp": "btp",
     "run_all_metallurgie": "metallurgie",
     "run_all_caou_chimie_plas": "caou",
+    "run_all_nicollin": "nicollin",
 }
 
 REQUIRED_COLUMNS = ("accident_id", "sentence", "pred_label", "pred_ok")

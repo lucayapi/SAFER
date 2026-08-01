@@ -60,6 +60,24 @@ def test_validate_prediction_v13_not_ambiguous_requires_none():
         )
 
 
+def test_validate_prediction_v13_not_ambiguous_coerces_ambiguity_type():
+    """ambiguous=false + ambiguity_type parasite → normalisé en NONE (pas de rejet)."""
+    out = validate_prediction_v13(
+        _v13_payload(
+            ambiguous=False,
+            context_needed=False,
+            alternative_label="NONE",
+            ambiguity_type="INSUFFICIENT_INFORMATION",
+            ambiguity_reason="should be cleared",
+        ),
+        pass_mode="pass1",
+    )
+    assert out["pred_ok"] is True
+    assert out["pred_label"] == "A0"
+    assert out["pred_ambiguity_type"] == "NONE"
+    assert out["pred_ambiguity_reason"] == ""
+
+
 def test_validate_prediction_dispatch_v13():
     out = validate_prediction(
         _v13_payload(

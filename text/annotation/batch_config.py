@@ -54,6 +54,11 @@ def _batch_config_from_mapping(
         n_accidents=raw.get("n_accidents", "all"),  # type: ignore[arg-type]
         units_per_accident=raw.get("units_per_accident", "all"),  # type: ignore[arg-type]
         accident_sample_seed=int(raw.get("accident_sample_seed", 42)),
+        accident_sample_frac=(
+            float(raw["accident_sample_frac"])
+            if raw.get("accident_sample_frac") is not None
+            else None
+        ),
         temperature=float(raw.get("temperature", 0.0)),
         reasoning_effort=str(raw.get("reasoning_effort", "medium")),
         max_output_tokens=int(raw.get("max_output_tokens", 4000)),

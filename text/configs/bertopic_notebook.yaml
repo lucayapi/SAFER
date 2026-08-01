@@ -18,7 +18,8 @@ bertopic:
   min_topic_size: 10
   representation:
     enabled: true
-    include_corpus_context: true
+    include_corpus_context: true   # sémantique macro A0–C (accident_macros.yaml)
+    include_sector_context: false  # secteur BTP/métallurgie/caou (corpus_prompt_context.yaml)
   diagnostics:
     save_datamap: true
     save_model: true

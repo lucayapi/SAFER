@@ -22,3 +22,9 @@ corpora:
     data_csv: dataset/data_caou.csv
     emb_csv: embeddings/Qwen3-Embedding-0.6B_caou.csv
     prompt_context: caou
+
+  nicollin:
+    display_name: Company corpus
+    data_csv: dataset/data_nicollin.csv
+    emb_csv: embeddings/Qwen3-Embedding-0.6B_nicollin.csv
+    prompt_context: nicollin

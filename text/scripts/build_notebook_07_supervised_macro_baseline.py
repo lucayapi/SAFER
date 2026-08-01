@@ -81,22 +81,6 @@ MODEL_REGISTRY["xgboost"] = {
     },
 }""",
     ),
-    (
-        "mlp",
-        "MLP",
-        "Perceptron multicouche (256→128, ReLU) sur embeddings **standardisés**, avec early stopping. "
-        "Architecture alignée sur le projecteur `mlp_sklearn` du notebook **08** (supervised_macro_ft).",
-        """\
-MODEL_REGISTRY["mlp"] = {
-    "use_scaler": True,
-    "params": {
-        "hidden_layer_sizes": (256, 128),
-        "max_iter": 500,
-        "early_stopping": True,
-        "class_weight": "balanced",
-    },
-}""",
-    ),
 ]
 
 TEST_CORPUS_SPECS = [
@@ -125,7 +109,7 @@ Chaque ligne = une **unité factuelle** (`sentence`) avec `pred_label` (macro) e
 ## Protocole
 
 1. **GroupKFold** (`N_FOLDS`, groupes = `accident_id`) sur BTP — un accident ne peut pas être à la fois en train et en validation.
-2. **Quatre classifieurs** : Logistic Regression, Random Forest, XGBoost, MLP.
+2. **Trois classifieurs** : Logistic Regression, Random Forest, XGBoost.
 3. **Sélection** du meilleur modèle sur **balanced accuracy** moyenne en CV (`SELECTION_METRIC`).
 4. **Réentraînement** sur 100 % BTP → évaluation sur chaque corpus test OOD.
 5. **Synthèse cross-domain** : BA CV vs BA OOD (moyenne et pire corpus).
@@ -191,7 +175,7 @@ Pour chaque classifieur :
 - métriques **accuracy** et **balanced_accuracy** par fold ;
 - les lignes sont agrégées à l'étape 3 (μ ± σ).
 
-**StandardScaler** : appliqué avant LR et MLP (fit sur le train du fold uniquement).
+**StandardScaler** : appliqué avant la régression logistique (fit sur le train du fold uniquement).
 """
 
 STEP3_MD = r"""
@@ -285,7 +269,7 @@ RESTIMATE = False
 # Métriques affichées dans tableaux et graphiques (macro_f1 exclue volontairement)
 DISPLAY_METRICS = ("accuracy", "balanced_accuracy")
 
-TEST_CORPORA = ["metallurgie", "caou"]
+TEST_CORPORA = ["metallurgie", "caou", "nicollin"]
 CV_CORPUS = "metallurgie"
 
 SOURCE_CFG = {
@@ -304,7 +288,7 @@ TARGET_COL_CFG = {
     "pred_ok_col": "pred_ok",
 }
 
-MODEL_ORDER = ["logistic_regression", "random_forest", "xgboost", "mlp"]
+MODEL_ORDER = ["logistic_regression", "random_forest", "xgboost"]
 MODEL_REGISTRY: dict = {}
 
 

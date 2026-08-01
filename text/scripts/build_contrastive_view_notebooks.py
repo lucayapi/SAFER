@@ -68,7 +68,7 @@ RESULTS_DIR = DEFAULT_OUTPUT
 
 LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
 BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
-TEST_CORPORA = list(_data.get("test_corpora") or cfg.get("test_corpora") or ["metallurgie", "caou"])
+TEST_CORPORA = list(_data.get("test_corpora") or cfg.get("test_corpora") or ["metallurgie", "caou", "nicollin"])
 FIGURES_DIR = RESULTS_DIR / "figures_notebook"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -106,7 +106,7 @@ Couleur = macro (`pred_label`). Figures dans `figures_notebook/`.
 """
 
 PROJECTED_BTP_CODE = '''from scgm_text.notebook_viz import plot_projected_embeddings_pca_tsne
-from safer_core.test_corpus import resolve_projected_embeddings_paths
+from safer_core.test_corpus import resolve_projected_embeddings_in_dir
 
 def save_fig(name: str) -> Path:
     path = FIGURES_DIR / name
@@ -115,8 +115,8 @@ def save_fig(name: str) -> Path:
     plt.show()
     return path
 
-pair_btp = resolve_projected_embeddings_paths(
-    METHOD_KEY, "btp", anchor=ROOT, results_dir=RESULTS_DIR
+pair_btp = resolve_projected_embeddings_in_dir(
+    RESULTS_DIR, "btp", method=METHOD_KEY, anchor=ROOT
 )
 if pair_btp is None:
     print("(absent) projected_btp — relancer eval_corpus")
@@ -142,12 +142,12 @@ PROJECTED_OOD_MD = """## 3. Embeddings projetés — corpus test OOD (PCA / t-SN
 Un graphique par corpus configuré (`test_corpora`).
 """
 
-PROJECTED_OOD_CODE = '''from safer_core.test_corpus import resolve_projected_embeddings_paths, resolve_test_corpus
+PROJECTED_OOD_CODE = '''from safer_core.test_corpus import resolve_projected_embeddings_in_dir, resolve_test_corpus
 
 for corpus_id in TEST_CORPORA:
     spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    pair = resolve_projected_embeddings_paths(
-        METHOD_KEY, corpus_id, anchor=ROOT, results_dir=RESULTS_DIR
+    pair = resolve_projected_embeddings_in_dir(
+        RESULTS_DIR, corpus_id, method=METHOD_KEY, anchor=ROOT
     )
     if pair is None:
         print(f"(absent) projected_{corpus_id}")
@@ -290,7 +290,7 @@ RESTIMATE_BERTOPIC = False
 BERTOPIC_UMAP_ENABLED = None
 BERTOPIC_MIN_TOPIC_SIZE = None
 
-from safer_core.classification_eval import load_saved_predictions
+from supervised_macro_ft.notebook_viz import load_saved_predictions
 from macro_transfer.notebook_bertopic import (
     bertopic_run_dir,
     display_notebook_bertopic_results,

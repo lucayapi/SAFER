@@ -55,7 +55,7 @@ python -c "import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is
 
 
 
-export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 
 echo "TEST_CORPORA=${TEST_CORPORA}"
 

@@ -55,9 +55,9 @@ def test_load_export_config():
     cfg = load_export_config(TEXT_ROOT / "configs" / "export_embeddings.yaml")
     assert cfg["text_col"] == "sentence"
     assert cfg["backbone_name"] == "Qwen/Qwen3-Embedding-0.6B"
-    assert resolve_corpora_ids(cfg) == ["btp", "metallurgie", "caou"]
+    assert resolve_corpora_ids(cfg) == ["btp", "metallurgie", "caou", "nicollin"]
     assert resolve_corpora_ids(cfg, corpus="caou") == ["caou"]
-    assert resolve_corpora_ids(cfg, all_corpora=True) == ["btp", "caou", "metallurgie"]
+    assert resolve_corpora_ids(cfg, all_corpora=True) == ["btp", "caou", "metallurgie", "nicollin"]
 
 
 def test_skip_existing_without_force(tmp_path, monkeypatch):

@@ -4,7 +4,7 @@
 #
 # Usage :
 #   cd ~/SAFER/text && bash jobs/export_raw_embeddings_eval.sh
-#   TEST_CORPORA=metallurgie,caou bash jobs/export_raw_embeddings_eval.sh
+#   TEST_CORPORA=metallurgie,caou,nicollin bash jobs/export_raw_embeddings_eval.sh
 
 #SBATCH --job-name=raw_emb_eval
 #SBATCH --partition=normal
@@ -28,7 +28,7 @@ else
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_bootstrap.sh"
 fi
 
-export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 SKIP_NPY="${SKIP_NPY:-0}"
 
 RAW_ARGS=()

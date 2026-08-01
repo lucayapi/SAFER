@@ -25,7 +25,7 @@ fi
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 
-export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou}"
+export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 echo "TEST_CORPORA=${TEST_CORPORA}"
 echo "Mode entraînement : K-fold (n_folds=5 dans configs/methods/softtriple.yaml)"
 python scripts/train_softtriple.py --config configs/methods/softtriple.yaml

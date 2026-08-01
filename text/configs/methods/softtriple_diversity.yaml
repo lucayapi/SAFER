@@ -5,7 +5,7 @@ use_prompt: false
 seed: 42
 n_folds: 5
 selection_metric: balanced_accuracy
-test_corpora: [metallurgie, caou]
+test_corpora: [metallurgie, caou, nicollin]
 
 data:
   dataset_path: dataset/data_btp.csv

@@ -177,12 +177,13 @@ def validate_prediction_v13(
         raise ValueError("context_used doit être false en passe 1.")
 
     if not ambiguous:
+        # Harmonisation : ambiguous=false implique aucun signal d'ambiguïté.
+        # Certains modèles renvoient encore ambiguity_type=INSUFFICIENT_INFORMATION
+        # avec ambiguous=false ; on normalise plutôt que de rejeter le label.
         if alternative_label != "NONE":
             raise ValueError("alternative_label doit être NONE si ambiguous=false.")
-        if ambiguity_type != "NONE":
-            raise ValueError("ambiguity_type doit être NONE si ambiguous=false.")
-        if ambiguity_reason:
-            raise ValueError("ambiguity_reason doit être vide si ambiguous=false.")
+        ambiguity_type = "NONE"
+        ambiguity_reason = ""
     else:
         if alternative_label == "NONE":
             raise ValueError("alternative_label requis si ambiguous=true.")
