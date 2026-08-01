@@ -36,9 +36,11 @@ def test_balanced_oversample_arrays_matches_indices():
     assert X_fit.shape[0] == len(y_fit)
 
 
-def test_resolve_train_balance_conflict_raises():
-    with pytest.raises(ValueError, match="incohérente"):
+def test_resolve_train_balance_oversampling_rejected():
+    with pytest.raises(ValueError, match="oversampling n'est plus supporté"):
         resolve_train_balance({"oversampling": True, "class_weight": "balanced"})
+    with pytest.raises(ValueError, match="oversampling n'est plus supporté"):
+        resolve_train_balance({"oversampling": True})
 
 
 def test_resolve_train_balance_defaults():
@@ -47,13 +49,12 @@ def test_resolve_train_balance_defaults():
     assert cw is None
 
 
-def test_resolve_train_balance_oversampling_only():
-    use_os, cw = resolve_train_balance({"oversampling": True})
-    assert use_os is True
-    assert cw is None
-
-
 def test_resolve_train_balance_class_weight_only():
     use_os, cw = resolve_train_balance({"class_weight": "balanced"})
     assert use_os is False
     assert cw == "balanced"
+
+
+def test_resolve_train_balance_rejects_unknown_class_weight():
+    with pytest.raises(ValueError, match="class_weight non supporté"):
+        resolve_train_balance({"class_weight": "inverse"})

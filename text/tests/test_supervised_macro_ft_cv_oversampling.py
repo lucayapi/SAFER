@@ -1,4 +1,4 @@
-"""Tests CV oversampling supervised_macro_ft."""
+"""Tests CV supervised_macro_ft — class_weight (pas d'oversampling)."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ def tiny_btp_csv(tmp_path: Path) -> Path:
 
 
 @patch("supervised_macro_ft.cv.fit_model")
-def test_cv_applies_oversampling(mock_fit, tiny_btp_csv):
+def test_cv_class_weight_keeps_train_size(mock_fit, tiny_btp_csv):
     mock_fit.return_value = ({}, {"accuracy": 1.0}, [])
 
     ds = TextRawDataset(str(tiny_btp_csv))
@@ -45,11 +45,11 @@ def test_cv_applies_oversampling(mock_fit, tiny_btp_csv):
         "backbone_name": "__test_dummy__",
         "backbone_trainable": False,
         "cache_backbone_embeddings": True,
-        "projection": "linear",
-        "hiddim": 8,
+        "projection": "mlp_sklearn",
+        "hiddim": 128,
         "n_classes": 4,
-        "oversampling": True,
-        "class_weight": None,
+        "oversampling": False,
+        "class_weight": "balanced",
         "max_seq_length": 16,
     }
     train_cfg = {"batch_size": 4, "epochs": 1, "seed": 0}
@@ -66,4 +66,30 @@ def test_cv_applies_oversampling(mock_fit, tiny_btp_csv):
         save_fold_checkpoints=False,
     )
     assert fold_rows
-    assert fold_rows[0]["n_train"] > fold_rows[0]["n_train_raw"]
+    assert fold_rows[0]["n_train"] == fold_rows[0]["n_train_raw"]
+
+
+def test_cv_rejects_oversampling(tiny_btp_csv):
+    ds = TextRawDataset(str(tiny_btp_csv))
+    model_cfg = {
+        "backbone_name": "__test_dummy__",
+        "backbone_trainable": True,
+        "projection": "mlp_sklearn",
+        "hiddim": 128,
+        "n_classes": 4,
+        "oversampling": True,
+        "class_weight": "balanced",
+        "max_seq_length": 16,
+    }
+    with pytest.raises(ValueError, match="oversampling"):
+        run_group_kfold_cv(
+            ds,
+            MagicMock(),
+            model_cfg=model_cfg,
+            train_cfg={"batch_size": 4, "epochs": 1, "seed": 0},
+            n_folds=2,
+            seed=0,
+            device=torch.device("cpu"),
+            backbone_hidden=None,
+            save_fold_checkpoints=False,
+        )

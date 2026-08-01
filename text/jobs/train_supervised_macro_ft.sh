@@ -1,17 +1,21 @@
 #!/bin/bash
-# Entraînement supervised macro FT (CE, backbone Qwen + tête linear).
+# Fine-tuning supervised_macro_ft (CE + class_weight=balanced).
+# Encodeur FT : last N layers ou full — pas d'encodeur gelé, pas d'oversampling.
 #
 # Usage:
-#   cd ~/SAFER/text && bash jobs/train_supervised_macro_ft.sh
-#   STANDARDIZE_BACKBONE=true bash jobs/train_supervised_macro_ft.sh
-#   OVERSAMPLING=true bash jobs/train_supervised_macro_ft.sh
-#   BACKBONE_TRAINABLE=true TRAIN_LAST_N_LAYERS=4 bash jobs/train_supervised_macro_ft.sh
-#   TEST_CORPORA=metallurgie,caou,nicollin bash jobs/train_supervised_macro_ft.sh
+#   cd ~/SAFER/text && sbatch jobs/train_supervised_macro_ft.sh
+#   TRAIN_LAST_N_LAYERS=1 sbatch jobs/train_supervised_macro_ft.sh
+#   TRAIN_LAST_N_LAYERS=null PROJECTION=null sbatch jobs/train_supervised_macro_ft.sh
+#   TEST_CORPORA=metallurgie,caou,nicollin sbatch jobs/train_supervised_macro_ft.sh
+#
+# Campagne 8 variantes (tableau article) :
+#   sbatch jobs/tune_supervised_macro_ft.sh
 
 #SBATCH --job-name=sup-macro-ft
 #SBATCH --partition=gpu
 #SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 #SBATCH --gres=gpu:1
+#SBATCH --constraint='a100|h100'
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --time=24:00:00
@@ -31,22 +35,16 @@ CONFIG="${CONFIG:-configs/methods/supervised_macro_ft.yaml}"
 export TEST_CORPORA="${TEST_CORPORA:-metallurgie,caou,nicollin}"
 
 ARGS=(--config "${CONFIG}" --test-corpora "${TEST_CORPORA}")
-if [[ -n "${STANDARDIZE_BACKBONE:-}" ]]; then
-  ARGS+=(--standardize-backbone "${STANDARDIZE_BACKBONE}")
-fi
-if [[ -n "${OVERSAMPLING:-}" ]]; then
-  ARGS+=(--oversampling "${OVERSAMPLING}")
-fi
 if [[ -n "${CLASS_WEIGHT:-}" ]]; then
   ARGS+=(--class-weight "${CLASS_WEIGHT}")
-fi
-if [[ -n "${BACKBONE_TRAINABLE:-}" ]]; then
-  ARGS+=(--backbone-trainable "${BACKBONE_TRAINABLE}")
 fi
 if [[ -n "${TRAIN_LAST_N_LAYERS:-}" ]]; then
   ARGS+=(--train-last-n-layers "${TRAIN_LAST_N_LAYERS}")
 fi
+if [[ -n "${PROJECTION:-}" ]]; then
+  ARGS+=(--projection "${PROJECTION}")
+fi
 
-echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPORA=${TEST_CORPORA} STANDARDIZE_BACKBONE=${STANDARDIZE_BACKBONE:-<yaml>} OVERSAMPLING=${OVERSAMPLING:-<yaml>} CLASS_WEIGHT=${CLASS_WEIGHT:-<yaml>} BACKBONE_TRAINABLE=${BACKBONE_TRAINABLE:-<yaml>} TRAIN_LAST_N_LAYERS=${TRAIN_LAST_N_LAYERS:-<yaml>} $(date -Iseconds)"
+echo "[sup-macro-ft] CONFIG=${CONFIG} TEST_CORPORA=${TEST_CORPORA} CLASS_WEIGHT=${CLASS_WEIGHT:-balanced} TRAIN_LAST_N_LAYERS=${TRAIN_LAST_N_LAYERS:-<yaml>} PROJECTION=${PROJECTION:-<yaml>} $(date -Iseconds)"
 python -u scripts/train_supervised_macro_ft.py "${ARGS[@]}"
 echo "[sup-macro-ft] terminé $(date -Iseconds)"

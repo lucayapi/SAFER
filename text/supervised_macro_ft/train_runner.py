@@ -279,7 +279,9 @@ def run_supervised_macro_ft_training(
         device=device,
         fold_out_root=str(out_dir),
         backbone_hidden=backbone_hidden,
-        save_fold_checkpoints=not cv_only,
+        save_fold_checkpoints=bool(
+            (cfg.get("exports") or {}).get("save_fold_checkpoints", False)
+        ),
     )
     cv_dir = out_dir / "cv"
     cv_dir.mkdir(parents=True, exist_ok=True)
@@ -375,14 +377,21 @@ def run_supervised_macro_ft_training(
         final_hist_df.to_csv(out_dir / "train_history_final.csv", index=False)
         logger.info("[macro_ft] Historique fit final exporté : %s", out_dir / "train_history_final.csv")
 
-    ckpt_dir = out_dir / "checkpoints" / "best_model"
-    save_checkpoint(
-        model,
-        ckpt_dir,
-        config={**model_cfg, **train_cfg, "method_name": cfg.get("method_name", "supervised_macro_ft")},
-    )
-
     exp_cfg = dict(cfg.get("exports") or {})
+    if bool(exp_cfg.get("save_checkpoint", True)):
+        ckpt_dir = out_dir / "checkpoints" / "best_model"
+        save_checkpoint(
+            model,
+            ckpt_dir,
+            config={
+                **model_cfg,
+                **train_cfg,
+                "method_name": cfg.get("method_name", "supervised_macro_ft"),
+            },
+        )
+    else:
+        logger.info("[macro_ft] Checkpoint HF ignoré (exports.save_checkpoint=false)")
+
     if bool(exp_cfg.get("save_btp_embeddings", True)):
         emb_dir = out_dir / "embeddings"
         emb_dir.mkdir(parents=True, exist_ok=True)

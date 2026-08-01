@@ -1,26 +1,32 @@
+# Campagne de variantes supervised_macro_ft (tableau article).
+# Ce n'est PAS un tuning « garder le best » : les 8 combos sont toutes évaluées
+# (CV BTP + fit 100 % + prédictions train/OOD + métriques).
+#
+# Lancer :
+#   sbatch jobs/tune_supervised_macro_ft.sh
+#   python scripts/tune_supervised_macro_ft.py --grid-config configs/tuning/supervised_macro_ft_grid.yaml
+#
+# 4 scopes × 2 projecteurs = 8 variantes :
+#   train_last_n_layers ∈ {1, 2, 3, null}  (null = full encoder)
+#   projection ∈ {mlp_sklearn, null}       (Yes / No projector)
+#
+# Fixé : backbone_trainable=true, class_weight=balanced, oversampling=false
+
 base_config: configs/methods/supervised_macro_ft.yaml
-output_dir: output/supervised_macro_ft/tuning
-final_output_dir: output/supervised_macro_ft
+output_dir: output/supervised_macro_ft/variants
 selection_metric: balanced_accuracy
 n_folds: 3
 seed: 42
 test_corpora: [metallurgie, caou, nicollin]
 
-# Grille : seuls les hyperparamètres réellement balayés.
-# Fixés dans base_config (non répétés ici) :
-#   dropout, weight_decay, early_stopping_patience, lr_head, lr_backbone,
-#   proj_hidden, selection_metric, epochs, batch_size, class_weight, …
-#
-# Combinaisons invalides filtrées dans tuning.py :
-#   - backbone_trainable=false + train_last_n_layers>0
-#   - projection=mlp_sklearn + hiddim≠128
-#   - oversampling=true + class_weight=balanced
-#   - backbone_trainable=true + standardize_backbone=true
+# Pas de checkpoints HF lourds par variante (preds + metrics suffisent).
+save_checkpoint: false
+save_btp_embeddings: false
 
 grid:
-  model.projection: [linear, mlp_sklearn]
-  model.hiddim: [128, 256, 512]
-  model.oversampling: [false, true]
-  model.backbone_trainable: [false, true]
-  model.train_last_n_layers: [null, 2, 3, 4]
-  training.lr_projector: [1.0e-3, 5.0e-4]
+  model.backbone_trainable: [true]
+  model.train_last_n_layers: [1, 2, 3, null]
+  model.projection: [mlp_sklearn, null]
+  model.class_weight: [balanced]
+  model.oversampling: [false]
+  model.cache_backbone_embeddings: [false]

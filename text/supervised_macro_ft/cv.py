@@ -59,7 +59,7 @@ def run_group_kfold_cv(
     device: torch.device,
     fold_out_root: Optional[str] = None,
     backbone_hidden: Optional[np.ndarray] = None,
-    save_fold_checkpoints: bool = True,
+    save_fold_checkpoints: bool = False,
 ) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame]:
     groups = dataset.get_groups()
     splits = group_kfold_splits(groups, n_folds, seed)

@@ -72,17 +72,10 @@ def resolve_train_balance(
 ) -> Tuple[bool, Optional[str]]:
     """Déduit la stratégie de rééquilibrage pour l'entraînement.
 
-    Retourne (use_oversampling, class_weight_mode) où :
-    - use_oversampling : bool indiquant si l'oversampling doit être appliqué
-      sur les indices d'entraînement (fold ou fit final).
-    - class_weight_mode : valeur à passer à `build_class_weights` pour la CE
-      (ex. "balanced") ou None.
+    Pour ``supervised_macro_ft`` (chemin article) : uniquement
+    ``class_weight=balanced`` — l'oversampling est rejeté.
 
-    Règle métier (choisie côté utilisateur) :
-    - oversampling=true ET class_weight="balanced" → ValueError explicite.
-    - oversampling=true → class_weight ignoré (doit être null / None).
-    - class_weight="balanced" seul → CE pondérée (pas d'oversampling).
-    - par défaut (aucun des deux) → pas de rééquilibrage.
+    Retourne (use_oversampling, class_weight_mode).
     """
     raw_oversampling = model_cfg.get("oversampling", False)
     oversampling = bool(raw_oversampling)
@@ -95,15 +88,17 @@ def resolve_train_balance(
         if class_weight_mode in ("none", "null", ""):
             class_weight_mode = None
 
-    if oversampling and class_weight_mode == "balanced":
+    if oversampling:
         raise ValueError(
-            "Configuration incohérente : oversampling=true et class_weight='balanced'. "
-            "Choisir soit l'oversampling, soit class_weight=balanced, mais pas les deux."
+            "oversampling n'est plus supporté pour supervised_macro_ft. "
+            "Utiliser class_weight='balanced' (CE pondérée)."
         )
 
-    if oversampling:
-        # L'oversampling remplace le besoin de pondération CE.
-        return True, None
+    if class_weight_mode is not None and class_weight_mode != "balanced":
+        raise ValueError(
+            f"class_weight non supporté : {raw_class_weight!r}. "
+            "Valeur attendue : balanced (ou null)."
+        )
 
     return False, class_weight_mode
 

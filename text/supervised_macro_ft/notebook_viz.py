@@ -62,6 +62,7 @@ class MacroFtArtifacts:
     checkpoint_dir: Optional[Path] = None
     projected_corpora: List[str] = field(default_factory=list)
     tuning_grid: Optional[pd.DataFrame] = None
+    variants_summary: Optional[pd.DataFrame] = None
     missing: List[str] = field(default_factory=list)
 
 
@@ -154,9 +155,18 @@ def load_macro_ft_artifacts(results_dir: str | Path) -> MacroFtArtifacts:
     art.projected_corpora = discover_projected_corpora(root)
 
     tuning_path = root / "tuning" / "grid_summary.csv"
+    if not tuning_path.is_file():
+        tuning_path = root / "grid_summary.csv"
     if not tuning_path.is_file() and root.parent.name == "combos":
         tuning_path = root.parent.parent / "grid_summary.csv"
     art.tuning_grid = _read_optional_csv(tuning_path)
+
+    variants_path = root / "results_summary.csv"
+    if not variants_path.is_file():
+        variants_path = root / "variants" / "results_summary.csv"
+    if not variants_path.is_file() and root.parent.name == "combos":
+        variants_path = root.parent.parent / "results_summary.csv"
+    art.variants_summary = _read_optional_csv(variants_path)
 
     return art
 

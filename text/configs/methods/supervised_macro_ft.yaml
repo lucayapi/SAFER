@@ -1,20 +1,13 @@
-# Fine-tuning supervisé macro (CE) — config entraînement BTP
+# Fine-tuning supervisé macro (CE) — encodeur Qwen partiellement / entièrement FT.
 #
-# Modes backbone (model.backbone_trainable + model.train_last_n_layers) :
-#   A gelé + projecteur : backbone_trainable: false, cache_backbone_embeddings: true
-#   B partiel           : backbone_trainable: true, train_last_n_layers: 4
-#   C complet           : backbone_trainable: true, train_last_n_layers: null
+# Variantes article (job variants) :
+#   Encoder : last 1 / 2 / 3 layers, ou full (train_last_n_layers: null)
+#   Projecteur : mlp_sklearn (Yes) | null (No)
+#   Loss : CE + class_weight=balanced (pas d'oversampling, pas d'encodeur gelé)
 #
-# Projecteur (model.projection) : linear | mlp_sklearn | null
-#   linear      — Linear(d_in → hiddim)
-#   mlp_sklearn — baseline notebook 07 : Linear(1024→256) → ReLU → Linear(256→128)
-#   null        — pas de ψ : z = h, tête Linear(d_backbone → n_classes)
-#
-# Rééquilibrage (mutuellement exclusif si les deux activés → erreur) :
-#   oversampling: false — pas de sur-échantillonnage (défaut)
-#   class_weight: null   — pas de pondération CE (défaut) ; option : balanced
-#
-# standardize_backbone — StandardScaler sur h avant ψ (backbone gelé uniquement)
+# Projecteur :
+#   mlp_sklearn — Linear(1024→256) → ReLU → Linear(256→128)
+#   null        — pas de ψ : tête Linear(d_backbone → n_classes)
 
 method_name: supervised_macro_ft
 output_dir: output/supervised_macro_ft
@@ -32,8 +25,8 @@ data:
 
 model:
   backbone_name: Qwen/Qwen3-Embedding-0.6B
-  backbone_trainable: false
-  train_last_n_layers: null
+  backbone_trainable: true
+  train_last_n_layers: 3
   max_seq_length: 256
   pooling: mean
   projection: mlp_sklearn
@@ -42,11 +35,10 @@ model:
   dropout: 0.1
   n_classes: 4
   oversampling: false
-  class_weight: null
-  gradient_checkpointing: false
-  cache_backbone_embeddings: true
+  class_weight: balanced
+  gradient_checkpointing: true
+  cache_backbone_embeddings: false
   standardize_backbone: false
-  backbone_emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
 
 training:
   n_folds: 3
@@ -59,7 +51,8 @@ training:
   lr_head: 1.0e-3
   weight_decay: 0.01
   early_stopping_patience: 2
-  use_amp: false
+  use_amp: true
 
 exports:
   save_btp_embeddings: true
+  save_checkpoint: true

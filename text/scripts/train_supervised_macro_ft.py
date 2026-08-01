@@ -17,10 +17,6 @@ from safer_core.paths import resolve_repo_path
 from supervised_macro_ft.train_runner import run_supervised_macro_ft_training
 
 
-def _parse_bool_flag(value: str) -> bool:
-    return str(value).strip().lower() in {"1", "true", "yes", "on"}
-
-
 def _parse_optional_int(value: str) -> int | None:
     text = str(value).strip().lower()
     if text in ("null", "none", ""):
@@ -38,46 +34,28 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--config", type=str, default="configs/methods/supervised_macro_ft.yaml")
     p.add_argument(
-        "--standardize-backbone",
-        type=_parse_bool_flag,
-        nargs="?",
-        const=True,
-        default=None,
-        help="Override model.standardize_backbone (true/false)",
-    )
-    p.add_argument(
-        "--oversampling",
-        type=_parse_bool_flag,
-        nargs="?",
-        const=True,
-        default=None,
-        help="Override model.oversampling (true/false)",
-    )
-    p.add_argument(
         "--class-weight",
         type=str,
         default=None,
         help="Override model.class_weight (null|balanced)",
     )
     p.add_argument(
-        "--backbone-trainable",
-        type=_parse_bool_flag,
-        nargs="?",
-        const=True,
-        default=None,
-        help="Override model.backbone_trainable (true/false)",
-    )
-    p.add_argument(
         "--train-last-n-layers",
         type=_parse_optional_int,
         default=None,
-        help="Override model.train_last_n_layers (int ou null)",
+        help="Override model.train_last_n_layers (int ou null = full encoder)",
+    )
+    p.add_argument(
+        "--projection",
+        type=str,
+        default=None,
+        help="Override model.projection (mlp_sklearn|null)",
     )
     p.add_argument(
         "--test-corpora",
         type=str,
         default=None,
-        help="Override test_corpora (comma-separated, ex. metallurgie,caou)",
+        help="Override test_corpora (comma-separated, ex. metallurgie,caou,nicollin)",
     )
     args = p.parse_args()
     cfg_path = resolve_repo_path(args.config, repo_root=TEXT_ROOT)
@@ -87,17 +65,14 @@ def main() -> None:
     test_corpora_raw = args.test_corpora or os.environ.get("TEST_CORPORA")
     if test_corpora_raw:
         test_corpora_override = [c.strip() for c in str(test_corpora_raw).split(",") if c.strip()]
-    if args.standardize_backbone is not None:
-        model_overrides["standardize_backbone"] = bool(args.standardize_backbone)
-    if args.oversampling is not None:
-        model_overrides["oversampling"] = bool(args.oversampling)
     if args.class_weight is not None:
         cw = str(args.class_weight).strip().lower()
         model_overrides["class_weight"] = None if cw in ("null", "none", "") else cw
-    if args.backbone_trainable is not None:
-        model_overrides["backbone_trainable"] = bool(args.backbone_trainable)
     if args.train_last_n_layers is not None:
         model_overrides["train_last_n_layers"] = args.train_last_n_layers
+    if args.projection is not None:
+        proj = str(args.projection).strip().lower()
+        model_overrides["projection"] = None if proj in ("null", "none", "") else proj
     result = run_supervised_macro_ft_training(
         cfg_path,
         training_overrides=training_overrides or None,
