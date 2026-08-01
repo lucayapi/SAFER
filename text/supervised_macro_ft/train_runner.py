@@ -378,6 +378,7 @@ def run_supervised_macro_ft_training(
         logger.info("[macro_ft] Historique fit final exporté : %s", out_dir / "train_history_final.csv")
 
     exp_cfg = dict(cfg.get("exports") or {})
+    ckpt_dir: Optional[Path] = None
     if bool(exp_cfg.get("save_checkpoint", True)):
         ckpt_dir = out_dir / "checkpoints" / "best_model"
         save_checkpoint(
@@ -592,7 +593,7 @@ def run_supervised_macro_ft_training(
     result = {
         "method_name": method_name,
         "output_dir": str(out_dir),
-        "checkpoint_dir": str(ckpt_dir),
+        "checkpoint_dir": str(ckpt_dir) if ckpt_dir is not None else None,
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
         "test_metrics_by_corpus": test_metrics_by_corpus,
@@ -610,7 +611,7 @@ def run_supervised_macro_ft_training(
         json.dump(result, f, indent=2, ensure_ascii=False)
     log_run_complete(
         output_dir=str(out_dir),
-        checkpoint_dir=str(ckpt_dir),
+        checkpoint_dir=str(ckpt_dir) if ckpt_dir is not None else None,
         summary_path=str(out_dir / "train_summary.json"),
     )
     return result

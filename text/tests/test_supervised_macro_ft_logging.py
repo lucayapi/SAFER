@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import torch
 
-from supervised_macro_ft.run_logging import resolve_effective_use_amp
+from supervised_macro_ft.run_logging import log_run_complete, resolve_effective_use_amp
 
 
 def test_resolve_effective_use_amp_explicit_false():
@@ -34,3 +34,9 @@ def test_resolve_effective_use_amp_frozen_cpu():
         device=torch.device("cpu"),
     )
     assert enabled is False
+
+
+def test_log_run_complete_without_checkpoint(caplog):
+    log_run_complete(output_dir="output/run", checkpoint_dir=None)
+
+    assert "checkpoint=not saved" in caplog.text

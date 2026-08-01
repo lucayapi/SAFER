@@ -287,11 +287,11 @@ def log_test_metrics(test_metrics: Mapping[str, Any], *, corpus: str) -> None:
 def log_run_complete(
     *,
     output_dir: str,
-    checkpoint_dir: str,
+    checkpoint_dir: Optional[str],
     summary_path: Optional[str] = None,
 ) -> None:
     logger.info("%s === Entraînement terminé ===", _PREFIX)
     logger.info("%s   output_dir=%s", _PREFIX, output_dir)
-    logger.info("%s   checkpoint=%s", _PREFIX, checkpoint_dir)
+    logger.info("%s   checkpoint=%s", _PREFIX, checkpoint_dir or "not saved")
     if summary_path:
         logger.info("%s   train_summary=%s", _PREFIX, summary_path)
