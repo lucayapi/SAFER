@@ -12,6 +12,7 @@
 #   MAX_COMBOS=2            # smoke test
 #   SKIP_FINAL_FIT=1        # CV seule (debug)
 #   SEED=42
+#   VARIANTS="full_yes full_no"  # relance un sous-ensemble
 #
 # Sorties : output/supervised_macro_ft/variants/
 #   results_summary.csv / results_summary.json
@@ -53,9 +54,14 @@ fi
 if [[ -n "${SEED:-}" ]]; then
   ARGS+=(--seed "${SEED}")
 fi
+VARIANTS_RAW="${VARIANTS:-}"
+if [[ -n "${VARIANTS_RAW}" ]]; then
+  read -r -a SELECTED_VARIANTS <<< "${VARIANTS_RAW//,/ }"
+  ARGS+=(--variants "${SELECTED_VARIANTS[@]}")
+fi
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
-echo "[macro_ft_var] GRID_CONFIG=${GRID_CONFIG} TEST_CORPORA=${TEST_CORPORA} MAX_COMBOS=${MAX_COMBOS:-all} SKIP_FINAL_FIT=${SKIP_FINAL_FIT:-0}"
+echo "[macro_ft_var] GRID_CONFIG=${GRID_CONFIG} TEST_CORPORA=${TEST_CORPORA} MAX_COMBOS=${MAX_COMBOS:-all} SKIP_FINAL_FIT=${SKIP_FINAL_FIT:-0} VARIANTS=${VARIANTS_RAW:-all}"
 
 export PYTHONUNBUFFERED=1
 python -u scripts/tune_supervised_macro_ft.py "${ARGS[@]}"
