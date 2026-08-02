@@ -16,6 +16,7 @@ from contrastive_methods.config import merge_config_dict
 from supervised_macro_ft.tuning import (
     _combo_id,
     _merge_overrides,
+    apply_full_encoder_training_overrides,
     build_variants_results_summary,
     encoder_scope_label,
     expand_grid,
@@ -58,6 +59,32 @@ def test_merge_overrides_dotted_keys():
     assert merged["model"]["projection"] is None
     assert merged["model"]["train_last_n_layers"] == 2
     assert merged["training"]["lr_head"] == 1e-3
+
+
+def test_full_encoder_training_overrides_apply_only_to_full_encoder():
+    base = {
+        "model": {"backbone_trainable": True},
+        "training": {"epochs": 30, "use_amp": True, "lr_backbone": 2e-5},
+    }
+    stability_overrides = {
+        "training.epochs": 3,
+        "training.use_amp": False,
+        "training.lr_backbone": 2e-6,
+    }
+
+    full = apply_full_encoder_training_overrides(
+        {"model.train_last_n_layers": None}, base, stability_overrides
+    )
+    partial = apply_full_encoder_training_overrides(
+        {"model.train_last_n_layers": 3}, base, stability_overrides
+    )
+
+    assert _merge_overrides(base, full)["training"] == {
+        "epochs": 3,
+        "use_amp": False,
+        "lr_backbone": 2e-6,
+    }
+    assert _merge_overrides(base, partial)["training"] == base["training"]
 
 
 def test_combo_id_readable():
@@ -122,6 +149,11 @@ def test_grid_yaml_loads():
     assert "mlp_sklearn" in spec["grid"]["model.projection"]
     assert None in spec["grid"]["model.projection"]
     assert spec["grid"]["model.backbone_trainable"] == [True]
+    assert spec["full_encoder_training_overrides"] == {
+        "training.epochs": 3,
+        "training.use_amp": False,
+        "training.lr_backbone": 2e-6,
+    }
     raw = expand_grid(spec["grid"])
     combos = filter_macro_ft_tuning_combos(raw, base)
     assert len(raw) == 8

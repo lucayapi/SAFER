@@ -132,6 +132,26 @@ def filter_macro_ft_tuning_combos(
     return kept
 
 
+def apply_full_encoder_training_overrides(
+    overrides: Dict[str, Any],
+    base_cfg: Dict[str, Any],
+    full_encoder_training_overrides: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Applique les réglages de stabilité seulement aux variantes full encoder."""
+    if not full_encoder_training_overrides:
+        return dict(overrides)
+    if any(not key.startswith("training.") for key in full_encoder_training_overrides):
+        raise ValueError("full_encoder_training_overrides accepte uniquement des clés training.*")
+
+    merged = _merge_overrides(base_cfg, overrides)
+    model_cfg = dict(merged.get("model") or {})
+    if not bool(model_cfg.get("backbone_trainable", False)):
+        return dict(overrides)
+    if model_cfg.get("train_last_n_layers") is not None:
+        return dict(overrides)
+    return {**overrides, **full_encoder_training_overrides}
+
+
 def _combo_id(overrides: Dict[str, Any]) -> str:
     parts = []
     for key in sorted(overrides.keys()):
@@ -316,9 +336,18 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     seed = int(tune_args.seed if tune_args.seed is not None else spec.get("seed", 42))
     save_checkpoint = bool(spec.get("save_checkpoint", False))
     save_btp_embeddings = bool(spec.get("save_btp_embeddings", False))
+    full_encoder_training_overrides = dict(spec.get("full_encoder_training_overrides") or {})
 
     combos = expand_grid(grid)
     combos = filter_macro_ft_tuning_combos(combos, base_cfg)
+    combos = [
+        apply_full_encoder_training_overrides(
+            overrides,
+            base_cfg,
+            full_encoder_training_overrides,
+        )
+        for overrides in combos
+    ]
     if tune_args.max_combos is not None:
         combos = combos[: tune_args.max_combos]
 

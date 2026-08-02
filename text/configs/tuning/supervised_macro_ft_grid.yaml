@@ -23,6 +23,12 @@ test_corpora: [metallurgie, caou, nicollin]
 save_checkpoint: false
 save_btp_embeddings: false
 
+# Les deux variantes full encoder sont plus instables : réglages dédiés.
+full_encoder_training_overrides:
+  training.epochs: 3
+  training.use_amp: false
+  training.lr_backbone: 2.0e-6
+
 grid:
   model.backbone_trainable: [true]
   model.train_last_n_layers: [1, 2, 3, null]
