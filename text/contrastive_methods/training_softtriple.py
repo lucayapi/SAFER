@@ -158,7 +158,7 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         val_loader = build_eval_loader(cfg, val_df, dataset.text_col, encoder, dev)
 
     optimizer = build_optimizer(encoder, [loss_module], cfg.learning_rate)
-    autocast_dtype = resolve_autocast_dtype(device)
+    autocast_dtype = resolve_autocast_dtype(device, cfg.use_amp)
     scaler = (
         torch.cuda.amp.GradScaler()
         if autocast_dtype == torch.float16 and dev.type == "cuda"

@@ -56,6 +56,7 @@ def run_final_classification_eval(
     output_root: Path,
     *,
     cv_summary: Optional[pd.DataFrame] = None,
+    classifier_overrides: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Path]:
     """Encode BTP + corpus test, export embeddings, LR sklearn, CSV classification + prédictions."""
     layout = layout_method_output(cfg.method_name, str(output_root))
@@ -87,7 +88,13 @@ def run_final_classification_eval(
 
     macros = None
     y_train_int = btp_df["label_id"].astype(int).to_numpy()
-    pipe = fit_classifier_on_embeddings(X_btp, y_train_int, cfg, seed=cfg.seed)
+    pipe = fit_classifier_on_embeddings(
+        X_btp,
+        y_train_int,
+        cfg,
+        seed=cfg.seed,
+        classifier_overrides=classifier_overrides,
+    )
 
     metrics_by_corpus: Dict[str, Mapping[str, Any]] = {}
     y_btp_macro = btp_df[label_col].astype(str).to_numpy()

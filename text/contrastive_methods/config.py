@@ -74,6 +74,10 @@ class ContrastiveConfig:
     post_eval_classifier: str = "logistic_regression"
     post_eval_class_weight: Optional[str] = None
     post_eval_oversampling: bool = False
+    post_eval_c: float = 1.0
+    post_eval_penalty: str = "l2"
+    post_eval_solver: str = "lbfgs"
+    use_amp: bool = True
     extra: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -304,6 +308,10 @@ def load_contrastive_config(
         post_eval_oversampling=bool(
             pick("oversampling", default=False, sources=(post_eval, raw))
         ),
+        post_eval_c=float(pick("C", default=1.0, sources=(post_eval, raw))),
+        post_eval_penalty=str(pick("penalty", default="l2", sources=(post_eval, raw))),
+        post_eval_solver=str(pick("solver", default="lbfgs", sources=(post_eval, raw))),
+        use_amp=bool(pick("use_amp", default=True, sources=(training, raw))),
         extra={"raw": raw, "config_path": str(path)},
     )
     from contrastive_methods.config_validation import validate_contrastive_config

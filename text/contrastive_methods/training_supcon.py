@@ -51,7 +51,7 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
     )
 
     optimizer = build_optimizer(encoder, [loss_module], cfg.learning_rate)
-    autocast_dtype = resolve_autocast_dtype(device)
+    autocast_dtype = resolve_autocast_dtype(device, cfg.use_amp)
     scaler = (
         torch.cuda.amp.GradScaler()
         if autocast_dtype == torch.float16 and dev.type == "cuda"

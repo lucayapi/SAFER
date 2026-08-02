@@ -6,7 +6,7 @@ import dataclasses
 import gc
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from contrastive_methods.config import (
     ContrastiveConfig,
@@ -15,7 +15,11 @@ from contrastive_methods.config import (
 )
 from contrastive_methods.data import get_group_kfold_splits, prepare_text_dataset, train_val_metadata
 from contrastive_methods.eval_corpus import run_final_classification_eval
-from contrastive_methods.post_eval import CV_CLASSIFICATION_METRIC_KEYS, run_post_eval_on_fold
+from contrastive_methods.post_eval import (
+    CV_CLASSIFICATION_METRIC_KEYS,
+    run_post_eval_grid_on_fold,
+    run_post_eval_on_fold,
+)
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.hf_training_common import get_device
 from safer_core.classification_eval import DEFAULT_SELECTION_METRIC
@@ -56,6 +60,7 @@ def run_kfold_loop(
     log_prefix: str = "kfold",
     save_tables: bool = True,
     metrics_dir: Optional[Path] = None,
+    post_eval_grid: Optional[List[Mapping[str, Any]]] = None,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Exécute K folds (validation uniquement) → agrégat μ±σ classification."""
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
@@ -95,9 +100,23 @@ def run_kfold_loop(
         ckpt = Path(fold_cfg.output_dir) / "checkpoints" / "best_model"
         if cfg.post_eval_enabled and ckpt.is_dir():
             try:
-                row.update(
-                    run_post_eval_on_fold(cfg, ckpt, train_df, val_df, cfg.text_col, device)
-                )
+                if post_eval_grid:
+                    grid_metrics = run_post_eval_grid_on_fold(
+                        cfg,
+                        ckpt,
+                        train_df,
+                        val_df,
+                        cfg.text_col,
+                        device,
+                        post_eval_grid,
+                    )
+                    for grid_id, metrics in grid_metrics.items():
+                        for metric, value in metrics.items():
+                            row[f"lr_{grid_id}_val_{metric}"] = value
+                else:
+                    row.update(
+                        run_post_eval_on_fold(cfg, ckpt, train_df, val_df, cfg.text_col, device)
+                    )
             except Exception as exc:
                 print(f"[{log_prefix}] post_eval fold {fold_id} ignoré : {exc}", flush=True)
         fold_rows.append(row)

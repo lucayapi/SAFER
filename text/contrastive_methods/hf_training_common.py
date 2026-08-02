@@ -35,8 +35,8 @@ def get_device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def resolve_autocast_dtype(device: str) -> Optional[torch.dtype]:
-    if not str(device).startswith("cuda"):
+def resolve_autocast_dtype(device: str, enabled: bool = True) -> Optional[torch.dtype]:
+    if not enabled or not str(device).startswith("cuda"):
         return None
     if hasattr(torch.cuda, "is_bf16_supported") and torch.cuda.is_bf16_supported():
         return torch.bfloat16
@@ -299,7 +299,7 @@ def encode_texts(
     items = [{"text": t, "label": 0} for t in texts]
     loader = DataLoader(items, batch_size=bs, shuffle=False, collate_fn=collate_fn)
     dev = torch.device(device)
-    autocast_dtype = resolve_autocast_dtype(str(device))
+    autocast_dtype = resolve_autocast_dtype(str(device), cfg.use_amp)
     use_amp = autocast_dtype is not None and dev.type == "cuda"
     parts: List[np.ndarray] = []
     batch_iter: Any = loader

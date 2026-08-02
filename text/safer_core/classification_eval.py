@@ -61,10 +61,15 @@ def macro_names() -> list[str]:
     return [ID2LABEL[i] for i in range(len(LABEL2ID))]
 
 
-def classifier_params(*, class_weight: Optional[str] = None) -> dict[str, Any]:
+def classifier_params(
+    *,
+    class_weight: Optional[str] = None,
+    classifier_overrides: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if class_weight == "balanced":
         params["class_weight"] = "balanced"
+    params.update(dict(classifier_overrides or {}))
     return params
 
 
@@ -76,12 +81,20 @@ def fit_logistic_on_embeddings(
     class_weight: Optional[str] = None,
     oversampling: bool = False,
     seed: int = 42,
+    classifier_overrides: Optional[Mapping[str, Any]] = None,
 ):
     X = np.asarray(X_train, dtype=np.float64)
     y = np.asarray(y_train_int, dtype=np.int64)
     if oversampling:
         X, y = balanced_oversample_arrays(X, y, seed=seed)
-    pipe = build_classifier_pipeline(classifier, classifier_params(class_weight=class_weight), seed=seed)
+    pipe = build_classifier_pipeline(
+        classifier,
+        classifier_params(
+            class_weight=class_weight,
+            classifier_overrides=classifier_overrides,
+        ),
+        seed=seed,
+    )
     _fit_pipeline(pipe, X, y, seed=seed)
     return pipe
 

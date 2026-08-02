@@ -41,6 +41,7 @@ def fit_classifier_on_embeddings(
     cfg: ContrastiveConfig,
     *,
     seed: int = 42,
+    classifier_overrides: Optional[Mapping[str, Any]] = None,
 ):
     return fit_logistic_on_embeddings(
         X_train,
@@ -49,6 +50,11 @@ def fit_classifier_on_embeddings(
         class_weight=cfg.post_eval_class_weight,
         oversampling=cfg.post_eval_oversampling,
         seed=seed,
+        classifier_overrides=classifier_overrides or {
+            "C": cfg.post_eval_c,
+            "penalty": cfg.post_eval_penalty,
+            "solver": cfg.post_eval_solver,
+        },
     )
 
 
@@ -73,6 +79,42 @@ def run_post_eval_on_fold(
     pipe = fit_classifier_on_embeddings(X_train, y_train_int, cfg, seed=cfg.seed)
     metrics = evaluate_classifier_on_embeddings(pipe, X_val, y_val_macro)
     return {f"val_{k}": float(metrics.get(k, float("nan"))) for k in CLASSIFICATION_METRIC_KEYS}
+
+
+def run_post_eval_grid_on_fold(
+    cfg: ContrastiveConfig,
+    checkpoint_dir: Path,
+    train_df: pd.DataFrame,
+    val_df: pd.DataFrame,
+    text_col: str,
+    device: str,
+    classifier_grid: Sequence[Mapping[str, Any]],
+) -> Dict[str, Dict[str, float]]:
+    """Évalue plusieurs LR sur les mêmes embeddings train/validation d'un fold."""
+    if not cfg.post_eval_enabled:
+        return {}
+    encoder = load_contrastive_checkpoint(cfg, Path(checkpoint_dir), device)
+    train_texts = train_df[text_col].astype(str).tolist()
+    val_texts = val_df[text_col].astype(str).tolist()
+    X_train = encode_texts(encoder, train_texts, cfg, device)
+    X_val = encode_texts(encoder, val_texts, cfg, device)
+    y_train_int = train_df["label_id"].astype(int).to_numpy()
+    y_val_macro = val_df[cfg.label_col].astype(str).to_numpy()
+    results: Dict[str, Dict[str, float]] = {}
+    for idx, classifier_overrides in enumerate(classifier_grid):
+        pipe = fit_classifier_on_embeddings(
+            X_train,
+            y_train_int,
+            cfg,
+            seed=cfg.seed,
+            classifier_overrides=classifier_overrides,
+        )
+        metrics = evaluate_classifier_on_embeddings(pipe, X_val, y_val_macro)
+        results[str(idx)] = {
+            key: float(metrics.get(key, float("nan")))
+            for key in CLASSIFICATION_METRIC_KEYS
+        }
+    return results
 
 
 def run_post_eval_on_corpus(
