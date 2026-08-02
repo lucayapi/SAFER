@@ -23,6 +23,9 @@ from supervised_macro_ft.tuning import (
     filter_macro_ft_tuning_combos,
     is_valid_macro_ft_tuning_model_cfg,
     projector_label,
+    merge_partial_tuning_summary_rows,
+    select_macro_ft_tuning_combos,
+    tuning_variant_name,
     validate_macro_ft_grid_keys,
 )
 
@@ -101,6 +104,39 @@ def test_encoder_projector_labels():
     assert projector_label("mlp_sklearn") == "Yes"
     assert projector_label(None) == "No"
     assert projector_label("null") == "No"
+
+
+def test_select_macro_ft_tuning_combos_by_cli_name():
+    base = {"model": {"backbone_trainable": True}}
+    combos = [
+        {"model.train_last_n_layers": 1, "model.projection": "mlp_sklearn"},
+        {"model.train_last_n_layers": None, "model.projection": "mlp_sklearn"},
+        {"model.train_last_n_layers": None, "model.projection": None},
+    ]
+
+    selected = select_macro_ft_tuning_combos(combos, base, ["full_yes,full_no"])
+
+    assert [tuning_variant_name(combo, base) for combo in selected] == ["full_yes", "full_no"]
+
+
+def test_select_macro_ft_tuning_combos_rejects_unknown_name():
+    base = {"model": {"backbone_trainable": True}}
+    combos = [{"model.train_last_n_layers": None, "model.projection": None}]
+
+    with pytest.raises(ValueError, match="Disponibles : full_no"):
+        select_macro_ft_tuning_combos(combos, base, ["full_yes"])
+
+
+def test_merge_partial_tuning_summary_rows_replaces_only_selected_variants():
+    existing = [
+        {"encoder_scope": "Last 1 layer", "projector": "Yes", "combo_id": "old_last_1_yes"},
+        {"encoder_scope": "Full encoder", "projector": "No", "combo_id": "old_full_no"},
+    ]
+    new = [{"encoder_scope": "Full encoder", "projector": "No", "combo_id": "new_full_no"}]
+
+    merged = merge_partial_tuning_summary_rows(existing, new, {"full_no"})
+
+    assert [row["combo_id"] for row in merged] == ["old_last_1_yes", "new_full_no"]
 
 
 @patch("supervised_macro_ft.tuning.run_supervised_macro_ft_cv")

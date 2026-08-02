@@ -119,6 +119,79 @@ def projector_label(projection: Any) -> str:
     return "Yes" if proj == "mlp_sklearn" else "No"
 
 
+def tuning_variant_name(overrides: Dict[str, Any], base_cfg: Dict[str, Any]) -> str:
+    """Identifiant CLI lisible d'une variante, par exemple ``full_yes``."""
+    model_cfg = dict(_merge_overrides(base_cfg, overrides).get("model") or {})
+    train_last_n_layers = model_cfg.get("train_last_n_layers")
+    if train_last_n_layers is None:
+        scope = "full"
+    else:
+        scope = f"last_{int(train_last_n_layers)}"
+    return f"{scope}_{projector_label(model_cfg.get('projection')).lower()}"
+
+
+def select_macro_ft_tuning_combos(
+    combos: List[Dict[str, Any]],
+    base_cfg: Dict[str, Any],
+    selected_variants: List[str],
+) -> List[Dict[str, Any]]:
+    """Sélectionne un sous-ensemble de variantes par identifiant CLI."""
+    requested = normalize_tuning_variant_names(selected_variants)
+    available = {tuning_variant_name(overrides, base_cfg) for overrides in combos}
+    unknown = requested - available
+    if unknown:
+        raise ValueError(
+            "Variante(s) inconnue(s) : "
+            f"{', '.join(sorted(unknown))}. Disponibles : {', '.join(sorted(available))}"
+        )
+    return [
+        overrides
+        for overrides in combos
+        if tuning_variant_name(overrides, base_cfg) in requested
+    ]
+
+
+def normalize_tuning_variant_names(selected_variants: List[str]) -> set[str]:
+    return {
+        value.strip().lower()
+        for raw_value in selected_variants
+        for value in str(raw_value).split(",")
+        if value.strip()
+    }
+
+
+def summary_row_variant_name(row: Dict[str, Any]) -> Optional[str]:
+    """Reconstruit l'identifiant CLI à partir d'une ligne de grid summary."""
+    scope_label = str(row.get("encoder_scope") or "").strip().lower()
+    projector = str(row.get("projector") or "").strip().lower()
+    if scope_label == "full encoder":
+        scope = "full"
+    elif scope_label.startswith("last "):
+        parts = scope_label.split()
+        if len(parts) < 2 or not parts[1].isdigit():
+            return None
+        scope = f"last_{parts[1]}"
+    else:
+        return None
+    if projector not in ("yes", "no"):
+        return None
+    return f"{scope}_{projector}"
+
+
+def merge_partial_tuning_summary_rows(
+    existing_rows: List[Dict[str, Any]],
+    new_rows: List[Dict[str, Any]],
+    selected_variants: set[str],
+) -> List[Dict[str, Any]]:
+    """Conserve les variantes non relancées et remplace celles sélectionnées."""
+    preserved_rows = [
+        row
+        for row in existing_rows
+        if summary_row_variant_name(row) not in selected_variants
+    ]
+    return [*preserved_rows, *new_rows]
+
+
 def filter_macro_ft_tuning_combos(
     combos: List[Dict[str, Any]],
     base_cfg: Dict[str, Any],
@@ -302,6 +375,16 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--max-combos", type=int, default=None)
     parser.add_argument(
+        "--variants",
+        nargs="+",
+        metavar="VARIANT",
+        help=(
+            "Sous-ensemble à relancer : last_1_yes, last_1_no, last_2_yes, "
+            "last_2_no, last_3_yes, last_3_no, full_yes, full_no. "
+            "Accepte aussi une liste séparée par des virgules."
+        ),
+    )
+    parser.add_argument(
         "--skip-final-fit",
         action="store_true",
         help="CV seule (pas de fit final ni preds OOD) — debug uniquement",
@@ -348,6 +431,14 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         )
         for overrides in combos
     ]
+    selected_variant_names: set[str] = set()
+    if tune_args.variants:
+        selected_variant_names = normalize_tuning_variant_names(tune_args.variants)
+        combos = select_macro_ft_tuning_combos(
+            combos,
+            base_cfg,
+            tune_args.variants,
+        )
     if tune_args.max_combos is not None:
         combos = combos[: tune_args.max_combos]
 
@@ -443,10 +534,25 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
             elapsed / 60,
         )
 
-    grid_df = pd.DataFrame(summary_rows)
-    grid_df.to_csv(variants_root / "grid_summary.csv", index=False)
+    all_summary_rows = summary_rows
+    grid_summary_path = variants_root / "grid_summary.csv"
+    if selected_variant_names and grid_summary_path.is_file():
+        existing_rows = pd.read_csv(grid_summary_path).to_dict(orient="records")
+        all_summary_rows = merge_partial_tuning_summary_rows(
+            existing_rows,
+            summary_rows,
+            selected_variant_names,
+        )
+        log.info(
+            "[macro_ft variants] Résumés fusionnés : %d existants conservés, %d relancés",
+            len(all_summary_rows) - len(summary_rows),
+            len(summary_rows),
+        )
 
-    results = build_variants_results_summary(summary_rows, test_corpora=test_corpora)
+    grid_df = pd.DataFrame(all_summary_rows)
+    grid_df.to_csv(grid_summary_path, index=False)
+
+    results = build_variants_results_summary(all_summary_rows, test_corpora=test_corpora)
     results_path = variants_root / "results_summary.csv"
     results.to_csv(results_path, index=False)
     (variants_root / "results_summary.json").write_text(

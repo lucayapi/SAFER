@@ -5,6 +5,7 @@
 # Lancer :
 #   sbatch jobs/tune_supervised_macro_ft.sh
 #   python scripts/tune_supervised_macro_ft.py --grid-config configs/tuning/supervised_macro_ft_grid.yaml
+#   python scripts/tune_supervised_macro_ft.py --variants full_yes full_no
 #
 # 4 scopes × 2 projecteurs = 8 variantes :
 #   train_last_n_layers ∈ {1, 2, 3, null}  (null = full encoder)
