@@ -15,12 +15,17 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
+import numpy as np
 import pandas as pd
 import yaml
 
 from contrastive_methods.config import load_contrastive_config_from_dict, merge_config_dict
+from contrastive_methods.data import prepare_text_dataset
 from contrastive_methods.eval_corpus import run_final_classification_eval
-from contrastive_methods.kfold_train import get_contrastive_runner, run_kfold_loop
+from contrastive_methods.hf_training_common import encode_contrastive_texts, get_device
+from contrastive_methods.kfold_train import get_contrastive_runner
+from contrastive_methods.post_eval import evaluate_classifier_on_embeddings, fit_classifier_on_embeddings
+from safer_core.kfold_eval import group_kfold_splits
 from safer_core.io import ensure_dir, load_yaml, save_config_resolved
 from safer_core.paths import TEXT_ROOT
 
@@ -187,6 +192,44 @@ def _build_lr_summary(
     return rows, best_index, dict(classifier_grid[best_index])
 
 
+def _run_logistic_group_cv(
+    cfg,
+    embeddings: np.ndarray,
+    metadata: pd.DataFrame,
+    classifier_grid: Sequence[Mapping[str, Any]],
+    n_folds: int,
+) -> List[Dict[str, Any]]:
+    """CV groupée de la LR sur embeddings issus d'un unique encoder full BTP."""
+    labels_int = metadata["label_id"].astype(int).to_numpy()
+    labels_macro = metadata[cfg.label_col].astype(str).to_numpy()
+    groups = metadata[cfg.group_col].astype(str).to_numpy()
+    splits = group_kfold_splits(groups, n_folds, cfg.seed)
+    fold_rows: List[Dict[str, Any]] = []
+    for fold_id, (train_idx, val_idx) in enumerate(splits):
+        row: Dict[str, Any] = {
+            "fold_id": int(fold_id),
+            "n_train": int(len(train_idx)),
+            "n_val": int(len(val_idx)),
+        }
+        for lr_index, classifier_overrides in enumerate(classifier_grid):
+            pipe = fit_classifier_on_embeddings(
+                embeddings[train_idx],
+                labels_int[train_idx],
+                cfg,
+                seed=cfg.seed + int(fold_id),
+                classifier_overrides=classifier_overrides,
+            )
+            metrics = evaluate_classifier_on_embeddings(
+                pipe,
+                embeddings[val_idx],
+                labels_macro[val_idx],
+            )
+            for metric in CV_METRICS:
+                row[f"lr_{lr_index}_val_{metric}"] = float(metrics.get(metric, float("nan")))
+        fold_rows.append(row)
+    return fold_rows
+
+
 def _write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as handle:
@@ -244,19 +287,33 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         merged = merge_config_dict(base_raw, merged_overrides)
         merged.update({"method_name": method_name, "seed": seed, "n_folds": n_folds})
         merged["output_dir"] = str(combo_dir)
-        merged["final_fit_full_data"] = False
+        merged["final_fit_full_data"] = True
         merged["selection_metric"] = selection_metric
         if spec.get("test_corpora"):
             merged["test_corpora"] = list(spec["test_corpora"])
         cfg = load_contrastive_config_from_dict(method_name, merged, config_path=str(args.grid_config))
 
-        fold_rows, _ = run_kfold_loop(
+        print(f"[architecture/{variant}] Fine-tuning full BTP…", flush=True)
+        result = runner(cfg)
+        checkpoint = result.output_root / "checkpoints" / "best_model"
+        if not checkpoint.is_dir():
+            raise FileNotFoundError(f"Checkpoint final absent : {checkpoint}")
+
+        dataset = prepare_text_dataset(cfg)
+        btp_metadata = dataset.metadata_df
+        btp_embeddings = encode_contrastive_texts(
             cfg,
-            runner,
-            fold_dir_fn=lambda fold_id, root=combo_dir: str(root / "folds" / f"fold_{fold_id}"),
-            log_prefix=f"architecture/{variant}",
-            save_tables=False,
-            post_eval_grid=classifier_grid,
+            btp_metadata[cfg.text_col].astype(str).tolist(),
+            checkpoint_dir=checkpoint,
+            device=get_device(),
+            batch_size=cfg.encode_batch_size,
+        )
+        fold_rows = _run_logistic_group_cv(
+            cfg,
+            btp_embeddings,
+            btp_metadata,
+            classifier_grid,
+            n_folds,
         )
         cv_dir = combo_dir / "cv"
         cv_dir.mkdir(parents=True, exist_ok=True)
@@ -279,16 +336,8 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         cv_summary.to_csv(cv_dir / "cv_summary.csv", index=False)
 
         if not args.skip_final_fit:
-            merged_final = dict(merged)
-            merged_final["final_fit_full_data"] = True
-            cfg_final = load_contrastive_config_from_dict(method_name, merged_final, config_path=str(args.grid_config))
-            print(f"[architecture/{variant}] Réentraînement final 100 % BTP…", flush=True)
-            result = runner(cfg_final)
-            checkpoint = result.output_root / "checkpoints" / "best_model"
-            if not checkpoint.is_dir():
-                raise FileNotFoundError(f"Checkpoint final absent : {checkpoint}")
             run_final_classification_eval(
-                cfg_final,
+                cfg,
                 checkpoint,
                 result.output_root,
                 cv_summary=cv_summary,

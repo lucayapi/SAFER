@@ -14,6 +14,7 @@ if str(TEXT_ROOT) not in sys.path:
 from contrastive_methods.architecture_tuning import (
     _apply_full_overrides,
     _build_lr_summary,
+    _run_logistic_group_cv,
     _merge_partial_summary,
     architecture_name,
     expand_grid,
@@ -135,3 +136,38 @@ def test_lr_overrides_reach_sklearn_classifier():
     assert pipe.named_steps["clf"].C == 0.01
     assert pipe.named_steps["clf"].class_weight == "balanced"
 
+
+def test_n_folds_only_splits_precomputed_full_btp_embeddings():
+    import numpy as np
+
+    rng = np.random.RandomState(7)
+    rows = []
+    embeddings = []
+    labels = ["A0", "A1", "B", "C"]
+    for label_id, label in enumerate(labels):
+        for group_id in range(8):
+            for item_id in range(2):
+                vector = rng.randn(6) * 0.05
+                vector[label_id] += 3.0
+                embeddings.append(vector)
+                rows.append({
+                    "label_id": label_id,
+                    "pred_label": label,
+                    "accident_id": f"{label}_{group_id}",
+                    "sentence": f"{label}-{group_id}-{item_id}",
+                })
+    cfg = ContrastiveConfig(
+        method_name="supcon",
+        dataset_path=TEXT_ROOT / "dataset/data_btp.csv",
+        label_col="pred_label",
+        group_col="accident_id",
+    )
+    fold_rows = _run_logistic_group_cv(
+        cfg,
+        np.asarray(embeddings),
+        pd.DataFrame(rows),
+        [{"C": 1.0, "penalty": "l2", "solver": "lbfgs", "class_weight": "balanced"}],
+        n_folds=4,
+    )
+    assert len(fold_rows) == 4
+    assert all("lr_0_val_balanced_accuracy" in row for row in fold_rows)
