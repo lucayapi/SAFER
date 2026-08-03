@@ -345,7 +345,7 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
             )
             save_config_resolved(
                 {
-                    **merged_final,
+                    **merged,
                     "architecture_variant": variant,
                     "best_logistic_params": best_lr,
                     "tuning_grid_config": args.grid_config,

@@ -55,7 +55,11 @@ class TextBackbone(nn.Module):
             and self.model is not None
             and hasattr(self.model, "gradient_checkpointing_enable")
         ):
+            if hasattr(self.model, "config") and hasattr(self.model.config, "use_cache"):
+                self.model.config.use_cache = False
             self.model.gradient_checkpointing_enable()
+            if hasattr(self.model, "enable_input_require_grads"):
+                self.model.enable_input_require_grads()
 
     def _get_transformer_layers(self) -> Optional[List[nn.Module]]:
         if self.model is None:
