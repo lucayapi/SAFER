@@ -53,23 +53,21 @@ Grille : `configs/tuning/supervised_macro_baseline_grid.yaml`
 
 ## Contenu
 
-1. Tableau récap **meilleurs hyperparamètres** + BA CV / OOD  
-2. Top combos de la grille  
-3. Comparaison **défaut (07)** vs **tuné (07b)**  
-4. Synthèse cross-domain  
-5. **Matrices de confusion** train (BTP) + OOD (tous modèles / corpus)  
-6. Checklist des artefacts
+1. Central tuned results table with BA CV / OOD
+2. **t-SNE** séparés des embeddings gelés, with a shared accident-process palette
+3. **Confusion matrices** train (BTP) + OOD (all models / corpora)
+4. Checklist des artefacts
 
 ## Chemins attendus
 
 ```
-output_test/metallurgie/supervised_baseline/tuning/
+output[_test]/<corpus>/supervised_baseline/tuning/
   results_summary.csv, grid_summary.csv, best_*.json
 
-output_test/btp/supervised_baseline_tuned/transfer/
+output[_test]/btp/supervised_baseline_tuned/transfer/
   source_macro_predictions.csv, models/<model>/…
 
-output_test/<corpus>/supervised_baseline_tuned/transfer/
+output[_test]/<corpus>/supervised_baseline_tuned/transfer/
   target_macro_predictions.csv, all_models_test_metrics.csv, models/<model>/…
 ```
 """
@@ -92,7 +90,6 @@ import seaborn as sns
 from IPython.display import display
 
 from macro_transfer.constants import MACRO_NAMES
-from macro_transfer.notebook_viz import plot_fsp_confusion_heatmap
 from macro_transfer.supervised_baseline import (
     load_cached_all_models_test_results,
     load_supervised_run_manifest,
@@ -104,6 +101,7 @@ from macro_transfer.supervised_baseline_tuning import (
     supervised_baseline_tuned_output_dir,
     supervised_baseline_tuning_dir,
 )
+from safer_core.brand_style import apply_matplotlib_brand
 from safer_core.test_corpus import resolve_test_corpus
 
 SELECTION_METRIC = "balanced_accuracy"
@@ -112,19 +110,80 @@ TEST_CORPORA = ["metallurgie", "caou", "nicollin"]
 CV_CORPUS = "metallurgie"
 MODEL_ORDER = ["logistic_regression", "random_forest", "xgboost"]
 MACROS = list(MACRO_NAMES)
+ROLE_COLORS = {
+    "A0": "#0072B2",
+    "A1": "#E69F00",
+    "B": "#009E73",
+    "C": "#D55E00",
+}
 
-TUNING_DIR = supervised_baseline_tuning_dir(cv_corpus=CV_CORPUS, anchor=TEXT_ROOT)
-DEFAULT_CV_DIR = supervised_baseline_output_dir(CV_CORPUS, anchor=TEXT_ROOT)
-TUNED_CV_DIR = supervised_baseline_tuned_output_dir(CV_CORPUS, anchor=TEXT_ROOT)
-TRAIN_OUT_DIR = supervised_baseline_tuned_output_dir("btp", anchor=TEXT_ROOT)
+
+def plot_simple_confusion(cm_df, *, title: str, fig_dir: Path, filename: str):
+    labels = list(MACROS)
+    matrix = cm_df.reindex(index=labels, columns=labels, fill_value=0)
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        matrix,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        cbar=False,
+        xticklabels=labels,
+        yticklabels=labels,
+        ax=ax,
+    )
+    ax.set_title(title)
+    ax.set_xlabel("Predicted accident-process role")
+    ax.set_ylabel("True accident-process role")
+    fig.tight_layout()
+    fig.savefig(fig_dir / filename, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(fig)
+
+OUTPUT_ROOTS = [TEXT_ROOT / "output", TEXT_ROOT / "output_test"]
+
+
+def _resolve_layout_dir(corpus_id: str, method: str) -> Path:
+    candidates = [root / str(corpus_id) / method for root in OUTPUT_ROOTS]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
+
+
+def _resolve_tuning_dir(corpus_id: str) -> Path:
+    candidates = [
+        root / str(corpus_id) / "supervised_baseline" / "tuning"
+        for root in OUTPUT_ROOTS
+    ]
+    for candidate in candidates:
+        if candidate.is_dir():
+            return candidate
+    return candidates[0]
+
+
+DEFAULT_DIRS = {
+    corpus_id: _resolve_layout_dir(corpus_id, "supervised_baseline")
+    for corpus_id in TEST_CORPORA
+}
+TUNED_DIRS = {
+    corpus_id: _resolve_layout_dir(corpus_id, "supervised_baseline_tuned")
+    for corpus_id in TEST_CORPORA + ["btp"]
+}
+TUNING_DIRS = {corpus_id: _resolve_tuning_dir(corpus_id) for corpus_id in TEST_CORPORA}
+TUNING_DIR = TUNING_DIRS[CV_CORPUS]
+DEFAULT_CV_DIR = DEFAULT_DIRS[CV_CORPUS]
+TUNED_CV_DIR = TUNED_DIRS[CV_CORPUS]
+TRAIN_OUT_DIR = TUNED_DIRS["btp"]
 FIG_DIR = TUNED_CV_DIR / "figures_notebook"
 FIG_DIR.mkdir(parents=True, exist_ok=True)
 
-print("Tuning dir :", TUNING_DIR)
-print("Baseline 07 :", DEFAULT_CV_DIR)
-print("Tuned 07b  :", TUNED_CV_DIR)
-print("Train BTP  :", TRAIN_OUT_DIR)
+print("Racines de sorties :", OUTPUT_ROOTS)
+print("Tuning par corpus :", TUNING_DIRS)
+print("Baseline 07 par corpus :", DEFAULT_DIRS)
+print("Tuned 07b par corpus :", TUNED_DIRS)
 print("Figures    :", FIG_DIR)
+apply_matplotlib_brand()
 sns.set_theme(style="whitegrid")
 """
         ),
@@ -139,17 +198,18 @@ Si des fichiers manquent, relance / attends la fin de :
         py(
             r"""
 required = {
-    "grid_summary": TUNING_DIR / "grid_summary.csv",
-    "best_combo": TUNING_DIR / "best_combo.json",
-    "results_summary": TUNING_DIR / "results_summary.csv",
-    "cv_summary_tuned": TUNED_CV_DIR / "cv" / "cv_summary.csv",
-    "cross_domain": TUNED_CV_DIR / "cross_domain_generalization.csv",
     "train_preds_best": TRAIN_OUT_DIR / "transfer" / "source_macro_predictions.csv",
 }
 for corpus_id in TEST_CORPORA:
-    out = supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
+    out = TUNED_DIRS[corpus_id]
     required[f"ood_metrics_{corpus_id}"] = out / "transfer" / "all_models_test_metrics.csv"
     required[f"ood_preds_{corpus_id}"] = out / "transfer" / "target_macro_predictions.csv"
+    tuning_results = TUNING_DIRS[corpus_id] / "results_summary.csv"
+    if tuning_results.is_file():
+        required[f"results_summary_{corpus_id}"] = tuning_results
+
+if not any((path / "grid_summary.csv").is_file() for path in TUNING_DIRS.values()):
+    required["grid_summary"] = TUNING_DIR / "grid_summary.csv"
 
 missing = [k for k, p in required.items() if not p.is_file()]
 print("Artefacts :")
@@ -167,93 +227,32 @@ print("\\nTous les artefacts principaux sont présents.")
         ),
         md(
             """
-## 1 — Tableau récapitulatif (meilleurs HP)
+## 1 — Tuned baseline results
 
-`results_summary.csv` : une ligne par modèle avec params retenus, BA CV et BA OOD.
+Central tuned results with balanced accuracy only.
 """
         ),
         py(
             r"""
-grid_summary, best_payload = load_tuning_artifacts(TUNING_DIR)
-best_model = str(best_payload.get("best_model") or "")
 results_summary = pd.read_csv(TUNING_DIR / "results_summary.csv")
-
-# Ordre modèles stable
 if "model" in results_summary.columns:
-    cat = pd.Categorical(
-        results_summary["model"], categories=MODEL_ORDER, ordered=True
-    )
+    cat = pd.Categorical(results_summary["model"], categories=MODEL_ORDER, ordered=True)
     results_summary = results_summary.assign(model=cat).sort_values("model")
 
-print("Meilleur modèle global (CV) :", best_model)
-print("Score CV :", best_payload.get("best_selection_score"))
-print()
-
-# Hyperparams lisibles
-hp_path = TUNING_DIR / "best_hyperparams.json"
-if hp_path.is_file():
-    hp_payload = json.loads(hp_path.read_text(encoding="utf-8"))
-    hp_by_model = hp_payload.get("best_hyperparams_by_model") or {}
-else:
-    hp_by_model = {
-        mk: (info.get("params") or {})
-        for mk, info in (best_payload.get("best_by_model") or {}).items()
-    }
-
-hp_rows = []
-for mk in MODEL_ORDER:
-    if mk not in hp_by_model:
-        continue
-    hp_rows.append(
-        {
-            "model": mk,
-            "is_best_overall": mk == best_model,
-            "best_params": json.dumps(hp_by_model[mk], ensure_ascii=False, default=str),
-        }
-    )
-display(pd.DataFrame(hp_rows))
-
-show_cols = [
-    c
-    for c in (
-        "model",
-        "is_best_overall",
-        "cv_balanced_accuracy",
-        "cv_ba_std",
-        "cv_accuracy",
-        "ba_ood_avg",
-        "ba_ood_worst",
-        *[c for c in results_summary.columns if c.startswith("ba_ood_") and c not in ("ba_ood_avg", "ba_ood_worst")],
-        "best_params",
-    )
-    if c in results_summary.columns
-]
-display(results_summary[show_cols])
-
-# Barplot CV vs OOD avg
-plot_df = results_summary.copy()
-if {"cv_balanced_accuracy", "ba_ood_avg", "model"}.issubset(plot_df.columns):
-    melt = plot_df.melt(
-        id_vars=["model"],
-        value_vars=["cv_balanced_accuracy", "ba_ood_avg"],
-        var_name="metric",
-        value_name="score",
-    )
-    melt["metric"] = melt["metric"].map(
-        {
-            "cv_balanced_accuracy": "CV BA (BTP)",
-            "ba_ood_avg": "BA OOD avg",
-        }
-    )
-    fig, ax = plt.subplots(figsize=(8, 4))
-    sns.barplot(data=melt, x="model", y="score", hue="metric", ax=ax)
-    ax.set_ylim(0, 1)
-    ax.set_ylabel("balanced accuracy")
-    ax.set_title("Best HP per model — CV vs OOD")
-    plt.xticks(rotation=15, ha="right")
-    plt.tight_layout()
-    fig.savefig(FIG_DIR / "results_cv_vs_ood.png", dpi=150)
-    plt.show()
+display_columns = {
+    "model": "Model",
+    "cv_balanced_accuracy": "CV BA (BTP)",
+    "cv_ba_std": "CV BA std",
+    "ba_ood_metallurgie": "BA Metallurgy",
+    "ba_ood_caou": "BA Chemistry-plastics",
+    "ba_ood_nicollin": "BA Company",
+    "ba_ood_avg": "BA OOD Avg",
+    "ba_ood_worst": "BA OOD Worst",
+}
+show_cols = [c for c in display_columns if c in results_summary.columns]
+central_results = results_summary[show_cols].rename(columns=display_columns).copy()
+numeric_cols = [c for c in central_results.columns if c != "Model"]
+display(central_results.style.format("{:.3f}", subset=numeric_cols, na_rep="—"))
 """
         ),
         md("## 2 — Top combos de la grille (toutes les tentatives)"),
@@ -376,8 +375,20 @@ if not plot_cmp.empty:
         md("## 4 — Synthèse cross-domain (params tunés)"),
         py(
             r"""
-cross_path = TUNED_CV_DIR / "cross_domain_generalization.csv"
-cross_tuned = pd.read_csv(cross_path)
+cross_parts = []
+for corpus_id in TEST_CORPORA:
+    candidates = [
+        TUNED_DIRS[corpus_id] / "cross_domain_generalization.csv",
+        TUNING_DIRS[corpus_id] / "cross_domain_generalization.csv",
+    ]
+    cross_path = next((path for path in candidates if path.is_file()), None)
+    if cross_path is not None:
+        part = pd.read_csv(cross_path)
+        part.insert(0, "corpus", corpus_id)
+        cross_parts.append(part)
+cross_tuned = pd.concat(cross_parts, ignore_index=True) if cross_parts else pd.DataFrame()
+if cross_tuned.empty:
+    print("Aucune synthèse cross-domain trouvée.")
 cross_disp = cross_tuned.rename(
     columns={
         "model": "Model",
@@ -393,7 +404,7 @@ display(cross_disp[keep])
 ood_tables = []
 for corpus_id in TEST_CORPORA:
     path = (
-        supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
+        TUNED_DIRS[corpus_id]
         / "transfer"
         / "all_models_test_metrics.csv"
     )
@@ -408,12 +419,12 @@ display(ood_all[disp_cols].sort_values(["corpus", "model"]))
 rows = []
 for corpus_id in TEST_CORPORA:
     def_path = (
-        supervised_baseline_output_dir(corpus_id, anchor=TEXT_ROOT)
+        DEFAULT_DIRS[corpus_id]
         / "transfer"
         / "all_models_test_metrics.csv"
     )
     tun_path = (
-        supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
+        TUNED_DIRS[corpus_id]
         / "transfer"
         / "all_models_test_metrics.csv"
     )
@@ -462,7 +473,126 @@ else:
         ),
         md(
             """
-## 5 — Matrices de confusion — train BTP (fit final tuné)
+## 2 — Frozen embeddings t-SNE
+
+Each corpus is shown in a separate figure. Colors represent the **true
+accident-process role** (`pred_label`). All available points are projected;
+no sampling is applied.
+"""
+        ),
+        py(
+            r"""
+from matplotlib.lines import Line2D
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
+from safer_core.data_loading import load_metadata_with_embeddings
+
+TSNE_SEED = 42
+ROLE_COLORS = {
+    "A0": "#4C78A8",
+    "A1": "#F58518",
+    "B": "#54A24B",
+    "C": "#E45756",
+}
+def _load_frozen_embeddings(corpus_id: str):
+    spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT, require_files=True)
+    meta, dim_cols = load_metadata_with_embeddings(
+        spec.data_csv,
+        spec.emb_csv,
+        label_col="pred_label",
+        pred_ok_col="pred_ok",
+        group_col="accident_id",
+    )
+    role = meta["pred_label"].astype(str)
+    keep = role.isin(MACROS).to_numpy()
+    meta = meta.loc[keep].reset_index(drop=True)
+    embeddings = meta[dim_cols].to_numpy(dtype=np.float32, copy=True)
+    return meta, embeddings
+
+
+def _plot_frozen_tsne(corpus_id: str, title: str, filename: str):
+    plot_meta, plot_embeddings = _load_frozen_embeddings(corpus_id)
+    pca_components = min(50, plot_embeddings.shape[1], len(plot_embeddings) - 1)
+    reduced_embeddings = PCA(
+        n_components=pca_components,
+        random_state=TSNE_SEED,
+    ).fit_transform(plot_embeddings)
+    perplexity = min(30, max(5, (len(plot_embeddings) - 1) // 3))
+    projection = TSNE(
+        n_components=2,
+        perplexity=perplexity,
+        init="pca",
+        learning_rate="auto",
+        random_state=TSNE_SEED,
+    ).fit_transform(reduced_embeddings)
+
+    fig, ax = plt.subplots(figsize=(9, 6.5))
+    for role in MACROS:
+        mask = plot_meta["pred_label"].eq(role).to_numpy()
+        if not mask.any():
+            continue
+        ax.scatter(
+            projection[mask, 0],
+            projection[mask, 1],
+            s=7,
+            alpha=0.55,
+            c=ROLE_COLORS[role],
+            marker="o",
+            linewidths=0,
+            label=role,
+        )
+
+    role_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="white",
+            markerfacecolor=ROLE_COLORS[role],
+            markersize=8,
+            label=role,
+        )
+        for role in MACROS
+    ]
+    ax.legend(handles=role_handles, title="Accident-process role")
+    ax.set_title(title)
+    ax.set_xlabel("t-SNE 1")
+    ax.set_ylabel("t-SNE 2")
+    ax.grid(False)
+    fig.tight_layout()
+    output_path = FIG_DIR / filename
+    fig.savefig(output_path, dpi=200, bbox_inches="tight", facecolor="white")
+    print(f"Saved figure: {output_path} ({len(plot_meta):,} points, no sampling)")
+    plt.show()
+    plt.close(fig)
+
+
+_plot_frozen_tsne(
+    "btp",
+    "Frozen embeddings - Construction",
+    "tsne_frozen_construction.png",
+)
+_plot_frozen_tsne(
+    "metallurgie",
+    "Frozen embeddings - Metallurgy",
+    "tsne_frozen_metallurgie.png",
+)
+_plot_frozen_tsne(
+    "caou",
+    "Frozen embeddings - Chemistry-plastics",
+    "tsne_frozen_chimie_plastiques.png",
+)
+_plot_frozen_tsne(
+    "nicollin",
+    "Frozen embeddings - Company",
+    "tsne_frozen_company.png",
+)
+"""
+        ),
+        md(
+            """
+## 3 — Confusion matrices — train BTP
 
 Predictions : `output_test/btp/supervised_baseline_tuned/transfer/models/<model>/`
 """
@@ -489,7 +619,7 @@ def _load_source_cm(model_key: str):
             return pd.DataFrame(cm, index=MACROS, columns=MACROS), metrics_path
     return None, metrics_path
 
-print("Best model (référence) :", best_model)
+print("Train BTP confusion matrices")
 for model_key in MODEL_ORDER:
     cm_df, metrics_path = _load_source_cm(model_key)
     if cm_df is None:
@@ -503,7 +633,7 @@ for model_key in MODEL_ORDER:
     if ba is not None:
         title += f" | BA={float(ba):.3f}"
     print(f"\\n### {title}")
-    plot_fsp_confusion_heatmap(
+    plot_simple_confusion(
         cm_df,
         fig_dir=FIG_DIR,
         title=title,
@@ -514,7 +644,7 @@ for model_key in MODEL_ORDER:
         ),
         md(
             """
-## 6 — Matrices de confusion — OOD (tous modèles × corpus)
+## 4 — Confusion matrices — OOD (all models × corpora)
 
 Pour chaque corpus test : tableau de métriques + heatmap par modèle.
 """
@@ -522,7 +652,7 @@ Pour chaque corpus test : tableau de métriques + heatmap par modèle.
         py(
             r"""
 for corpus_id in TEST_CORPORA:
-    out_dir = supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
+    out_dir = TUNED_DIRS[corpus_id]
     fig_dir = out_dir / "figures_notebook"
     fig_dir.mkdir(parents=True, exist_ok=True)
     spec = resolve_test_corpus(corpus_id, anchor=TEXT_ROOT)
@@ -554,14 +684,18 @@ for corpus_id in TEST_CORPORA:
                 np.asarray(m["_confusion_matrix"]), index=MACROS, columns=MACROS
             )
         ba = m.get("balanced_accuracy", float("nan"))
-        star = " ★" if model_key == best_model else ""
+        corpus_label = {
+            "metallurgie": "Metallurgy",
+            "caou": "Chemistry-plastics",
+            "nicollin": "Company",
+        }.get(corpus_id, corpus_id)
         title = (
-            f"OOD {spec.display_name} — {model_key}{star} | BA={float(ba):.3f}"
+            f"{corpus_label} OOD — {model_key} | BA={float(ba):.3f}"
             if ba == ba
-            else f"OOD {spec.display_name} — {model_key}{star}"
+            else f"{corpus_label} OOD — {model_key}"
         )
         print(f"\\n### {title}")
-        plot_fsp_confusion_heatmap(
+        plot_simple_confusion(
             cm_df,
             fig_dir=FIG_DIR,
             title=title,
@@ -569,14 +703,15 @@ for corpus_id in TEST_CORPORA:
         )
         # Copie sous le dossier corpus
         src = FIG_DIR / f"confusion_ood_{corpus_id}_{model_key}.png"
-        if src.is_file():
+        dst = fig_dir / src.name
+        if src.is_file() and src.resolve() != dst.resolve():
             import shutil
 
-            shutil.copy(src, fig_dir / src.name)
+            shutil.copy(src, dst)
         display(cm_df)
 """
         ),
-        md("## 7 — Checklist artefacts"),
+        md("## 5 — Checklist artefacts"),
         py(
             r"""
 expected = [
@@ -593,7 +728,7 @@ for model_key in MODEL_ORDER:
         TRAIN_OUT_DIR / "transfer" / "models" / model_key / "source_macro_predictions.csv"
     )
 for corpus_id in TEST_CORPORA:
-    out_dir = supervised_baseline_tuned_output_dir(corpus_id, anchor=TEXT_ROOT)
+    out_dir = TUNED_DIRS[corpus_id]
     expected.append(out_dir / "transfer" / "all_models_test_metrics.csv")
     expected.append(out_dir / "transfer" / "target_macro_predictions.csv")
     for model_key in MODEL_ORDER:
@@ -613,7 +748,26 @@ print("Figures notebook :", FIG_DIR)
         ),
     ]
 
-    # Fix buggy display columns line in section 4 - I'll write clean version
+    removed_sections = (
+        "## 2 — Top combos",
+        "## 3 — Défaut",
+        "## 4 — Synthèse cross-domain",
+    )
+    filtered_cells = []
+    skip_section = False
+    for cell in cells:
+        source = "".join(cell.get("source", []))
+        is_heading = cell.get("cell_type") == "markdown" and source.lstrip().startswith("## ")
+        if is_heading and any(source.lstrip().startswith(prefix) for prefix in removed_sections):
+            skip_section = True
+            continue
+        if skip_section and is_heading:
+            skip_section = False
+        if not skip_section:
+            filtered_cells.append(cell)
+    cells = filtered_cells
+
+    # Build the notebook after removing non-central tuning sections.
     nb = {
         "nbformat": 4,
         "nbformat_minor": 5,

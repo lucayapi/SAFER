@@ -331,18 +331,18 @@ def test_load_supervised_datasets_target_paths_differ_by_corpus():
         "group_col": "accident_id",
         "pred_ok_col": "pred_ok",
     }
+    fixed_target = resolve_test_corpus(
+        "metallurgie", anchor=anchor, require_files=True, require_emb_csv=True
+    )
     sizes: dict[str, int] = {}
     for corpus_id in ("metallurgie", "caou"):
-        spec = resolve_test_corpus(
-            corpus_id, anchor=anchor, require_files=True, require_emb_csv=True
-        )
         cfg = {
             "corpus": corpus_id,
             "source": source,
             "target": {
                 **col_cfg,
-                "dataset_path": str(spec.data_csv.relative_to(anchor)).replace("\\", "/"),
-                "emb_csv": str(spec.emb_csv.relative_to(anchor)).replace("\\", "/"),
+                "dataset_path": str(fixed_target.data_csv.relative_to(anchor)).replace("\\", "/"),
+                "emb_csv": str(fixed_target.emb_csv.relative_to(anchor)).replace("\\", "/"),
             },
         }
         data = load_supervised_datasets(cfg, anchor=anchor)

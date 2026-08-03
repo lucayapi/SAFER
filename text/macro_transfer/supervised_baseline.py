@@ -249,14 +249,8 @@ def load_supervised_datasets(
     groups_btp = btp_meta[group_col].astype(str).to_numpy()
 
     test_spec = resolve_test_corpus(corpus, anchor=root)
-    target_data = resolve_repo_path(
-        str(target_cfg.get("dataset_path") or test_spec.data_csv_str()),
-        repo_root=root,
-    )
-    target_emb = resolve_repo_path(
-        str(target_cfg.get("emb_csv") or test_spec.emb_csv_str()),
-        repo_root=root,
-    )
+    target_data = test_spec.data_csv
+    target_emb = test_spec.emb_csv
     target_text_col = str(target_cfg.get("text_col", text_col))
     target_label_col = str(target_cfg.get("label_col", label_col))
     target_group_col = str(target_cfg.get("group_col", group_col))
