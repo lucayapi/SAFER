@@ -13,8 +13,8 @@ if str(TEXT_ROOT) not in sys.path:
 
 from contrastive_methods.architecture_tuning import (
     _apply_full_overrides,
+    _apply_scope_epoch_override,
     _build_lr_summary,
-    _run_logistic_group_cv,
     _merge_partial_summary,
     architecture_name,
     expand_grid,
@@ -41,6 +41,13 @@ def test_macro_ft_architecture_grids_have_exactly_eight_variants():
             for projector in ("yes", "no")
         }
         assert spec["logistic_grid"]["C"] == [0.01, 0.1, 1.0, 10.0]
+        assert spec["n_folds"] == 3
+        assert spec["epochs_by_encoder_scope"] == {
+            "last_1": 30,
+            "last_2": 15,
+            "last_3": 10,
+            "full": 3,
+        }
 
 
 def test_full_overrides_only_apply_to_full_encoder():
@@ -56,6 +63,22 @@ def test_full_overrides_only_apply_to_full_encoder():
     assert full["training.use_amp"] is False
     assert full["training.learning_rate"] == 2e-6
     assert "training.epochs" not in last
+
+
+def test_scope_epoch_overrides_are_architecture_specific():
+    epochs = {"last_1": 30, "last_2": 15, "last_3": 10, "full": 3}
+    assert _apply_scope_epoch_override(
+        {"model.train_last_n_layers": 1}, epochs
+    )["training.epochs"] == 30
+    assert _apply_scope_epoch_override(
+        {"model.train_last_n_layers": 2}, epochs
+    )["training.epochs"] == 15
+    assert _apply_scope_epoch_override(
+        {"model.train_last_n_layers": 3}, epochs
+    )["training.epochs"] == 10
+    assert _apply_scope_epoch_override(
+        {"model.train_last_n_layers": None}, epochs
+    )["training.epochs"] == 3
 
 
 def test_variant_selection_and_partial_summary_replacement(tmp_path):
@@ -135,39 +158,3 @@ def test_lr_overrides_reach_sklearn_classifier():
     )
     assert pipe.named_steps["clf"].C == 0.01
     assert pipe.named_steps["clf"].class_weight == "balanced"
-
-
-def test_n_folds_only_splits_precomputed_full_btp_embeddings():
-    import numpy as np
-
-    rng = np.random.RandomState(7)
-    rows = []
-    embeddings = []
-    labels = ["A0", "A1", "B", "C"]
-    for label_id, label in enumerate(labels):
-        for group_id in range(8):
-            for item_id in range(2):
-                vector = rng.randn(6) * 0.05
-                vector[label_id] += 3.0
-                embeddings.append(vector)
-                rows.append({
-                    "label_id": label_id,
-                    "pred_label": label,
-                    "accident_id": f"{label}_{group_id}",
-                    "sentence": f"{label}-{group_id}-{item_id}",
-                })
-    cfg = ContrastiveConfig(
-        method_name="supcon",
-        dataset_path=TEXT_ROOT / "dataset/data_btp.csv",
-        label_col="pred_label",
-        group_col="accident_id",
-    )
-    fold_rows = _run_logistic_group_cv(
-        cfg,
-        np.asarray(embeddings),
-        pd.DataFrame(rows),
-        [{"C": 1.0, "penalty": "l2", "solver": "lbfgs", "class_weight": "balanced"}],
-        n_folds=4,
-    )
-    assert len(fold_rows) == 4
-    assert all("lr_0_val_balanced_accuracy" in row for row in fold_rows)

@@ -3,7 +3,7 @@ method: softtriple
 output_dir: output/softtriple
 use_prompt: false
 seed: 42
-n_folds: 5
+n_folds: 3
 selection_metric: balanced_accuracy
 test_corpora: [metallurgie, caou, nicollin]
 
@@ -32,17 +32,19 @@ training:
   epochs: 30
   learning_rate: 2.0e-5
   gradient_accumulation_steps: 1
-  distance_metric: euclidean
+  distance_metric: cosine
 
 softtriple:
   centers_per_class: 5
   gamma: 0.1
   lambda: 10.0
   delta: 0.01
-  tau: 0.01
+  tau: 0.2
+  normalize_embeddings: true
+  normalize_centers: true
   center_max_similarity: 0.5
   center_min_distance: 0.3
-  center_regularization_type: diversity
+  center_regularization_type: merge_l21
   export_effective_centers: true
   effective_center_distance_threshold: 0.05
   effective_center_similarity_threshold: 0.995

@@ -225,6 +225,25 @@ def apply_full_encoder_training_overrides(
     return {**overrides, **full_encoder_training_overrides}
 
 
+def apply_encoder_scope_epoch_override(
+    overrides: Dict[str, Any],
+    base_cfg: Dict[str, Any],
+    epochs_by_encoder_scope: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Applique le nombre d'epochs correspondant au scope de l'encodeur."""
+    if not epochs_by_encoder_scope:
+        return dict(overrides)
+    merged = _merge_overrides(base_cfg, overrides)
+    train_last_n_layers = (merged.get("model") or {}).get("train_last_n_layers")
+    scope = "full" if train_last_n_layers is None else f"last_{int(train_last_n_layers)}"
+    if scope not in epochs_by_encoder_scope:
+        return dict(overrides)
+    return {
+        **overrides,
+        "training.epochs": int(epochs_by_encoder_scope[scope]),
+    }
+
+
 def _combo_id(overrides: Dict[str, Any]) -> str:
     parts = []
     for key in sorted(overrides.keys()):
@@ -420,6 +439,7 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
     save_checkpoint = bool(spec.get("save_checkpoint", False))
     save_btp_embeddings = bool(spec.get("save_btp_embeddings", False))
     full_encoder_training_overrides = dict(spec.get("full_encoder_training_overrides") or {})
+    epochs_by_encoder_scope = dict(spec.get("epochs_by_encoder_scope") or {})
 
     combos = expand_grid(grid)
     combos = filter_macro_ft_tuning_combos(combos, base_cfg)
@@ -428,6 +448,14 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
             overrides,
             base_cfg,
             full_encoder_training_overrides,
+        )
+        for overrides in combos
+    ]
+    combos = [
+        apply_encoder_scope_epoch_override(
+            overrides,
+            base_cfg,
+            epochs_by_encoder_scope,
         )
         for overrides in combos
     ]

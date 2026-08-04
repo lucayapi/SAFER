@@ -17,6 +17,7 @@ from supervised_macro_ft.tuning import (
     _combo_id,
     _merge_overrides,
     apply_full_encoder_training_overrides,
+    apply_encoder_scope_epoch_override,
     build_variants_results_summary,
     encoder_scope_label,
     expand_grid,
@@ -88,6 +89,23 @@ def test_full_encoder_training_overrides_apply_only_to_full_encoder():
         "lr_backbone": 2e-6,
     }
     assert _merge_overrides(base, partial)["training"] == base["training"]
+
+
+def test_encoder_scope_epoch_overrides_apply_to_all_scopes():
+    base = {
+        "model": {"backbone_trainable": True},
+        "training": {"epochs": 30},
+    }
+    epochs = {"last_1": 30, "last_2": 15, "last_3": 10, "full": 3}
+
+    assert _merge_overrides(
+        base,
+        apply_encoder_scope_epoch_override({"model.train_last_n_layers": 2}, base, epochs),
+    )["training"]["epochs"] == 15
+    assert _merge_overrides(
+        base,
+        apply_encoder_scope_epoch_override({"model.train_last_n_layers": None}, base, epochs),
+    )["training"]["epochs"] == 3
 
 
 def test_combo_id_readable():

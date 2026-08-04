@@ -37,6 +37,8 @@ class ContrastiveConfig:
     softtriple_lambda: float = 10.0
     softtriple_delta: float = 0.01
     softtriple_tau: float = 0.01
+    softtriple_normalize_embeddings: bool = True
+    softtriple_normalize_centers: bool = True
     center_max_similarity: float = 0.5
     center_min_distance: float = 0.3
     center_regularization_type: str = "none"
@@ -201,6 +203,12 @@ def load_contrastive_config(
         ),
         softtriple_delta=float(pick("delta", default=0.01, sources=(softtriple,))),
         softtriple_tau=float(pick("tau", default=0.01, sources=(softtriple,))),
+        softtriple_normalize_embeddings=bool(
+            pick("normalize_embeddings", default=True, sources=(softtriple,))
+        ),
+        softtriple_normalize_centers=bool(
+            pick("normalize_centers", default=True, sources=(softtriple,))
+        ),
         center_max_similarity=float(
             pick("center_max_similarity", default=0.5, sources=(softtriple,))
         ),

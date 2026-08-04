@@ -32,6 +32,10 @@ def test_load_softtriple_yaml():
     cfg = load_contrastive_config("softtriple")
     assert cfg.centers_per_class == 5
     assert cfg.softtriple_lambda == 10.0
+    assert cfg.softtriple_normalize_embeddings is True
+    assert cfg.softtriple_normalize_centers is True
+    assert cfg.center_regularization_type == "merge_l21"
+    assert cfg.softtriple_tau == 0.2
 
 
 def test_load_supcon_yaml():
@@ -39,11 +43,20 @@ def test_load_supcon_yaml():
     assert cfg.supcon_temperature == 0.07
     assert cfg.supcon_normalize_embeddings is True
     assert cfg.distance_metric == "cosine"
+    from contrastive_methods.samplers.pk_batch_sampler import resolve_balanced_pk_params
+
+    params = resolve_balanced_pk_params(
+        [0, 1, 2, 3] * 4,
+        batch_size=cfg.batch_size,
+        seed=cfg.seed,
+    )
+    assert params.classes_per_batch == 4
+    assert params.samples_per_class == 2
 
 
-def test_load_softtriple_distance_euclidean():
+def test_load_softtriple_distance_cosine():
     cfg = load_contrastive_config("softtriple")
-    assert cfg.distance_metric == "euclidean"
+    assert cfg.distance_metric == "cosine"
     assert cfg.center_min_distance == 0.3
 
 
@@ -68,7 +81,7 @@ def test_tuning_grid_batch_triplet_merges_distance():
 
 def test_tuning_grid_softtriple_merges_method_params():
     cfg = _grid_cfg("softtriple")
-    assert cfg.distance_metric == "euclidean"
+    assert cfg.distance_metric == "cosine"
     assert cfg.softtriple_gamma in (0.1, 0.2)
     assert cfg.softtriple_lambda in (5.0, 10.0)
     assert cfg.softtriple_delta == 0.01

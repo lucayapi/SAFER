@@ -1,380 +1,326 @@
-"""Génère un notebook de visualisation des résultats par méthode contrastive."""
+"""Generate separate result viewers for the three contrastive methods."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-NB = Path(__file__).resolve().parents[1] / "notebooks"
-
+REPO = Path(__file__).resolve().parents[1]
+NOTEBOOK_DIR = REPO / "notebooks"
 METHODS = (
-    ("batch_triplet", "Batch Triplet", "batch_triplet"),
-    ("softtriple", "SoftTriple", "softtriple"),
-    ("supcon", "SupCon", "supcon"),
+    ("batch_triplet", "Batch Triplet"),
+    ("supcon", "SupCon"),
+    ("softtriple", "SoftTriple"),
 )
 
 
-def _cell(code: str, cell_type: str = "code") -> dict:
-    return {
+def _cell(source: str, cell_type: str = "code", cell_id: str | None = None) -> dict:
+    cell = {
         "cell_type": cell_type,
         "metadata": {},
-        "source": [line + "\n" for line in code.strip().split("\n")],
-        **({"outputs": [], "execution_count": None} if cell_type == "code" else {}),
+        "source": [line + "\n" for line in source.strip().split("\n")],
     }
+    if cell_type == "code":
+        cell.update({"outputs": [], "execution_count": None})
+    if cell_id:
+        cell["id"] = cell_id
+    return cell
 
 
-def _nb(cells: list) -> dict:
+def _notebook(cells: list[dict]) -> dict:
     return {
         "nbformat": 4,
         "nbformat_minor": 5,
-        "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}},
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3",
+            },
+            "language_info": {"name": "python"},
+        },
         "cells": cells,
     }
 
 
-def _config_code(method_key: str, display_name: str) -> str:
-    return f'''# --- Paramètres (modifier ici) ---
-from pathlib import Path
+CONFIG_CODE = r'''from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
+import seaborn as sns
 import yaml
 from IPython.display import display
 
-ROOT = TEXT_ROOT  # défini par la cellule bootstrap
-
 from safer_core.brand_style import apply_matplotlib_brand
 
-apply_matplotlib_brand()
-plt.rcParams["figure.dpi"] = 96
-plt.rcParams["figure.autolayout"] = True
-
-METHOD_KEY = "{method_key}"
-DISPLAY_NAME = "{display_name}"
-CONFIG_PATH = ROOT / "configs/methods" / "{method_key}.yaml"
-
-cfg = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
-_data = cfg.get("data") or {{}}
-_model = cfg.get("model") or {{}}
-DATASET_CSV = ROOT / _data.get("dataset_path", cfg.get("dataset_path", "dataset/data_btp.csv"))
-DEFAULT_OUTPUT = ROOT / cfg.get("output_dir", f"output/{{METHOD_KEY}}")
-
-# Dossier de résultats à considérer (relatif à ROOT ou chemin absolu)
-# Modifier RESULTS_DIR pour pointer vers un run spécifique (standard, combo tuning, WP3, …)
-RESULTS_DIR = DEFAULT_OUTPUT
-# Exemples :
-# RESULTS_DIR = ROOT / "output/{method_key}/tuning/combos/projectionlinear_hiddim128_abc12345"
-# RESULTS_DIR = Path("/chemin/vers/mon_experience")
-
-LABEL_COL = _data.get("label_col", cfg.get("label_col", "pred_label"))
-BACKBONE = _model.get("backbone_name", cfg.get("backbone_name", "(non défini)"))
-TEST_CORPORA = list(_data.get("test_corpora") or cfg.get("test_corpora") or ["metallurgie", "caou", "nicollin"])
+ROOT = TEXT_ROOT
+METHOD_KEY = "__METHOD_KEY__"
+DISPLAY_NAME = "__DISPLAY_NAME__"
+CONFIG_PATH = ROOT / "configs" / "methods" / f"{METHOD_KEY}.yaml"
+METHOD_CONFIG = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+TEST_CORPORA = list(
+    (METHOD_CONFIG.get("data") or {}).get("test_corpora")
+    or METHOD_CONFIG.get("test_corpora")
+    or ["metallurgie", "caou", "nicollin"]
+)
+RESULTS_DIR = ROOT / "output" / METHOD_KEY / "macro_ft_tuning"
 FIGURES_DIR = RESULTS_DIR / "figures_notebook"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
-print("Méthode  :", DISPLAY_NAME)
-print("Config   :", CONFIG_PATH.relative_to(ROOT))
-print("Résultats:", RESULTS_DIR)
-print("Figures  :", FIGURES_DIR)
-print("Corpus OOD:", TEST_CORPORA)
+ROLE_COLORS = {
+    "A0": "#0072B2",
+    "A1": "#E69F00",
+    "B": "#009E73",
+    "C": "#D55E00",
+}
+CORPUS_LABELS = {
+    "btp": "Construction",
+    "metallurgie": "Metallurgy",
+    "caou": "Chemistry-plastics",
+    "nicollin": "Company",
+}
+TSNE_VARIANT_ID = None
+TSNE_CORPUS = "btp"
+TSNE_MAX_POINTS = None
+TSNE_SEED = 42
+
+apply_matplotlib_brand()
+sns.set_theme(style="whitegrid")
+plt.rcParams["figure.dpi"] = 96
+
+print("Method:", DISPLAY_NAME)
+print("Results:", RESULTS_DIR)
+print("Figures:", FIGURES_DIR)
 '''
 
+TABLE_CODE = r'''results = pd.read_csv(RESULTS_DIR / "results_summary.csv")
+if results.empty:
+    raise FileNotFoundError(f"No contrastive results found in {RESULTS_DIR}")
 
-METRICS_MD = """## 1. Métriques de classification
-
-Tableau unique : CV BTP (μ±σ), évaluation LR in-domain (BTP) et OOD (métallurgie, caou).
-"""
-
-METRICS_CODE = '''from contrastive_methods.view_metrics import (
-    build_view_classification_summary_table,
-    format_ood_summary_line,
-    validate_contrastive_results_dir,
+metric_table = pd.DataFrame()
+metric_table["Model"] = (
+    results["encoder_scope"].astype(str)
+    + " / projector "
+    + results["projector"].astype(str)
 )
-from supervised_macro_ft.notebook_viz import style_metrics_table
-
-validate_contrastive_results_dir(RESULTS_DIR)
-summary = build_view_classification_summary_table(RESULTS_DIR, test_corpora=TEST_CORPORA)
-display(style_metrics_table(summary, ("balanced_accuracy", "macro_f1", "accuracy")))
-ood_line = format_ood_summary_line(RESULTS_DIR)
-if ood_line:
-    print(ood_line)
-'''
-
-PROJECTED_BTP_MD = """## 2. Embeddings projetés — BTP (PCA / t-SNE)
-
-Couleur = macro (`pred_label`). Figures dans `figures_notebook/`.
-"""
-
-PROJECTED_BTP_CODE = '''from scgm_text.notebook_viz import plot_projected_embeddings_pca_tsne
-from safer_core.test_corpus import resolve_projected_embeddings_in_dir
-
-def save_fig(name: str) -> Path:
-    path = FIGURES_DIR / name
-    plt.tight_layout()
-    plt.savefig(path, dpi=160, bbox_inches="tight")
-    plt.show()
-    return path
-
-pair_btp = resolve_projected_embeddings_in_dir(
-    RESULTS_DIR, "btp", method=METHOD_KEY, anchor=ROOT
+metric_table["CV BA ± std (BTP)"] = results.apply(
+    lambda row: f"{float(row['cv_ba_mean']):.3f} ± {float(row['cv_ba_std']):.3f}",
+    axis=1,
 )
-if pair_btp is None:
-    print("(absent) projected_btp — relancer eval_corpus")
-else:
-    paths = plot_projected_embeddings_pca_tsne(
-        pair_btp[0],
-        pair_btp[1],
-        LABEL_COL,
-        corpus_name=f"{DISPLAY_NAME} — BTP (avant classif. LR)",
-        save_fig=save_fig,
-        figures_dir=FIGURES_DIR,
-        png_name=f"{METHOD_KEY}_btp_pca_tsne.png",
-        max_points=8000,
-        seed=42,
-        include_plotly=False,
-    )
-    if paths:
-        print(paths)
-'''
-
-PROJECTED_OOD_MD = """## 3. Embeddings projetés — corpus test OOD (PCA / t-SNE)
-
-Un graphique par corpus configuré (`test_corpora`).
-"""
-
-PROJECTED_OOD_CODE = '''from safer_core.test_corpus import resolve_projected_embeddings_in_dir, resolve_test_corpus
-
 for corpus_id in TEST_CORPORA:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    pair = resolve_projected_embeddings_in_dir(
-        RESULTS_DIR, corpus_id, method=METHOD_KEY, anchor=ROOT
+    metric_table[f"BA {CORPUS_LABELS.get(corpus_id, corpus_id)}"] = results[
+        f"ba_ood_{corpus_id}"
+    ]
+metric_table["BA OOD Avg"] = results["ba_ood_avg"]
+metric_table["BA OOD Worst"] = results["ba_ood_worst"]
+display(
+    metric_table.style.format(
+        {
+            column: "{:.3f}"
+            for column in metric_table.columns
+            if column.startswith("BA ")
+        },
+        na_rep="—",
     )
-    if pair is None:
-        print(f"(absent) projected_{corpus_id}")
-        continue
+)
 
-    def _save_fig_ood(name: str, _dir=FIGURES_DIR / f"ood_{corpus_id}") -> Path:
-        _dir.mkdir(parents=True, exist_ok=True)
-        path = _dir / name
-        plt.tight_layout()
-        plt.savefig(path, dpi=160, bbox_inches="tight")
-        plt.show()
-        return path
-
-    paths = plot_projected_embeddings_pca_tsne(
-        pair[0],
-        pair[1],
-        LABEL_COL,
-        corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (avant classif. LR)",
-        save_fig=_save_fig_ood,
-        figures_dir=FIGURES_DIR / f"ood_{corpus_id}",
-        png_name=f"{METHOD_KEY}_{corpus_id}_pca_tsne.png",
-        max_points=8000,
-        seed=42,
-        include_plotly=False,
-    )
-    if paths:
-        print(f"{corpus_id}:", paths)
+best_row = results.sort_values("ba_ood_avg", ascending=False).iloc[0]
+BEST_VARIANT_ID = str(best_row["combo_id"])
+print("Best variant selected by BA OOD average:", BEST_VARIANT_ID)
+print(
+    "Best model:",
+    f"{best_row['encoder_scope']} / projector {best_row['projector']}",
+)
 '''
 
-SOFTTRIPLE_CENTERS_MD = """## 4. Centres SoftTriple effectifs (softtriple uniquement)
+TSNE_CODE = r'''from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 
-Tableau des centres + PCA/t-SNE avec losanges `A0#0`, …
-"""
+selected_variant_id = TSNE_VARIANT_ID or BEST_VARIANT_ID
+variant_dir = RESULTS_DIR / "combos" / str(selected_variant_id)
+embedding_path = variant_dir / "embeddings" / f"projected_{TSNE_CORPUS}.npy"
+metadata_path = variant_dir / "embeddings" / f"projected_{TSNE_CORPUS}_metadata.csv"
 
-SOFTTRIPLE_CENTERS_CODE = '''if METHOD_KEY == "softtriple":
-    from scgm_text.notebook_viz import (
-        plot_embeddings_csv_pca_tsne_with_softtriple_centers,
-        resolve_softtriple_centers_csv,
-        softtriple_centers_summary_table,
-    )
-    from safer_core.test_corpus import resolve_final_embeddings_csv_in_dir, resolve_test_corpus
+if not embedding_path.is_file() or not metadata_path.is_file():
+    print("Projected embeddings missing:", embedding_path)
+else:
+    tsne_embeddings = np.load(embedding_path)
+    tsne_metadata = pd.read_csv(metadata_path)
+    if len(tsne_embeddings) != len(tsne_metadata):
+        raise ValueError("Projected embeddings and metadata are not aligned")
+    role_column = "pred_label" if "pred_label" in tsne_metadata.columns else "true_macro"
+    if role_column not in tsne_metadata.columns:
+        raise KeyError("True accident-process role column is missing")
 
-    centers_csv = resolve_softtriple_centers_csv(RESULTS_DIR)
-    if centers_csv is None:
-        print("(absent) centres SoftTriple")
-    else:
-        display(softtriple_centers_summary_table(centers_csv))
-        emb_btp = resolve_final_embeddings_csv_in_dir(
-            RESULTS_DIR, "btp", method=METHOD_KEY, anchor=ROOT
+    if TSNE_MAX_POINTS is not None and len(tsne_embeddings) > int(TSNE_MAX_POINTS):
+        rng = np.random.default_rng(TSNE_SEED)
+        selected_indices = np.sort(
+            rng.choice(len(tsne_embeddings), size=int(TSNE_MAX_POINTS), replace=False)
         )
-        if emb_btp.is_file():
-            p = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
-                emb_btp,
-                DATASET_CSV,
-                LABEL_COL,
-                results_dir=RESULTS_DIR,
-                corpus_name=f"{DISPLAY_NAME} — BTP (centres)",
-                save_fig=save_fig,
-                png_name="softtriple_btp_pca_tsne_centers.png",
-                max_points=8000,
-                seed=42,
-            )
-            if p is not None:
-                print(p)
-        for corpus_id in TEST_CORPORA:
-            spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-            emb_test = resolve_final_embeddings_csv_in_dir(
-                RESULTS_DIR, "test", corpus_id=corpus_id, method=METHOD_KEY, anchor=ROOT
-            )
-            if not emb_test.is_file():
-                print(f"(absent) final_embeddings test {corpus_id}")
-                continue
-            fig_dir = FIGURES_DIR / f"ood_{corpus_id}"
-            fig_dir.mkdir(parents=True, exist_ok=True)
+        tsne_embeddings = tsne_embeddings[selected_indices]
+        tsne_metadata = tsne_metadata.iloc[selected_indices].reset_index(drop=True)
+        points_note = f"sample of {len(tsne_metadata):,} points"
+    else:
+        points_note = f"all {len(tsne_metadata):,} points"
 
-            def _save_centers(name: str, _dir=fig_dir) -> Path:
-                path = _dir / name
-                plt.tight_layout()
-                plt.savefig(path, dpi=160, bbox_inches="tight")
-                plt.show()
-                return path
+    pca_components = min(50, tsne_embeddings.shape[1], len(tsne_embeddings) - 1)
+    tsne_input = PCA(
+        n_components=pca_components,
+        random_state=TSNE_SEED,
+    ).fit_transform(tsne_embeddings)
+    perplexity = min(30, max(5, (len(tsne_input) - 1) // 3))
+    tsne_coordinates = TSNE(
+        n_components=2,
+        perplexity=perplexity,
+        init="pca",
+        learning_rate="auto",
+        random_state=TSNE_SEED,
+    ).fit_transform(tsne_input)
 
-            p_test = plot_embeddings_csv_pca_tsne_with_softtriple_centers(
-                emb_test,
-                spec.data_csv,
-                LABEL_COL,
-                results_dir=RESULTS_DIR,
-                corpus_name=f"{DISPLAY_NAME} — {spec.display_name} (centres)",
-                save_fig=_save_centers,
-                png_name=f"softtriple_{corpus_id}_pca_tsne_centers.png",
-                max_points=8000,
-                seed=42,
-            )
-            if p_test is not None:
-                print(f"{corpus_id}:", p_test)
+    variant_row = results.loc[results["combo_id"].astype(str) == str(selected_variant_id)].iloc[0]
+    figure, axis = plt.subplots(figsize=(9, 6.5))
+    for role in ("A0", "A1", "B", "C"):
+        role_mask = tsne_metadata[role_column].astype(str).eq(role).to_numpy()
+        if not role_mask.any():
+            continue
+        axis.scatter(
+            tsne_coordinates[role_mask, 0],
+            tsne_coordinates[role_mask, 1],
+            s=7,
+            alpha=0.55,
+            color=ROLE_COLORS[role],
+            label=role,
+            linewidths=0,
+        )
+    axis.set_title(
+        f"t-SNE — {DISPLAY_NAME} — {variant_row['encoder_scope']} / "
+        f"projector {variant_row['projector']} — "
+        f"{CORPUS_LABELS.get(TSNE_CORPUS, TSNE_CORPUS)} ({points_note})"
+    )
+    axis.set_xlabel("t-SNE 1")
+    axis.set_ylabel("t-SNE 2")
+    axis.legend(title="Accident-process role")
+    axis.grid(False)
+    figure.tight_layout()
+    tsne_filename = f"tsne_{selected_variant_id}_{TSNE_CORPUS}.png"
+    figure.savefig(FIGURES_DIR / tsne_filename, dpi=200, bbox_inches="tight")
+    print("Saved:", FIGURES_DIR / tsne_filename)
+    plt.show()
+    plt.close(figure)
 '''
 
-RAW_TEST_MD = """## 5. Embeddings bruts OOD (référence Qwen)
+CONFUSION_CODE = r'''from sklearn.metrics import confusion_matrix
 
-Vecteurs encodeur avant fine-tuning contrastif — PCA / t-SNE / UMAP (PNG statiques).
-"""
 
-RAW_TEST_CODE = '''from macro_transfer.notebook_viz import plot_test_corpus_raw_embeddings
-
-for corpus_id in TEST_CORPORA:
-    spec = resolve_test_corpus(corpus_id, anchor=ROOT)
-    fig_dir = FIGURES_DIR / f"raw_{corpus_id}"
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    _raw = plot_test_corpus_raw_embeddings(
-        corpus_id,
-        fig_dir=fig_dir,
-        anchor=ROOT,
-        label_col=LABEL_COL,
-        max_points=12000,
-        seed=42,
-        prefix=f"raw_{corpus_id}",
-        show=True,
-        display_metrics=False,
-        include_plotly=False,
-        include_tsne_per_macro=False,
+def plot_simple_confusion(matrix_df, *, title: str, filename: str):
+    labels = ["A0", "A1", "B", "C"]
+    matrix = matrix_df.reindex(index=labels, columns=labels, fill_value=0)
+    figure, axis = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        matrix,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        cbar=False,
+        xticklabels=labels,
+        yticklabels=labels,
+        ax=axis,
     )
-    if _raw.missing:
-        print(f"{corpus_id} — manquant :", ", ".join(_raw.missing))
-    elif _raw.pca_tsne_path:
-        print(f"{spec.display_name} :", _raw.pca_tsne_path, _raw.umap_png_path)
-'''
+    axis.set_title(title)
+    axis.set_xlabel("Predicted accident-process role")
+    axis.set_ylabel("True accident-process role")
+    figure.tight_layout()
+    figure.savefig(FIGURES_DIR / filename, dpi=200, bbox_inches="tight")
+    plt.show()
+    plt.close(figure)
 
-BERTOPIC_MD = """## 6. Topic modeling BERTopic (intra-macro)
 
-Segmentation du corpus choisi en sous-corpus **A0 / A1 / B / C** (classe prédite par défaut).
-Embeddings = projection contrastive (`projected_*.npy`).
-Hyperparamètres : `configs/bertopic_notebook.yaml`.
-
-Sorties : `{RESULTS_DIR}/bertopic_notebook/<corpus>/` (consommées par le notebook **06** BN).
-"""
-
-BERTOPIC_CODE = '''BERTOPIC_CORPUS = "metallurgie"
-BERTOPIC_SEGMENT_MODE = "predicted"
-RESTIMATE_BERTOPIC = False
-BERTOPIC_UMAP_ENABLED = None
-BERTOPIC_MIN_TOPIC_SIZE = None
-
-from supervised_macro_ft.notebook_viz import load_saved_predictions
-from macro_transfer.notebook_bertopic import (
-    bertopic_run_dir,
-    display_notebook_bertopic_results,
-    load_notebook_bertopic_config,
-    run_notebook_bertopic,
-)
-
-cfg_full = load_notebook_bertopic_config(anchor=ROOT)
-nb_cfg = cfg_full.get("notebook") or {}
-bertopic_out = bertopic_run_dir(RESULTS_DIR, BERTOPIC_CORPUS, output_subdir=str(nb_cfg.get("output_subdir", "bertopic_notebook")))
-_assign = bertopic_out / "topics_bertopic" / "assignments.csv"
-
-preds_bertopic = load_saved_predictions(RESULTS_DIR, BERTOPIC_CORPUS)
-if preds_bertopic is not None:
-    print("Prédictions job :", RESULTS_DIR / "predictions" / f"predictions_{BERTOPIC_CORPUS}.csv")
-else:
-    print("Pas de predictions/ en cache — LR sur embeddings projetés si besoin.")
-
-if RESTIMATE_BERTOPIC or not _assign.is_file():
-    bt_cfg = dict(cfg_full)
-    if BERTOPIC_UMAP_ENABLED is not None:
-        bt_cfg.setdefault("bertopic", {}).setdefault("umap", {})["enabled"] = bool(BERTOPIC_UMAP_ENABLED)
-    if BERTOPIC_MIN_TOPIC_SIZE is not None:
-        bt_cfg.setdefault("bertopic", {})["min_topic_size"] = int(BERTOPIC_MIN_TOPIC_SIZE)
-    run_notebook_bertopic(
-        RESULTS_DIR,
-        BERTOPIC_CORPUS,
-        method_name=METHOD_KEY,
-        view_kind="contrastive",
-        segment_mode=BERTOPIC_SEGMENT_MODE or str(nb_cfg.get("segment_mode", "predicted")),
-        label_col=LABEL_COL,
-        preds=preds_bertopic,
-        bertopic_cfg=bt_cfg.get("bertopic"),
-        topics_export_cfg=bt_cfg.get("topics_export"),
-        topic_judge_cfg=bt_cfg.get("topic_judge"),
-        anchor=ROOT,
-        method_key=METHOD_KEY,
-        seed=42,
-        export_for_bn=bool(nb_cfg.get("export_for_bn", True)),
-    )
-    print("BERTopic terminé :", bertopic_out)
-else:
-    print("Cache BERTopic :", bertopic_out)
-
-display_notebook_bertopic_results(bertopic_out)
-print("→ Entrée notebook 06 BN :", bertopic_out)
+for variant_index, variant_row in results.reset_index(drop=True).iterrows():
+    variant_id = str(variant_row["combo_id"])
+    variant_dir = RESULTS_DIR / "combos" / variant_id
+    for corpus_id in ["btp", *TEST_CORPORA]:
+        prediction_path = variant_dir / "predictions" / f"predictions_{corpus_id}.csv"
+        if not prediction_path.is_file():
+            print("Missing predictions:", prediction_path)
+            continue
+        predictions = pd.read_csv(prediction_path)
+        if not {"true_macro", "pred_macro"}.issubset(predictions.columns):
+            print("Missing true_macro/pred_macro:", prediction_path)
+            continue
+        labels = ["A0", "A1", "B", "C"]
+        matrix = confusion_matrix(
+            predictions["true_macro"].astype(str),
+            predictions["pred_macro"].astype(str),
+            labels=labels,
+        )
+        corpus_label = CORPUS_LABELS.get(corpus_id, corpus_id)
+        title = (
+            f"{DISPLAY_NAME} — {variant_row['encoder_scope']} / "
+            f"projector {variant_row['projector']} — {corpus_label}"
+        )
+        plot_simple_confusion(
+            pd.DataFrame(matrix, index=labels, columns=labels),
+            title=title,
+            filename=f"confusion_{variant_index + 1:02d}_{variant_id[:32]}_{corpus_id}.png",
+        )
 '''
 
 
 def main() -> None:
     import sys
 
-    repo = Path(__file__).resolve().parents[1]
-    if str(repo) not in sys.path:
-        sys.path.insert(0, str(repo))
+    if str(REPO) not in sys.path:
+        sys.path.insert(0, str(REPO))
     from safer_core.notebook_bootstrap import NOTEBOOK_PATH_SETUP
 
-    NB.mkdir(parents=True, exist_ok=True)
-    for method_key, display_name, _config_file in METHODS:
-        nb_name = f"05_view_{method_key}_results.ipynb"
-        title_md = (
-            f"# Résultats — {display_name}\n\n"
-            f"**Lecture seule** — métriques LR + projections sur embeddings projetés "
-            f"(`projected_*.npy`).\n\n"
-            f"Modifiez `RESULTS_DIR` pour pointer vers un autre run (standard, combo tuning, etc.).\n"
+    NOTEBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    for method_key, display_name in METHODS:
+        config = (
+            CONFIG_CODE.replace("__METHOD_KEY__", method_key)
+            .replace("__DISPLAY_NAME__", display_name)
         )
         cells = [
-            _cell(title_md, "markdown"),
-            _cell(NOTEBOOK_PATH_SETUP),
-            _cell(_config_code(method_key, display_name)),
-            _cell(METRICS_MD, "markdown"),
-            _cell(METRICS_CODE),
-            _cell(PROJECTED_BTP_MD, "markdown"),
-            _cell(PROJECTED_BTP_CODE),
-            _cell(PROJECTED_OOD_MD, "markdown"),
-            _cell(PROJECTED_OOD_CODE),
+            _cell(
+                f"""# {display_name} contrastive fine-tuning results
+
+Read-only viewer for the eight encoder/projector variants.
+The table, confusion matrices and t-SNE use the same format as notebook 08.
+""",
+                "markdown",
+            ),
+            _cell(NOTEBOOK_PATH_SETUP, cell_id="bootstrap"),
+            _cell(config, cell_id="config"),
+            _cell("## 1 — Tuned contrastive results", "markdown"),
+            _cell(TABLE_CODE, cell_id="table"),
+            _cell(
+                """## 2 — t-SNE for the best variant
+
+Set `TSNE_VARIANT_ID` and `TSNE_CORPUS` in the configuration cell to change the figure.
+`TSNE_MAX_POINTS = None` keeps all available points.
+""",
+                "markdown",
+            ),
+            _cell(TSNE_CODE, cell_id="tsne"),
+            _cell(
+                """## 3 — Confusion matrices for all variants
+
+Simple confusion matrices are generated for Construction and every OOD corpus.
+""",
+                "markdown",
+            ),
+            _cell(CONFUSION_CODE, cell_id="confusion"),
+            _cell(
+                "Figures are saved under `RESULTS_DIR / figures_notebook`.",
+                "markdown",
+            ),
         ]
-        if method_key == "softtriple":
-            cells.extend([_cell(SOFTTRIPLE_CENTERS_MD, "markdown"), _cell(SOFTTRIPLE_CENTERS_CODE)])
-        cells.extend([_cell(RAW_TEST_MD, "markdown"), _cell(RAW_TEST_CODE)])
-        cells.extend([_cell(BERTOPIC_MD, "markdown"), _cell(BERTOPIC_CODE)])
-        out = NB / nb_name
-        out.write_text(json.dumps(_nb(cells), indent=1), encoding="utf-8")
-        print("Écrit", out)
+        output_path = NOTEBOOK_DIR / f"05_view_{method_key}_results.ipynb"
+        output_path.write_text(
+            json.dumps(_notebook(cells), indent=1, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print("Wrote", output_path)
 
 
 if __name__ == "__main__":

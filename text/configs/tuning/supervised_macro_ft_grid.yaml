@@ -30,6 +30,12 @@ full_encoder_training_overrides:
   training.use_amp: false
   training.lr_backbone: 2.0e-6
 
+epochs_by_encoder_scope:
+  last_1: 30
+  last_2: 15
+  last_3: 10
+  full: 3
+
 grid:
   model.backbone_trainable: [true]
   model.train_last_n_layers: [1, 2, 3, null]

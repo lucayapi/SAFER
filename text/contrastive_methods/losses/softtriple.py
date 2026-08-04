@@ -105,7 +105,10 @@ class SoftTripleLoss(nn.Module):
                 penalties.append(penalty)
         if not penalties:
             return torch.tensor(0.0, device=self.centers.device)
-        return self.tau * torch.stack(penalties).mean()
+        penalty = torch.stack(penalties).mean()
+        if self.center_regularization_type == "merge_l21":
+            penalty = penalty / (self.centers_per_class * (self.centers_per_class - 1))
+        return self.tau * penalty
 
     def forward(self, embeddings: torch.Tensor, labels: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         relaxed_sim, _ = self.compute_relaxed_class_similarity(embeddings)

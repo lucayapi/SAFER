@@ -3,7 +3,7 @@ method: batch_triplet
 output_dir: output/batch_triplet
 use_prompt: false
 seed: 42
-n_folds: 5
+n_folds: 3
 selection_metric: balanced_accuracy
 test_corpora: [metallurgie, caou, nicollin]
 
@@ -33,6 +33,9 @@ training:
   learning_rate: 2.0e-5
   gradient_accumulation_steps: 1
   distance_metric: euclidean
+
+batch_triplet:
+  loss_type: soft_margin
 
 post_eval:
   enabled: true

@@ -15,17 +15,10 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
-import numpy as np
 import pandas as pd
-import yaml
-
 from contrastive_methods.config import load_contrastive_config_from_dict, merge_config_dict
-from contrastive_methods.data import prepare_text_dataset
 from contrastive_methods.eval_corpus import run_final_classification_eval
-from contrastive_methods.hf_training_common import encode_contrastive_texts, get_device
-from contrastive_methods.kfold_train import get_contrastive_runner
-from contrastive_methods.post_eval import evaluate_classifier_on_embeddings, fit_classifier_on_embeddings
-from safer_core.kfold_eval import group_kfold_splits
+from contrastive_methods.kfold_train import get_contrastive_runner, run_kfold_loop
 from safer_core.io import ensure_dir, load_yaml, save_config_resolved
 from safer_core.paths import TEXT_ROOT
 
@@ -112,6 +105,22 @@ def _apply_full_overrides(
     return merged
 
 
+def _encoder_scope_key(overrides: Mapping[str, Any]) -> str:
+    layers = overrides.get("model.train_last_n_layers")
+    return "full" if layers is None else f"last_{int(layers)}"
+
+
+def _apply_scope_epoch_override(
+    overrides: Mapping[str, Any],
+    epochs_by_encoder_scope: Mapping[str, Any],
+) -> Dict[str, Any]:
+    merged = dict(overrides)
+    scope = _encoder_scope_key(merged)
+    if scope in epochs_by_encoder_scope:
+        merged["training.epochs"] = int(epochs_by_encoder_scope[scope])
+    return merged
+
+
 def _metric_value(metrics_dir: Path, filename: str, metric: str = "balanced_accuracy") -> float:
     path = metrics_dir / filename
     if not path.is_file():
@@ -192,41 +201,25 @@ def _build_lr_summary(
     return rows, best_index, dict(classifier_grid[best_index])
 
 
-def _run_logistic_group_cv(
+def _run_full_pipeline_group_cv(
     cfg,
-    embeddings: np.ndarray,
-    metadata: pd.DataFrame,
+    runner,
+    combo_dir: Path,
     classifier_grid: Sequence[Mapping[str, Any]],
-    n_folds: int,
+    variant: str,
 ) -> List[Dict[str, Any]]:
-    """CV groupée de la LR sur embeddings issus d'un unique encoder full BTP."""
-    labels_int = metadata["label_id"].astype(int).to_numpy()
-    labels_macro = metadata[cfg.label_col].astype(str).to_numpy()
-    groups = metadata[cfg.group_col].astype(str).to_numpy()
-    splits = group_kfold_splits(groups, n_folds, cfg.seed)
-    fold_rows: List[Dict[str, Any]] = []
-    for fold_id, (train_idx, val_idx) in enumerate(splits):
-        row: Dict[str, Any] = {
-            "fold_id": int(fold_id),
-            "n_train": int(len(train_idx)),
-            "n_val": int(len(val_idx)),
-        }
-        for lr_index, classifier_overrides in enumerate(classifier_grid):
-            pipe = fit_classifier_on_embeddings(
-                embeddings[train_idx],
-                labels_int[train_idx],
-                cfg,
-                seed=cfg.seed + int(fold_id),
-                classifier_overrides=classifier_overrides,
-            )
-            metrics = evaluate_classifier_on_embeddings(
-                pipe,
-                embeddings[val_idx],
-                labels_macro[val_idx],
-            )
-            for metric in CV_METRICS:
-                row[f"lr_{lr_index}_val_{metric}"] = float(metrics.get(metric, float("nan")))
-        fold_rows.append(row)
+    """CV honnête: nouvel encodeur contrastif entraîné dans chaque fold."""
+    def fold_dir_fn(fold_id: int) -> str:
+        return str(combo_dir / "folds" / f"fold_{fold_id}")
+
+    fold_rows, _ = run_kfold_loop(
+        cfg,
+        runner,
+        fold_dir_fn=fold_dir_fn,
+        log_prefix=f"architecture/{variant}",
+        save_tables=False,
+        post_eval_grid=[dict(params) for params in classifier_grid],
+    )
     return fold_rows
 
 
@@ -241,10 +234,15 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
     parser.add_argument("--grid-config", default=f"configs/tuning/{method_name}_macro_ft_grid.yaml")
     parser.add_argument("--max-combos", type=int, default=None)
     parser.add_argument("--skip-final-fit", action="store_true")
+    parser.add_argument(
+        "--n-folds",
+        type=int,
+        default=None,
+        help="Nombre de folds de la CV groupée (défaut: 3).",
+    )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--variants", nargs="+", default=None)
     args, _ = parser.parse_known_args(argv)
-
     spec = load_yaml(TEXT_ROOT / args.grid_config)
     method_name = str(spec.get("method_name", method_name))
     base_path = TEXT_ROOT / str(spec.get("base_config", f"configs/methods/{method_name}.yaml"))
@@ -271,9 +269,15 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
     classifier_grid = [dict(params) for params in expand_grid(spec.get("logistic_grid") or {})]
     if not classifier_grid:
         raise ValueError("logistic_grid ne peut pas être vide")
-    n_folds = int(spec.get("n_folds", 5))
+    folds_override = args.n_folds
+    if folds_override is None and os.environ.get("N_FOLDS"):
+        folds_override = int(os.environ["N_FOLDS"])
+    n_folds = int(folds_override if folds_override is not None else spec.get("n_folds", 3))
+    if n_folds < 2:
+        raise ValueError("n_folds doit être >= 2 pour la CV LR.")
     selection_metric = str(spec.get("selection_metric", "balanced_accuracy"))
     full_training_overrides = dict(spec.get("full_training_overrides") or {})
+    epochs_by_encoder_scope = dict(spec.get("epochs_by_encoder_scope") or {})
     tuning_root = TEXT_ROOT / str(spec.get("output_dir", f"output/{method_name}/macro_ft_tuning"))
     ensure_dir(tuning_root / "combos")
     runner = get_contrastive_runner(method_name)
@@ -281,9 +285,12 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
 
     for architecture in architecture_combos:
         variant = _variant_from_overrides(architecture)
-        merged_overrides = _apply_full_overrides(architecture, full_training_overrides)
         combo_id = variant
         combo_dir = tuning_root / "combos" / combo_id
+        merged_overrides = _apply_full_overrides(architecture, full_training_overrides)
+        merged_overrides = _apply_scope_epoch_override(
+            merged_overrides, epochs_by_encoder_scope
+        )
         merged = merge_config_dict(base_raw, merged_overrides)
         merged.update({"method_name": method_name, "seed": seed, "n_folds": n_folds})
         merged["output_dir"] = str(combo_dir)
@@ -293,27 +300,12 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
             merged["test_corpora"] = list(spec["test_corpora"])
         cfg = load_contrastive_config_from_dict(method_name, merged, config_path=str(args.grid_config))
 
-        print(f"[architecture/{variant}] Fine-tuning full BTP…", flush=True)
-        result = runner(cfg)
-        checkpoint = result.output_root / "checkpoints" / "best_model"
-        if not checkpoint.is_dir():
-            raise FileNotFoundError(f"Checkpoint final absent : {checkpoint}")
-
-        dataset = prepare_text_dataset(cfg)
-        btp_metadata = dataset.metadata_df
-        btp_embeddings = encode_contrastive_texts(
-            cfg,
-            btp_metadata[cfg.text_col].astype(str).tolist(),
-            checkpoint_dir=checkpoint,
-            device=get_device(),
-            batch_size=cfg.encode_batch_size,
+        print(
+            f"[architecture/{variant}] CV complète: nouvel encodeur par fold…",
+            flush=True,
         )
-        fold_rows = _run_logistic_group_cv(
-            cfg,
-            btp_embeddings,
-            btp_metadata,
-            classifier_grid,
-            n_folds,
+        fold_rows = _run_full_pipeline_group_cv(
+            cfg, runner, combo_dir, classifier_grid, variant
         )
         cv_dir = combo_dir / "cv"
         cv_dir.mkdir(parents=True, exist_ok=True)
@@ -326,6 +318,7 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         cv_summary = pd.DataFrame([{
             "model": f"{method_name}_{variant}",
             "n_folds": len(fold_rows),
+            "cv_protocol": "full_pipeline",
             "mean_balanced_accuracy": best_cv.get("mean_val_balanced_accuracy"),
             "std_balanced_accuracy": best_cv.get("std_val_balanced_accuracy"),
             "mean_accuracy": best_cv.get("mean_val_accuracy"),
@@ -336,6 +329,11 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         cv_summary.to_csv(cv_dir / "cv_summary.csv", index=False)
 
         if not args.skip_final_fit:
+            print(f"[architecture/{variant}] Fit final sur 100 % BTP…", flush=True)
+            result = runner(cfg)
+            checkpoint = result.output_root / "checkpoints" / "best_model"
+            if not checkpoint.is_dir():
+                raise FileNotFoundError(f"Checkpoint final absent : {checkpoint}")
             run_final_classification_eval(
                 cfg,
                 checkpoint,
@@ -366,6 +364,7 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
             "combo_dir": str(combo_dir),
             "cv_ba_mean": best_cv.get("mean_val_balanced_accuracy"),
             "cv_ba_std": best_cv.get("std_val_balanced_accuracy"),
+            "cv_protocol": "full_pipeline",
             "cv_accuracy_mean": best_cv.get("mean_val_accuracy"),
             "cv_macro_f1_mean": best_cv.get("mean_val_macro_f1"),
             "best_lr_C": best_lr.get("C"),

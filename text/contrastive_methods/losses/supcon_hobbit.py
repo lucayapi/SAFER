@@ -83,14 +83,18 @@ class HobbitSupConLoss(nn.Module):
             0,
         )
         mask = mask * logits_mask
+        valid_anchor = mask.sum(1) > 0
 
         exp_logits = torch.exp(logits) * logits_mask
         log_prob = logits - torch.log(exp_logits.sum(1, keepdim=True) + 1e-12)
 
         mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-12)
         loss = -(self.temperature / self.base_temperature) * mean_log_prob_pos
-        loss = loss.view(anchor_count, batch_size).mean()
-        return loss
+        loss = loss.view(anchor_count, batch_size)
+        valid_anchor = valid_anchor.view(anchor_count, batch_size)
+        if valid_anchor.any():
+            return loss[valid_anchor].mean()
+        return loss.mean()
 
 
 class SupConEmbeddingLoss(nn.Module):

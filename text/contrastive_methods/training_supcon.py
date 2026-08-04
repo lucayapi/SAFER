@@ -24,6 +24,10 @@ from contrastive_methods.hf_training_common import (
 from contrastive_methods.losses.supcon_hobbit import build_supcon_embedding_loss
 from contrastive_methods.results import TrainingResult
 from contrastive_methods.hf_training_common import get_device, resolve_autocast_dtype
+from contrastive_methods.samplers.pk_batch_sampler import (
+    build_pk_batch_sampler,
+    resolve_balanced_pk_params,
+)
 from contrastive_methods.training_log import TRAIN_LOG_COLUMNS, build_train_log_row, print_epoch_line
 from safer_core.io import save_config_resolved
 from safer_core.paths import layout_method_output
@@ -46,8 +50,20 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
     loss_module = build_supcon_embedding_loss(cfg).to(dev)
 
     cache_dir = checkpoints / "backbone_cache"
+    supcon_pk = resolve_balanced_pk_params(
+        train_df["label_id"].tolist(),
+        cfg.batch_size,
+        seed=cfg.seed,
+    )
+    pk_sampler = build_pk_batch_sampler(train_df["label_id"].tolist(), supcon_pk)
     train_loader, use_hidden_cache = build_train_loader(
-        cfg, train_df, dataset.text_col, encoder, dev, cache_dir
+        cfg,
+        train_df,
+        dataset.text_col,
+        encoder,
+        dev,
+        cache_dir,
+        batch_sampler=pk_sampler,
     )
 
     optimizer = build_optimizer(encoder, [loss_module], cfg.learning_rate)
@@ -64,6 +80,7 @@ def run_supcon(cfg: ContrastiveConfig) -> TrainingResult:
     t_train = time.perf_counter()
     for epoch in range(cfg.epochs):
         epoch_no = epoch + 1
+        pk_sampler.set_epoch(epoch)
         train_loss = run_training_epoch(
             encoder,
             loss_module,

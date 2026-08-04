@@ -96,7 +96,7 @@ def test_config_retrocompat_diversity_when_tau_positive():
     assert resolve_center_regularization_type(None, 0.0) == "none"
 
 
-def test_load_default_softtriple_yaml_uses_diversity():
+def test_load_default_softtriple_yaml_uses_merge_regularization():
     cfg = load_contrastive_config("softtriple")
-    assert cfg.center_regularization_type == "diversity"
-    assert cfg.softtriple_tau == 0.01
+    assert cfg.center_regularization_type == "merge_l21"
+    assert cfg.softtriple_tau == 0.2

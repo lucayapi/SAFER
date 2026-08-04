@@ -41,6 +41,9 @@ tune_architecture_job_run() {
   if [[ "${SKIP_FINAL_FIT:-0}" == "1" ]]; then
     extra+=(--skip-final-fit)
   fi
+  if [[ -n "${N_FOLDS:-}" ]]; then
+    extra+=(--n-folds "${N_FOLDS}")
+  fi
   if [[ -n "${SEED:-}" ]]; then
     extra+=(--seed "${SEED}")
   fi
@@ -49,6 +52,6 @@ tune_architecture_job_run() {
     extra+=(--variants "${selected_variants[@]}")
   fi
 
-  echo "[architecture-tuning] script=${script} grid=${GRID_CONFIG} VARIANTS=${VARIANTS:-all} TEST_CORPORA=${TEST_CORPORA:-${TEST_CORPUS:-config}}"
+  echo "[architecture-tuning] script=${script} grid=${GRID_CONFIG} VARIANTS=${VARIANTS:-all} TEST_CORPORA=${TEST_CORPORA:-${TEST_CORPUS:-config}} N_FOLDS=${N_FOLDS:-config}"
   python "scripts/${script}" "${extra[@]}"
 }

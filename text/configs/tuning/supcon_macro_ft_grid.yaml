@@ -2,7 +2,7 @@ method_name: supcon
 base_config: configs/methods/supcon.yaml
 output_dir: output/supcon/macro_ft_tuning
 seed: 42
-n_folds: 5
+n_folds: 3
 selection_metric: balanced_accuracy
 test_corpora: [metallurgie, caou, nicollin]
 
@@ -22,3 +22,9 @@ full_training_overrides:
   training.epochs: 3
   training.use_amp: false
   training.learning_rate: 2.0e-6
+
+epochs_by_encoder_scope:
+  last_1: 30
+  last_2: 15
+  last_3: 10
+  full: 3
