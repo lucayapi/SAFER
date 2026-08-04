@@ -14,3 +14,5 @@ class TrainingResult:
     best_train_loss: float = float("nan")
     train_wall_time_sec: float = float("nan")
     train_log_path: Optional[Path] = None
+    best_epoch: Optional[int] = None
+    epochs_ran: Optional[int] = None

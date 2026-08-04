@@ -27,6 +27,9 @@ class ContrastiveConfig:
     eval_batch_size: int = 16
     encode_batch_size: int = 16
     epochs: int = 30
+    early_stopping_patience: int = 3
+    early_stopping_inner_val_ratio: float = 0.1
+    final_epochs_from_cv: bool = True
     learning_rate: float = 2.0e-5
     val_ratio: float = 0.1
     gradient_accumulation_steps: int = 1
@@ -188,6 +191,15 @@ def load_contrastive_config(
             pick("encode_batch_size", default=16, sources=(training, raw))
         ),
         epochs=int(pick("epochs", default=30, sources=(training, raw))),
+        early_stopping_patience=int(
+            pick("early_stopping_patience", default=3, sources=(training, raw))
+        ),
+        early_stopping_inner_val_ratio=float(
+            pick("early_stopping_inner_val_ratio", default=0.1, sources=(training, raw))
+        ),
+        final_epochs_from_cv=bool(
+            pick("final_epochs_from_cv", default=True, sources=(training, raw))
+        ),
         learning_rate=float(pick("learning_rate", default=2.0e-5, sources=(training, raw))),
         val_ratio=float(pick("val_ratio", default=0.1, sources=(data, training, raw))),
         gradient_accumulation_steps=int(

@@ -8,6 +8,9 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
+import numpy as np
+from sklearn.model_selection import GroupShuffleSplit
+
 from contrastive_methods.config import (
     ContrastiveConfig,
     load_contrastive_config_from_dict,
@@ -52,6 +55,58 @@ def _fold_output_path(base: Path, fold_id: int) -> Path:
     return base / "folds" / f"fold_{fold_id}"
 
 
+def _inner_early_stopping_split(
+    dataset,
+    outer_train_idx: np.ndarray,
+    cfg: ContrastiveConfig,
+    fold_id: int,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Split only the outer training partition for early-stopping monitoring."""
+    outer_train_idx = np.asarray(outer_train_idx, dtype=np.int64)
+    groups = np.asarray(dataset.get_groups())
+    metadata = dataset.get_metadata_df()
+    if groups.ndim != 1 or groups.shape[0] <= int(outer_train_idx.max(initial=-1)):
+        return outer_train_idx, np.array([], dtype=np.int64)
+    try:
+        labels = np.asarray(metadata.iloc[outer_train_idx]["label_id"])
+    except (AttributeError, KeyError, IndexError, TypeError):
+        return outer_train_idx, np.array([], dtype=np.int64)
+    if labels.ndim != 1 or len(labels) != len(outer_train_idx):
+        return outer_train_idx, np.array([], dtype=np.int64)
+    unique_labels = set(labels.tolist())
+    if len(unique_labels) < 2 or len(outer_train_idx) < 4:
+        return outer_train_idx, np.array([], dtype=np.int64)
+
+    ratio = min(max(float(cfg.early_stopping_inner_val_ratio), 0.01), 0.5)
+    for attempt in range(20):
+        splitter = GroupShuffleSplit(
+            n_splits=1,
+            test_size=ratio,
+            random_state=int(cfg.seed) + fold_id * 100 + attempt,
+        )
+        local_train, local_val = next(
+            splitter.split(outer_train_idx, labels, groups=groups[outer_train_idx])
+        )
+        inner_train_idx = outer_train_idx[local_train]
+        inner_val_idx = outer_train_idx[local_val]
+        val_labels = set(np.asarray(metadata.iloc[inner_val_idx]["label_id"]).tolist())
+        train_labels = set(np.asarray(metadata.iloc[inner_train_idx]["label_id"]).tolist())
+        val_counts = metadata.iloc[inner_val_idx]["label_id"].value_counts()
+        if len(train_labels) >= 2 and len(val_labels) >= 2 and (val_counts >= 2).all():
+            return inner_train_idx, inner_val_idx
+    return outer_train_idx, np.array([], dtype=np.int64)
+
+
+def _safe_group_count(dataset, indices: np.ndarray) -> Optional[int]:
+    groups = np.asarray(dataset.get_groups())
+    if groups.ndim != 1 or len(indices) == 0:
+        return 0 if len(indices) == 0 else None
+    try:
+        return len(set(groups[np.asarray(indices, dtype=np.int64)].tolist()))
+    except (IndexError, TypeError):
+        return None
+
+
 def run_kfold_loop(
     cfg: ContrastiveConfig,
     runner: Callable[[ContrastiveConfig], TrainingResult],
@@ -88,6 +143,11 @@ def run_kfold_loop(
         fold_cfg.extra = dict(cfg.extra)
         fold_cfg.extra["fold_train_idx"] = train_idx
         fold_cfg.extra["fold_val_idx"] = val_idx
+        inner_train_idx, inner_val_idx = _inner_early_stopping_split(
+            dataset, train_idx, cfg, fold_id
+        )
+        fold_cfg.extra["early_stopping_train_idx"] = inner_train_idx
+        fold_cfg.extra["early_stopping_val_idx"] = inner_val_idx
 
         print(f"[{log_prefix}] fold {fold_id} → {fold_out}", flush=True)
         result = runner(fold_cfg)
@@ -96,6 +156,18 @@ def run_kfold_loop(
             "fold_id": fold_id,
             "best_train_loss": result.best_train_loss,
             "train_wall_time_sec": float(result.train_wall_time_sec),
+            "best_epoch": result.best_epoch,
+            "epochs_ran": result.epochs_ran,
+            "max_epochs": cfg.epochs,
+            "early_stopped": bool(result.epochs_ran is not None and result.epochs_ran < cfg.epochs),
+            "n_outer_train": len(train_idx),
+            "n_outer_val": len(val_idx),
+            "n_inner_train": len(inner_train_idx),
+            "n_inner_val": len(inner_val_idx),
+            "n_outer_train_groups": _safe_group_count(dataset, train_idx),
+            "n_outer_val_groups": _safe_group_count(dataset, val_idx),
+            "n_inner_train_groups": _safe_group_count(dataset, inner_train_idx),
+            "n_inner_val_groups": _safe_group_count(dataset, inner_val_idx),
         }
         ckpt = Path(fold_cfg.output_dir) / "checkpoints" / "best_model"
         if cfg.post_eval_enabled and ckpt.is_dir():

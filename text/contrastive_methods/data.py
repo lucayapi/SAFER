@@ -39,6 +39,10 @@ def split_train_val(
     dataset: TextRawDataset,
     cfg: ContrastiveConfig,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    early_train = cfg.extra.get("early_stopping_train_idx")
+    early_val = cfg.extra.get("early_stopping_val_idx")
+    if early_train is not None and early_val is not None:
+        return np.asarray(early_train, dtype=np.int64), np.asarray(early_val, dtype=np.int64)
     fold_train = cfg.extra.get("fold_train_idx")
     fold_val = cfg.extra.get("fold_val_idx")
     if fold_train is not None and fold_val is not None:

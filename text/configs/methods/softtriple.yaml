@@ -30,6 +30,9 @@ training:
   eval_batch_size: 16
   encode_batch_size: 16
   epochs: 30
+  early_stopping_patience: 3
+  early_stopping_inner_val_ratio: 0.1
+  final_epochs_from_cv: true
   learning_rate: 2.0e-5
   gradient_accumulation_steps: 1
   distance_metric: cosine

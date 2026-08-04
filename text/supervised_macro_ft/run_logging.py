@@ -140,7 +140,7 @@ def log_effective_config(
         f"selection_metric={train_cfg.get('selection_metric', 'balanced_accuracy')}",
         f"batch_size={train_cfg.get('batch_size', 32)}, lr_projector={train_cfg.get('lr_projector', 1e-3)}, "
         f"lr_head={train_cfg.get('lr_head', 1e-3)}, lr_backbone={train_cfg.get('lr_backbone', 2e-5)}",
-        f"early_stopping_patience={train_cfg.get('early_stopping_patience', 2)}",
+        f"early_stopping_patience={train_cfg.get('early_stopping_patience', 3)}",
     ]
     if n_samples is not None:
         lines.append(f"n_samples={n_samples}")

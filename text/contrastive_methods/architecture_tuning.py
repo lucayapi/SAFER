@@ -8,10 +8,12 @@ logistique sont explorés ici.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import itertools
 import json
 import math
 import os
+import statistics
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
@@ -330,12 +332,23 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
 
         if not args.skip_final_fit:
             print(f"[architecture/{variant}] Fit final sur 100 % BTP…", flush=True)
-            result = runner(cfg)
+            fold_epochs = [
+                int(row["best_epoch"])
+                for row in fold_rows
+                if row.get("best_epoch") is not None and int(row["best_epoch"]) > 0
+            ]
+            final_epochs = cfg.epochs
+            if cfg.final_epochs_from_cv and fold_epochs:
+                final_epochs = max(1, int(round(statistics.median(fold_epochs))))
+            cfg_final = dataclasses.replace(cfg, epochs=final_epochs)
+            cfg_final.extra = dict(cfg.extra)
+            cfg_final.extra["final_epochs_used"] = final_epochs
+            result = runner(cfg_final)
             checkpoint = result.output_root / "checkpoints" / "best_model"
             if not checkpoint.is_dir():
                 raise FileNotFoundError(f"Checkpoint final absent : {checkpoint}")
             run_final_classification_eval(
-                cfg,
+                cfg_final,
                 checkpoint,
                 result.output_root,
                 cv_summary=cv_summary,
@@ -346,6 +359,8 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
                     **merged,
                     "architecture_variant": variant,
                     "best_logistic_params": best_lr,
+                    "best_epoch_by_fold": fold_epochs,
+                    "final_epochs_used": final_epochs,
                     "tuning_grid_config": args.grid_config,
                 },
                 result.output_root,
@@ -371,6 +386,7 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
             "best_lr_penalty": best_lr.get("penalty"),
             "best_lr_solver": best_lr.get("solver"),
             "best_lr_class_weight": best_lr.get("class_weight"),
+            "final_epochs_used": final_epochs if not args.skip_final_fit else None,
             "ba_btp": _metric_value(metrics_dir, "metrics_classification_btp.csv"),
         }
         for corpus_id in cfg.test_corpora_list():

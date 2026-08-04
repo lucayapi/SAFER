@@ -35,9 +35,23 @@ def tiny_btp_csv(tmp_path: Path) -> Path:
     return path
 
 
+@patch(
+    "supervised_macro_ft.cv.evaluate_loader",
+    return_value={"loss": 0.5, "accuracy": 1.0, "macro_f1": 1.0, "balanced_accuracy": 1.0},
+)
 @patch("supervised_macro_ft.cv.fit_model")
-def test_cv_class_weight_keeps_train_size(mock_fit, tiny_btp_csv):
-    mock_fit.return_value = ({}, {"accuracy": 1.0}, [])
+def test_cv_class_weight_keeps_train_size(mock_fit, mock_evaluate, tiny_btp_csv):
+    mock_fit.return_value = (
+        {},
+        {
+            "epoch": 1,
+            "val_loss": 0.4,
+            "val_accuracy": 0.9,
+            "val_macro_f1": 0.9,
+            "val_balanced_accuracy": 0.9,
+        },
+        [],
+    )
 
     ds = TextRawDataset(str(tiny_btp_csv))
     hidden = np.random.randn(len(ds), 16).astype(np.float32)
@@ -67,6 +81,9 @@ def test_cv_class_weight_keeps_train_size(mock_fit, tiny_btp_csv):
     )
     assert fold_rows
     assert fold_rows[0]["n_train"] == fold_rows[0]["n_train_raw"]
+    assert fold_rows[0]["n_inner_train"] == fold_rows[0]["n_train_raw"]
+    assert fold_rows[0]["n_inner_val"] > 0
+    assert fold_rows[0]["n_outer_val"] == fold_rows[0]["n_val"]
 
 
 def test_cv_rejects_oversampling(tiny_btp_csv):

@@ -121,6 +121,30 @@ def resolve_balanced_pk_params(
     )
 
 
+def resolve_validation_pk_params(
+    labels: Sequence[int],
+    batch_size: int,
+    *,
+    seed: int = 42,
+) -> PKParams:
+    """Construit un batch P-K pour une validation pouvant manquer des classes."""
+    unique_labels = sorted(set(int(x) for x in labels))
+    if len(unique_labels) < 2:
+        raise ValueError(
+            f"Validation PK : au moins 2 labels distincts requis, obtenu {unique_labels}."
+        )
+    classes_per_batch = len(unique_labels)
+    samples_per_class = max(2, int(batch_size) // classes_per_batch)
+    return PKParams(
+        sampler="pk",
+        batch_size=classes_per_batch * samples_per_class,
+        classes_per_batch=classes_per_batch,
+        samples_per_class=samples_per_class,
+        drop_last=True,
+        seed=int(seed),
+    )
+
+
 class PKBatchSampler(SetEpochMixin, BatchSampler):
     """
     P labels distincts × K exemples par label par batch.

@@ -170,6 +170,9 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
     )
     log_rows: List[dict] = []
     best_train_loss = float("inf")
+    best_metric = float("inf")
+    best_epoch = 0
+    stale_epochs = 0
     best_dir = checkpoints / "best_model"
 
     t_train = time.perf_counter()
@@ -191,9 +194,18 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             val_loss = _run_val_epoch(encoder, loss_module, val_loader, dev)
         print_epoch_line("SoftTriple", epoch_no, cfg.epochs, train_loss, val_loss=val_loss)
         log_rows.append(build_train_log_row(epoch_no, train_loss, val_loss=val_loss))
-        if train_loss < best_train_loss:
+        best_train_loss = min(best_train_loss, train_loss)
+        monitor = val_loss if val_loss is not None else train_loss
+        if monitor < best_metric:
+            best_metric = monitor
+            best_epoch = epoch_no
+            stale_epochs = 0
             best_train_loss = train_loss
             _save_softtriple_checkpoint(encoder, loss_module, cfg, best_dir)
+        elif val_loader is not None:
+            stale_epochs += 1
+            if stale_epochs >= max(1, cfg.early_stopping_patience):
+                break
 
     train_wall_time_sec = time.perf_counter() - t_train
 
@@ -231,6 +243,8 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
             "train_rows": len(train_df),
             "val_rows": len(val_df),
             "best_train_loss": best_train_loss,
+            "best_epoch": best_epoch,
+            "epochs_ran": len(log_rows),
             "embeddings": str(emb_path),
             "center_regularization_type": cfg.center_regularization_type,
         },
@@ -242,4 +256,6 @@ def run_softtriple(cfg: ContrastiveConfig) -> TrainingResult:
         best_train_loss=best_train_loss,
         train_wall_time_sec=train_wall_time_sec,
         train_log_path=metrics_dir / "train_log.csv",
+        best_epoch=best_epoch,
+        epochs_ran=len(log_rows),
     )

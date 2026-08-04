@@ -236,9 +236,9 @@ def fit_model(
     class_weight: Optional[torch.Tensor] = None,
     run_label: str = "train",
 ) -> Tuple[SupervisedMacroModel, Dict[str, Any], List[Dict[str, Any]]]:
-    """Entraîne avec early stopping optionnel sur val macro_f1 ; retourne l'historique epoch par epoch."""
+    """Entraîne avec early stopping optionnel sur la métrique de sélection."""
     epochs = int(train_cfg.get("epochs", 30))
-    patience = int(train_cfg.get("early_stopping_patience", 2))
+    patience = int(train_cfg.get("early_stopping_patience", 3))
     selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
     criterion = nn.CrossEntropyLoss(
         weight=class_weight.to(device) if class_weight is not None else None

@@ -57,13 +57,13 @@ def test_run_kfold_loop_mock_two_folds(tmp_path):
     assert (tmp_path / "run" / "cv" / "cv_summary.csv").is_file()
 
 
-def test_methods_yaml_n_folds_is_five():
+def test_methods_yaml_n_folds_is_three():
     from contrastive_methods.config import load_contrastive_config
 
     cfg = load_contrastive_config(
         "batch_triplet",
         TEXT_ROOT / "configs/methods/batch_triplet.yaml",
     )
-    assert cfg.n_folds == 5
+    assert cfg.n_folds == 3
     assert cfg.selection_metric == "balanced_accuracy"
     assert cfg.test_corpora_list() == ["metallurgie", "caou", "nicollin"]

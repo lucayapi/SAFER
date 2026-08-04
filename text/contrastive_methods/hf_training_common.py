@@ -202,17 +202,15 @@ def build_eval_loader(
     text_col: str,
     encoder: ContrastiveEncoder,
     device: torch.device,
+    *,
+    batch_sampler=None,
 ) -> DataLoader:
     dl_kwargs = dataloader_kwargs(str(device))
     ds = TextLabelDataset(df, text_col)
     collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
-    return DataLoader(
-        ds,
-        batch_size=cfg.eval_batch_size,
-        shuffle=False,
-        collate_fn=collate,
-        **dl_kwargs,
-    )
+    if batch_sampler is not None:
+        return DataLoader(ds, batch_sampler=batch_sampler, collate_fn=collate, **dl_kwargs)
+    return DataLoader(ds, batch_size=cfg.eval_batch_size, shuffle=False, collate_fn=collate, **dl_kwargs)
 
 
 def forward_embeddings(

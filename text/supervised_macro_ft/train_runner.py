@@ -147,6 +147,14 @@ def prepare_shared_backbone_hidden(
         group_col=str(data_cfg.get("group_col", "accident_id")),
         text_col=data_cfg.get("text_col"),
     )
+    dataset_groups = np.asarray(dataset.get_groups()).astype(str)
+    data_sizes: Dict[str, Any] = {
+        "btp": {
+            "n_samples": int(len(dataset)),
+            "n_groups": int(len(np.unique(dataset_groups))),
+        },
+        "ood": {},
+    }
     hidden, _ = _prepare_backbone_hidden(
         anchor=anchor,
         out_dir=Path(cache_dir),
@@ -293,6 +301,23 @@ def run_supervised_macro_ft_training(
         logger.info("[macro_ft] Historique CV exporté : %s", cv_dir / "train_history.csv")
     log_cv_summary(cv_summary, selection_metric=selection_metric)
 
+    best_epochs = [
+        int(row["best_epoch"])
+        for row in fold_rows
+        if row.get("best_epoch") is not None and int(row["best_epoch"]) > 0
+    ]
+    final_train_cfg = dict(train_cfg)
+    if best_epochs and bool(train_cfg.get("final_epochs_from_cv", True)):
+        final_epochs = max(1, int(round(float(np.median(best_epochs)))))
+        final_train_cfg["epochs"] = final_epochs
+        logger.info(
+            "[macro_ft] Epochs finales depuis la CV : %d (folds=%s)",
+            final_epochs,
+            best_epochs,
+        )
+    else:
+        final_epochs = int(final_train_cfg.get("epochs", 30))
+
     if cv_only:
         return {
             "method_name": method_name,
@@ -302,6 +327,8 @@ def run_supervised_macro_ft_training(
             "selection_score": float(
                 cv_summary.iloc[0]["mean_balanced_accuracy"] if not cv_summary.empty else float("nan")
             ),
+            "data_sizes": data_sizes,
+            "final_epochs_used": int(final_epochs),
         }
 
     # Fit final 100 % BTP
@@ -356,11 +383,20 @@ def run_supervised_macro_ft_training(
         else:
             train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
+    data_sizes["btp"].update(
+        {
+            "n_train_final_raw": int(len(dataset)),
+            "n_train_final_effective": int(len(final_idx)) if use_oversampling else int(len(dataset)),
+            "n_validation_final": 0,
+            "n_groups_validation_final": 0,
+        }
+    )
+
     model, final_metrics, final_history = fit_model(
         model,
         train_loader,
         val_loader=None,
-        train_cfg=train_cfg,
+        train_cfg=final_train_cfg,
         device=device,
         class_weight=class_weight,
         run_label="final_fit",
@@ -386,7 +422,7 @@ def run_supervised_macro_ft_training(
             ckpt_dir,
             config={
                 **model_cfg,
-                **train_cfg,
+                **final_train_cfg,
                 "method_name": cfg.get("method_name", "supervised_macro_ft"),
             },
         )
@@ -456,6 +492,11 @@ def run_supervised_macro_ft_training(
                 group_col=str(data_cfg.get("group_col", "accident_id")),
                 text_col=data_cfg.get("text_col"),
             )
+            test_groups = np.asarray(test_ds.get_groups()).astype(str)
+            data_sizes["ood"][str(corpus_id)] = {
+                "n_samples": int(len(test_ds)),
+                "n_groups": int(len(np.unique(test_groups))),
+            }
             test_meta = test_ds.get_metadata_df()
             texts = test_meta[text_col].astype(str).tolist()
             n_test = len(texts)
@@ -596,6 +637,32 @@ def run_supervised_macro_ft_training(
         "checkpoint_dir": str(ckpt_dir) if ckpt_dir is not None else None,
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
+        "final_epochs_used": int(final_epochs),
+        "data_sizes": data_sizes,
+        "cv_fold_sizes": [
+            {
+                key: row.get(key)
+                for key in (
+                    "fold",
+                    "n_train",
+                    "n_train_raw",
+                    "n_val",
+                    "n_outer_train",
+                    "n_outer_val",
+                    "n_inner_train",
+                    "n_inner_val",
+                    "n_groups_outer_train",
+                    "n_groups_outer_val",
+                    "n_groups_inner_train",
+                    "n_groups_inner_val",
+                    "best_epoch",
+                    "max_epochs",
+                    "early_stopped",
+                )
+                if key in row
+            }
+            for row in fold_rows
+        ],
         "test_metrics_by_corpus": test_metrics_by_corpus,
         "cross_domain_summary": cross_domain_summary.to_dict(orient="records"),
         "backbone_cache_used": bool(use_hidden_cache),
