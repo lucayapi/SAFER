@@ -235,6 +235,14 @@ def run_supervised_macro_ft_training(
         group_col=str(data_cfg.get("group_col", "accident_id")),
         text_col=data_cfg.get("text_col"),
     )
+    dataset_groups = np.asarray(dataset.get_groups()).astype(str)
+    data_sizes: Dict[str, Any] = {
+        "btp": {
+            "n_samples": int(len(dataset)),
+            "n_groups": int(len(np.unique(dataset_groups))),
+        },
+        "ood": {},
+    }
 
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
