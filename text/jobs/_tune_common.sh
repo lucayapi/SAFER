@@ -51,6 +51,7 @@ tune_architecture_job_run() {
     read -r -a selected_variants <<< "${VARIANTS//,/ }"
     extra+=(--variants "${selected_variants[@]}")
   fi
+  extra+=(--refit "${REFIT:-true}")
 
   echo "[architecture-tuning] script=${script} grid=${GRID_CONFIG} VARIANTS=${VARIANTS:-all} TEST_CORPORA=${TEST_CORPORA:-${TEST_CORPUS:-config}} N_FOLDS=${N_FOLDS:-config}"
   python "scripts/${script}" "${extra[@]}"

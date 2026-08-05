@@ -1,6 +1,6 @@
 #!/bin/bash
 # SupCon : 8 architectures x 4 paramètres LR, paramètres contrastifs fixes.
-# Usage : VARIANTS="full_yes full_no" sbatch jobs/tune_supcon_macro_ft.sh
+# Usage : VARIANTS="full_yes full_no" REFIT=false sbatch jobs/tune_supcon_macro_ft.sh
 
 #SBATCH --job-name=tune_supcon_macro_ft
 #SBATCH --partition=gpu

@@ -1,6 +1,6 @@
 #!/bin/bash
 # SoftTriple : 8 architectures x 4 paramètres LR, paramètres contrastifs fixes.
-# Usage : VARIANTS="last_1_yes full_no" sbatch jobs/tune_softtriple_macro_ft.sh
+# Usage : VARIANTS="last_1_yes full_no" REFIT=false sbatch jobs/tune_softtriple_macro_ft.sh
 
 #SBATCH --job-name=tune_softtriple_macro_ft
 #SBATCH --partition=gpu

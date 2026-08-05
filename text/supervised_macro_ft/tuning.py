@@ -332,6 +332,44 @@ def _find_ood_ba(combo_dir: Path, corpus_id: str) -> float:
     return float("nan")
 
 
+def _macro_combo_complete(combo_dir: Path, test_corpora: List[str]) -> bool:
+    metrics_dir = combo_dir / "metrics"
+    required = [
+        combo_dir / "train_summary.json",
+        combo_dir / "cv" / "cv_summary.csv",
+        metrics_dir / "metrics_classification_btp.csv",
+    ]
+    required.extend(
+        metrics_dir / f"metrics_classification_test_{corpus_id}.csv"
+        for corpus_id in test_corpora
+    )
+    return all(path.is_file() for path in required)
+
+
+def _macro_row_from_artifacts(
+    combo_dir: Path,
+    overrides: Dict[str, Any],
+    test_corpora: List[str],
+) -> Optional[Dict[str, Any]]:
+    if not _macro_combo_complete(combo_dir, test_corpora):
+        return None
+    try:
+        summary = json.loads((combo_dir / "train_summary.json").read_text(encoding="utf-8"))
+        cv_rows = summary.get("cv_summary") or []
+        cv_row = dict(cv_rows[0]) if cv_rows else {}
+    except (OSError, ValueError, TypeError, IndexError):
+        return None
+    row: Dict[str, Any] = {
+        "combo_output_dir": str(combo_dir),
+        **cv_row,
+        "selection_score": float(cv_row.get("mean_balanced_accuracy", float("nan"))),
+    }
+    for corpus_id in test_corpora:
+        row[f"ba_ood_{corpus_id}"] = _find_ood_ba(combo_dir, corpus_id)
+    row.update({k.replace(".", "_"): v for k, v in overrides.items()})
+    return row
+
+
 def build_variants_results_summary(
     combo_rows: List[Dict[str, Any]],
     *,
@@ -408,6 +446,12 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help="CV seule (pas de fit final ni preds OOD) — debug uniquement",
     )
+    parser.add_argument(
+        "--refit",
+        type=lambda value: str(value).strip().lower() in {"1", "true", "yes", "y"},
+        default=True,
+        help="Force le recalcul des variantes existantes (défaut: true).",
+    )
     parser.add_argument("--seed", type=int, default=None, help="Override seed global")
     tune_args = parser.parse_args(argv)
 
@@ -459,6 +503,7 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         )
         for overrides in combos
     ]
+    all_combos = list(combos)
     selected_variant_names: set[str] = set()
     if tune_args.variants:
         selected_variant_names = normalize_tuning_variant_names(tune_args.variants)
@@ -516,7 +561,13 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         )
         t0 = time.perf_counter()
 
-        if tune_args.skip_final_fit:
+        row = None
+        if not tune_args.refit:
+            row = _macro_row_from_artifacts(combo_dir, overrides, test_corpora)
+            if row is not None:
+                log.info("[macro_ft variants] variante complète détectée : skip refit (%s)", cid)
+
+        if row is None and tune_args.skip_final_fit:
             row = _run_combo_cv(
                 base_cfg,
                 overrides,
@@ -527,7 +578,7 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
                 seed=seed,
                 selection_metric=selection_metric,
             )
-        else:
+        elif row is None:
             result = run_supervised_macro_ft_training(
                 None,
                 cfg=merged,
@@ -563,13 +614,41 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         )
 
     all_summary_rows = summary_rows
+    if not tune_args.refit:
+        known_variants = {
+            summary_row_variant_name(row)
+            for row in summary_rows
+            if summary_row_variant_name(row) is not None
+        }
+        for overrides in all_combos:
+            variant = tuning_variant_name(overrides, base_cfg)
+            if variant in known_variants:
+                continue
+            cid = _combo_id(overrides)
+            combo_dir = variants_root / "combos" / cid
+            row = _macro_row_from_artifacts(combo_dir, overrides, test_corpora)
+            if row is None:
+                continue
+            model_cfg = dict(_merge_overrides(base_cfg, overrides).get("model") or {})
+            row["combo_id"] = cid
+            row["encoder_scope"] = encoder_scope_label(model_cfg.get("train_last_n_layers"))
+            row["projector"] = projector_label(model_cfg.get("projection"))
+            row["combo_output_dir"] = str(combo_dir)
+            summary_rows.append(row)
+            known_variants.add(variant)
+        all_summary_rows = summary_rows
     grid_summary_path = variants_root / "grid_summary.csv"
-    if selected_variant_names and grid_summary_path.is_file():
+    replacement_variants = {
+        summary_row_variant_name(row)
+        for row in all_summary_rows
+        if summary_row_variant_name(row) is not None
+    }
+    if replacement_variants and grid_summary_path.is_file():
         existing_rows = pd.read_csv(grid_summary_path).to_dict(orient="records")
         all_summary_rows = merge_partial_tuning_summary_rows(
             existing_rows,
-            summary_rows,
-            selected_variant_names,
+            all_summary_rows,
+            replacement_variants,
         )
         log.info(
             "[macro_ft variants] Résumés fusionnés : %d existants conservés, %d relancés",

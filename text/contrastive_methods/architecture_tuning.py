@@ -134,6 +134,72 @@ def _metric_value(metrics_dir: Path, filename: str, metric: str = "balanced_accu
         return float("nan")
 
 
+def _contrastive_combo_complete(combo_dir: Path, test_corpora: Sequence[str]) -> bool:
+    metrics_dir = combo_dir / "metrics"
+    required = [
+        combo_dir / "best_logistic_params.json",
+        combo_dir / "cv" / "cv_per_fold.csv",
+        combo_dir / "cv" / "cv_summary.csv",
+        combo_dir / "cv" / "logistic_grid_summary.csv",
+        metrics_dir / "metrics_classification_btp.csv",
+    ]
+    required.extend(
+        metrics_dir / f"metrics_classification_test_{corpus_id}.csv"
+        for corpus_id in test_corpora
+    )
+    return all(path.is_file() for path in required)
+
+
+def _completed_contrastive_row(
+    combo_dir: Path,
+    cfg,
+    merged_overrides: Mapping[str, Any],
+    variant: str,
+) -> Optional[Dict[str, Any]]:
+    if not _contrastive_combo_complete(combo_dir, cfg.test_corpora_list()):
+        return None
+    try:
+        cv_df = pd.read_csv(combo_dir / "cv" / "cv_summary.csv")
+        best_lr = json.loads((combo_dir / "best_logistic_params.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, pd.errors.ParserError):
+        return None
+    if cv_df.empty:
+        return None
+    best_cv = cv_df.iloc[0].to_dict()
+    metrics_dir = combo_dir / "metrics"
+    row: Dict[str, Any] = {
+        "method": cfg.method_name,
+        "variant": variant,
+        "encoder_scope": _scope_label(merged_overrides.get("model.train_last_n_layers")),
+        "projector": "Yes" if merged_overrides.get("model.use_projector") else "No",
+        "train_last_n_layers": merged_overrides.get("model.train_last_n_layers"),
+        "projection": merged_overrides.get("model.projection") if merged_overrides.get("model.use_projector") else None,
+        "embedding_dim": 128 if merged_overrides.get("model.use_projector") else 1024,
+        "combo_id": variant,
+        "combo_dir": str(combo_dir),
+        "cv_ba_mean": best_cv.get("mean_balanced_accuracy"),
+        "cv_ba_std": best_cv.get("std_balanced_accuracy"),
+        "cv_protocol": "full_pipeline",
+        "cv_accuracy_mean": best_cv.get("mean_accuracy"),
+        "cv_macro_f1_mean": best_cv.get("mean_macro_f1"),
+        "best_lr_C": best_lr.get("C"),
+        "best_lr_penalty": best_lr.get("penalty"),
+        "best_lr_solver": best_lr.get("solver"),
+        "best_lr_class_weight": best_lr.get("class_weight"),
+        "final_epochs_used": cfg.epochs,
+        "ba_btp": _metric_value(metrics_dir, "metrics_classification_btp.csv"),
+    }
+    for corpus_id in cfg.test_corpora_list():
+        row[f"ba_ood_{corpus_id}"] = _metric_value(
+            metrics_dir, f"metrics_classification_test_{corpus_id}.csv"
+        )
+    ood = [
+        value for key, value in row.items()
+        if key.startswith("ba_ood_") and math.isfinite(float(value))
+    ]
+    row["ba_ood_avg"] = sum(ood) / len(ood) if ood else float("nan")
+    row["ba_ood_worst"] = min(ood) if ood else float("nan")
+    return row
 def _finite_or_none(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
         return None
@@ -244,6 +310,12 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
     )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--variants", nargs="+", default=None)
+    parser.add_argument(
+        "--refit",
+        type=lambda value: str(value).strip().lower() in {"1", "true", "yes", "y"},
+        default=True,
+        help="Force le recalcul des variantes existantes (défaut: true).",
+    )
     args, _ = parser.parse_known_args(argv)
     spec = load_yaml(TEXT_ROOT / args.grid_config)
     method_name = str(spec.get("method_name", method_name))
@@ -262,6 +334,7 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
     actual = {_variant_from_overrides(combo) for combo in architecture_combos}
     if actual != expected:
         raise ValueError(f"La grille architecture doit produire exactement 8 variantes, obtenu : {sorted(actual)}")
+    all_architecture_combos = list(architecture_combos)
     selected = parse_variants(args.variants)
     if selected is not None:
         architecture_combos = [combo for combo in architecture_combos if _variant_from_overrides(combo) in selected]
@@ -289,6 +362,23 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         variant = _variant_from_overrides(architecture)
         combo_id = variant
         combo_dir = tuning_root / "combos" / combo_id
+        if not args.refit:
+            cfg_existing_overrides = _apply_full_overrides(architecture, full_training_overrides)
+            cfg_existing_overrides = _apply_scope_epoch_override(
+                cfg_existing_overrides, epochs_by_encoder_scope
+            )
+            merged_existing = merge_config_dict(base_raw, cfg_existing_overrides)
+            merged_existing.update({"method_name": method_name, "seed": seed, "n_folds": n_folds})
+            merged_existing["output_dir"] = str(combo_dir)
+            merged_existing["final_fit_full_data"] = True
+            existing_cfg = load_contrastive_config_from_dict(method_name, merged_existing, config_path=str(args.grid_config))
+            existing_row = _completed_contrastive_row(
+                combo_dir, existing_cfg, cfg_existing_overrides, variant
+            )
+            if existing_row is not None:
+                new_rows.append(existing_row)
+                print(f"[architecture/{variant}] variante complète détectée: skip refit", flush=True)
+                continue
         merged_overrides = _apply_full_overrides(architecture, full_training_overrides)
         merged_overrides = _apply_scope_epoch_override(
             merged_overrides, epochs_by_encoder_scope
@@ -402,6 +492,29 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
         row["ba_ood_avg"] = sum(ood) / len(ood) if ood else float("nan")
         row["ba_ood_worst"] = min(ood) if ood else float("nan")
         new_rows.append(row)
+
+    if not args.refit:
+        known_variants = {_variant_key(row) for row in new_rows}
+        for architecture in all_architecture_combos:
+            variant = _variant_from_overrides(architecture)
+            if variant in known_variants:
+                continue
+            merged_overrides = _apply_full_overrides(architecture, full_training_overrides)
+            merged_overrides = _apply_scope_epoch_override(
+                merged_overrides, epochs_by_encoder_scope
+            )
+            combo_dir = tuning_root / "combos" / variant
+            merged_existing = merge_config_dict(base_raw, merged_overrides)
+            merged_existing.update({"method_name": method_name, "seed": seed, "n_folds": n_folds})
+            merged_existing["output_dir"] = str(combo_dir)
+            merged_existing["final_fit_full_data"] = True
+            existing_cfg = load_contrastive_config_from_dict(method_name, merged_existing, config_path=str(args.grid_config))
+            existing_row = _completed_contrastive_row(
+                combo_dir, existing_cfg, merged_overrides, variant
+            )
+            if existing_row is not None:
+                new_rows.append(existing_row)
+                known_variants.add(variant)
 
     summary_path = tuning_root / "grid_summary.csv"
     all_rows = _merge_partial_summary(summary_path, new_rows)
