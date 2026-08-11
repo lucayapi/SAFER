@@ -41,6 +41,10 @@ PARAMETER_KEYS = (
 )
 
 
+def _log_progress(message: str) -> None:
+    print(f"[theme-discovery] {message}", flush=True)
+
+
 @dataclass
 class PreparedData:
     units: pd.DataFrame
@@ -202,21 +206,51 @@ def resolve_n_workers(config: Mapping[str, Any]) -> int:
     return max(1, available - 1)
 
 
-def _parallel_map(function: Any, tasks: Sequence[Any], config: Mapping[str, Any]) -> list[Any]:
+def _parallel_map(
+    function: Any,
+    tasks: Sequence[Any],
+    config: Mapping[str, Any],
+    *,
+    progress_label: str | None = None,
+) -> list[Any]:
     """Execute independent clustering tasks with bounded outer parallelism."""
     if not tasks:
         return []
     workers = resolve_n_workers(config)
     if workers <= 1:
-        return [function(task) for task in tasks]
+        iterator: Iterable[Any] = (function(task) for task in tasks)
+    else:
+        iterator = None
     try:
         from joblib import Parallel, delayed
     except ImportError as error:
         raise ImportError("joblib est requis lorsque le parallélisme est activé avec plusieurs workers.") from error
     backend = str(config.get("parallel", {}).get("backend", "loky"))
-    return Parallel(n_jobs=workers, backend=backend, batch_size=1, verbose=0)(
-        delayed(function)(task) for task in tasks
-    )
+    if workers > 1:
+        iterator = Parallel(
+            n_jobs=workers,
+            backend=backend,
+            batch_size=1,
+            verbose=0,
+            return_as="generator",
+        )(
+            delayed(function)(task) for task in tasks
+        )
+    if progress_label and config.get("pareto", {}).get("show_progress", True):
+        try:
+            from tqdm.auto import tqdm
+
+            iterator = tqdm(
+                iterator,
+                total=len(tasks),
+                desc=progress_label,
+                unit="task",
+                file=sys.stdout,
+                leave=True,
+            )
+        except ImportError:
+            pass
+    return list(iterator)
 
 
 def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = None) -> dict[str, Any]:
@@ -1100,6 +1134,7 @@ def evaluate_pareto_candidates(
     if metrics_path.is_file() and not reestimate:
         cached = pd.read_csv(metrics_path)
         if {"configuration_id", "dbcv_umap"}.issubset(cached.columns):
+            _log_progress(f"[{role}] candidats: cache réutilisé ({metrics_path})")
             return cached.loc[:, ~cached.columns.str.contains("semantic", case=False)]
     clustering_input = role_embeddings
     plan = parameter_plan(
@@ -1125,7 +1160,16 @@ def evaluate_pareto_candidates(
         }
         for index, params in enumerate(plan)
     ]
-    results = _parallel_map(_evaluate_candidate_task, tasks, config)
+    _log_progress(
+        f"[{role}] candidats: démarrage de {len(tasks)} configurations "
+        f"avec {resolve_n_workers(config)} workers"
+    )
+    results = _parallel_map(
+        _evaluate_candidate_task,
+        tasks,
+        config,
+        progress_label=f"{role} candidats",
+    )
     rows: list[dict[str, Any]] = []
     for result in sorted(results, key=lambda item: int(item["index"])):
         configuration_id = str(result["configuration_id"])
@@ -1144,6 +1188,7 @@ def evaluate_pareto_candidates(
         })
     result = pd.DataFrame(rows)
     result.to_csv(metrics_path, index=False)
+    _log_progress(f"[{role}] candidats: terminé ({len(result)} configurations)")
     (pareto_dir / "candidate_metadata.json").write_text(
         json.dumps({
             "version": "pareto_candidates_parallel_v2",
@@ -1188,6 +1233,7 @@ def evaluate_resampling_stability(
     theme_path = pareto_dir / "stability_theme.csv"
     summary_path = pareto_dir / "stability_summary.csv"
     if theme_path.is_file() and summary_path.is_file() and not reestimate:
+        _log_progress(f"[{role}] resampling: cache réutilisé ({summary_path})")
         return pd.read_csv(theme_path), pd.read_csv(summary_path)
     candidate_dir = pareto_dir / "candidate_partitions"
     clustering_input = role_embeddings
@@ -1224,7 +1270,16 @@ def evaluate_resampling_stability(
                 "random_state": random_state + repetition + candidate_index,
                 "config": config,
             })
-    task_results = _parallel_map(_evaluate_stability_task, all_tasks, config)
+    _log_progress(
+        f"[{role}] resampling: démarrage de {n_repetitions} réplications "
+        f"pour {len(candidates)} configurations ({len(all_tasks)} tâches)"
+    )
+    task_results = _parallel_map(
+        _evaluate_stability_task,
+        all_tasks,
+        config,
+        progress_label=f"{role} resampling",
+    )
     all_rows = [row for task_rows in task_results for row in task_rows]
     theme_frame = pd.DataFrame(all_rows)
     if theme_frame.empty:
@@ -1245,6 +1300,10 @@ def evaluate_resampling_stability(
         summary["n_repetitions"] = n_repetitions
     theme_frame.to_csv(theme_path, index=False)
     summary.to_csv(summary_path, index=False)
+    _log_progress(
+        f"[{role}] resampling: terminé ({len(summary)} résumés, "
+        f"{len(all_tasks)} tâches)"
+    )
     (pareto_dir / "stability_metadata.json").write_text(
         json.dumps({
             "version": "resampling_stability_parallel_v2",
@@ -1281,6 +1340,7 @@ def select_pareto_partitions(
     output_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
     """Identify the D_U/S_R Pareto frontier and select its partition medoid."""
+    _log_progress(f"[{role}] Pareto: démarrage sur {len(candidates)} configurations")
     pareto_dir = output_dir / "pareto" / role
     pareto_dir.mkdir(parents=True, exist_ok=True)
     result = candidates.copy()
@@ -1319,6 +1379,17 @@ def select_pareto_partitions(
     if selected_id:
         np.save(pareto_dir / "selected_labels.npy", np.load(labels_dir / f"{selected_id}_labels.npy").astype(np.int32))
         (pareto_dir / "selected_configuration.json").write_text(json.dumps({"role": role, "configuration_id": selected_id}, indent=2), encoding="utf-8")
+    selected_row = pareto.loc[pareto["configuration_id"].eq(selected_id)]
+    selected_metrics = ""
+    if not selected_row.empty:
+        selected_metrics = (
+            f", D_U={float(selected_row.iloc[0]['dbcv_umap']):.4f}, "
+            f"S_R={float(selected_row.iloc[0]['stability']):.4f}"
+        )
+    _log_progress(
+        f"[{role}] Pareto: terminé — {len(pareto)} non-dominées, "
+        f"sélection={selected_id or 'aucune'}{selected_metrics}"
+    )
     return result, agreement, selected_id
 
 
@@ -2095,6 +2166,10 @@ def run_theme_discovery(
     if stage == "pareto" and not output_base.is_dir():
         raise FileNotFoundError(f"Existing run directory not found: {output_base}")
     output_base.mkdir(parents=True, exist_ok=True)
+    _log_progress(
+        f"START dataset={config['data'].get('dataset_id')} stage={stage} "
+        f"output={output_base} workers={resolve_n_workers(config)}"
+    )
 
     if stage != "pareto":
         (output_base / "config_resolved.yaml").write_text(
@@ -2120,6 +2195,10 @@ def run_theme_discovery(
     prepared: PreparedData | None = None
     if stage in {"all", "metrics"}:
         prepared = prepare_data(config, output_base)
+        _log_progress(
+            f"données prêtes: {len(prepared.units)} unités, "
+            f"{prepared.units['_accident_id'].nunique()} accidents"
+        )
         for role in ROLES:
             candidates = evaluate_pareto_candidates(
                 role, prepared.units, prepared.embeddings, config, output_base, reestimate=reestimate
@@ -2149,8 +2228,10 @@ def run_theme_discovery(
             stability_summaries[role] = summary
 
     if stage == "metrics":
+        _log_progress(f"DONE stage=metrics output={output_base}")
         return output_base
 
+    _log_progress("Pareto: sélection des partitions non-dominées par rôle")
     for role in ROLES:
         merged = candidate_tables[role]
         table, agreement, selected_id = select_pareto_partitions(role, merged, output_base)
@@ -2169,6 +2250,7 @@ def run_theme_discovery(
     ]
     pd.DataFrame(summary_rows).to_csv(output_base / "pareto_selection_summary.csv", index=False)
     if stage == "all" and prepared is not None and all(selections.get(role) for role in ROLES):
+        _log_progress("matérialisation: thèmes sélectionnés et dictionnaire")
         consensus_results = build_selected_consensus_results(
             prepared, config, output_base, selections, stability_themes
         )
@@ -2187,6 +2269,7 @@ def run_theme_discovery(
             }, indent=2),
             encoding="utf-8",
         )
+    _log_progress(f"DONE stage={stage} output={output_base}")
     return output_base
 
 
