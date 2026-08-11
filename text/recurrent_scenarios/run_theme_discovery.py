@@ -20,7 +20,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--dataset",
-        help="Dataset registered in config.yaml (btp, metallurgie, caou or nicollin).",
+        help="Dataset registered in config.yaml (default: caou).",
     )
     parser.add_argument(
         "--debug",

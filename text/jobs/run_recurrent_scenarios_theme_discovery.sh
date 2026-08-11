@@ -2,10 +2,9 @@
 # Parallel D_U/S_R theme discovery for the recurrent-accident analysis.
 #
 # Usage from text/:
-#   DATASET=btp REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   DATASET=metallurgie DEBUG=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   DATASET=btp STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   STAGE=pareto RUN_DIR=recurrent_scenarios/runs/audit_btp sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   STAGE=pareto RUN_DIR=recurrent_scenarios/runs/audit_caou sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
 #SBATCH --job-name=accident_themes
 #SBATCH --partition=normal
@@ -36,7 +35,7 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-DATASET="${DATASET:-btp}"
+DATASET="${DATASET:-caou}"
 CONFIG_PATH="${CONFIG_PATH:-recurrent_scenarios/config.yaml}"
 REESTIMATE="${REESTIMATE:-0}"
 DEBUG="${DEBUG:-0}"

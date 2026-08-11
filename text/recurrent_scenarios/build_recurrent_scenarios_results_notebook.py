@@ -49,7 +49,7 @@ if not (SCENARIO_DIR / "scenario_pipeline.py").is_file():
     SCENARIO_DIR = next((path for path in candidates if (path / "scenario_pipeline.py").is_file()), SCENARIO_DIR)
 
 # Set SAFER_THEME_RUN_DIR before launching Jupyter, or edit this cell.
-RUN_DIR = Path(os.environ.get("SAFER_THEME_RUN_DIR", SCENARIO_DIR / "runs" / "audit_btp"))
+RUN_DIR = Path(os.environ.get("SAFER_THEME_RUN_DIR", SCENARIO_DIR / "runs" / "audit_caou"))
 ROLES = ("A0", "A1", "B", "C")
 if not RUN_DIR.is_dir():
     raise FileNotFoundError(f"Run directory not found: {RUN_DIR}")

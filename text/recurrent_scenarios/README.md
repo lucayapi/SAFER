@@ -62,7 +62,7 @@ From `text/`, metrics can be launched independently:
 
 ```bash
 python recurrent_scenarios/run_theme_discovery.py \
-  --config recurrent_scenarios/config.yaml --dataset btp \
+  --config recurrent_scenarios/config.yaml --dataset caou \
   --stage metrics --reestimate
 ```
 
@@ -70,8 +70,8 @@ Then Pareto selection can be regenerated from the same run directory:
 
 ```bash
 python recurrent_scenarios/run_theme_discovery.py \
-  --config recurrent_scenarios/config.yaml --dataset btp \
-  --stage pareto --run-dir recurrent_scenarios/runs/audit_btp
+  --config recurrent_scenarios/config.yaml --dataset caou \
+  --stage pareto --run-dir recurrent_scenarios/runs/audit_caou
 ```
 
 The equivalent Slurm controls are `STAGE=metrics` or `STAGE=pareto` and
@@ -80,7 +80,7 @@ to change the Pareto/selection logic and regenerate results without spending
 another job on metric computation.
 
 The corpus is selected with the CLI option `--dataset` or the `DATASET` environment
-variable in the Slurm job. The registered choices are `btp`, `metallurgie`, `caou` and `nicollin`.
+variable in the Slurm job. The default registered corpus is `caou`.
 Each choice uses its corresponding annotated unit table and frozen Qwen embedding export,
 and writes to a separate `runs/audit_<dataset_id>/` directory.
 
@@ -89,20 +89,19 @@ and writes to a separate `runs/audit_<dataset_id>/` directory.
 From `text/`:
 
 ```powershell
-python recurrent_scenarios/run_theme_discovery.py --config recurrent_scenarios/config.yaml --dataset btp --reestimate
-python recurrent_scenarios/run_theme_discovery.py --config recurrent_scenarios/config.yaml --dataset metallurgie --debug
+python recurrent_scenarios/run_theme_discovery.py --config recurrent_scenarios/config.yaml --dataset caou --reestimate
 ```
 
 On Slurm, from `text/`:
 
 ```bash
-DATASET=btp REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
 # Metrics/stability only
-DATASET=btp STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
 # Pareto only, using an existing metrics run
-DATASET=btp STAGE=pareto RUN_DIR=recurrent_scenarios/runs/audit_btp \
+DATASET=caou STAGE=pareto RUN_DIR=recurrent_scenarios/runs/audit_caou \
   sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 ```
 

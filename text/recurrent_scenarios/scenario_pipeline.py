@@ -223,7 +223,7 @@ def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = No
     """Select one registered corpus without changing the source YAML file."""
     selected = json.loads(json.dumps(config))
     data_cfg = selected.setdefault("data", {})
-    chosen_id = str(dataset_id or data_cfg.get("dataset_id", "btp")).strip().lower()
+    chosen_id = str(dataset_id or data_cfg.get("dataset_id", "caou")).strip().lower()
     registry = data_cfg.get("dataset_registry", {})
     if chosen_id not in registry:
         available = ", ".join(sorted(registry))

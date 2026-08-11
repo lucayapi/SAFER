@@ -11,7 +11,7 @@ from scenario_pipeline import run_pipeline
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the recurrent accident scenario protocol.")
     parser.add_argument("--config", type=Path, default=Path(__file__).with_name("config.yaml"))
-    parser.add_argument("--dataset", help="Dataset registered in config.yaml: btp, metallurgie, caou or nicollin.")
+    parser.add_argument("--dataset", help="Dataset registered in config.yaml (default: caou).")
     parser.add_argument("--debug", action="store_true", help="Use the short repetition count from config.")
     args = parser.parse_args()
     output_dir = run_pipeline(args.config.resolve(), debug=True if args.debug else None, dataset_id=args.dataset)
