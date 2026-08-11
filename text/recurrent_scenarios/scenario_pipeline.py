@@ -1334,12 +1334,60 @@ def _pareto_mask(values: pd.DataFrame, objectives: Sequence[str]) -> pd.Series:
     return mask
 
 
+def _partition_family_ids(
+    agreement: pd.DataFrame,
+    similarity_threshold: float,
+) -> pd.Series:
+    """Assign Pareto partitions to connected robust families."""
+    configuration_ids = list(agreement.index)
+    family_ids: dict[str, str] = {}
+    family_number = 1
+    for start in configuration_ids:
+        if start in family_ids:
+            continue
+        pending = [start]
+        members: list[str] = []
+        while pending:
+            current = pending.pop()
+            if current in family_ids:
+                continue
+            family_ids[current] = f"F{family_number:02d}"
+            members.append(current)
+            neighbours = agreement.columns[
+                agreement.loc[current].fillna(0.0).to_numpy(dtype=float) >= similarity_threshold
+            ]
+            pending.extend(str(neighbour) for neighbour in neighbours if str(neighbour) not in family_ids)
+        family_number += 1
+    return pd.Series(family_ids, name="pareto_family_id")
+
+
+def _ordered_pareto_export(table: pd.DataFrame) -> pd.DataFrame:
+    """Order the complete per-role Pareto export without dropping diagnostics."""
+    preferred = [
+        "role", "configuration_id", "pareto_non_dominated", "selected_final",
+        "pareto_family_id", "pareto_family_size", "selected_family",
+        "representativeness", "dbcv_umap", "stability",
+        "n_clusters", "noise_fraction", "coverage", "median_accident_support",
+        "mean_accident_support", "min_accident_support", "max_accident_support",
+        "n_single_accident_clusters", "median_cluster_size",
+        "min_cluster_size_observed", "max_cluster_size_observed",
+        "n_units_sampled", "n_units_noise", "n_accidents_sampled",
+        "n_themes", "n_repetitions", "dbcv_n_units",
+        *PARAMETER_KEYS, "random_state",
+    ]
+    columns = [column for column in preferred if column in table.columns]
+    columns.extend(column for column in table.columns if column not in columns)
+    return table.loc[:, columns]
+
+
 def select_pareto_partitions(
     role: str,
     candidates: pd.DataFrame,
     output_dir: Path,
+    *,
+    family_similarity_threshold: float = 0.80,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
-    """Identify the D_U/S_R Pareto frontier and select its partition medoid."""
+    """Identify the D_U/S_R Pareto frontier and select a robust-family medoid."""
     _log_progress(f"[{role}] Pareto: démarrage sur {len(candidates)} configurations")
     pareto_dir = output_dir / "pareto" / role
     pareto_dir.mkdir(parents=True, exist_ok=True)
@@ -1364,21 +1412,71 @@ def select_pareto_partitions(
             agreement.loc[left_id, right_id] = score
     agreement_path = pareto_dir / "pareto_partition_agreement.csv"
     agreement.to_csv(agreement_path, index=True, index_label="configuration_id")
-    if len(pareto) == 1:
-        selected_id = str(pareto.iloc[0]["configuration_id"])
-        pareto["representativeness"] = 1.0
-    elif len(pareto) > 1:
-        pareto["representativeness"] = agreement.loc[pareto["configuration_id"], pareto["configuration_id"]].replace(np.nan, 0).sum(axis=1).to_numpy() / (len(pareto) - 1)
-        selected_id = str(pareto.sort_values(["representativeness", "stability", "dbcv_umap"], ascending=False).iloc[0]["configuration_id"])
+    if len(pareto) > 0:
+        family_series = _partition_family_ids(agreement, family_similarity_threshold)
+        pareto = pareto.merge(family_series, left_on="configuration_id", right_index=True, how="left")
+        family_sizes = pareto["pareto_family_id"].value_counts().rename("pareto_family_size")
+        pareto = pareto.merge(family_sizes, left_on="pareto_family_id", right_index=True, how="left")
+        largest_size = int(family_sizes.max())
+        largest_families = family_sizes[family_sizes.eq(largest_size)].index.tolist()
+        if len(largest_families) > 1:
+            family_quality = (
+                pareto[pareto["pareto_family_id"].isin(largest_families)]
+                .groupby("pareto_family_id")[["stability", "dbcv_umap"]]
+                .mean()
+                .sort_values(["stability", "dbcv_umap"], ascending=False)
+            )
+            selected_family = str(family_quality.index[0])
+        else:
+            selected_family = str(largest_families[0])
+        pareto["selected_family"] = pareto["pareto_family_id"].eq(selected_family)
+        selected_family_rows = pareto[pareto["selected_family"]].copy()
+        if len(selected_family_rows) == 1:
+            selected_family_rows["representativeness"] = 1.0
+            pareto.loc[selected_family_rows.index, "representativeness"] = 1.0
+        else:
+            family_ids = selected_family_rows["configuration_id"].tolist()
+            family_agreement = agreement.loc[family_ids, family_ids]
+            representativeness = (family_agreement.sum(axis=1) - 1.0) / (len(family_ids) - 1)
+            pareto["representativeness"] = np.nan
+            representativeness_frame = representativeness.rename("representativeness").reset_index()
+            representativeness_frame = representativeness_frame.rename(columns={"index": "configuration_id"})
+            pareto = pareto.drop(columns=["representativeness"])
+            pareto = pareto.merge(representativeness_frame, on="configuration_id", how="left")
+        selected_id = str(
+            pareto[pareto["selected_family"]]
+            .sort_values(["representativeness", "stability", "dbcv_umap"], ascending=False)
+            .iloc[0]["configuration_id"]
+        )
     else:
         selected_id = ""
         pareto["representativeness"] = pd.Series(dtype=float)
+        pareto["pareto_family_id"] = pd.Series(dtype=str)
+        pareto["pareto_family_size"] = pd.Series(dtype=int)
+        pareto["selected_family"] = pd.Series(dtype=bool)
     result = result.merge(pareto[["configuration_id", "representativeness"]], on="configuration_id", how="left")
+    for column in ("pareto_family_id", "pareto_family_size", "selected_family"):
+        result = result.merge(pareto[["configuration_id", column]], on="configuration_id", how="left")
+    result["selected_final"] = result["configuration_id"].eq(selected_id)
     result.to_csv(pareto_dir / "pareto_selection_table.csv", index=False)
-    pareto.to_csv(pareto_dir / "pareto_frontier.csv", index=False)
+    _ordered_pareto_export(pareto.assign(selected_final=pareto["configuration_id"].eq(selected_id))).to_csv(
+        pareto_dir / "pareto_frontier.csv", index=False
+    )
+    _ordered_pareto_export(pareto.assign(selected_final=pareto["configuration_id"].eq(selected_id))).to_csv(
+        pareto_dir / "pareto_optimal_configurations.csv", index=False
+    )
     if selected_id:
         np.save(pareto_dir / "selected_labels.npy", np.load(labels_dir / f"{selected_id}_labels.npy").astype(np.int32))
-        (pareto_dir / "selected_configuration.json").write_text(json.dumps({"role": role, "configuration_id": selected_id}, indent=2), encoding="utf-8")
+        selected_family_id = str(pareto.loc[pareto["configuration_id"].eq(selected_id), "pareto_family_id"].iloc[0])
+        (pareto_dir / "selected_configuration.json").write_text(
+            json.dumps({
+                "role": role,
+                "configuration_id": selected_id,
+                "pareto_family_id": selected_family_id,
+                "family_similarity_threshold": family_similarity_threshold,
+            }, indent=2),
+            encoding="utf-8",
+        )
     selected_row = pareto.loc[pareto["configuration_id"].eq(selected_id)]
     selected_metrics = ""
     if not selected_row.empty:
@@ -1502,8 +1600,8 @@ def write_pareto_figure(
                     subset["dbcv_umap"],
                     subset["stability"],
                     marker=marker,
-                    facecolors="none",
-                    edgecolors=dominated_color,
+                    facecolors=dominated_color,
+                    edgecolors="black",
                     alpha=0.65,
                     s=48,
                     linewidths=0.9,
@@ -1522,17 +1620,6 @@ def write_pareto_figure(
                     linewidths=0.8,
                     zorder=4,
                 )
-        if not frontier.empty:
-            axis.plot(
-                frontier["dbcv_umap"],
-                frontier["stability"],
-                color=pareto_color,
-                linewidth=1.3,
-                alpha=0.9,
-                zorder=3,
-            )
-            for _, row in frontier.iterrows():
-                axis.annotate(str(row["configuration_id"]), (row["dbcv_umap"], row["stability"]), xytext=(4, 4), textcoords="offset points", fontsize=7)
         selected = frame[
             frame.get("representativeness", pd.Series(index=frame.index)).notna()
             & frame["pareto_non_dominated"].fillna(False).astype(bool)
@@ -1551,15 +1638,6 @@ def write_pareto_figure(
                 s=230,
                 zorder=5,
             )
-            selected_row = selected.iloc[0]
-            axis.annotate(
-                f"★ {selected_row['configuration_id']}",
-                (selected_row["dbcv_umap"], selected_row["stability"]),
-                xytext=(6, -12),
-                textcoords="offset points",
-                fontsize=8,
-                fontweight="bold",
-            )
         axis.set_title(role)
         axis.set_xlabel("DBCV UMAP $D_U$")
         axis.set_ylabel("Stabilité Jaccard $S_R$")
@@ -1567,14 +1645,13 @@ def write_pareto_figure(
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], marker="o", linestyle="None", color=dominated_color, label="Leaf — dominé", markerfacecolor="none", markeredgecolor=dominated_color, markersize=7),
-        Line2D([0], [0], marker="^", linestyle="None", color=dominated_color, label="EOM — dominé", markerfacecolor="none", markeredgecolor=dominated_color, markersize=7),
-        Line2D([0], [0], marker="o", linestyle="None", color=pareto_color, label="Leaf — Pareto", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="^", linestyle="None", color=pareto_color, label="EOM — Pareto", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], color=pareto_color, linewidth=1.3, label="Front de Pareto"),
-        Line2D([0], [0], marker="*", linestyle="None", color="#d62728", label="Partition représentative", markerfacecolor="#d62728", markeredgecolor="black", markersize=11),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Leaf", markerfacecolor="none", markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="^", linestyle="None", color="black", label="EOM", markerfacecolor="none", markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Configurations dominées", markerfacecolor=dominated_color, markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Front de Pareto", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="*", linestyle="None", color="#d62728", label="Partition retenue", markerfacecolor="#d62728", markeredgecolor="black", markersize=11),
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
+    figure.legend(handles=handles, loc="upper center", ncol=5, frameon=False)
     figure.suptitle("Validation Pareto des partitions UMAP–HDBSCAN", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
@@ -2232,23 +2309,58 @@ def run_theme_discovery(
         return output_base
 
     _log_progress("Pareto: sélection des partitions non-dominées par rôle")
+    family_similarity_threshold = float(
+        config.get("pareto", {}).get("partition_family_similarity_threshold", 0.80)
+    )
     for role in ROLES:
         merged = candidate_tables[role]
-        table, agreement, selected_id = select_pareto_partitions(role, merged, output_base)
+        table, agreement, selected_id = select_pareto_partitions(
+            role,
+            merged,
+            output_base,
+            family_similarity_threshold=family_similarity_threshold,
+        )
         selection_tables[role] = table
         agreements[role] = agreement
         selections[role] = selected_id
+    pareto_frontiers = []
+    for role in ROLES:
+        table = selection_tables.get(role, pd.DataFrame())
+        if table.empty:
+            continue
+        frontier = table[table["pareto_non_dominated"].fillna(False)].copy()
+        if not frontier.empty:
+            pareto_frontiers.append(_ordered_pareto_export(frontier))
+    if pareto_frontiers:
+        pd.concat(pareto_frontiers, ignore_index=True).to_csv(
+            output_base / "pareto_frontier_all_roles.csv", index=False
+        )
     write_pareto_figure(selection_tables, output_base / "figures")
-    summary_rows = [
-        {
-            "role": role,
-            "selected_configuration": selections.get(role, ""),
-            "n_candidates": int(len(selection_tables.get(role, []))),
-            "n_pareto": int(selection_tables[role]["pareto_non_dominated"].sum()) if not selection_tables[role].empty else 0,
-        }
-        for role in ROLES
-    ]
-    pd.DataFrame(summary_rows).to_csv(output_base / "pareto_selection_summary.csv", index=False)
+    summary_rows = []
+    for role in ROLES:
+        table = selection_tables.get(role, pd.DataFrame())
+        selected_id = selections.get(role, "")
+        selected = table[table["configuration_id"].eq(selected_id)] if not table.empty else pd.DataFrame()
+        row = selected.iloc[0] if not selected.empty else pd.Series(dtype=object)
+        summary_rows.append({
+            "Role": role,
+            "Config": selected_id,
+            "DBCV": row.get("dbcv_umap", np.nan),
+            "DBCV UMAP": row.get("dbcv_umap", np.nan),
+            "Stability": row.get("stability", np.nan),
+            "K": row.get("n_clusters", np.nan),
+            "Noise": row.get("noise_fraction", np.nan),
+            "Coverage": row.get("coverage", np.nan),
+            "Median accident support": row.get("median_accident_support", np.nan),
+            "n_candidates": int(len(table)),
+            "n_pareto": int(table["pareto_non_dominated"].sum()) if not table.empty else 0,
+            "Pareto family": row.get("pareto_family_id", np.nan),
+            "Pareto family size": row.get("pareto_family_size", np.nan),
+            "Family similarity threshold": family_similarity_threshold,
+        })
+    selected_metrics = pd.DataFrame(summary_rows)
+    selected_metrics.to_csv(output_base / "pareto_selection_summary.csv", index=False)
+    _log_progress("métriques des configurations Pareto retenues:\n" + selected_metrics.to_string(index=False))
     if stage == "all" and prepared is not None and all(selections.get(role) for role in ROLES):
         _log_progress("matérialisation: thèmes sélectionnés et dictionnaire")
         consensus_results = build_selected_consensus_results(

@@ -97,7 +97,7 @@ for role in ROLES:
 
 Grey/open markers are dominated candidates, orange markers are non-dominated
 candidates, and the red star is the selected partition medoid. The horizontal
-axis is `D_U`; no semantic-space `D_S` is used in this implementation.
+axis is `D_U`, the primary DBCV metric used for Pareto selection.
         """
     ),
     code(

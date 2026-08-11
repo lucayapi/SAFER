@@ -40,14 +40,14 @@ consensus:
 # The notebook runs this preliminary screen before consensus. The complete
 # candidate grid and all non-grid clustering options live in this section.
 screening:
-  # 32 combinations: 2 neighbours x 2 dimensions x 1 min_dist x
+  # 72 combinations: 3 neighbours x 3 dimensions x 1 min_dist x
   # 2 minimum cluster sizes x 2 min_samples x 2 extraction methods.
-  max_parameter_combinations: 32
+  max_parameter_combinations: 72
   sampling_fraction: 1.0
   show_progress: true
   umap:
-    n_neighbors: [15, 30]
-    n_components: [5, 10]
+    n_neighbors: [10, 20, 40]
+    n_components: [5, 10, 15]
     min_dist: [0.0]
     metric: cosine
     low_memory: true
@@ -61,8 +61,11 @@ screening:
 
 pareto:
   random_state: 42
-  max_parameter_combinations: 32
+  max_parameter_combinations: 72
   resampling_fraction: 0.8
+  # Pareto partitions with pairwise symmetric Jaccard similarity above this
+  # value are assigned to the same robust solution family.
+  partition_family_similarity_threshold: 0.80
   # 100 grouped accident-level resamples provide a stable median S_R.
   n_resampling: 100
   debug_resampling: 10
