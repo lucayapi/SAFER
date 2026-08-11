@@ -75,7 +75,7 @@ requires recording the change and rerunning the affected downstream cells.
     ),
     code(
         """
-DATASET_ID = "btp"
+DATASET_ID = "caou"
 DISCOVERY_RUN_NAME = "theme_discovery_audit"
 RUN_DIR = SCENARIO_DIR / "runs" / DISCOVERY_RUN_NAME / DATASET_ID
 DATA_ROOT = SCENARIO_DIR.parent / "dataset"

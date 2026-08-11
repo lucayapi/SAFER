@@ -102,7 +102,7 @@ count from `config.yaml`; switch it to `False` for the planned 100-repetition an
     code(
         """
 CONFIG_PATH = SCENARIO_DIR / "config.yaml"
-DATASET_ID = "btp"  # btp, metallurgie, caou or nicollin
+DATASET_ID = "caou"
 USE_DEBUG_REPETITIONS = True
 REESTIMATE = False  # Set True to recompute screening and consensus caches.
 RUN_NAME = "notebook_audit"

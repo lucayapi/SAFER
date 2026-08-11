@@ -92,7 +92,7 @@ Keeping it `False` is the normal mode after an intermediate result has been audi
     ),
     code(
         """
-DATASET_ID = "btp"  # Registry identifier used in the existing corpus exports.
+DATASET_ID = "caou"  # Registry identifier used in the existing corpus exports.
 RUN_NAME = "theme_discovery_audit"
 REESTIMATE = False  # False = reuse saved tables; True = recompute every discovery artifact.
 RANDOM_SEED = 42  # Global seed; changing it measures stochastic UMAP sensitivity.
@@ -100,10 +100,7 @@ RANDOM_SEED = 42  # Global seed; changing it measures stochastic UMAP sensitivit
 # These paths are deliberately visible here rather than hidden in a config file.
 DATA_ROOT = SCENARIO_DIR.parent / "dataset"
 DATASET_PATHS = {
-    "btp": (DATA_ROOT / "data_btp.csv", DATA_ROOT / "Qwen3-Embedding-0.6B_btp.csv"),
-    "metallurgie": (DATA_ROOT / "data_metallurgie.csv", DATA_ROOT / "Qwen3-Embedding-0.6B_metallurgie.csv"),
     "caou": (DATA_ROOT / "data_caou.csv", DATA_ROOT / "Qwen3-Embedding-0.6B_caou.csv"),
-    "nicollin": (DATA_ROOT / "data_nicollin.csv", DATA_ROOT / "Qwen3-Embedding-0.6B_nicollin.csv"),
 }
 UNITS_PATH, EMBEDDINGS_PATH = DATASET_PATHS[DATASET_ID]
 RUN_DIR = SCENARIO_DIR / "runs" / RUN_NAME / DATASET_ID
