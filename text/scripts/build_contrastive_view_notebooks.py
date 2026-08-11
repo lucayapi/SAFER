@@ -94,9 +94,78 @@ print("Results:", RESULTS_DIR)
 print("Figures:", FIGURES_DIR)
 '''
 
-TABLE_CODE = r'''results = pd.read_csv(RESULTS_DIR / "results_summary.csv")
+TABLE_CODE = r'''def _read_ba(path):
+    if not path.is_file():
+        return float("nan")
+    frame = pd.read_csv(path)
+    if frame.empty:
+        return float("nan")
+    if "balanced_accuracy" in frame.columns:
+        return float(frame.iloc[0]["balanced_accuracy"])
+    return float("nan")
+
+
+def _metric_path(combo_dir, corpus_id):
+    metrics_dir = combo_dir / "metrics"
+    candidates = [
+        metrics_dir / ("metrics_classification_btp.csv" if corpus_id == "btp" else f"metrics_classification_test_{corpus_id}.csv"),
+        metrics_dir / ("metrics_classification_btp.csv" if corpus_id == "btp" else f"metrics_classification_{corpus_id}.csv"),
+    ]
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
+def _variant_label(config, combo_id):
+    variant = str(config.get("architecture_variant") or combo_id)
+    model = config.get("model") or {}
+    if variant in {"last_1_yes", "last_1_no", "last_2_yes", "last_2_no", "last_3_yes", "last_3_no", "full_yes", "full_no"}:
+        scope, projector = variant.rsplit("_", 1)
+        scope_label = "Full encoder" if scope == "full" else f"Last {scope.split('_')[1]} " + ("layer" if scope == "last_1" else "layers")
+        return scope_label, "Yes" if projector == "yes" else "No"
+    layers = model.get("train_last_n_layers")
+    scope_label = "Full encoder" if layers is None else f"Last {int(layers)} " + ("layer" if int(layers) == 1 else "layers")
+    return scope_label, "Yes" if model.get("use_projector", True) else "No"
+
+
+def _discover_results_from_combo_dirs():
+    rows = []
+    combos_dir = RESULTS_DIR / "combos"
+    for combo_dir in sorted(path for path in combos_dir.iterdir() if path.is_dir()) if combos_dir.is_dir() else []:
+        cv_path = combo_dir / "cv" / "cv_summary.csv"
+        if not cv_path.is_file():
+            continue
+        cv = pd.read_csv(cv_path)
+        if cv.empty:
+            continue
+        config_path = combo_dir / "configs" / "config_resolved.yaml"
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        scope_label, projector = _variant_label(config, combo_dir.name)
+        cv_row = cv.iloc[0]
+        row = {
+            "method": METHOD_KEY,
+            "variant": str(config.get("architecture_variant") or combo_dir.name),
+            "encoder_scope": scope_label,
+            "projector": projector,
+            "combo_id": combo_dir.name,
+            "combo_dir": str(combo_dir),
+            "cv_ba_mean": cv_row.get("mean_balanced_accuracy", float("nan")),
+            "cv_ba_std": cv_row.get("std_balanced_accuracy", float("nan")),
+            "cv_accuracy_mean": cv_row.get("mean_accuracy", float("nan")),
+            "cv_macro_f1_mean": cv_row.get("mean_macro_f1", float("nan")),
+        }
+        for corpus_id in ["btp", *TEST_CORPORA]:
+            row[f"ba_{'btp' if corpus_id == 'btp' else 'ood_' + corpus_id}"] = _read_ba(_metric_path(combo_dir, corpus_id))
+        ood = [row[f"ba_ood_{corpus_id}"] for corpus_id in TEST_CORPORA if pd.notna(row[f"ba_ood_{corpus_id}"])]
+        row["ba_ood_avg"] = float(np.mean(ood)) if ood else float("nan")
+        row["ba_ood_worst"] = float(np.min(ood)) if ood else float("nan")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+results = _discover_results_from_combo_dirs()
+if results.empty and (RESULTS_DIR / "results_summary.csv").is_file():
+    results = pd.read_csv(RESULTS_DIR / "results_summary.csv")
 if results.empty:
-    raise FileNotFoundError(f"No contrastive results found in {RESULTS_DIR}")
+    raise FileNotFoundError(f"No complete contrastive variant found in {RESULTS_DIR / 'combos'}")
 
 metric_table = pd.DataFrame()
 metric_table["Model"] = (

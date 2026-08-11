@@ -1,0 +1,113 @@
+data:
+  dataset_id: btp
+  units_path: ../dataset/data_btp.csv
+  embeddings_path: ../dataset/Qwen3-Embedding-0.6B_btp.csv
+  output_dir: ./runs/audit_{dataset_id}
+  accident_id_col: accident_id
+  fact_id_col: fact_id
+  text_col: sentence
+  role_col: pred_label
+  valid_col: pred_ok
+  keep_valid_only: true
+  encoder_name: Qwen/Qwen3-Embedding-0.6B
+  normalize_embeddings: true
+  dataset_registry:
+    btp:
+      units_path: ../dataset/data_btp.csv
+      embeddings_path: ../dataset/Qwen3-Embedding-0.6B_btp.csv
+    metallurgie:
+      units_path: ../dataset/data_metallurgie.csv
+      embeddings_path: ../dataset/Qwen3-Embedding-0.6B_metallurgie.csv
+    caou:
+      units_path: ../dataset/data_caou.csv
+      embeddings_path: ../dataset/Qwen3-Embedding-0.6B_caou.csv
+    nicollin:
+      units_path: ../dataset/data_nicollin.csv
+      embeddings_path: ../dataset/Qwen3-Embedding-0.6B_nicollin.csv
+
+# Outer process parallelism. With ``auto``, workers are exactly
+# max(1, allocated cores - 1); on Slurm the allocation is SLURM_CPUS_PER_TASK.
+# UMAP itself remains single-threaded to avoid nested oversubscription.
+parallel:
+  enabled: true
+  n_workers: auto
+  backend: loky
+
+consensus:
+  random_state: 42
+  sampling_fraction: 0.8
+  n_repetitions: 50
+  debug_repetitions: 10
+  show_progress: true
+  consensus_knn: 50
+  consensus_edge_threshold: 0.6
+  ignore_noise_pairs: true
+  min_topic_accident_support: 20
+  max_topics_per_role: 6
+  max_dense_units: 6000
+
+# The notebook runs this preliminary screen before consensus. The complete
+# candidate grid and all non-grid clustering options live in this section.
+screening:
+  max_parameter_combinations: 50
+  sampling_fraction: 1.0
+  show_progress: true
+  umap:
+    n_neighbors: [10, 20, 40]
+    n_components: [5, 10, 15]
+    min_dist: [0.0, 0.05, 0.1]
+    metric: cosine
+    low_memory: true
+    n_jobs: 1
+  hdbscan:
+    min_cluster_size: [20, 50, 100]
+    min_samples: [null, 5, 10]
+    cluster_selection_method: [eom, leaf]
+    metric: euclidean
+    prediction_data: true
+
+pareto:
+  random_state: 42
+  max_parameter_combinations: 50
+  resampling_fraction: 0.8
+  n_resampling: 50
+  debug_resampling: 10
+  dbcv_sample_size: null
+  show_progress: true
+
+topics:
+  top_words: 12
+  top_sentences: 5
+  n_gram_range: [1, 2]
+  min_topic_frequency: 1
+  idf_smoothing: 1.0
+  stopwords_file: stop_metier.txt
+  additional_stopwords: []
+  stopwords: [le, la, les, un, une, des, de, du, et, en, dans, sur, au, aux, que, qui, est, a, avec, pour, par, ce, cette, son, sa, ses, il, elle, ils, elles]
+
+figures:
+  coassociation_plot_max_units: 250
+  coassociation_roles: [A0, A1, B, C]
+
+descriptive:
+  bootstrap_repetitions: 1000
+  cooccurrence_min_support: 5
+
+bayesian_networks:
+  n_folds: 5
+  max_indegree: 3
+  equivalent_sample_size: 5
+  latent_states: [2, 3, 4]
+  latent_max_iter: 100
+  latent_tolerance: 0.0001
+  bootstrap_repetitions: 100
+  bootstrap_arc_threshold: 0.75
+  include_a0_to_b_direct: true
+  ensure_macro_chain_backbone: false
+  top_scenarios: 30
+  min_scenario_support: 3
+
+runtime:
+  use_debug_repetitions: false
+  overwrite: false
+  save_intermediate_assignments: true

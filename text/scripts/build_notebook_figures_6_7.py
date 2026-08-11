@@ -39,9 +39,9 @@ TITLE_MD = """# Article figures 6 and 7 — transfer performance
 This notebook reproduces the two figures describing the effect of encoder-update depth,
 projector inclusion and learning strategy on cross-corpus balanced accuracy.
 
-The values below are the results supplied for the article tables. Edit the data cells if
-the final training campaign produces updated values. Figures are exported as both PNG
-and PDF under `output/article_figures_6_7/figures/`.
+The figures load the latest available metrics directly from each method's variant
+directories. They do not depend exclusively on global summary CSV files. Figures are
+exported as both PNG and PDF under `output/article_figures_6_7/figures/`.
 
 The y-axes are intentionally truncated to make differences visible. The limits are
 reported in each figure caption and should be retained in the article caption.
@@ -51,8 +51,10 @@ reported in each figure caption and should be retained in the article caption.
 PARAMETERS_CODE = """from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
+import yaml
 from IPython.display import display
 
 ROOT = TEXT_ROOT
@@ -76,13 +78,27 @@ PROJECTOR_COLORS = {
     "With projector": "#0072B2",
 }
 METHOD_ORDER = ["Cross-entropy", "Batch-hard Triplet", "Supervised contrastive", "SoftTriple"]
+METHOD_DISPLAY_NAMES = {
+    "Frozen logistic regression": "Frozen embeddings + LR",
+    "Cross-entropy": "Cross-entropy fine-tuning",
+    "Batch-hard Triplet": "Batch-hard Triplet",
+    "Supervised contrastive": "Supervised contrastive",
+    "SoftTriple": "SoftTriple",
+}
 METHOD_COLORS = {
-    "Frozen logistic regression": "#7F7F7F",
-    "Cross-entropy": "#D55E00",
+    "Frozen embeddings + LR": "#7F7F7F",
+    "Cross-entropy fine-tuning": "#D55E00",
     "Batch-hard Triplet": "#0072B2",
     "Supervised contrastive": "#009E73",
     "SoftTriple": "#CC79A7",
 }
+METHOD_RESULTS_DIRS = {
+    "Cross-entropy": ROOT / "output" / "supervised_macro_ft" / "variants",
+    "Batch-hard Triplet": ROOT / "output" / "batch_triplet" / "macro_ft_tuning",
+    "Supervised contrastive": ROOT / "output" / "supcon" / "macro_ft_tuning",
+    "SoftTriple": ROOT / "output" / "softtriple" / "macro_ft_tuning",
+}
+TARGET_CORPORA = ["metallurgie", "caou", "nicollin"]
 """
 
 
@@ -125,6 +141,95 @@ fig6_df = pd.DataFrame(FIG6_ROWS)
 fig6_df["depth"] = pd.Categorical(fig6_df["depth"], categories=DEPTH_ORDER, ordered=True)
 fig6_df["method"] = pd.Categorical(fig6_df["method"], categories=METHOD_ORDER, ordered=True)
 fig6_df = fig6_df.sort_values(["method", "depth", "projector"])
+
+
+def _read_metric_csv(path):
+    if not path.is_file():
+        return float("nan")
+    frame = pd.read_csv(path)
+    if frame.empty or "balanced_accuracy" not in frame.columns:
+        return float("nan")
+    return float(frame.iloc[0]["balanced_accuracy"])
+
+
+def _variant_labels(config, combo_id):
+    variant = str(config.get("architecture_variant") or combo_id)
+    if variant in {"last_1_yes", "last_1_no", "last_2_yes", "last_2_no", "last_3_yes", "last_3_no", "full_yes", "full_no"}:
+        scope, projector = variant.rsplit("_", 1)
+        depth = "Full encoder" if scope == "full" else f"Last {scope.split('_')[1]} " + ("layer" if scope == "last_1" else "layers")
+        return depth, "With projector" if projector == "yes" else "Without projector"
+    model = config.get("model") or {}
+    layers = model.get("train_last_n_layers")
+    depth = "Full encoder" if layers is None else f"Last {int(layers)} " + ("layer" if int(layers) == 1 else "layers")
+    return depth, "With projector" if model.get("use_projector", True) else "Without projector"
+
+
+def _discover_contrastive_method_rows(method, results_dir):
+    rows = []
+    combos_dir = results_dir / "combos"
+    if not combos_dir.is_dir():
+        return pd.DataFrame()
+    for combo_dir in sorted(path for path in combos_dir.iterdir() if path.is_dir()):
+        cv_path = combo_dir / "cv" / "cv_summary.csv"
+        config_path = combo_dir / "configs" / "config_resolved.yaml"
+        if not cv_path.is_file():
+            continue
+        cv = pd.read_csv(cv_path)
+        if cv.empty:
+            continue
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+        depth, projector = _variant_labels(config, combo_dir.name)
+        cv_row = cv.iloc[0]
+        row = {
+            "method": method,
+            "depth": depth,
+            "projector": projector,
+            "ood_avg": float(cv_row.get("mean_ood_balanced_accuracy", float("nan"))) * 100.0,
+            "ood_worst": float(cv_row.get("min_ood_balanced_accuracy", float("nan"))) * 100.0,
+        }
+        values = []
+        for corpus_id in TARGET_CORPORA:
+            metric_path = results_dir / "combos" / combo_dir.name / "metrics" / f"metrics_classification_test_{corpus_id}.csv"
+            value = _read_metric_csv(metric_path) * 100.0
+            row[f"ba_ood_{corpus_id}"] = value
+            if np.isfinite(value):
+                values.append(value)
+        if values:
+            row["ood_avg"] = float(np.mean(values))
+            row["ood_worst"] = float(np.min(values))
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def _load_article_method_rows(method, results_dir):
+    if method == "Cross-entropy":
+        path = results_dir / "results_summary.csv"
+        if not path.is_file():
+            return pd.DataFrame()
+        source = pd.read_csv(path)
+        rows = []
+        for _, item in source.iterrows():
+            rows.append({
+                "method": method,
+                "depth": item.get("encoder_scope"),
+                "projector": "With projector" if str(item.get("projector")).lower() == "yes" else "Without projector",
+                "ood_avg": float(item.get("ba_ood_avg", float("nan"))) * 100.0,
+                "ood_worst": float(item.get("ba_ood_worst", float("nan"))) * 100.0,
+                **{f"ba_ood_{corpus_id}": float(item.get(f"ba_ood_{corpus_id}", float("nan"))) * 100.0 for corpus_id in TARGET_CORPORA},
+            })
+        return pd.DataFrame(rows)
+    return _discover_contrastive_method_rows(method, results_dir)
+
+
+dynamic_rows = []
+for method_name in METHOD_ORDER:
+    method_rows = _load_article_method_rows(method_name, METHOD_RESULTS_DIRS[method_name])
+    if method_rows.empty:
+        print(f"No complete result rows found for {method_name}")
+    dynamic_rows.append(method_rows)
+dynamic_fig6_df = pd.concat(dynamic_rows, ignore_index=True) if dynamic_rows else pd.DataFrame()
+if not dynamic_fig6_df.empty:
+    fig6_df = dynamic_fig6_df
 display(fig6_df)
 """
 
@@ -134,10 +239,10 @@ FIG6_PLOT_CODE = """from matplotlib.lines import Line2D
 fig6, axes = plt.subplots(
     2,
     4,
-    figsize=(14, 7.4),
+    figsize=(14, 6.8),
     sharex=True,
     sharey=True,
-    gridspec_kw={"hspace": 0.18, "wspace": 0.16},
+    gridspec_kw={"hspace": 0.08, "wspace": 0.14},
 )
 
 metric_specs = [
@@ -145,72 +250,90 @@ metric_specs = [
     ("ood_worst", 68.9, "(b) Worst-corpus BA"),
 ]
 x = range(len(DEPTH_ORDER))
+projector_styles = {
+    "Without projector": {"linestyle": "-", "marker": "o"},
+    "With projector": {"linestyle": "--", "marker": "s"},
+}
 for column, method in enumerate(METHOD_ORDER):
     method_df = fig6_df[fig6_df["method"] == method]
     for row, (metric, baseline, row_label) in enumerate(metric_specs):
         ax = axes[row, column]
         for projector in PROJECTOR_ORDER:
-            series = method_df[method_df["projector"] == projector].set_index("depth").loc[DEPTH_ORDER]
+            series = method_df[method_df["projector"] == projector].set_index("depth").reindex(DEPTH_ORDER)
             ax.plot(
                 list(x),
                 series[metric].to_numpy(),
-                marker="o",
+                marker=projector_styles[projector]["marker"],
+                linestyle=projector_styles[projector]["linestyle"],
                 linewidth=2,
                 markersize=5,
                 color=PROJECTOR_COLORS[projector],
             )
         ax.axhline(baseline, color="#555555", linestyle="--", linewidth=1.2)
-        ax.set_ylim(40, 90)
+        ax.set_ylim(65, 90)
         ax.set_xticks(list(x), ["Last 1", "Last 2", "Last 3", "Full"])
         if row == 0:
-            ax.set_title(method)
-        if row == 1:
-            ax.set_xlabel("Encoder-update depth")
+            ax.set_title(METHOD_DISPLAY_NAMES[method])
         ax.grid(axis="y", alpha=0.3)
 
-axes[0, 0].text(
-    0.03,
-    76.9 + 1.0,
-    "Frozen baseline: 76.9%",
-    color="#555555",
-    fontsize=8,
-)
-axes[1, 0].text(
-    0.03,
-    68.9 + 1.0,
-    "Frozen baseline: 68.9%",
-    color="#555555",
-    fontsize=8,
-)
-fig6.text(0.012, 0.72, "(a) OOD average BA", rotation=90, va="center", fontweight="bold")
-fig6.text(0.012, 0.285, "(b) Worst-corpus BA", rotation=90, va="center", fontweight="bold")
+for ax in axes.flat:
+    ax.tick_params(axis="y", pad=2)
+axes[0, 0].set_ylabel("(a) OOD average BA", labelpad=6, fontweight="bold")
+axes[1, 0].set_ylabel("(b) Worst-corpus BA", labelpad=6, fontweight="bold")
+fig6.text(0.5, 0.015, "Encoder-update depth", ha="center", fontweight="bold")
 legend_handles = [
-    Line2D([0], [0], color=PROJECTOR_COLORS["Without projector"], marker="o", linewidth=2, label="No projector"),
-    Line2D([0], [0], color=PROJECTOR_COLORS["With projector"], marker="o", linewidth=2, label="With projector"),
-    Line2D([0], [0], color="#555555", linestyle="--", linewidth=1.2, label="Frozen logistic regression baseline"),
+    Line2D([0], [0], color=PROJECTOR_COLORS["Without projector"], marker="o", linestyle="-", linewidth=2, label="No projector"),
+    Line2D([0], [0], color=PROJECTOR_COLORS["With projector"], marker="s", linestyle="--", linewidth=2, label="With projector"),
+    Line2D([0], [0], color="#555555", linestyle="--", linewidth=1.2, label="Frozen embeddings + LR baseline"),
 ]
-fig6.legend(handles=legend_handles, loc="upper center", bbox_to_anchor=(0.5, 0.985), ncol=3)
-fig6.tight_layout(rect=[0.035, 0.02, 1, 0.91])
+fig6.legend(handles=legend_handles, loc="upper center", bbox_to_anchor=(0.5, 0.99), ncol=3)
+fig6.subplots_adjust(left=0.085, right=0.99, bottom=0.08, top=0.91, hspace=0.08, wspace=0.14)
 fig6.savefig(FIGURES_DIR / "figure_6_encoder_depth_projector.png", bbox_inches="tight")
 fig6.savefig(FIGURES_DIR / "figure_6_encoder_depth_projector.pdf", bbox_inches="tight")
 display(fig6)
+plt.close(fig6)
 """
 
 
 FIG7_DATA_CODE = """FIG7_ROWS = [
-    {"strategy": "Frozen logistic regression", "Metallurgy": 81.7, "Chemistry-plastics": 80.2, "Company": 68.9},
-    {"strategy": "Cross-entropy", "Metallurgy": 86.9, "Chemistry-plastics": 85.1, "Company": 84.4},
+    {"strategy": "Frozen embeddings + LR", "Metallurgy": 81.7, "Chemistry-plastics": 80.2, "Company": 68.9},
+    {"strategy": "Cross-entropy fine-tuning", "Metallurgy": 86.9, "Chemistry-plastics": 85.1, "Company": 84.4},
     {"strategy": "Batch-hard Triplet", "Metallurgy": 86.9, "Chemistry-plastics": 85.6, "Company": 76.4},
     {"strategy": "Supervised contrastive", "Metallurgy": 89.1, "Chemistry-plastics": 87.1, "Company": 79.3},
     {"strategy": "SoftTriple", "Metallurgy": 88.1, "Chemistry-plastics": 86.6, "Company": 78.7},
 ]
 
 fig7_df = pd.DataFrame(FIG7_ROWS).set_index("strategy")
+
+FIG7_ROWS_DYNAMIC = [
+    {"strategy": "Frozen embeddings + LR", "Metallurgy": 81.7, "Chemistry-plastics": 80.2, "Company": 68.9},
+]
+corpus_display = {
+    "metallurgie": "Metallurgy",
+    "caou": "Chemistry-plastics",
+    "nicollin": "Company",
+}
+for method_name in METHOD_ORDER:
+    method_rows = _load_article_method_rows(method_name, METHOD_RESULTS_DIRS[method_name])
+    if method_rows.empty:
+        continue
+    method_rows = method_rows.dropna(subset=["ood_avg"])
+    if method_rows.empty:
+        continue
+    best = method_rows.sort_values("ood_avg", ascending=False).iloc[0]
+    FIG7_ROWS_DYNAMIC.append({
+        "strategy": METHOD_DISPLAY_NAMES[method_name],
+        **{
+            display_name: float(best.get(f"ba_ood_{corpus_id}", float("nan")))
+            for corpus_id, display_name in corpus_display.items()
+        },
+    })
+fig7_df = pd.DataFrame(FIG7_ROWS_DYNAMIC).set_index("strategy")
 display(fig7_df)
 """
 
 
-FIG7_PLOT_CODE = """fig7, ax = plt.subplots(figsize=(11.5, 6.8))
+FIG7_PLOT_CODE = """fig7, ax = plt.subplots(figsize=(11.5, 6.3))
 fig7_df.T.plot(
     kind="bar",
     ax=ax,
@@ -224,20 +347,21 @@ ax.set_ylim(60, 92)
 ax.set_xticklabels(["Metallurgy", "Chemistry-plastics", "Company"], rotation=0)
 ax.grid(axis="y", alpha=0.3)
 handles, labels = ax.get_legend_handles_labels()
-fig7.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.99), ncol=5)
+fig7.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 0.975), ncol=5)
 ax.get_legend().remove()
 
 for container in ax.containers:
     ax.bar_label(container, fmt="%.1f", padding=2, fontsize=8)
 
-fig7.subplots_adjust(top=0.84, bottom=0.12, left=0.08, right=0.98)
+fig7.subplots_adjust(top=0.88, bottom=0.12, left=0.08, right=0.98)
 fig7.savefig(FIGURES_DIR / "figure_7_best_strategy_by_corpus.png", bbox_inches="tight")
 fig7.savefig(FIGURES_DIR / "figure_7_best_strategy_by_corpus.pdf", bbox_inches="tight")
 display(fig7)
+plt.close(fig7)
 """
 
 
-CONFUSION_MD = """## Confusion matrix — Cross-entropy, full encoder, no projector
+CONFUSION_MD = """## Confusion matrix — Cross-entropy fine-tuning, full encoder, no projector
 
 This is the selected global model evaluated on the **Company** corpus.
 The matrix is normalized by true class (row-wise), so each diagonal entry is the
@@ -316,9 +440,9 @@ display(fig_cm)
 INTERPRETATION_MD = """## Interpretation for the article
 
 - Full-encoder adaptation is generally strongest, but the effect is not monotonic with depth.
-- Projector impact depends on the loss: it strongly hurts Cross-entropy for the full encoder,
+- Projector impact depends on the loss: it strongly hurts Cross-entropy fine-tuning for the full encoder,
   slightly helps SupCon, and is mixed for Triplet and SoftTriple.
-- Supervised contrastive learning is strongest on Metallurgy and Chemistry-plastics, while Cross-entropy is strongest
+- Supervised contrastive learning is strongest on Metallurgy and Chemistry-plastics, while Cross-entropy fine-tuning is strongest
   on the Company corpus, indicating a different organizational and reporting shift.
 
 Suggested Figure 6 caption:
@@ -326,7 +450,8 @@ Suggested Figure 6 caption:
 > *Effect of encoder-update depth and projector inclusion on cross-corpus balanced accuracy.
 > Panel (a) reports average performance across the three unseen target corpora, while panel
 > (b) reports performance on the most difficult target corpus. All panels use the same
-> truncated 40–90% y-axis scale.*
+> truncated 65–90% y-axis scale. The frozen logistic-regression baseline reaches 76.9%
+> for average OOD BA and 68.9% for worst-corpus BA.*
 
 Suggested Figure 7 caption:
 
