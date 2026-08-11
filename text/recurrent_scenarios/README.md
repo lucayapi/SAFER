@@ -116,7 +116,7 @@ parallel-runtime metadata, candidate partitions, diagnostics, figures and CSV ta
 
 ## Input contract
 
-The default files are the existing BTP annotated units and the existing fixed Qwen embeddings.
+The default files are the existing CAOU annotated units and the existing fixed Qwen embeddings.
 The unit table must contain `accident_id`, `fact_id`, `sentence`, `pred_label` and `pred_ok`.
 Valid roles are `A0`, `A1`, `B` and `C`. The embedding table must contain `doc_id` matching
 `fact_id` or the same row order as the unit table, plus numeric `dim_*` columns.
