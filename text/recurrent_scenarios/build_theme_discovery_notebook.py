@@ -347,10 +347,9 @@ cells.extend([
 
 The figure is a two-dimensional scatter plot with `D_U` on the horizontal axis
 and `S_R` on the vertical axis. Leaf configurations use circles. Dominated
-configurations are open grey markers,
-Pareto configurations are orange markers joined by the Pareto front, and the
-selected partition medoid is marked with a red star. There are deliberately no
-universal vertical or horizontal cut-offs for DBCV or stability.
+configurations are open grey markers and Pareto configurations are orange
+markers. There are deliberately no universal vertical or horizontal cut-offs
+for DBCV or stability; the selected partition is reported separately.
         """
     ),
     code(

@@ -1572,38 +1572,18 @@ def write_pareto_figure(
                     linewidths=0.8,
                     zorder=4,
                 )
-        selected = frame[
-            frame.get("representativeness", pd.Series(index=frame.index)).notna()
-            & frame["pareto_non_dominated"].fillna(False).astype(bool)
-            & frame["dbcv_umap"].notna()
-            & frame["stability"].notna()
-        ]
-        if not selected.empty:
-            selected = selected.sort_values("representativeness", ascending=False).head(1)
-            axis.scatter(
-                selected["dbcv_umap"],
-                selected["stability"],
-                marker="*",
-                color="#d62728",
-                edgecolors="black",
-                linewidths=0.8,
-                s=230,
-                zorder=5,
-            )
         axis.set_title(role)
-        axis.set_xlabel("DBCV UMAP $D_U$")
-        axis.set_ylabel("Stabilité Jaccard $S_R$")
+        axis.set_xlabel("UMAP-space DBCV $D_U$")
+        axis.set_ylabel("Accident-level resampling stability $S_R$")
         axis.grid(alpha=0.25)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Leaf", markerfacecolor="none", markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Configurations dominées", markerfacecolor=dominated_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Front de Pareto", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="*", linestyle="None", color="#d62728", label="Partition retenue", markerfacecolor="#d62728", markeredgecolor="black", markersize=11),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Dominated configurations", markerfacecolor=dominated_color, markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Pareto frontier", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=4, frameon=False)
-    figure.suptitle("Validation Pareto des partitions UMAP–HDBSCAN", y=0.98)
+    figure.legend(handles=handles, loc="upper center", ncol=2, frameon=False)
+    figure.suptitle("Pareto validation of UMAP--HDBSCAN partitions", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
