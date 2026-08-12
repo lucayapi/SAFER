@@ -35,14 +35,19 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-DATASET="${DATASET:-caou}"
+# Leave the dataset unset unless the job explicitly receives DATASET=...
+# so that config.yaml's data.dataset_id remains the default source of truth.
+DATASET="${DATASET:-}"
 CONFIG_PATH="${CONFIG_PATH:-recurrent_scenarios/config.yaml}"
 REESTIMATE="${REESTIMATE:-0}"
 DEBUG="${DEBUG:-0}"
 STAGE="${STAGE:-all}"
 RUN_DIR="${RUN_DIR:-}"
 
-ARGS=(recurrent_scenarios/run_theme_discovery.py --config "${CONFIG_PATH}" --dataset "${DATASET}" --stage "${STAGE}")
+ARGS=(recurrent_scenarios/run_theme_discovery.py --config "${CONFIG_PATH}" --stage "${STAGE}")
+if [[ -n "${DATASET}" ]]; then
+  ARGS+=(--dataset "${DATASET}")
+fi
 if [[ "${REESTIMATE}" == "1" ]]; then
   ARGS+=(--reestimate)
 fi
@@ -53,7 +58,7 @@ if [[ -n "${RUN_DIR}" ]]; then
   ARGS+=(--run-dir "${RUN_DIR}")
 fi
 
-echo "Dataset=${DATASET}"
+echo "Dataset=${DATASET:-from-config}"
 echo "Config=${CONFIG_PATH}"
 echo "Stage=${STAGE}"
 echo "RunDir=${RUN_DIR:-auto}"
