@@ -28,6 +28,9 @@ data:
 parallel:
   enabled: true
   n_workers: auto
+  # UMAP/HDBSCAN tasks are memory-heavy. The CPU allocation is 32, but
+  # simultaneous workers are capped to avoid Slurm OOM on large corpora.
+  max_workers: 4
   backend: loky
 
 consensus:
@@ -61,7 +64,7 @@ screening:
   hdbscan:
     min_cluster_size: [25, 50]
     min_samples: [5, 10]
-    cluster_selection_method: [eom, leaf]
+    cluster_selection_method: [leaf]
     metric: euclidean
     prediction_data: true
 
@@ -69,9 +72,6 @@ pareto:
   random_state: 42
   max_parameter_combinations: 72
   resampling_fraction: 0.8
-  # Pareto partitions with pairwise symmetric Jaccard similarity above this
-  # value are assigned to the same robust solution family.
-  partition_family_similarity_threshold: 0.80
   # 100 grouped accident-level resamples provide a stable median S_R.
   n_resampling: 100
   debug_resampling: 10

@@ -199,11 +199,13 @@ def resolve_n_workers(config: Mapping[str, Any]) -> int:
     if not bool(parallel_cfg.get("enabled", True)):
         return 1
     configured = parallel_cfg.get("n_workers", "auto")
-    if configured not in (None, "", "auto"):
-        return max(1, int(configured))
     allocated = os.environ.get("SLURM_CPUS_PER_TASK")
     available = int(allocated) if allocated else int(os.cpu_count() or 1)
-    return max(1, available - 1)
+    workers = available - 1 if configured in (None, "", "auto") else int(configured)
+    max_workers = parallel_cfg.get("max_workers")
+    if max_workers not in (None, ""):
+        workers = min(workers, int(max_workers))
+    return max(1, workers)
 
 
 def _parallel_map(
@@ -1334,33 +1336,6 @@ def _pareto_mask(values: pd.DataFrame, objectives: Sequence[str]) -> pd.Series:
     return mask
 
 
-def _partition_family_ids(
-    agreement: pd.DataFrame,
-    similarity_threshold: float,
-) -> pd.Series:
-    """Assign Pareto partitions to connected robust families."""
-    configuration_ids = list(agreement.index)
-    family_ids: dict[str, str] = {}
-    family_number = 1
-    for start in configuration_ids:
-        if start in family_ids:
-            continue
-        pending = [start]
-        members: list[str] = []
-        while pending:
-            current = pending.pop()
-            if current in family_ids:
-                continue
-            family_ids[current] = f"F{family_number:02d}"
-            members.append(current)
-            neighbours = agreement.columns[
-                agreement.loc[current].fillna(0.0).to_numpy(dtype=float) >= similarity_threshold
-            ]
-            pending.extend(str(neighbour) for neighbour in neighbours if str(neighbour) not in family_ids)
-        family_number += 1
-    return pd.Series(family_ids, name="pareto_family_id")
-
-
 def _ordered_pareto_export(table: pd.DataFrame) -> pd.DataFrame:
     """Order the complete per-role Pareto export without dropping diagnostics."""
     preferred = [
@@ -1384,10 +1359,8 @@ def select_pareto_partitions(
     role: str,
     candidates: pd.DataFrame,
     output_dir: Path,
-    *,
-    family_similarity_threshold: float = 0.80,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
-    """Identify the D_U/S_R Pareto frontier and select a robust-family medoid."""
+    """Identify the D_U/S_R Pareto frontier and select its medoid."""
     _log_progress(f"[{role}] Pareto: démarrage sur {len(candidates)} configurations")
     pareto_dir = output_dir / "pareto" / role
     pareto_dir.mkdir(parents=True, exist_ok=True)
@@ -1413,39 +1386,19 @@ def select_pareto_partitions(
     agreement_path = pareto_dir / "pareto_partition_agreement.csv"
     agreement.to_csv(agreement_path, index=True, index_label="configuration_id")
     if len(pareto) > 0:
-        family_series = _partition_family_ids(agreement, family_similarity_threshold)
-        pareto = pareto.merge(family_series, left_on="configuration_id", right_index=True, how="left")
-        family_sizes = pareto["pareto_family_id"].value_counts().rename("pareto_family_size")
-        pareto = pareto.merge(family_sizes, left_on="pareto_family_id", right_index=True, how="left")
-        largest_size = int(family_sizes.max())
-        largest_families = family_sizes[family_sizes.eq(largest_size)].index.tolist()
-        if len(largest_families) > 1:
-            family_quality = (
-                pareto[pareto["pareto_family_id"].isin(largest_families)]
-                .groupby("pareto_family_id")[["stability", "dbcv_umap"]]
-                .mean()
-                .sort_values(["stability", "dbcv_umap"], ascending=False)
-            )
-            selected_family = str(family_quality.index[0])
+        pareto["pareto_family_id"] = "F01"
+        pareto["pareto_family_size"] = len(pareto)
+        pareto["selected_family"] = True
+        if len(pareto) == 1:
+            pareto["representativeness"] = 1.0
         else:
-            selected_family = str(largest_families[0])
-        pareto["selected_family"] = pareto["pareto_family_id"].eq(selected_family)
-        selected_family_rows = pareto[pareto["selected_family"]].copy()
-        if len(selected_family_rows) == 1:
-            selected_family_rows["representativeness"] = 1.0
-            pareto.loc[selected_family_rows.index, "representativeness"] = 1.0
-        else:
-            family_ids = selected_family_rows["configuration_id"].tolist()
-            family_agreement = agreement.loc[family_ids, family_ids]
-            representativeness = (family_agreement.sum(axis=1) - 1.0) / (len(family_ids) - 1)
-            pareto["representativeness"] = np.nan
-            representativeness_frame = representativeness.rename("representativeness").reset_index()
-            representativeness_frame = representativeness_frame.rename(columns={"index": "configuration_id"})
-            pareto = pareto.drop(columns=["representativeness"])
-            pareto = pareto.merge(representativeness_frame, on="configuration_id", how="left")
+            configuration_ids = pareto["configuration_id"].tolist()
+            representativeness = (
+                agreement.loc[configuration_ids, configuration_ids].sum(axis=1) - 1.0
+            ) / (len(pareto) - 1)
+            pareto["representativeness"] = pareto["configuration_id"].map(representativeness)
         selected_id = str(
-            pareto[pareto["selected_family"]]
-            .sort_values(["representativeness", "stability", "dbcv_umap"], ascending=False)
+            pareto.sort_values(["representativeness", "stability", "dbcv_umap"], ascending=False)
             .iloc[0]["configuration_id"]
         )
     else:
@@ -1473,7 +1426,6 @@ def select_pareto_partitions(
                 "role": role,
                 "configuration_id": selected_id,
                 "pareto_family_id": selected_family_id,
-                "family_similarity_threshold": family_similarity_threshold,
             }, indent=2),
             encoding="utf-8",
         )
@@ -1577,7 +1529,7 @@ def write_pareto_figure(
         figsize=(14, 10) if len(plot_roles) > 1 else (8, 6),
         squeeze=False,
     )
-    method_markers = {"leaf": "o", "eom": "^"}
+    method_markers = {"leaf": "o"}
     pareto_color = "#f28e2b"
     dominated_color = "#9e9e9e"
     for axis, role in zip(axes.flat, plot_roles):
@@ -1646,12 +1598,11 @@ def write_pareto_figure(
         axis.remove()
     handles = [
         Line2D([0], [0], marker="o", linestyle="None", color="black", label="Leaf", markerfacecolor="none", markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="^", linestyle="None", color="black", label="EOM", markerfacecolor="none", markeredgecolor="black", markersize=7),
         Line2D([0], [0], marker="o", linestyle="None", color="black", label="Configurations dominées", markerfacecolor=dominated_color, markeredgecolor="black", markersize=7),
         Line2D([0], [0], marker="o", linestyle="None", color="black", label="Front de Pareto", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
         Line2D([0], [0], marker="*", linestyle="None", color="#d62728", label="Partition retenue", markerfacecolor="#d62728", markeredgecolor="black", markersize=11),
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=5, frameon=False)
+    figure.legend(handles=handles, loc="upper center", ncol=4, frameon=False)
     figure.suptitle("Validation Pareto des partitions UMAP–HDBSCAN", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
@@ -2309,16 +2260,12 @@ def run_theme_discovery(
         return output_base
 
     _log_progress("Pareto: sélection des partitions non-dominées par rôle")
-    family_similarity_threshold = float(
-        config.get("pareto", {}).get("partition_family_similarity_threshold", 0.80)
-    )
     for role in ROLES:
         merged = candidate_tables[role]
         table, agreement, selected_id = select_pareto_partitions(
             role,
             merged,
             output_base,
-            family_similarity_threshold=family_similarity_threshold,
         )
         selection_tables[role] = table
         agreements[role] = agreement
@@ -2356,7 +2303,6 @@ def run_theme_discovery(
             "n_pareto": int(table["pareto_non_dominated"].sum()) if not table.empty else 0,
             "Pareto family": row.get("pareto_family_id", np.nan),
             "Pareto family size": row.get("pareto_family_size", np.nan),
-            "Family similarity threshold": family_similarity_threshold,
         })
     selected_metrics = pd.DataFrame(summary_rows)
     selected_metrics.to_csv(output_base / "pareto_selection_summary.csv", index=False)

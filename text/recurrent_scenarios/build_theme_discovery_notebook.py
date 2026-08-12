@@ -121,8 +121,8 @@ scale used by UMAP; higher values favour broader structure. `n_components` contr
 the dimension in which HDBSCAN estimates density; it is not a 2-D plotting setting.
 `min_dist` controls how tightly UMAP packs nearby points. `min_cluster_size` is the
 smallest persistent branch considered a theme. `min_samples` controls density
-conservatism; higher values usually create more noise. `eom` keeps broader persistent
-branches, while `leaf` explores finer terminal branches.
+conservatism; higher values usually create more noise. The grid uses `leaf` to
+explore finer terminal branches.
         """
     ),
     code(
@@ -138,7 +138,7 @@ UMAP_PARAMETERS = {
 HDBSCAN_PARAMETERS = {
     "min_cluster_size": [20, 50, 100],  # Minimum candidate theme mass.
     "min_samples": [None, 5, 10],  # Local density conservatism; None follows min_cluster_size.
-    "cluster_selection_method": ["eom", "leaf"],  # Broad persistent branches versus fine leaves.
+    "cluster_selection_method": ["leaf"],  # Explore fine terminal branches.
     "metric": "euclidean",  # Metric in the UMAP clustering coordinates.
     "prediction_data": True,  # Retain prediction metadata for auditability.
 }
@@ -175,8 +175,8 @@ The main Pareto front uses only UMAP-space DBCV `D_U` and resampling stability
 `S_R`. No pre-filtering threshold is applied before the Pareto comparison. The
 number of clusters, coverage, noise fraction and accident support are retained
 only as diagnostics. The main figure is a two-dimensional scatter plot: leaf
-configurations use circles, EOM configurations use triangles, dominated points
-are shown as open grey markers, and Pareto points are shown in orange. Pareto
+configurations use circles, dominated points are shown as open grey markers,
+and Pareto points are shown in orange. Pareto
 solutions are joined in increasing `D_U` order, and the representative medoid
 is marked with a star. The complete Pareto diagnostic table is saved separately
 for each role.
@@ -346,8 +346,8 @@ cells.extend([
 ## 9. Pareto validation plot
 
 The figure is a two-dimensional scatter plot with `D_U` on the horizontal axis
-and `S_R` on the vertical axis. Leaf configurations use circles and EOM
-configurations use triangles. Dominated configurations are open grey markers,
+and `S_R` on the vertical axis. Leaf configurations use circles. Dominated
+configurations are open grey markers,
 Pareto configurations are orange markers joined by the Pareto front, and the
 selected partition medoid is marked with a red star. There are deliberately no
 universal vertical or horizontal cut-offs for DBCV or stability.
