@@ -1,7 +1,7 @@
 data:
   dataset_id: caou
-  units_path: ../dataset/data_caou.csv
-  embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_caou.csv
+  units_path: ../dataset/data_{dataset_id}.csv
+  embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_{dataset_id}.csv
   output_dir: ./runs/audit_{dataset_id}
   accident_id_col: accident_id
   fact_id_col: fact_id
@@ -15,6 +15,12 @@ data:
     caou:
       units_path: ../dataset/data_caou.csv
       embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_caou.csv
+    btp:
+      units_path: ../dataset/data_btp.csv
+      embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_btp.csv
+    metallurgie:
+      units_path: ../dataset/data_metallurgie.csv
+      embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
 
 # Outer process parallelism. With ``auto``, workers are exactly
 # max(1, allocated cores - 1); on Slurm the allocation is SLURM_CPUS_PER_TASK.
