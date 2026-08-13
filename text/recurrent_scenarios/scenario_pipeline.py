@@ -227,14 +227,22 @@ def _parallel_map(
         from joblib import Parallel, delayed
     except ImportError as error:
         raise ImportError("joblib est requis lorsque le parallélisme est activé avec plusieurs workers.") from error
-    backend = str(config.get("parallel", {}).get("backend", "loky"))
+    parallel_cfg = config.get("parallel", {})
+    backend = str(parallel_cfg.get("backend", "loky"))
     if workers > 1:
+        parallel_kwargs: dict[str, Any] = {
+            "n_jobs": workers,
+            "backend": backend,
+            "batch_size": 1,
+            "pre_dispatch": parallel_cfg.get("pre_dispatch", workers),
+            "verbose": 0,
+            "return_as": "generator",
+        }
+        if backend in {"loky", "multiprocessing"}:
+            parallel_kwargs["max_nbytes"] = parallel_cfg.get("max_nbytes", "16M")
+            parallel_kwargs["mmap_mode"] = parallel_cfg.get("mmap_mode", "r")
         iterator = Parallel(
-            n_jobs=workers,
-            backend=backend,
-            batch_size=1,
-            verbose=0,
-            return_as="generator",
+            **parallel_kwargs,
         )(
             delayed(function)(task) for task in tasks
         )
@@ -551,8 +559,19 @@ def _fit_cluster_with_embedding(
         metric=str(hdbscan_cfg.get("metric", "euclidean")),
         prediction_data=bool(hdbscan_cfg.get("prediction_data", True)),
     )
-    reduced_embeddings = umap_model.fit_transform(embeddings)
-    return np.asarray(clusterer.fit_predict(reduced_embeddings), dtype=int), np.asarray(reduced_embeddings)
+    try:
+        from threadpoolctl import threadpool_limits
+    except ImportError:
+        threadpool_limits = None
+    inner_threads = max(1, int(config.get("parallel", {}).get("inner_threads", 1)))
+    if threadpool_limits is None:
+        reduced_embeddings = umap_model.fit_transform(embeddings)
+        labels = clusterer.fit_predict(reduced_embeddings)
+    else:
+        with threadpool_limits(limits=inner_threads):
+            reduced_embeddings = umap_model.fit_transform(embeddings)
+            labels = clusterer.fit_predict(reduced_embeddings)
+    return np.asarray(labels, dtype=int), np.asarray(reduced_embeddings)
 
 
 def _neighbor_pairs(embeddings: np.ndarray, k: int) -> np.ndarray:
@@ -1032,7 +1051,7 @@ def _candidate_metrics(role_units: pd.DataFrame, labels: np.ndarray) -> dict[str
 def _evaluate_candidate_task(task: Mapping[str, Any]) -> dict[str, Any]:
     """Fit and score one full-data candidate in an isolated worker."""
     labels, reduced = _fit_cluster_with_embedding(
-        task["texts"],
+        (),
         task["embeddings"],
         task["params"],
         int(task["random_state"]),
@@ -1090,14 +1109,16 @@ def _candidate_metrics_from_accident_ids(accident_ids: Sequence[str], labels: np
 
 def _evaluate_stability_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
     """Fit one resampled candidate and return cluster-wise Jaccard rows."""
+    selected_indices = np.asarray(task["selected_indices"], dtype=int)
     resampled_labels, _ = _fit_cluster_with_embedding(
-        task["texts"],
-        task["embeddings"],
+        (),
+        np.asarray(task["embeddings"])[selected_indices],
         task["params"],
         int(task["random_state"]),
         task["config"],
     )
-    local_reference = np.asarray(task["reference"])[task["selected_indices"]]
+    reference = np.load(task["reference_path"], mmap_mode="r")
+    local_reference = np.asarray(reference)[selected_indices]
     rows = []
     for cluster_label in task["reference_clusters"]:
         rows.append({
@@ -1153,7 +1174,6 @@ def evaluate_pareto_candidates(
             "role": role,
             "configuration_id": _configuration_id(role, index),
             "params": params,
-            "texts": role_units["_text"].tolist(),
             "embeddings": clustering_input,
             "accident_ids": role_units["_accident_id"].astype(str).to_numpy(),
             "random_state": random_state + index,
@@ -1263,12 +1283,11 @@ def evaluate_resampling_stability(
                 "role": role,
                 "configuration_id": configuration_id,
                 "repetition": repetition,
-                "reference": reference,
+                "reference_path": str(labels_path),
                 "reference_clusters": reference_clusters,
                 "selected_indices": selected_indices,
                 "params": params,
-                "texts": role_units.iloc[selected_indices]["_text"].tolist(),
-                "embeddings": clustering_input[selected_indices],
+                "embeddings": clustering_input,
                 "random_state": random_state + repetition + candidate_index,
                 "config": config,
             })
@@ -1339,9 +1358,8 @@ def _pareto_mask(values: pd.DataFrame, objectives: Sequence[str]) -> pd.Series:
 def _ordered_pareto_export(table: pd.DataFrame) -> pd.DataFrame:
     """Order the complete per-role Pareto export without dropping diagnostics."""
     preferred = [
-        "role", "configuration_id", "pareto_non_dominated", "selected_final",
-        "pareto_family_id", "pareto_family_size", "selected_family",
-        "representativeness", "dbcv_umap", "stability",
+        "role", "configuration_id", "pareto_non_dominated", "candidate_only",
+        "dbcv_umap", "stability",
         "n_clusters", "noise_fraction", "coverage", "median_accident_support",
         "mean_accident_support", "min_accident_support", "max_accident_support",
         "n_single_accident_clusters", "median_cluster_size",
@@ -1360,7 +1378,7 @@ def select_pareto_partitions(
     candidates: pd.DataFrame,
     output_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, str]:
-    """Identify the D_U/S_R Pareto frontier and select its medoid."""
+    """Identify the D_U/S_R Pareto frontier without selecting a partition."""
     _log_progress(f"[{role}] Pareto: démarrage sur {len(candidates)} configurations")
     pareto_dir = output_dir / "pareto" / role
     pareto_dir.mkdir(parents=True, exist_ok=True)
@@ -1371,76 +1389,22 @@ def select_pareto_partitions(
     if not pool.empty:
         result.loc[pool.index, "pareto_non_dominated"] = _pareto_mask(pool, ["dbcv_umap", "stability"])
     pareto = result[result["pareto_non_dominated"]].copy()
-    labels_dir = pareto_dir / "candidate_partitions"
-    agreement = pd.DataFrame(index=pareto["configuration_id"], columns=pareto["configuration_id"], dtype=float)
-    for left_id in agreement.index:
-        left = np.load(labels_dir / f"{left_id}_labels.npy").astype(int)
-        for right_id in agreement.columns:
-            right = np.load(labels_dir / f"{right_id}_labels.npy").astype(int)
-            if left_id == right_id:
-                score = 1.0
-            else:
-                common = (left >= 0) | (right >= 0)
-                score = _symmetric_partition_jaccard(left[common], right[common])
-            agreement.loc[left_id, right_id] = score
-    agreement_path = pareto_dir / "pareto_partition_agreement.csv"
-    agreement.to_csv(agreement_path, index=True, index_label="configuration_id")
-    if len(pareto) > 0:
-        pareto["pareto_family_id"] = "F01"
-        pareto["pareto_family_size"] = len(pareto)
-        pareto["selected_family"] = True
-        if len(pareto) == 1:
-            pareto["representativeness"] = 1.0
-        else:
-            configuration_ids = pareto["configuration_id"].tolist()
-            representativeness = (
-                agreement.loc[configuration_ids, configuration_ids].sum(axis=1) - 1.0
-            ) / (len(pareto) - 1)
-            pareto["representativeness"] = pareto["configuration_id"].map(representativeness)
-        selected_id = str(
-            pareto.sort_values(["representativeness", "stability", "dbcv_umap"], ascending=False)
-            .iloc[0]["configuration_id"]
-        )
-    else:
-        selected_id = ""
-        pareto["representativeness"] = pd.Series(dtype=float)
-        pareto["pareto_family_id"] = pd.Series(dtype=str)
-        pareto["pareto_family_size"] = pd.Series(dtype=int)
-        pareto["selected_family"] = pd.Series(dtype=bool)
-    result = result.merge(pareto[["configuration_id", "representativeness"]], on="configuration_id", how="left")
-    for column in ("pareto_family_id", "pareto_family_size", "selected_family"):
-        result = result.merge(pareto[["configuration_id", column]], on="configuration_id", how="left")
-    result["selected_final"] = result["configuration_id"].eq(selected_id)
+    agreement = pd.DataFrame()
+    result["candidate_only"] = True
     result.to_csv(pareto_dir / "pareto_selection_table.csv", index=False)
-    _ordered_pareto_export(pareto.assign(selected_final=pareto["configuration_id"].eq(selected_id))).to_csv(
+    _ordered_pareto_export(pareto.assign(candidate_only=True)).to_csv(
         pareto_dir / "pareto_frontier.csv", index=False
     )
-    _ordered_pareto_export(pareto.assign(selected_final=pareto["configuration_id"].eq(selected_id))).to_csv(
+    _ordered_pareto_export(pareto.assign(candidate_only=True)).to_csv(
         pareto_dir / "pareto_optimal_configurations.csv", index=False
     )
-    if selected_id:
-        np.save(pareto_dir / "selected_labels.npy", np.load(labels_dir / f"{selected_id}_labels.npy").astype(np.int32))
-        selected_family_id = str(pareto.loc[pareto["configuration_id"].eq(selected_id), "pareto_family_id"].iloc[0])
-        (pareto_dir / "selected_configuration.json").write_text(
-            json.dumps({
-                "role": role,
-                "configuration_id": selected_id,
-                "pareto_family_id": selected_family_id,
-            }, indent=2),
-            encoding="utf-8",
-        )
-    selected_row = pareto.loc[pareto["configuration_id"].eq(selected_id)]
+    selected_id = ""
     selected_metrics = ""
-    if not selected_row.empty:
-        selected_metrics = (
-            f", D_U={float(selected_row.iloc[0]['dbcv_umap']):.4f}, "
-            f"S_R={float(selected_row.iloc[0]['stability']):.4f}"
-        )
     _log_progress(
         f"[{role}] Pareto: terminé — {len(pareto)} non-dominées, "
         f"sélection={selected_id or 'aucune'}{selected_metrics}"
     )
-    return result, agreement, selected_id
+    return result, agreement, ""
 
 
 def _symmetric_partition_jaccard(left: np.ndarray, right: np.ndarray) -> float:
@@ -2266,28 +2230,16 @@ def run_theme_discovery(
     summary_rows = []
     for role in ROLES:
         table = selection_tables.get(role, pd.DataFrame())
-        selected_id = selections.get(role, "")
-        selected = table[table["configuration_id"].eq(selected_id)] if not table.empty else pd.DataFrame()
-        row = selected.iloc[0] if not selected.empty else pd.Series(dtype=object)
         summary_rows.append({
             "Role": role,
-            "Config": selected_id,
-            "DBCV": row.get("dbcv_umap", np.nan),
-            "DBCV UMAP": row.get("dbcv_umap", np.nan),
-            "Stability": row.get("stability", np.nan),
-            "K": row.get("n_clusters", np.nan),
-            "Noise": row.get("noise_fraction", np.nan),
-            "Coverage": row.get("coverage", np.nan),
-            "Median accident support": row.get("median_accident_support", np.nan),
             "n_candidates": int(len(table)),
             "n_pareto": int(table["pareto_non_dominated"].sum()) if not table.empty else 0,
-            "Pareto family": row.get("pareto_family_id", np.nan),
-            "Pareto family size": row.get("pareto_family_size", np.nan),
         })
-    selected_metrics = pd.DataFrame(summary_rows)
-    selected_metrics.to_csv(output_base / "pareto_selection_summary.csv", index=False)
+    pareto_summary = pd.DataFrame(summary_rows)
+    pareto_summary.to_csv(output_base / "pareto_selection_summary.csv", index=False)
+    selected_metrics = pareto_summary
     _log_progress("métriques des configurations Pareto retenues:\n" + selected_metrics.to_string(index=False))
-    if stage == "all" and prepared is not None and all(selections.get(role) for role in ROLES):
+    if stage == "manual_selection" and prepared is not None:
         _log_progress("matérialisation: thèmes sélectionnés et dictionnaire")
         consensus_results = build_selected_consensus_results(
             prepared, config, output_base, selections, stability_themes

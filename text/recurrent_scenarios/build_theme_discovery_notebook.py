@@ -70,8 +70,6 @@ if str(SCENARIO_DIR) not in sys.path:
 
 from scenario_pipeline import (
     ROLES,
-    build_selected_consensus_results,
-    build_topic_dictionary,
     evaluate_pareto_candidates,
     evaluate_resampling_stability,
     load_topic_stopwords,
@@ -286,8 +284,6 @@ candidate_tables = {}
 theme_stability = {}
 stability_summary = {}
 selection_tables = {}
-agreement_matrices = {}
-selected_configuration = {}
         """
     ),
 ]
@@ -318,16 +314,15 @@ display(candidate_tables[role].sort_values(["dbcv_umap", "stability"], ascending
         code(
             f"""
 role = "{role}"
-selection_tables[role], agreement_matrices[role], selected_configuration[role] = select_pareto_partitions(
+selection_tables[role], _, _ = select_pareto_partitions(
     role, candidate_tables[role], RUN_DIR,
 )
 display(selection_tables[role].sort_values(["pareto_non_dominated", "dbcv_umap"], ascending=False)[[
     "configuration_id", "hdbscan_cluster_selection_method", "dbcv_umap",
     "stability", "n_clusters", "noise_fraction", "coverage", "median_accident_support",
-    "pareto_non_dominated", "representativeness",
+    "pareto_non_dominated", "candidate_only",
 ]])
-print("Selected Pareto-medoid configuration:", selected_configuration[role])
-display(agreement_matrices[role])
+print("Pareto candidates retained; no configuration is selected automatically.")
 role_figure = RUN_DIR / "figures" / f"pareto_validation_{{role}}.png"
 write_pareto_figure(
     {{role: selection_tables[role]}},
@@ -349,7 +344,8 @@ The figure is a two-dimensional scatter plot with `D_U` on the horizontal axis
 and `S_R` on the vertical axis. Leaf configurations use circles. Dominated
 configurations are open grey markers and Pareto configurations are orange
 markers. There are deliberately no universal vertical or horizontal cut-offs
-for DBCV or stability; the selected partition is reported separately.
+for DBCV or stability. All non-dominated candidates are retained for
+post-hoc human or LLM comparison.
         """
     ),
     code(
@@ -359,7 +355,6 @@ display(Image(filename=str(RUN_DIR / "figures" / "pareto_validation_all_roles.pn
 summary = pd.DataFrame([
     {
         "role": role,
-        "selected_configuration": selected_configuration[role],
         "n_candidates": len(selection_tables[role]),
         "n_pareto": int(selection_tables[role]["pareto_non_dominated"].sum()),
     }
@@ -371,27 +366,17 @@ summary.to_csv(RUN_DIR / "pareto_selection_summary.csv", index=False)
     ),
     markdown(
         """
-## 10. Freeze the selected memberships and build the theme dictionary
+## 10. Candidate partitions remain available
 
-This is the hand-off boundary to Notebook 2. Cluster memberships are now fixed.
-The dictionary terms and representative sentences are descriptive only and cannot
-modify the selected assignments.
+No Pareto candidate is frozen here. Notebook 2 asks the analyst to choose one
+configuration ID per role. That explicit choice controls both the 2-D map and
+the subsequent human/LLM theme annotation.
         """
     ),
     code(
         """
-if any(not selected_configuration[role] for role in ROLES):
-    raise RuntimeError("At least one role has no selected Pareto configuration. Review the candidate grid and valid D_U/S_R values.")
-consensus_results = build_selected_consensus_results(
-    prepared, config, RUN_DIR, selected_configuration, theme_stability
-)
-topic_dictionary = build_topic_dictionary(prepared, consensus_results, config, RUN_DIR / "topics")
-display(topic_dictionary.sort_values(["role", "n_accidents"], ascending=[True, False]))
-pd.DataFrame([{"role": role, "configuration_id": selected_configuration[role]} for role in ROLES]).to_csv(
-    RUN_DIR / "selected_configurations.csv", index=False
-)
-print("Frozen outputs:", RUN_DIR / "clustering")
-print("Notebook 2 can now be run without recomputing UMAP or HDBSCAN.")
+print("Candidate labels:", RUN_DIR / "pareto" / "<role>" / "candidate_partitions")
+print("Edit PARTITION_SELECTION in Notebook 2 to choose the partitions to inspect.")
         """
     ),
 ])

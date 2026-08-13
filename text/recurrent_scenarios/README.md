@@ -152,8 +152,12 @@ explicitly reported in the outputs and is not presented as causal evidence.
 - `descriptive/topic_frequencies.csv`, co-occurrence and lift tables;
 - `figures/pareto_validation_all_roles.png`: candidate configurations and Pareto frontiers;
 - `parallel_runtime.json`: resolved worker count and Slurm CPU allocation;
-- `theme_discovery_manifest.json`: run identity and selected configurations;
+- `pareto_selection_summary.csv`: run identity and the number of retained Pareto candidates by role; no configuration is selected automatically;
+- For large corpora such as BTP, the discovery configuration limits outer workers, pre-dispatch, and BLAS/OpenMP threads; if SLURM still reports an OOM, set `parallel.max_workers: 1` before restarting with `--reestimate`.
 - `notebooks/recurrent_scenarios_results.ipynb`: post-run presentation notebook;
+- the results notebook lets the analyst edit `RUN_DIRECTORY`, choose one Pareto `configuration_id` per role in `PARTITION_SELECTION`, define one OpenAI prompt per role, and choose the number of representative sentences;
+- `topics_manual/llm_theme_labels.csv` and `topics_manual/topic_dictionary_with_llm_labels.csv`: optional labels, descriptions and evidence for the manually selected partitions;
+- `figures/umap_topics_2d_A0.png`, `umap_topics_2d_A1.png`, `umap_topics_2d_B.png` and `umap_topics_2d_C.png`: descriptive two-dimensional UMAP maps for the manually selected partitions, with noise shown separately;
 - `bayesian_networks/cv_log_likelihood.csv`;
 - `bayesian_networks/arc_stability.csv`;
 - `scenarios/scenario_catalog.csv`;
