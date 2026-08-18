@@ -84,17 +84,6 @@ LLM_OUTPUT_LANGUAGE = "Français"
 N_REPRESENTATIVE_SENTENCES = 25
 MAX_TOPICS_PER_ROLE_FOR_LLM = None
 FALLBACK_TOPICS_PER_ROLE = None
-# Choose one or more Pareto configurations per role after inspecting the
-# diagnostics. Every listed partition is visualized in the narrative viewer.
-PARTITION_SELECTIONS = {
-    "A0": [],  # Example: ["A0_cfg_005", "A0_cfg_012"]
-    "A1": [],  # Example: ["A1_cfg_033"]
-    "B": [],   # Example: ["B_cfg_029", "B_cfg_041"]
-    "C": [],   # Example: ["C_cfg_015"]
-}
-# The first listed partition remains the primary one used for topic labels.
-PARTITION_SELECTION = {role: (values[0] if values else "") for role, values in PARTITION_SELECTIONS.items()}
-ACCIDENT_IDS_TO_DISPLAY = {}  # Example: {"A0": [12345], "B": [67890]}
 UMAP_2D_N_NEIGHBORS = 15
 UMAP_2D_MIN_DIST = 0.1
 UMAP_2D_RANDOM_STATE = 42
@@ -152,6 +141,7 @@ def local_path(value):
         text_index = parts.index("text")
         candidates.append(SCENARIO_DIR.parent / Path(*parts[text_index + 1:]))
     candidates.extend([
+        SCENARIO_DIR / path.name,
         SCENARIO_DIR.parent / path.name,
         SCENARIO_DIR.parent.parent / path.name,
     ])
@@ -172,9 +162,12 @@ def load_run_config():
             f"La configuration du run ne contient pas la section 'data' : {yaml_path}"
         )
     data_cfg = loaded["data"]
-    for key in ("units_path", "embeddings_path", "stopwords_file"):
+    for key in ("units_path", "embeddings_path"):
         if data_cfg.get(key):
             data_cfg[key] = str(local_path(data_cfg[key]))
+    topics_cfg = loaded.setdefault("topics", {})
+    if topics_cfg.get("stopwords_file"):
+        topics_cfg["stopwords_file"] = str(local_path(topics_cfg["stopwords_file"]))
     return loaded
 
 manifest = read_json("theme_discovery_manifest.json", {})
@@ -197,7 +190,7 @@ if summary_path.is_file():
     display(pd.read_csv(summary_path))
         """
     ),
-    markdown("## 2. Pareto candidates and manual partition selection"),
+    markdown("## 2. Pareto candidates"),
     code(
         """
 selection_rows = []
@@ -206,7 +199,7 @@ for role in ROLES:
     if path.is_file():
         print(f"{role} — Pareto frontier")
         frontier = pd.read_csv(path)
-        chosen_ids = [str(value) for value in PARTITION_SELECTIONS.get(role, [])]
+        chosen_ids = []
         frontier_ids = set(frontier["configuration_id"].astype(str))
         selection_rows.extend(
             {
@@ -220,7 +213,7 @@ for role in ROLES:
         print()
 selection_check = pd.DataFrame(selection_rows)
 display(selection_check)
-if (
+if False and (
     selection_check.empty
     or set(selection_check["role"]) != set(ROLES)
     or not selection_check["is_pareto_candidate"].all()
@@ -258,14 +251,56 @@ for role in ROLES:
     stability_path = RUN_DIR / "pareto" / role / "stability_summary.csv"
     theme_path = RUN_DIR / "pareto" / role / "stability_theme.csv"
     print(f"### {role}")
-    if metrics_path.is_file():
+    frontier_path = RUN_DIR / "pareto" / role / "pareto_frontier.csv"
+    if frontier_path.is_file():
+        pareto = pd.read_csv(frontier_path)
+        if "pareto_non_dominated" in pareto.columns:
+            is_nondominated = pareto["pareto_non_dominated"].astype(str).str.lower().isin({"true", "1", "yes"})
+            pareto = pareto.loc[is_nondominated].copy()
+        pareto = pareto.sort_values("coverage", ascending=False, na_position="last")
+        print("Pareto non-dominated candidates — sorted by coverage (descending)")
+        display(pareto)
+    elif metrics_path.is_file():
+        # Fallback for runs created before pareto_frontier.csv was exported.
         metrics = pd.read_csv(metrics_path)
         if stability_path.is_file():
             metrics = metrics.merge(pd.read_csv(stability_path), on=["role", "configuration_id"], how="left")
-        display(metrics.sort_values(["dbcv_umap", "stability"], ascending=False))
+        display(metrics.sort_values("coverage", ascending=False, na_position="last"))
     if theme_path.is_file():
         print("Theme-level median Jaccard stability")
         display(pd.read_csv(theme_path).sort_values(["configuration_id", "theme_stability"], ascending=[True, False]))
+        """
+    ),
+    code(
+        """
+# Choose one or more Pareto configurations per role after inspecting sections 2--4.
+PARTITION_SELECTIONS = {
+    "A0": [],  # Example: ["A0_cfg_005", "A0_cfg_012"]
+    "A1": [],  # Example: ["A1_cfg_033"]
+    "B": [],   # Example: ["B_cfg_029", "B_cfg_041"]
+    "C": [],   # Example: ["C_cfg_015"]
+}
+PARTITION_SELECTION = {role: (values[0] if values else "") for role, values in PARTITION_SELECTIONS.items()}
+
+selection_rows = []
+for role in ROLES:
+    frontier_path = RUN_DIR / "pareto" / role / "pareto_frontier.csv"
+    frontier = pd.read_csv(frontier_path) if frontier_path.is_file() else pd.DataFrame()
+    frontier_ids = set(frontier.get("configuration_id", pd.Series(dtype=str)).astype(str))
+    for configuration_id in PARTITION_SELECTIONS.get(role, []):
+        selection_rows.append({
+            "role": role,
+            "configuration_id": str(configuration_id),
+            "is_pareto_candidate": str(configuration_id) in frontier_ids,
+        })
+selection_check = pd.DataFrame(selection_rows)
+display(selection_check)
+if (
+    selection_check.empty
+    or set(selection_check["role"]) != set(ROLES)
+    or not selection_check["is_pareto_candidate"].all()
+):
+    raise ValueError("PARTITION_SELECTIONS doit contenir au moins un configuration_id Pareto valide pour chaque rôle.")
         """
     ),
     markdown("## 5. Frozen themes and audit dictionary"),
@@ -274,6 +309,14 @@ for role in ROLES:
 if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_units
+
+missing_selection_roles = [role for role in ROLES if not PARTITION_SELECTIONS.get(role)]
+if missing_selection_roles:
+    raise ValueError(
+        "Renseigne PARTITION_SELECTIONS avant cette cellule pour les rôles : "
+        + ", ".join(missing_selection_roles)
+        + ". Utilise les configuration_id présents dans pareto_frontier.csv."
+    )
 
 units, _ = load_units(config)
 embedding_cache = RUN_DIR / "embeddings" / "embeddings_encoded.npy"
@@ -285,12 +328,17 @@ manual_results = {}
 partition_frames = {}
 for role in ROLES:
     configuration_id = str(PARTITION_SELECTION[role])
-    assignments_path = RUN_DIR / "clustering" / role / "topic_assignments.csv"
     labels_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_labels.npy"
     strength_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy"
-    if not assignments_path.is_file() or not labels_path.is_file() or not strength_path.is_file():
+    if not labels_path.is_file() or not strength_path.is_file():
         raise FileNotFoundError(f"Missing candidate artifacts for {role}/{configuration_id}")
-    assignments = pd.read_csv(assignments_path)
+    role_units = units[units["_role"].astype(str).eq(role)].reset_index(drop=True)
+    assignments = role_units[["_accident_id", "_fact_id", "_text"]].copy()
+    assignments.rename(
+        columns={"_accident_id": "accident_id", "_fact_id": "fact_id", "_text": "sentence"},
+        inplace=True,
+    )
+    assignments["role"] = role
     labels = np.load(labels_path).astype(int)
     strengths = np.load(strength_path).astype(float)
     if len(assignments) != len(labels) or len(labels) != len(strengths):
@@ -357,6 +405,29 @@ primary_representatives = representatives_by_membership[
 representative_lookup = primary_representatives.groupby("topic_id")["sentence"].apply(lambda values: " || ".join(values.astype(str).tolist())).to_dict()
 topics["representative_sentences"] = topics["topic_id"].map(representative_lookup).fillna(topics.get("representative_sentences", ""))
 topics.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary.csv", index=False)
+
+# Build a catalog for every selected Pareto partition. The configuration ID is
+# part of the topic identity for labels and plots because topic numbers can be
+# reused by different partitions.
+topic_catalog_rows = []
+primary_topic_lookup = topics.set_index("topic_id").to_dict("index") if not topics.empty else {}
+for (role, configuration_id), frame in partition_frames.items():
+    for topic in sorted(int(value) for value in frame["Topic"].unique() if int(value) >= 0):
+        subset = frame[frame["Topic"].eq(topic)].sort_values("membership_strength", ascending=False)
+        topic_id = f"{role}_{topic:03d}"
+        primary_row = primary_topic_lookup.get(topic_id, {}) if str(configuration_id) == str(PARTITION_SELECTION[role]) else {}
+        topic_catalog_rows.append({
+            "topic_id": topic_id,
+            "role": role,
+            "configuration_id": str(configuration_id),
+            "n_units": int(len(subset)),
+            "n_accidents": int(subset["accident_id"].nunique()),
+            "top_terms": str(primary_row.get("top_terms", "")),
+            "label": str(primary_row.get("label", "")),
+            "representative_sentences": " || ".join(subset["sentence"].astype(str).head(N_REPRESENTATIVE_SENTENCES).tolist()),
+        })
+topic_catalog = pd.DataFrame(topic_catalog_rows)
+topic_catalog.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary_all_selected.csv", index=False)
 selected_topics = topics.copy()
 display(topics)
 
@@ -456,18 +527,18 @@ def topic_representatives(row, n_sentences):
 
 
 def topic_records_for_role(role):
-    role_topics = topics[topics["role"].astype(str).eq(role)].copy()
-    if not selected_topics.empty and "topic_id" in selected_topics.columns:
-        selected_ids = set(selected_topics["topic_id"].astype(str))
-        role_topics = role_topics[role_topics["topic_id"].astype(str).isin(selected_ids)]
+    role_topics = topic_catalog[topic_catalog["role"].astype(str).eq(role)].copy()
+    if not role_topics.empty:
+        role_topics = role_topics.sort_values(["configuration_id", "n_accidents"], ascending=[True, False])
     elif FALLBACK_TOPICS_PER_ROLE is not None:
         role_topics = role_topics.sort_values("n_accidents", ascending=False).head(int(FALLBACK_TOPICS_PER_ROLE))
     if MAX_TOPICS_PER_ROLE_FOR_LLM is not None:
-        role_topics = role_topics.sort_values("n_accidents", ascending=False).head(int(MAX_TOPICS_PER_ROLE_FOR_LLM))
+        role_topics = role_topics.groupby("configuration_id", group_keys=False).head(int(MAX_TOPICS_PER_ROLE_FOR_LLM))
     records = []
     for _, row in role_topics.iterrows():
         records.append({
             "topic_id": str(row["topic_id"]),
+            "configuration_id": str(row["configuration_id"]),
             "top_words": str(row.get("top_terms", row.get("label", ""))),
             "representative_sentences": topic_representatives(row, N_REPRESENTATIVE_SENTENCES),
         })
@@ -513,9 +584,26 @@ Thèmes à analyser :
     return parse_llm_payload(raw_text)
 
 
+llm_cache_path = RUN_DIR / "topics_manual" / "llm_theme_labels.csv"
+llm_cache = pd.read_csv(llm_cache_path) if llm_cache_path.is_file() else pd.DataFrame()
+if not llm_cache.empty and "configuration_id" not in llm_cache.columns:
+    # Backward compatibility with the previous cache format, which contained
+    # only labels for the primary partition of each role.
+    llm_cache["configuration_id"] = llm_cache["role"].map(PARTITION_SELECTION)
+for column in ("topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"):
+    if column not in llm_cache.columns:
+        llm_cache[column] = ""
+llm_cache["cache_key"] = (
+    llm_cache["role"].astype(str) + "::" +
+    llm_cache["configuration_id"].astype(str) + "::" +
+    llm_cache["topic_id"].astype(str)
+)
+llm_cache = llm_cache.drop_duplicates("cache_key", keep="last")
+cached_by_key = llm_cache.set_index("cache_key").to_dict("index") if not llm_cache.empty else {}
 llm_rows = []
+new_llm_rows = []
 llm_status = {}
-if not topics.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
+if not topic_catalog.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
     try:
         from openai import OpenAI
 
@@ -526,7 +614,21 @@ if not topics.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
                 continue
             failed_count = 0
             missing_count = 0
+            cached_count = 0
             for record in tqdm(records, desc=f"OpenAI labels {role}", unit="topic"):
+                cache_key = f"{role}::{record['configuration_id']}::{record['topic_id']}"
+                cached = cached_by_key.get(cache_key)
+                if cached and str(cached.get("llm_label", "")).strip():
+                    cached_count += 1
+                    llm_rows.append({
+                        "topic_id": record["topic_id"],
+                        "role": role,
+                        "configuration_id": record["configuration_id"],
+                        "llm_label": str(cached.get("llm_label", "")).strip(),
+                        "llm_description": str(cached.get("llm_description", "")).strip(),
+                        "llm_evidence": str(cached.get("llm_evidence", "")).strip(),
+                    })
+                    continue
                 try:
                     response_items = request_role_labels(client, role, [record])
                     by_topic = {str(item.get("topic_id")): item for item in response_items if item.get("topic_id")}
@@ -536,15 +638,17 @@ if not topics.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
                     llm_rows.append({
                         "topic_id": record["topic_id"],
                         "role": role,
+                        "configuration_id": record["configuration_id"],
                         "llm_label": str(item.get("label", "")).strip(),
                         "llm_description": str(item.get("description", "")).strip(),
                         "llm_evidence": str(item.get("evidence", "")).strip(),
                     })
                 except Exception as error:
                     failed_count += 1
-                    llm_rows.append({
+                    new_llm_rows.append({
                         "topic_id": record["topic_id"],
                         "role": role,
+                        "configuration_id": record["configuration_id"],
                         "llm_label": "",
                         "llm_description": "",
                         "llm_evidence": "",
@@ -554,6 +658,10 @@ if not topics.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
                 llm_status[role] = f"completed_with_failures:{failed_count}"
             elif missing_count:
                 llm_status[role] = f"completed_with_missing_topics:{missing_count}"
+            elif cached_count == len(records):
+                llm_status[role] = f"loaded_from_cache:{cached_count}"
+            elif cached_count:
+                llm_status[role] = f"completed_with_cache_hits:{cached_count}"
             else:
                 llm_status[role] = "completed"
     except Exception as error:
@@ -562,14 +670,28 @@ if not topics.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
 else:
     llm_status["global"] = "skipped: OPENAI_ENABLED is false or OPENAI_API_KEY is missing"
 
-llm_labels = pd.DataFrame(llm_rows, columns=["topic_id", "role", "llm_label", "llm_description", "llm_evidence"])
+if not llm_rows and not new_llm_rows and not llm_cache.empty:
+    llm_rows = llm_cache.to_dict("records")
+llm_labels = pd.DataFrame(
+    list(llm_cache.drop(columns=["cache_key"], errors="ignore").to_dict("records"))
+    + llm_rows
+    + new_llm_rows,
+    columns=["topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"],
+)
+if not llm_labels.empty:
+    llm_labels["cache_key"] = (
+        llm_labels["role"].astype(str) + "::" +
+        llm_labels["configuration_id"].astype(str) + "::" +
+        llm_labels["topic_id"].astype(str)
+    )
+    llm_labels = llm_labels.drop_duplicates("cache_key", keep="last").drop(columns=["cache_key"])
 (RUN_DIR / "topics_manual").mkdir(parents=True, exist_ok=True)
 llm_labels.to_csv(RUN_DIR / "topics_manual" / "llm_theme_labels.csv", index=False)
 (RUN_DIR / "topics_manual" / "llm_theme_labels_status.json").write_text(json.dumps(llm_status, indent=2, ensure_ascii=False), encoding="utf-8")
 
-theme_labels = topics.copy()
+theme_labels = topic_catalog.copy()
 if not llm_labels.empty:
-    theme_labels = theme_labels.merge(llm_labels, on=["topic_id", "role"], how="left")
+    theme_labels = theme_labels.merge(llm_labels, on=["topic_id", "role", "configuration_id"], how="left")
 else:
     theme_labels["llm_label"] = ""
     theme_labels["llm_description"] = ""
@@ -596,6 +718,23 @@ Each selected non-dominated partition can be inspected directly on the source
 accident narrative. The colours are local to the displayed partition and the
 legend uses the LLM label when available, otherwise a transparent topic ID or
 top-term label. Noise (`-1`) remains uncoloured.
+        """
+    ),
+    code(
+        """
+# Choose one accident independently for each role. None displays the first
+# accident in the corresponding role dataframe by default.
+ACCIDENT_ID_A0 = None
+ACCIDENT_ID_A1 = None
+ACCIDENT_ID_B = None
+ACCIDENT_ID_C = None
+ACCIDENT_IDS_TO_DISPLAY = {
+    "A0": ACCIDENT_ID_A0,
+    "A1": ACCIDENT_ID_A1,
+    "B": ACCIDENT_ID_B,
+    "C": ACCIDENT_ID_C,
+}
+display(pd.DataFrame({"role": list(ACCIDENT_IDS_TO_DISPLAY), "selected_accident_id": list(ACCIDENT_IDS_TO_DISPLAY.values())}))
         """
     ),
     code(
@@ -691,12 +830,18 @@ def show_colored_text_inline_v5(
 
 def show_partition_narratives(role, configuration_id, accident_ids=None):
     frame = partition_frames[(role, str(configuration_id))].copy()
-    primary_labels = theme_labels[theme_labels["role"].astype(str).eq(role)].copy()
-    label_lookup = primary_labels.set_index("topic_id")["plot_label"].astype(str).to_dict() if not primary_labels.empty else {}
+    partition_labels = theme_labels[
+        theme_labels["role"].astype(str).eq(role)
+        & theme_labels["configuration_id"].astype(str).eq(str(configuration_id))
+    ].copy()
+    label_lookup = partition_labels.set_index("topic_id")["plot_label"].astype(str).to_dict() if not partition_labels.empty else {}
     frame["topic_label"] = frame["Topic"].map(lambda value: label_lookup.get(f"{role}_{int(value):03d}", f"Topic {int(value)}") if int(value) >= 0 else "Bruit / non assigné")
-    requested = accident_ids or ACCIDENT_IDS_TO_DISPLAY.get(role)
-    if requested is None:
-        requested = frame["accident_id"].drop_duplicates().head(3).tolist()
+    requested = accident_ids if accident_ids is not None else ACCIDENT_IDS_TO_DISPLAY.get(role)
+    if requested is None or requested == "":
+        requested = frame["accident_id"].drop_duplicates().head(1).tolist()
+    elif isinstance(requested, (str, int)):
+        requested = [requested]
+    print(f"{role} — accidents disponibles : {frame['accident_id'].drop_duplicates().astype(str).tolist()[:20]}")
     for accident_id in requested:
         display(HTML(f"<h4>{role} — partition {configuration_id} — accident {html_lib.escape(str(accident_id))}</h4>"))
         show_colored_text_inline_v5(frame, accident_id)
@@ -704,7 +849,7 @@ def show_partition_narratives(role, configuration_id, accident_ids=None):
 
 for (role, configuration_id) in partition_frames:
     print(f"{role} — partition {configuration_id}")
-    show_partition_narratives(role, configuration_id)
+    show_partition_narratives(role, configuration_id, accident_ids=ACCIDENT_IDS_TO_DISPLAY.get(role))
         """
     ),
     markdown(
@@ -740,7 +885,10 @@ else:
     retained_topic_ids = set(theme_labels["topic_id"].astype(str))
 plot_frame["topic_id"] = plot_frame["topic_id"].fillna("").astype(str)
 plot_frame["plot_topic_id"] = plot_frame["topic_id"].where(plot_frame["topic_id"].isin(retained_topic_ids), "")
-label_lookup = theme_labels.set_index("topic_id")["plot_label"].astype(str).to_dict()
+primary_theme_labels = theme_labels[
+    theme_labels["configuration_id"].astype(str).eq(theme_labels["role"].map(PARTITION_SELECTION).astype(str))
+]
+label_lookup = primary_theme_labels.set_index("topic_id")["plot_label"].astype(str).to_dict()
 
 import umap
 
@@ -824,13 +972,10 @@ outputs = [
     "figures/pareto_validation_all_roles.png", "figures/umap_topics_2d_A0.png",
     "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
     "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
-    "topics_manual/representatives_by_membership.csv",
+    "topics_manual/topic_dictionary_all_selected.csv", "topics_manual/representatives_by_membership.csv",
     "topics_manual/llm_theme_labels.csv", "topics_manual/topic_dictionary_with_llm_labels.csv",
     "pareto/A0/candidate_partitions/<configuration_id>_labels.npy",
     "pareto/A0/candidate_partitions/<configuration_id>_membership_strength.npy",
-    "clustering/A0/topic_assignments.csv",
-    "clustering/A1/topic_assignments.csv", "clustering/B/topic_assignments.csv",
-    "clustering/C/topic_assignments.csv",
 ]
 display(pd.DataFrame({"path": outputs, "exists": [(RUN_DIR / path).exists() for path in outputs]}))
         """

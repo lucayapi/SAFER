@@ -617,10 +617,12 @@ def screen_clustering_parameters(
         "coverage",
         "median_accident_support",
         "n_single_accident_clusters",
+        "random_state",
     }
     if cache_path.is_file() and not reestimate:
         cached = pd.read_csv(cache_path)
-        if required_columns.issubset(cached.columns):
+        expected_random_state = int(config.get("random_state", 42))
+        if required_columns.issubset(cached.columns) and cached["random_state"].astype(int).eq(expected_random_state).all():
             return cached
     role_embeddings = embeddings[role_mask]
     screening_cfg = config.get("screening", {})
@@ -650,13 +652,14 @@ def screen_clustering_parameters(
                 role_units.iloc[selected_indices]["_text"].tolist(),
                 role_embeddings[selected_indices],
                 params,
-                int(config.get("random_state", 42)) + configuration_index,
+                int(config.get("random_state", 42)),
                 config,
             )
         metrics = _screening_metrics(role_units, selected_indices, labels)
         rows.append({
             "role": role,
             "configuration_id": f"{role}_cfg_{configuration_index:03d}",
+            "random_state": int(config.get("random_state", 42)),
             **params,
             **metrics,
         })
@@ -1125,13 +1128,18 @@ def evaluate_pareto_candidates(
     candidate_dir = pareto_dir / "candidate_partitions"
     candidate_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = pareto_dir / "candidate_metrics.csv"
+    expected_random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
     if metrics_path.is_file() and not reestimate:
         cached = pd.read_csv(metrics_path)
         membership_files_present = all(
             (candidate_dir / f"{configuration_id}_membership_strength.npy").is_file()
             for configuration_id in cached.get("configuration_id", pd.Series(dtype=str)).astype(str)
         )
-        if {"configuration_id", "dbcv_umap"}.issubset(cached.columns) and membership_files_present:
+        cache_has_expected_seed = (
+            "random_state" in cached.columns
+            and cached["random_state"].astype(int).eq(expected_random_state).all()
+        )
+        if {"configuration_id", "dbcv_umap"}.issubset(cached.columns) and membership_files_present and cache_has_expected_seed:
             _log_progress(f"[{role}] candidats: cache réutilisé ({metrics_path})")
             return cached.loc[:, ~cached.columns.str.contains("semantic", case=False)]
     clustering_input = role_embeddings
@@ -1141,7 +1149,7 @@ def evaluate_pareto_candidates(
         apply_selection=False,
         budget_override=None,
     )
-    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
+    random_state = expected_random_state
     dbcv_sample_size = pareto_cfg.get("dbcv_sample_size")
     tasks = [
         {
@@ -1151,7 +1159,7 @@ def evaluate_pareto_candidates(
             "params": params,
             "embeddings": clustering_input,
             "accident_ids": role_units["_accident_id"].astype(str).to_numpy(),
-            "random_state": random_state + index,
+            "random_state": random_state,
             "config": config,
             "dbcv_sample_size": dbcv_sample_size,
         }
@@ -1231,14 +1239,32 @@ def evaluate_resampling_stability(
     pareto_dir = output_dir / "pareto" / role
     theme_path = pareto_dir / "stability_theme.csv"
     summary_path = pareto_dir / "stability_summary.csv"
-    if theme_path.is_file() and summary_path.is_file() and not reestimate:
+    n_repetitions = int(pareto_cfg.get("n_resampling", 30))
+    fraction = float(pareto_cfg.get("resampling_fraction", 0.8))
+    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
+    stability_metadata_path = pareto_dir / "stability_metadata.json"
+    expected_stability_metadata = {
+        "version": "fixed_main_seed_v1",
+        "random_state": random_state,
+        "n_repetitions": n_repetitions,
+        "resampling_fraction": fraction,
+    }
+    cached_stability_metadata = {}
+    if stability_metadata_path.is_file():
+        try:
+            cached_stability_metadata = json.loads(stability_metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached_stability_metadata = {}
+    if (
+        theme_path.is_file()
+        and summary_path.is_file()
+        and cached_stability_metadata == expected_stability_metadata
+        and not reestimate
+    ):
         _log_progress(f"[{role}] resampling: cache réutilisé ({summary_path})")
         return pd.read_csv(theme_path), pd.read_csv(summary_path)
     candidate_dir = pareto_dir / "candidate_partitions"
     clustering_input = role_embeddings
-    n_repetitions = int(pareto_cfg.get("n_resampling", 30))
-    fraction = float(pareto_cfg.get("resampling_fraction", 0.8))
-    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
     all_tasks: list[dict[str, Any]] = []
     candidates = candidates.reset_index(drop=True)
     accident_ids = role_units["_accident_id"].astype(str).to_numpy()
@@ -1249,7 +1275,7 @@ def evaluate_resampling_stability(
         params = {key: _to_python_value(candidate[key]) for key in PARAMETER_KEYS}
         reference_clusters = [int(label) for label in np.unique(reference) if label >= 0]
         for repetition in range(n_repetitions):
-            rng = np.random.default_rng(random_state + ROLE_RANK[role] * 10000 + candidate_index * 100 + repetition)
+            rng = np.random.default_rng(random_state + ROLE_RANK[role] * 10000 + repetition)
             selected_accidents = _sample_accidents(role_units, fraction, rng)
             selected_indices = np.flatnonzero(role_units["_accident_id"].isin(selected_accidents).to_numpy())
             if len(selected_indices) < 3:
@@ -1263,7 +1289,7 @@ def evaluate_resampling_stability(
                 "selected_indices": selected_indices,
                 "params": params,
                 "embeddings": clustering_input,
-                "random_state": random_state + repetition + candidate_index,
+                "random_state": random_state + repetition,
                 "config": config,
             })
     _log_progress(
@@ -1296,19 +1322,10 @@ def evaluate_resampling_stability(
         summary["n_repetitions"] = n_repetitions
     theme_frame.to_csv(theme_path, index=False)
     summary.to_csv(summary_path, index=False)
+    stability_metadata_path.write_text(json.dumps(expected_stability_metadata, indent=2), encoding="utf-8")
     _log_progress(
         f"[{role}] resampling: terminé ({len(summary)} résumés, "
         f"{len(all_tasks)} tâches)"
-    )
-    (pareto_dir / "stability_metadata.json").write_text(
-        json.dumps({
-            "version": "resampling_stability_parallel_v2",
-            "role": role,
-            "n_tasks": len(all_tasks),
-            "n_workers": resolve_n_workers(config),
-            "n_repetitions": n_repetitions,
-        }, indent=2),
-        encoding="utf-8",
     )
     return theme_frame, summary
 
@@ -1544,7 +1561,11 @@ def load_topic_stopwords(config: Mapping[str, Any]) -> set[str]:
     if stopwords_file:
         path = Path(stopwords_file)
         if not path.is_file():
-            raise FileNotFoundError(f"Fichier de stopwords métier introuvable : {path}")
+            local_candidate = Path(__file__).resolve().parent / path.name
+            if local_candidate.is_file():
+                path = local_candidate
+            if not local_candidate.is_file():
+                raise FileNotFoundError(f"Fichier de stopwords métier introuvable : {path}")
         for raw_line in path.read_text(encoding="utf-8").splitlines():
             line = raw_line.strip().lower()
             if line and not line.startswith("#"):
