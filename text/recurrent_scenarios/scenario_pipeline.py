@@ -234,13 +234,9 @@ def _parallel_map(
             "n_jobs": workers,
             "backend": backend,
             "batch_size": 1,
-            "pre_dispatch": parallel_cfg.get("pre_dispatch", workers),
             "verbose": 0,
             "return_as": "generator",
         }
-        if backend in {"loky", "multiprocessing"}:
-            parallel_kwargs["max_nbytes"] = parallel_cfg.get("max_nbytes", "16M")
-            parallel_kwargs["mmap_mode"] = parallel_cfg.get("mmap_mode", "r")
         iterator = Parallel(
             **parallel_kwargs,
         )(
@@ -512,6 +508,8 @@ def _fit_cluster_with_embedding(
     params: Mapping[str, Any],
     random_state: int,
     config: Mapping[str, Any],
+    *,
+    return_membership_strength: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fit one UMAP-HDBSCAN candidate and retain the fitted UMAP coordinates."""
     try:
@@ -520,7 +518,11 @@ def _fit_cluster_with_embedding(
     except ImportError as error:
         raise ImportError("umap-learn et hdbscan sont requis pour le clustering.") from error
     if len(embeddings) < 3:
-        return np.full(len(embeddings), -1, dtype=int), np.asarray(embeddings)
+        labels = np.full(len(embeddings), -1, dtype=int)
+        reduced = np.asarray(embeddings)
+        if return_membership_strength:
+            return labels, reduced, np.zeros(len(labels), dtype=np.float32)
+        return labels, reduced
     screening_cfg = config["screening"]
     umap_cfg = screening_cfg["umap"]
     hdbscan_cfg = screening_cfg["hdbscan"]
@@ -544,19 +546,17 @@ def _fit_cluster_with_embedding(
         metric=str(hdbscan_cfg.get("metric", "euclidean")),
         prediction_data=bool(hdbscan_cfg.get("prediction_data", True)),
     )
-    try:
-        from threadpoolctl import threadpool_limits
-    except ImportError:
-        threadpool_limits = None
-    inner_threads = max(1, int(config.get("parallel", {}).get("inner_threads", 1)))
-    if threadpool_limits is None:
-        reduced_embeddings = umap_model.fit_transform(embeddings)
-        labels = clusterer.fit_predict(reduced_embeddings)
-    else:
-        with threadpool_limits(limits=inner_threads):
-            reduced_embeddings = umap_model.fit_transform(embeddings)
-            labels = clusterer.fit_predict(reduced_embeddings)
-    return np.asarray(labels, dtype=int), np.asarray(reduced_embeddings)
+    reduced_embeddings = umap_model.fit_transform(embeddings)
+    labels = clusterer.fit_predict(reduced_embeddings)
+    labels = np.asarray(labels, dtype=int)
+    reduced_embeddings = np.asarray(reduced_embeddings)
+    if return_membership_strength:
+        strengths = np.asarray(
+            getattr(clusterer, "probabilities_", np.where(labels >= 0, 1.0, 0.0)),
+            dtype=np.float32,
+        )
+        return labels, reduced_embeddings, strengths
+    return labels, reduced_embeddings
 
 
 def _screening_metrics(
@@ -1019,12 +1019,13 @@ def _candidate_metrics(role_units: pd.DataFrame, labels: np.ndarray) -> dict[str
 
 def _evaluate_candidate_task(task: Mapping[str, Any]) -> dict[str, Any]:
     """Fit and score one full-data candidate in an isolated worker."""
-    labels, reduced = _fit_cluster_with_embedding(
+    labels, reduced, membership_strength = _fit_cluster_with_embedding(
         (),
         task["embeddings"],
         task["params"],
         int(task["random_state"]),
         task["config"],
+        return_membership_strength=True,
     )
     dbcv_indices = np.arange(len(labels))
     sample_size = task.get("dbcv_sample_size")
@@ -1037,6 +1038,7 @@ def _evaluate_candidate_task(task: Mapping[str, Any]) -> dict[str, Any]:
         "configuration_id": str(task["configuration_id"]),
         "params": dict(task["params"]),
         "labels": labels.astype(np.int32),
+        "membership_strength": membership_strength.astype(np.float32),
         "reduced": np.asarray(reduced, dtype=np.float32),
         "dbcv_umap": _dbcv(reduced[dbcv_indices], labels[dbcv_indices]),
         "dbcv_n_units": int(len(dbcv_indices)),
@@ -1086,7 +1088,7 @@ def _evaluate_stability_task(task: Mapping[str, Any]) -> list[dict[str, Any]]:
         int(task["random_state"]),
         task["config"],
     )
-    reference = np.load(task["reference_path"], mmap_mode="r")
+    reference = np.load(task["reference_path"])
     local_reference = np.asarray(reference)[selected_indices]
     rows = []
     for cluster_label in task["reference_clusters"]:
@@ -1125,7 +1127,11 @@ def evaluate_pareto_candidates(
     metrics_path = pareto_dir / "candidate_metrics.csv"
     if metrics_path.is_file() and not reestimate:
         cached = pd.read_csv(metrics_path)
-        if {"configuration_id", "dbcv_umap"}.issubset(cached.columns):
+        membership_files_present = all(
+            (candidate_dir / f"{configuration_id}_membership_strength.npy").is_file()
+            for configuration_id in cached.get("configuration_id", pd.Series(dtype=str)).astype(str)
+        )
+        if {"configuration_id", "dbcv_umap"}.issubset(cached.columns) and membership_files_present:
             _log_progress(f"[{role}] candidats: cache réutilisé ({metrics_path})")
             return cached.loc[:, ~cached.columns.str.contains("semantic", case=False)]
     clustering_input = role_embeddings
@@ -1166,7 +1172,9 @@ def evaluate_pareto_candidates(
         configuration_id = str(result["configuration_id"])
         labels = result["labels"]
         reduced = result["reduced"]
+        membership_strength = result["membership_strength"]
         np.save(candidate_dir / f"{configuration_id}_labels.npy", labels.astype(np.int32))
+        np.save(candidate_dir / f"{configuration_id}_membership_strength.npy", membership_strength.astype(np.float32))
         np.save(candidate_dir / f"{configuration_id}_umap.npy", reduced.astype(np.float32))
         rows.append({
             "role": role,
@@ -1182,7 +1190,7 @@ def evaluate_pareto_candidates(
     _log_progress(f"[{role}] candidats: terminé ({len(result)} configurations)")
     (pareto_dir / "candidate_metadata.json").write_text(
         json.dumps({
-            "version": "pareto_candidates_parallel_v2",
+            "version": "pareto_candidates_parallel_v3_membership_strength",
             "role": role,
             "n_candidates": len(result),
             "n_workers": resolve_n_workers(config),

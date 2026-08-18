@@ -360,15 +360,16 @@ summary.to_csv(RUN_DIR / "pareto_selection_summary.csv", index=False)
         """
 ## 10. Candidate partitions remain available
 
-No Pareto candidate is frozen here. Notebook 2 asks the analyst to choose one
-configuration ID per role. That explicit choice controls both the 2-D map and
-the subsequent human/LLM theme annotation.
+No Pareto candidate is frozen here. The results notebook asks the analyst to
+enter one or more configuration IDs per role. Those explicit choices control
+the cluster inspection, narrative colouring, 2-D map and subsequent human/LLM
+theme annotation.
         """
     ),
     code(
         """
 print("Candidate labels:", RUN_DIR / "pareto" / "<role>" / "candidate_partitions")
-print("Edit PARTITION_SELECTION in Notebook 2 to choose the partitions to inspect.")
+print("Edit PARTITION_SELECTIONS in topic_modeling_results.ipynb before running the analysis cells.")
         """
     ),
 ])

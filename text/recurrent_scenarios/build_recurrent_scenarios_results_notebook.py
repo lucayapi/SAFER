@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-NOTEBOOK_PATH = ROOT / "notebooks" / "recurrent_scenarios_results.ipynb"
+NOTEBOOK_PATH = ROOT / "notebooks" / "topic_modeling_results.ipynb"
 
 
 def markdown(text: str) -> dict:
@@ -81,17 +81,20 @@ RUN_DIRECTORY = "runs/theme_discovery_audit/caou"
 OPENAI_ENABLED = True
 OPENAI_MODEL = "gpt-4o-mini"
 LLM_OUTPUT_LANGUAGE = "Français"
-N_REPRESENTATIVE_SENTENCES = 5
+N_REPRESENTATIVE_SENTENCES = 25
 MAX_TOPICS_PER_ROLE_FOR_LLM = None
 FALLBACK_TOPICS_PER_ROLE = None
-# Choose one Pareto configuration per role after inspecting the diagnostics.
-# These example IDs are editable and are validated against pareto_frontier.csv.
-PARTITION_SELECTION = {
-    "A0": "A0_cfg_005",
-    "A1": "A1_cfg_033",
-    "B": "B_cfg_029",
-    "C": "C_cfg_015",
+# Choose one or more Pareto configurations per role after inspecting the
+# diagnostics. Every listed partition is visualized in the narrative viewer.
+PARTITION_SELECTIONS = {
+    "A0": [],  # Example: ["A0_cfg_005", "A0_cfg_012"]
+    "A1": [],  # Example: ["A1_cfg_033"]
+    "B": [],   # Example: ["B_cfg_029", "B_cfg_041"]
+    "C": [],   # Example: ["C_cfg_015"]
 }
+# The first listed partition remains the primary one used for topic labels.
+PARTITION_SELECTION = {role: (values[0] if values else "") for role, values in PARTITION_SELECTIONS.items()}
+ACCIDENT_IDS_TO_DISPLAY = {}  # Example: {"A0": [12345], "B": [67890]}
 UMAP_2D_N_NEIGHBORS = 15
 UMAP_2D_MIN_DIST = 0.1
 UMAP_2D_RANDOM_STATE = 42
@@ -177,6 +180,10 @@ def load_run_config():
 manifest = read_json("theme_discovery_manifest.json", {})
 parallel = read_json("parallel_runtime.json", {})
 config = load_run_config()
+config.setdefault("topics", {})["top_sentences"] = max(
+    int(config.get("topics", {}).get("top_sentences", 5)),
+    N_REPRESENTATIVE_SENTENCES,
+)
 display(pd.DataFrame([{
     "dataset": manifest.get("dataset_id", config.get("data", {}).get("dataset_id")),
     "selection_objectives": ", ".join(manifest.get("selection_objectives", ["dbcv_umap", "stability"])),
@@ -199,14 +206,28 @@ for role in ROLES:
     if path.is_file():
         print(f"{role} — Pareto frontier")
         frontier = pd.read_csv(path)
-        chosen_id = PARTITION_SELECTION.get(role, "")
-        selection_rows.append({"role": role, "configuration_id": chosen_id, "is_pareto_candidate": chosen_id in set(frontier["configuration_id"].astype(str))})
+        chosen_ids = [str(value) for value in PARTITION_SELECTIONS.get(role, [])]
+        frontier_ids = set(frontier["configuration_id"].astype(str))
+        selection_rows.extend(
+            {
+                "role": role,
+                "configuration_id": chosen_id,
+                "is_pareto_candidate": chosen_id in frontier_ids,
+            }
+            for chosen_id in chosen_ids
+        )
         display(frontier)
         print()
 selection_check = pd.DataFrame(selection_rows)
 display(selection_check)
-if not selection_check["is_pareto_candidate"].all():
-    raise ValueError("Each PARTITION_SELECTION entry must be a configuration_id present in that role's pareto_frontier.csv.")
+if (
+    selection_check.empty
+    or set(selection_check["role"]) != set(ROLES)
+    or not selection_check["is_pareto_candidate"].all()
+):
+    raise ValueError(
+        "PARTITION_SELECTIONS doit contenir au moins un configuration_id Pareto valide pour chaque rôle."
+    )
         """
     ),
     markdown(
@@ -261,17 +282,21 @@ if len(embeddings) != len(units):
     raise ValueError(f"Embedding/unit mismatch: {len(embeddings)} embeddings for {len(units)} units")
 
 manual_results = {}
+partition_frames = {}
 for role in ROLES:
     configuration_id = str(PARTITION_SELECTION[role])
     assignments_path = RUN_DIR / "clustering" / role / "topic_assignments.csv"
     labels_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_labels.npy"
-    if not assignments_path.is_file() or not labels_path.is_file():
+    strength_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy"
+    if not assignments_path.is_file() or not labels_path.is_file() or not strength_path.is_file():
         raise FileNotFoundError(f"Missing candidate artifacts for {role}/{configuration_id}")
     assignments = pd.read_csv(assignments_path)
     labels = np.load(labels_path).astype(int)
-    if len(assignments) != len(labels):
+    strengths = np.load(strength_path).astype(float)
+    if len(assignments) != len(labels) or len(labels) != len(strengths):
         raise ValueError(f"Label/assignment mismatch for {role}/{configuration_id}")
     assignments["topic_id"] = [f"{role}_{label:03d}" if label >= 0 else "" for label in labels]
+    assignments["membership_strength"] = strengths
     topic_rows = []
     for label in sorted(int(value) for value in np.unique(labels) if value >= 0):
         mask = labels == label
@@ -290,9 +315,47 @@ for role in ROLES:
         replications=pd.DataFrame(),
     )
 
+    for candidate_id in [str(value) for value in PARTITION_SELECTIONS[role]]:
+        candidate_labels_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{candidate_id}_labels.npy"
+        candidate_strength_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{candidate_id}_membership_strength.npy"
+        candidate_labels = np.load(candidate_labels_path).astype(int)
+        candidate_strength = np.load(candidate_strength_path).astype(float)
+        if len(candidate_labels) != len(assignments) or len(candidate_strength) != len(assignments):
+            raise ValueError(f"Label/assignment mismatch for {role}/{candidate_id}")
+        candidate_frame = assignments[["accident_id", "fact_id", "sentence"]].copy()
+        candidate_frame["Topic"] = candidate_labels
+        candidate_frame["membership_strength"] = candidate_strength
+        candidate_frame["partition_id"] = candidate_id
+        candidate_frame["role"] = role
+        partition_frames[(role, candidate_id)] = candidate_frame
+
 prepared_manual = PreparedData(units=units, embeddings=embeddings, input_summary=pd.DataFrame())
 topics = build_topic_dictionary(prepared_manual, manual_results, config, RUN_DIR / "topics_manual")
 topics["selected_configuration_id"] = topics["role"].map(PARTITION_SELECTION)
+representative_rows = []
+for (role, configuration_id), frame in partition_frames.items():
+    for topic in sorted(int(value) for value in frame["Topic"].unique() if int(value) >= 0):
+        subset = frame[frame["Topic"].eq(topic)].sort_values("membership_strength", ascending=False).head(N_REPRESENTATIVE_SENTENCES)
+        representative_rows.extend(
+            {
+                "role": role,
+                "configuration_id": configuration_id,
+                "topic_id": f"{role}_{topic:03d}",
+                "fact_id": row["fact_id"],
+                "accident_id": row["accident_id"],
+                "sentence": row["sentence"],
+                "membership_strength": row["membership_strength"],
+            }
+            for _, row in subset.iterrows()
+        )
+representatives_by_membership = pd.DataFrame(representative_rows)
+(RUN_DIR / "topics_manual").mkdir(parents=True, exist_ok=True)
+representatives_by_membership.to_csv(RUN_DIR / "topics_manual" / "representatives_by_membership.csv", index=False)
+primary_representatives = representatives_by_membership[
+    representatives_by_membership["configuration_id"].astype(str).eq(representatives_by_membership["role"].map(PARTITION_SELECTION).astype(str))
+]
+representative_lookup = primary_representatives.groupby("topic_id")["sentence"].apply(lambda values: " || ".join(values.astype(str).tolist())).to_dict()
+topics["representative_sentences"] = topics["topic_id"].map(representative_lookup).fillna(topics.get("representative_sentences", ""))
 topics.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary.csv", index=False)
 selected_topics = topics.copy()
 display(topics)
@@ -305,7 +368,69 @@ for role in ROLES:
     ),
     markdown(
         """
-## 6. Natural-language theme labels with the OpenAI API
+## 6. Membership-strength distributions
+
+These scores are HDBSCAN membership strengths, not posterior probabilities.
+They are shown for every selected Pareto partition. The histogram describes
+the distribution over units, while the horizontal barplot compares the maximum,
+mean and median strength for each topic. Noise units are excluded from topic
+summaries but remain visible in the diagnostic count.
+        """
+    ),
+    code(
+        """
+from matplotlib.ticker import MaxNLocator
+
+
+membership_summaries = {}
+for (role, configuration_id), frame in partition_frames.items():
+    valid = frame[frame["Topic"].astype(int).ge(0)].copy()
+    valid["Topic"] = valid["Topic"].astype(int)
+    summary = valid.groupby("Topic")["membership_strength"].agg(
+        n_units="size",
+        max_strength="max",
+        mean_strength="mean",
+        median_strength="median",
+    ).sort_values("max_strength", ascending=False)
+    summary.insert(0, "role", role)
+    summary.insert(1, "configuration_id", configuration_id)
+    membership_summaries[(role, configuration_id)] = summary.reset_index()
+    display(summary.reset_index())
+
+    figure, axes = plt.subplots(1, 2, figsize=(17, 6), gridspec_kw={"width_ratios": [1, 1.7]})
+    strengths = valid["membership_strength"].astype(float)
+    axes[0].hist(strengths, bins=np.linspace(0, 1, 21), color="#4C78A8", edgecolor="white")
+    axes[0].set_title(f"{role} — {configuration_id}: distribution")
+    axes[0].set_xlabel("HDBSCAN membership strength")
+    axes[0].set_ylabel("Number of units")
+    axes[0].set_xlim(0, 1)
+    axes[0].xaxis.set_major_locator(MaxNLocator(6))
+
+    plot_summary = summary.sort_values("max_strength", ascending=True)
+    positions = np.arange(len(plot_summary))
+    axes[1].barh(positions, plot_summary["max_strength"], color="#F28E2B", alpha=0.85, label="Maximum")
+    axes[1].scatter(plot_summary["mean_strength"], positions, color="#4C78A8", s=28, label="Moyenne", zorder=3)
+    axes[1].scatter(plot_summary["median_strength"], positions, color="#59A14F", s=28, label="Médiane", zorder=3)
+    axes[1].set_yticks(positions)
+    axes[1].set_yticklabels([f"Topic {int(topic)}" for topic in plot_summary.index])
+    axes[1].set_xlim(0, 1)
+    axes[1].set_xlabel("Membership strength")
+    axes[1].set_title(f"{role} — {configuration_id}: strength by topic")
+    axes[1].legend(frameon=False)
+    axes[1].grid(axis="x", alpha=0.2)
+    figure.tight_layout()
+    (RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
+    figure.savefig(RUN_DIR / "figures" / f"membership_strength_{role}_{configuration_id}.png", dpi=250, bbox_inches="tight")
+    display(figure)
+    plt.close(figure)
+
+membership_summary_table = pd.concat(membership_summaries.values(), ignore_index=True) if membership_summaries else pd.DataFrame()
+membership_summary_table.to_csv(RUN_DIR / "topics_manual" / "membership_strength_summary.csv", index=False)
+        """
+    ),
+    markdown(
+        """
+## 7. Natural-language theme labels with the OpenAI API
 
 The prompts are defined in the first code cell, separately for A0, A1, B and
 C. For each role, the API receives the topic identifiers, top words and the
@@ -465,7 +590,126 @@ display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "l
     ),
     markdown(
         """
-## 7. Two-dimensional UMAP topic map
+## 8. Narrative text coloured by topic
+
+Each selected non-dominated partition can be inspected directly on the source
+accident narrative. The colours are local to the displayed partition and the
+legend uses the LLM label when available, otherwise a transparent topic ID or
+top-term label. Noise (`-1`) remains uncoloured.
+        """
+    ),
+    code(
+        """
+import html as html_lib
+from IPython.display import HTML
+
+
+def show_colored_text_inline_v5(
+    frame,
+    accident_id,
+    *,
+    text_col="sentence",
+    topic_col="Topic",
+    label_col="topic_label",
+    show_legend=True,
+    legend_max_items=80,
+    cmap_name="tab20",
+    sep=" ",
+    font_size_px=11,
+    line_height=1.55,
+    highlight_style="border",
+    pastel_strength=0.82,
+    border_width_px=2,
+    container_max_width_px=1100,
+    legend_font_size_px=9,
+    legend_title="Thèmes",
+    legend_max_height_px=260,
+    legend_item_min_width_px=220,
+):
+    data = frame[frame["accident_id"].astype(str).eq(str(accident_id))].copy()
+    if data.empty:
+        print(f"Aucune donnée pour accident_id={accident_id}")
+        return
+    topics_in_text = data[topic_col].fillna(-1).astype(int).to_numpy()
+    topic_ids = sorted(topic for topic in np.unique(topics_in_text) if topic != -1)
+    cmap = plt.get_cmap(cmap_name, max(1, len(topic_ids)))
+
+    def rgba_to_hex(rgba):
+        return "#{:02x}{:02x}{:02x}".format(*(int(channel * 255) for channel in rgba[:3]))
+
+    def hex_to_rgb(value):
+        value = value.lstrip("#")
+        return tuple(int(value[index:index + 2], 16) for index in (0, 2, 4))
+
+    def pastel(value):
+        red, green, blue = hex_to_rgb(value)
+        return "rgb({},{},{})".format(
+            int(red + (255 - red) * pastel_strength),
+            int(green + (255 - green) * pastel_strength),
+            int(blue + (255 - blue) * pastel_strength),
+        )
+
+    colors = {topic: rgba_to_hex(cmap(index)) for index, topic in enumerate(topic_ids)}
+    backgrounds = {topic: pastel(colors[topic]) for topic in topic_ids}
+    labels = {}
+    for topic in topic_ids:
+        subset = data[data[topic_col].fillna(-1).astype(int).eq(topic)]
+        value = subset[label_col].iloc[0] if label_col in subset.columns else ""
+        labels[topic] = str(value).strip() if str(value).strip() else f"Topic {topic}"
+
+    parts = []
+    for _, row in data.iterrows():
+        sentence = str(row.get(text_col, "")).strip()
+        if not sentence:
+            continue
+        topic = int(row.get(topic_col, -1))
+        escaped = html_lib.escape(sentence)
+        if topic < 0:
+            parts.append(f"<span style='color:#111'>{escaped}</span>")
+            continue
+        color = colors.get(topic, "#999999")
+        background = backgrounds.get(topic, "#f5f5f5")
+        if highlight_style == "bar":
+            style = f"border-left:{border_width_px}px solid {color};padding:1px 7px;"
+        else:
+            style = f"background:{background};padding:1px 6px;border-radius:8px;box-shadow:0 0 0 {border_width_px}px {color} inset;"
+        parts.append(f"<span title='{html_lib.escape(labels.get(topic, f'Topic {topic}'))}' style='{style}'>{escaped}</span>")
+
+    legend = ""
+    if show_legend and topic_ids:
+        items = []
+        for topic in topic_ids[:legend_max_items]:
+            items.append(
+                f"<div style='display:flex;align-items:flex-start;gap:8px;padding:5px 7px;border-radius:10px;background:{backgrounds[topic]};min-width:{legend_item_min_width_px}px;'>"
+                f"<div style='width:10px;height:10px;background:{colors[topic]};border-radius:3px;margin-top:2px;flex:0 0 auto;'></div>"
+                f"<div style='font-size:{legend_font_size_px}px;line-height:1.25;overflow-wrap:anywhere;'>{html_lib.escape(labels[topic])}</div></div>"
+            )
+        legend = f"<div style='margin-top:10px;padding:10px 12px;border:1px solid #eee;border-radius:14px;background:#fbfbfb;'><div style='font-weight:800;margin-bottom:8px;'>{html_lib.escape(legend_title)}</div><div style='display:flex;flex-wrap:wrap;gap:8px;max-height:{legend_max_height_px}px;overflow:auto;'>{''.join(items)}</div></div>"
+
+    display(HTML(f"<div style='max-width:{container_max_width_px}px;'><div style='font-size:{font_size_px}px;line-height:{line_height};white-space:pre-wrap;border:1px solid #e0e0e0;padding:12px;border-radius:14px;background:#fff;'>{sep.join(parts)}</div>{legend}</div>"))
+
+
+def show_partition_narratives(role, configuration_id, accident_ids=None):
+    frame = partition_frames[(role, str(configuration_id))].copy()
+    primary_labels = theme_labels[theme_labels["role"].astype(str).eq(role)].copy()
+    label_lookup = primary_labels.set_index("topic_id")["plot_label"].astype(str).to_dict() if not primary_labels.empty else {}
+    frame["topic_label"] = frame["Topic"].map(lambda value: label_lookup.get(f"{role}_{int(value):03d}", f"Topic {int(value)}") if int(value) >= 0 else "Bruit / non assigné")
+    requested = accident_ids or ACCIDENT_IDS_TO_DISPLAY.get(role)
+    if requested is None:
+        requested = frame["accident_id"].drop_duplicates().head(3).tolist()
+    for accident_id in requested:
+        display(HTML(f"<h4>{role} — partition {configuration_id} — accident {html_lib.escape(str(accident_id))}</h4>"))
+        show_colored_text_inline_v5(frame, accident_id)
+
+
+for (role, configuration_id) in partition_frames:
+    print(f"{role} — partition {configuration_id}")
+    show_partition_narratives(role, configuration_id)
+        """
+    ),
+    markdown(
+        """
+## 9. Two-dimensional UMAP topic map
 
 This is a descriptive BERTopic-style map. A separate two-dimensional UMAP is
 fit for visualization only; it is not used for clustering or model selection.
@@ -572,7 +816,7 @@ for role in ROLES:
         plt.close(figure)
         """
     ),
-    markdown("## 8. Export locations"),
+    markdown("## 10. Export locations"),
     code(
         """
 outputs = [
@@ -580,8 +824,11 @@ outputs = [
     "figures/pareto_validation_all_roles.png", "figures/umap_topics_2d_A0.png",
     "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
     "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
+    "topics_manual/representatives_by_membership.csv",
     "topics_manual/llm_theme_labels.csv", "topics_manual/topic_dictionary_with_llm_labels.csv",
-    "pareto/A0/candidate_partitions/<configuration_id>_labels.npy", "clustering/A0/topic_assignments.csv",
+    "pareto/A0/candidate_partitions/<configuration_id>_labels.npy",
+    "pareto/A0/candidate_partitions/<configuration_id>_membership_strength.npy",
+    "clustering/A0/topic_assignments.csv",
     "clustering/A1/topic_assignments.csv", "clustering/B/topic_assignments.csv",
     "clustering/C/topic_assignments.csv",
 ]

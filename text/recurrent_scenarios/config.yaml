@@ -33,12 +33,6 @@ parallel:
   # UMAP/HDBSCAN tasks are memory-heavy. The CPU allocation is 32, but
   # simultaneous workers are capped to avoid Slurm OOM on large corpora.
   max_workers: 2
-  # Keep only one/two serialized arrays in flight per worker. Large BTP
-  # embeddings are memory-mapped instead of copied into every process.
-  pre_dispatch: 2
-  max_nbytes: 16M
-  mmap_mode: r
-  inner_threads: 1
   backend: loky
 
 # This section defines the single shared UMAP--HDBSCAN candidate grid used by
