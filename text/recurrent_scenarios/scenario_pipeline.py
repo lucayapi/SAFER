@@ -53,7 +53,7 @@ class PreparedData:
 
 
 @dataclass
-class ConsensusResult:
+class PartitionResult:
     role: str
     assignments: pd.DataFrame
     topics: pd.DataFrame
@@ -446,8 +446,8 @@ def parameter_plan(
     apply_selection: bool = True,
     budget_override: int | None = None,
 ) -> list[dict[str, Any]]:
-    screening_cfg = config.get("screening", {})
-    cfg = screening_cfg if "umap" in screening_cfg else config["consensus"]
+    screening_cfg = config["screening"]
+    cfg = screening_cfg
     umap_cfg = cfg["umap"]
     hdbscan_cfg = cfg["hdbscan"]
     keys = [
@@ -462,15 +462,8 @@ def parameter_plan(
     values = [values for _, values in keys]
     combinations = [dict(zip(names, combination)) for combination in itertools.product(*values)]
     selection = None
-    if apply_selection:
-        consensus_cfg = config["consensus"]
-        selected_by_role = consensus_cfg.get("selected_parameter_combinations_by_role")
-        if isinstance(selected_by_role, Mapping) and role in selected_by_role:
-            selection = selected_by_role[role]
-        elif "selected_parameter_combinations" in consensus_cfg:
-            selection = consensus_cfg["selected_parameter_combinations"]
-        if selection is not None:
-            selection = list(selection)
+    if True:
+        if False:
             combinations = [
                 combination
                 for combination in combinations
@@ -487,15 +480,7 @@ def parameter_plan(
                 raise ValueError(
                     f"Aucune configuration sélectionnée ne correspond à la grille pour le rôle {role or 'global'}."
                 )
-    if budget_override is not None:
-        budget = budget_override
-    elif not apply_selection:
-        budget = config.get("screening", {}).get(
-            "max_parameter_combinations",
-            config.get("consensus", {}).get("max_parameter_combinations"),
-        )
-    else:
-        budget = config.get("consensus", {}).get("max_parameter_combinations")
+    budget = budget_override
     if selection is not None:
         budget = None
     if budget is not None and int(budget) < len(combinations):
@@ -536,9 +521,9 @@ def _fit_cluster_with_embedding(
         raise ImportError("umap-learn et hdbscan sont requis pour le clustering.") from error
     if len(embeddings) < 3:
         return np.full(len(embeddings), -1, dtype=int), np.asarray(embeddings)
-    screening_cfg = config.get("screening", {})
-    umap_cfg = screening_cfg.get("umap", config.get("consensus", {}).get("umap", {}))
-    hdbscan_cfg = screening_cfg.get("hdbscan", config.get("consensus", {}).get("hdbscan", {}))
+    screening_cfg = config["screening"]
+    umap_cfg = screening_cfg["umap"]
+    hdbscan_cfg = screening_cfg["hdbscan"]
     n_neighbors = min(int(params["umap_n_neighbors"]), max(2, len(embeddings) - 1))
     n_components = min(int(params["umap_n_components"]), max(2, len(embeddings) - 1))
     umap_model = umap.UMAP(
@@ -572,20 +557,6 @@ def _fit_cluster_with_embedding(
             reduced_embeddings = umap_model.fit_transform(embeddings)
             labels = clusterer.fit_predict(reduced_embeddings)
     return np.asarray(labels, dtype=int), np.asarray(reduced_embeddings)
-
-
-def _neighbor_pairs(embeddings: np.ndarray, k: int) -> np.ndarray:
-    from sklearn.neighbors import NearestNeighbors
-
-    if len(embeddings) < 2:
-        return np.empty((0, 2), dtype=int)
-    neighbors = NearestNeighbors(n_neighbors=min(len(embeddings), int(k) + 1), metric="cosine").fit(embeddings)
-    indices = neighbors.kneighbors(return_distance=False)[:, 1:]
-    sources = np.repeat(np.arange(len(embeddings)), indices.shape[1])
-    targets = indices.reshape(-1)
-    pairs = np.column_stack([sources, targets])
-    pairs = pairs[pairs[:, 0] < pairs[:, 1]]
-    return np.unique(pairs, axis=0)
 
 
 def _screening_metrics(
@@ -627,7 +598,7 @@ def screen_clustering_parameters(
     *,
     reestimate: bool = False,
 ) -> pd.DataFrame:
-    """Run the preliminary UMAP-HDBSCAN screening before consensus estimation.
+    """Run the UMAP-HDBSCAN diagnostics for the shared candidate grid.
 
     Each candidate configuration is fitted once on a deterministic accident sample.
     This stage reports usability diagnostics only; it does not select a best score.
@@ -654,14 +625,14 @@ def screen_clustering_parameters(
     role_embeddings = embeddings[role_mask]
     screening_cfg = config.get("screening", {})
     fraction = float(screening_cfg.get("sampling_fraction", 1.0))
-    rng = np.random.default_rng(int(config["consensus"].get("random_state", 42)) + 10000 + ROLE_RANK[role])
+    rng = np.random.default_rng(int(config.get("random_state", 42)) + 10000 + ROLE_RANK[role])
     accidents = _sample_accidents(role_units, fraction, rng)
     selected = role_units["_accident_id"].isin(accidents).to_numpy()
     selected_indices = np.flatnonzero(selected)
     plan = parameter_plan(
         config,
         apply_selection=False,
-        budget_override=screening_cfg.get("max_parameter_combinations"),
+        budget_override=None,
     )
     rows: list[dict[str, Any]] = []
     iterator: Iterable[tuple[int, dict[str, Any]]] = enumerate(plan)
@@ -679,7 +650,7 @@ def screen_clustering_parameters(
                 role_units.iloc[selected_indices]["_text"].tolist(),
                 role_embeddings[selected_indices],
                 params,
-                int(config["consensus"].get("random_state", 42)) + configuration_index,
+                int(config.get("random_state", 42)) + configuration_index,
                 config,
             )
         metrics = _screening_metrics(role_units, selected_indices, labels)
@@ -771,7 +742,7 @@ def select_admissible_parameter_combinations(
     rules: Mapping[str, Any] | None = None,
     rules_by_role: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Convert manually configured screening rules into role-specific consensus plans."""
+    """Convert configured screening rules into role-specific candidate plans."""
     selected: dict[str, list[dict[str, Any]]] = {}
     for role, frame in screening_results.items():
         role_rules = rules_by_role.get(role, {}) if rules_by_role is not None else rules
@@ -868,14 +839,14 @@ def consensus_role(
     output_dir: Path,
     *,
     reestimate: bool = False,
-) -> ConsensusResult:
+) -> PartitionResult:
     role_mask = units["_role"].eq(role).to_numpy()
     role_units = units.loc[role_mask].reset_index(drop=True)
     role_embeddings = embeddings[role_mask]
     clustering_embeddings = role_embeddings
     n_units = len(role_units)
     if n_units > int(config["consensus"].get("max_dense_units", 6000)) and int(config["consensus"].get("consensus_knn", 50)) <= 0:
-        raise ValueError("Le consensus dense est désactivé au-delà de max_dense_units; utilisez le graphe k-NN.")
+        raise ValueError("Legacy consensus execution is no longer supported.")
     role_dir = output_dir / "clustering" / role
     role_dir.mkdir(parents=True, exist_ok=True)
     cache_files = [
@@ -888,7 +859,7 @@ def consensus_role(
     if not reestimate and all(path.is_file() for path in cache_files):
         metadata = json.loads((role_dir / "cache_metadata.json").read_text(encoding="utf-8"))
         if metadata.get("version") == "direct_umap_hdbscan_consensus_v1":
-            return ConsensusResult(
+            return PartitionResult(
                 role=role,
                 assignments=pd.read_csv(role_dir / "topic_assignments.csv"),
                 topics=pd.read_csv(role_dir / "topics.csv"),
@@ -898,8 +869,6 @@ def consensus_role(
     plan = parameter_plan(config, role=role)
     consensus_cfg = config["consensus"]
     repetitions = int(consensus_cfg.get("n_repetitions", 100))
-    if config.get("runtime", {}).get("use_debug_repetitions", False):
-        repetitions = int(consensus_cfg.get("debug_repetitions", 10))
     rng = np.random.default_rng(int(consensus_cfg.get("random_state", 42)) + ROLE_RANK[role])
     pairs = _neighbor_pairs(clustering_embeddings, int(consensus_cfg.get("consensus_knn", 50)))
     co_present = np.zeros(len(pairs), dtype=np.int32)
@@ -1011,7 +980,7 @@ def consensus_role(
         json.dumps({"version": "direct_umap_hdbscan_consensus_v1", "role": role}, indent=2),
         encoding="utf-8",
     )
-    return ConsensusResult(role=role, assignments=assignment_rows, topics=topics, edges=edge_frame, replications=replications)
+    return PartitionResult(role=role, assignments=assignment_rows, topics=topics, edges=edge_frame, replications=replications)
 
 
 def _topic_stability(topic_number: int, labels: np.ndarray, pairs: np.ndarray, similarity: np.ndarray) -> float:
@@ -1164,9 +1133,9 @@ def evaluate_pareto_candidates(
         config,
         role=None,
         apply_selection=False,
-        budget_override=pareto_cfg.get("max_parameter_combinations"),
+        budget_override=None,
     )
-    random_state = int(pareto_cfg.get("random_state", config.get("consensus", {}).get("random_state", 42)))
+    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
     dbcv_sample_size = pareto_cfg.get("dbcv_sample_size")
     tasks = [
         {
@@ -1260,10 +1229,8 @@ def evaluate_resampling_stability(
     candidate_dir = pareto_dir / "candidate_partitions"
     clustering_input = role_embeddings
     n_repetitions = int(pareto_cfg.get("n_resampling", 30))
-    if config.get("runtime", {}).get("use_debug_repetitions", False):
-        n_repetitions = int(pareto_cfg.get("debug_resampling", min(n_repetitions, 5)))
     fraction = float(pareto_cfg.get("resampling_fraction", 0.8))
-    random_state = int(pareto_cfg.get("random_state", config.get("consensus", {}).get("random_state", 42)))
+    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
     all_tasks: list[dict[str, Any]] = []
     candidates = candidates.reset_index(drop=True)
     accident_ids = role_units["_accident_id"].astype(str).to_numpy()
@@ -1426,15 +1393,15 @@ def _symmetric_partition_jaccard(left: np.ndarray, right: np.ndarray) -> float:
     return float((directional(left, right) + directional(right, left)) / 2.0)
 
 
-def build_selected_consensus_results(
+def build_selected_partition_results(
     prepared: PreparedData,
     config: Mapping[str, Any],
     output_dir: Path,
     selections: Mapping[str, str],
     stability_themes: Mapping[str, pd.DataFrame] | None = None,
-) -> dict[str, ConsensusResult]:
-    """Materialize Pareto-medoid labels in the same result format as downstream functions."""
-    results: dict[str, ConsensusResult] = {}
+) -> dict[str, PartitionResult]:
+    """Materialize the manually selected Pareto partition for downstream analysis."""
+    results: dict[str, PartitionResult] = {}
     for role in ROLES:
         role_mask = prepared.units["_role"].eq(role).to_numpy()
         role_units = prepared.units.loc[role_mask].reset_index(drop=True)
@@ -1467,7 +1434,7 @@ def build_selected_consensus_results(
         assignments.to_csv(role_dir / "topic_assignments.csv", index=False)
         topics.to_csv(role_dir / "topics.csv", index=False)
         (role_dir / "cache_metadata.json").write_text(json.dumps({"version": "pareto_medoid_partition_v1", "role": role, "configuration_id": selected_id}, indent=2), encoding="utf-8")
-        results[role] = ConsensusResult(role=role, assignments=assignments, topics=topics, edges=pd.DataFrame(), replications=pd.DataFrame())
+        results[role] = PartitionResult(role=role, assignments=assignments, topics=topics, edges=pd.DataFrame(), replications=pd.DataFrame())
     return results
 
 
@@ -1588,7 +1555,7 @@ def _tokenize(text: str, stopwords: set[str], ngram_range: tuple[int, int] = (1,
 
 def build_topic_dictionary(
     prepared: PreparedData,
-    consensus_results: Mapping[str, ConsensusResult],
+    partition_results: Mapping[str, PartitionResult],
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> pd.DataFrame:
@@ -1600,7 +1567,7 @@ def build_topic_dictionary(
     min_topic_frequency = int(topics_cfg.get("min_topic_frequency", 1))
     idf_smoothing = float(topics_cfg.get("idf_smoothing", 1.0))
     topic_payloads: list[tuple[str, pd.Series, dict[str, int]]] = []
-    for role, result in consensus_results.items():
+    for role, result in partition_results.items():
         for _, topic in result.topics.iterrows():
             topic_id = str(topic["topic_id"])
             subset = result.assignments[result.assignments["topic_id"] == topic_id]
@@ -1626,7 +1593,7 @@ def build_topic_dictionary(
     }
     for topic_id, topic, token_counts in topic_payloads:
         role = str(topic["role"])
-        result = consensus_results[role]
+        result = partition_results[role]
         subset = result.assignments[result.assignments["topic_id"] == topic_id].copy()
         total_tokens = max(1, sum(token_counts.values()))
         scored_terms = {
@@ -1663,14 +1630,14 @@ def build_topic_dictionary(
 
 def build_accident_topic_matrix(
     prepared: PreparedData,
-    consensus_results: Mapping[str, ConsensusResult],
+    partition_results: Mapping[str, PartitionResult],
     topic_dictionary: pd.DataFrame,
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
-    consensus_cfg = config["consensus"]
-    min_support = int(consensus_cfg.get("min_topic_accident_support", 20))
-    max_topics = consensus_cfg.get("max_topics_per_role")
+    topics_cfg = config.get("topics", {})
+    min_support = int(topics_cfg.get("min_accident_support", 20))
+    max_topics = topics_cfg.get("max_topics_per_role")
     selected_parts: list[pd.DataFrame] = []
     selected_rows: list[dict[str, Any]] = []
     for role in ROLES:
@@ -1685,7 +1652,7 @@ def build_accident_topic_matrix(
     matrix = pd.DataFrame({"accident_id": accident_ids})
     for topic_id in selected.get("topic_id", pd.Series(dtype=str)).astype(str):
         role = topic_id.split("_", 1)[0]
-        assignments = consensus_results[role].assignments
+        assignments = partition_results[role].assignments
         present = assignments.loc[assignments["topic_id"] == topic_id, "accident_id"].drop_duplicates()
         matrix[topic_id] = matrix["accident_id"].isin(set(present)).astype(int)
     topic_columns = [column for column in selected.get("topic_id", pd.Series(dtype=str)).astype(str) if column in matrix.columns]
@@ -1713,7 +1680,7 @@ def descriptive_tables(
 ) -> dict[str, pd.DataFrame]:
     output_dir.mkdir(parents=True, exist_ok=True)
     topic_columns = [column for column in selected_topics.get("topic_id", pd.Series(dtype=str)).astype(str) if column in matrix.columns]
-    rng = np.random.default_rng(int(config["consensus"].get("random_state", 42)))
+    rng = np.random.default_rng(int(config.get("random_state", 42)))
     n_boot = int(config.get("descriptive", {}).get("bootstrap_repetitions", 1000))
     n_accidents = len(matrix)
     frequency_rows = []
@@ -1832,7 +1799,7 @@ def evaluate_bn_cv(matrix: pd.DataFrame, variable_macro_map: Mapping[str, str], 
         edges, no_z = fit_no_z_model(train, variable_macro_map, config)
         rows.append({"model": "BN_without_Z", "fold": fold, "latent_states": None, "log_likelihood": float(no_z.log_probability_matrix(test).mean()), "n_train": len(train), "n_test": len(test), "n_edges": len(edges)})
         for n_states in latent_states:
-            latent = fit_latent_model(train, edges, config, int(n_states), random_state=int(config["consensus"].get("random_state", 42)) + fold + int(n_states))
+            latent = fit_latent_model(train, edges, config, int(n_states), random_state=int(config.get("random_state", 42)) + fold + int(n_states))
             rows.append({"model": "BN_with_Z", "fold": fold, "latent_states": int(n_states), "log_likelihood": float(latent.log_probability_matrix(test).mean()), "n_train": len(train), "n_test": len(test), "n_edges": len(edges), "em_iterations": latent.n_iter})
     result = pd.DataFrame(rows)
     result.to_csv(output_dir / "cv_log_likelihood.csv", index=False)
@@ -1842,7 +1809,7 @@ def evaluate_bn_cv(matrix: pd.DataFrame, variable_macro_map: Mapping[str, str], 
 
 def bootstrap_arc_stability(matrix: pd.DataFrame, variable_macro_map: Mapping[str, str], config: Mapping[str, Any], output_dir: Path) -> pd.DataFrame:
     repetitions = int(config["bayesian_networks"].get("bootstrap_repetitions", 100))
-    rng = np.random.default_rng(int(config["consensus"].get("random_state", 42)) + 1000)
+    rng = np.random.default_rng(int(config.get("random_state", 42)) + 1000)
     accidents = matrix["accident_id"].astype(str).drop_duplicates().to_numpy()
     rows = []
     for repetition in range(repetitions):
@@ -1983,7 +1950,7 @@ def write_descriptive_figures(tables: Mapping[str, pd.DataFrame], output_dir: Pa
 
 
 def write_consensus_figures(
-    consensus_results: Mapping[str, ConsensusResult],
+    partition_results: Mapping[str, PartitionResult],
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> None:
@@ -1993,7 +1960,7 @@ def write_consensus_figures(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     tradeoff_frames = []
-    for role, result in consensus_results.items():
+    for role, result in partition_results.items():
         repetitions = result.replications.copy()
         repetitions["configuration"] = (
             repetitions["umap_n_neighbors"].astype(str)
@@ -2022,8 +1989,8 @@ def write_consensus_figures(
     max_units = int(config.get("figures", {}).get("coassociation_plot_max_units", 250))
     roles = config.get("figures", {}).get("coassociation_roles", list(ROLES))
     for role in roles:
-        if role in consensus_results:
-            _plot_coassociation(consensus_results[role], max_units, output_dir / f"coassociation_matrix_{role}.png")
+        if role in partition_results:
+            _plot_coassociation(partition_results[role], max_units, output_dir / f"coassociation_matrix_{role}.png")
 
 
 def _plot_tradeoff(frame: pd.DataFrame, role: str, output_path: Path | None, axis: Any = None) -> None:
@@ -2055,7 +2022,7 @@ def _plot_tradeoff(frame: pd.DataFrame, role: str, output_path: Path | None, axi
         plt.close(axis.figure)
 
 
-def _plot_coassociation(result: ConsensusResult, max_units: int, output_path: Path) -> None:
+def _plot_coassociation(result: PartitionResult, max_units: int, output_path: Path) -> None:
     import matplotlib.pyplot as plt
     import seaborn as sns
 
@@ -2106,7 +2073,6 @@ def save_models(
 def run_theme_discovery(
     config_path: Path,
     *,
-    debug: bool | None = None,
     dataset_id: str | None = None,
     reestimate: bool = False,
     stage: str = "all",
@@ -2116,7 +2082,8 @@ def run_theme_discovery(
 
     ``metrics`` computes or reuses candidate and resampling metrics,
     ``pareto`` regenerates only the Pareto selection from an existing run,
-    and ``all`` performs both stages and materializes the selected topics.
+    and ``all`` performs both stages. Partition selection is manual and occurs
+    in the results notebook.
     """
     if stage not in {"all", "metrics", "pareto"}:
         raise ValueError("stage must be one of: all, metrics, pareto")
@@ -2125,8 +2092,6 @@ def run_theme_discovery(
 
     raw_config = select_dataset_config(load_yaml_config(config_path), dataset_id)
     config = resolve_config_paths(raw_config, config_path)
-    if debug is not None:
-        config.setdefault("runtime", {})["use_debug_repetitions"] = bool(debug)
 
     if run_dir is not None:
         output_base = Path(run_dir).expanduser().resolve()
@@ -2241,10 +2206,10 @@ def run_theme_discovery(
     _log_progress("métriques des configurations Pareto retenues:\n" + selected_metrics.to_string(index=False))
     if stage == "manual_selection" and prepared is not None:
         _log_progress("matérialisation: thèmes sélectionnés et dictionnaire")
-        consensus_results = build_selected_consensus_results(
+        partition_results = build_selected_partition_results(
             prepared, config, output_base, selections, stability_themes
         )
-        topic_dictionary = build_topic_dictionary(prepared, consensus_results, config, output_base / "topics")
+        topic_dictionary = build_topic_dictionary(prepared, partition_results, config, output_base / "topics")
         pd.DataFrame([{"role": role, "configuration_id": selections[role]} for role in ROLES]).to_csv(
             output_base / "selected_configurations.csv", index=False
         )
@@ -2260,35 +2225,6 @@ def run_theme_discovery(
             encoding="utf-8",
         )
     _log_progress(f"DONE stage={stage} output={output_base}")
-    return output_base
-
-
-def run_pipeline(config_path: Path, *, debug: bool | None = None, dataset_id: str | None = None) -> Path:
-    raw_config = select_dataset_config(load_yaml_config(config_path), dataset_id)
-    config = resolve_config_paths(raw_config, config_path)
-    if debug is not None:
-        config.setdefault("runtime", {})["use_debug_repetitions"] = bool(debug)
-    output_base = Path(config["data"]["output_dir"])
-    if output_base.exists() and any(output_base.iterdir()) and not config.get("runtime", {}).get("overwrite", False):
-        output_base = output_base.with_name(output_base.name + "_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-    output_base.mkdir(parents=True, exist_ok=True)
-    (output_base / "config_resolved.yaml").write_text(yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    prepared = prepare_data(config, output_base)
-    consensus_results = {role: consensus_role(role, prepared.units, prepared.embeddings, config, output_base) for role in ROLES}
-    write_consensus_figures(consensus_results, config, output_base / "figures")
-    topic_dictionary = build_topic_dictionary(prepared, consensus_results, config, output_base / "topics")
-    matrix, selected_topics, variable_macro_map = build_accident_topic_matrix(prepared, consensus_results, topic_dictionary, config, output_base / "matrices")
-    descriptive = descriptive_tables(matrix, selected_topics, config, output_base / "descriptive")
-    write_descriptive_figures(descriptive, output_base / "figures")
-    cv = evaluate_bn_cv(matrix, variable_macro_map, config, output_base / "bayesian_networks")
-    no_z_edges, no_z = fit_no_z_model(matrix[list(variable_macro_map)], variable_macro_map, config)
-    latent_models = {int(states): fit_latent_model(matrix[list(variable_macro_map)], no_z_edges, config, int(states), random_state=int(config["consensus"].get("random_state", 42)) + int(states)) for states in _grid_values(config["bayesian_networks"].get("latent_states", [2, 3, 4]))}
-    arc_stability = bootstrap_arc_stability(matrix, variable_macro_map, config, output_base / "bayesian_networks")
-    save_models(no_z_edges, no_z, latent_models, variable_macro_map, output_base / "bayesian_networks")
-    write_network_figure(no_z_edges, variable_macro_map, arc_stability, output_base / "figures" / "constrained_networks_without_with_z.png")
-    selected_state = int(cv.loc[cv["model"].eq("BN_with_Z"), "latent_states"].dropna().mode().iloc[0]) if not cv.loc[cv["model"].eq("BN_with_Z"), "latent_states"].dropna().empty else list(latent_models)[0]
-    extract_scenarios(matrix, selected_topics, variable_macro_map, no_z, {selected_state: latent_models[selected_state]}, config, output_base / "scenarios")
-    write_audit_report(config, prepared, selected_topics, cv, arc_stability, output_base)
     return output_base
 
 
@@ -2328,13 +2264,13 @@ def write_audit_report(config: Mapping[str, Any], prepared: PreparedData, select
 
 
 __all__ = [
-    "ROLES", "PreparedData", "ConsensusResult", "LatentMixtureBN", "load_yaml_config",
+    "ROLES", "PreparedData", "PartitionResult", "LatentMixtureBN", "load_yaml_config",
     "select_dataset_config", "resolve_config_paths", "prepare_data", "parameter_plan",
-    "consensus_role", "build_topic_dictionary",
+    "build_topic_dictionary",
     "build_accident_topic_matrix", "descriptive_tables", "fit_no_z_model", "fit_latent_model",
-    "evaluate_bn_cv", "bootstrap_arc_stability", "extract_scenarios", "run_pipeline", "run_theme_discovery", "resolve_n_workers",
+    "evaluate_bn_cv", "bootstrap_arc_stability", "extract_scenarios", "run_theme_discovery", "resolve_n_workers",
     "screen_clustering_parameters", "mark_admissible_configurations", "resolve_admissibility_rules", "load_topic_stopwords",
     "select_admissible_parameter_combinations", "write_screening_figures",
-    "write_consensus_figures", "evaluate_pareto_candidates", "evaluate_resampling_stability",
-    "select_pareto_partitions", "build_selected_consensus_results", "write_pareto_figure",
+    "evaluate_pareto_candidates", "evaluate_resampling_stability",
+    "select_pareto_partitions", "build_selected_partition_results", "write_pareto_figure",
 ]

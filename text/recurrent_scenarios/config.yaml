@@ -22,6 +22,8 @@ data:
       units_path: ../dataset/data_metallurgie.csv
       embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
 
+random_state: 42
+
 # Outer process parallelism. With ``auto``, workers are exactly
 # max(1, allocated cores - 1); on Slurm the allocation is SLURM_CPUS_PER_TASK.
 # UMAP itself remains single-threaded to avoid nested oversubscription.
@@ -39,25 +41,10 @@ parallel:
   inner_threads: 1
   backend: loky
 
-consensus:
-  random_state: 42
-  sampling_fraction: 0.8
-  n_repetitions: 100
-  debug_repetitions: 10
-  show_progress: true
-  consensus_knn: 50
-  consensus_edge_threshold: 0.6
-  ignore_noise_pairs: true
-  min_topic_accident_support: 20
-  max_topics_per_role: 6
-  max_dense_units: 6000
-
-# The notebook runs this preliminary screen before consensus. The complete
-# candidate grid and all non-grid clustering options live in this section.
+# This section defines the single shared UMAP--HDBSCAN candidate grid used by
+# both screening diagnostics and Pareto evaluation.
 screening:
-  # 72 combinations: 3 neighbours x 3 dimensions x 1 min_dist x
-  # 2 minimum cluster sizes x 2 min_samples x 2 extraction methods.
-  max_parameter_combinations: 72
+  # The complete grid is evaluated; no combination budget is applied.
   sampling_fraction: 1.0
   show_progress: true
   umap:
@@ -76,14 +63,13 @@ screening:
 
 pareto:
   random_state: 42
-  max_parameter_combinations: 72
+  # The complete screening grid is evaluated for Pareto analysis.
   resampling_fraction: 0.8
   # 100 grouped accident-level resamples provide a stable median S_R.
-  n_resampling: 100
-  debug_resampling: 10
+  n_resampling: 30
   # Full DBCV is quadratic in the number of units; use a fixed reproducible
   # subsample for a practical and comparable UMAP-space diagnostic.
-  dbcv_sample_size: 3000
+  dbcv_sample_size: null
   show_progress: true
 
 topics:
@@ -95,10 +81,8 @@ topics:
   stopwords_file: stop_metier.txt
   additional_stopwords: []
   stopwords: [le, la, les, un, une, des, de, du, et, en, dans, sur, au, aux, que, qui, est, a, avec, pour, par, ce, cette, son, sa, ses, il, elle, ils, elles]
-
-figures:
-  coassociation_plot_max_units: 250
-  coassociation_roles: [A0, A1, B, C]
+  min_accident_support: 20
+  max_topics_per_role: 6
 
 descriptive:
   bootstrap_repetitions: 1000
@@ -119,6 +103,5 @@ bayesian_networks:
   min_scenario_support: 3
 
 runtime:
-  use_debug_repetitions: false
   overwrite: false
   save_intermediate_assignments: true

@@ -47,7 +47,7 @@ if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 
 from scenario_pipeline import (
-    ConsensusResult,
+    PartitionResult,
     ROLES,
     bootstrap_arc_stability,
     build_accident_topic_matrix,
@@ -119,9 +119,9 @@ config = {
         "normalize_embeddings": True,
         "output_dir": str(RUN_DIR),
     },
-    "consensus": {
-        "random_state": 42,
-        "min_topic_accident_support": MIN_TOPIC_ACCIDENT_SUPPORT,
+    "random_state": 42,
+    "topics": {
+        "min_accident_support": MIN_TOPIC_ACCIDENT_SUPPORT,
         "max_topics_per_role": MAX_TOPICS_PER_ROLE,
     },
     "descriptive": {"bootstrap_repetitions": 1000, "cooccurrence_min_support": 5},
@@ -148,21 +148,21 @@ print("Using discovery run:", RUN_DIR)
     code(
         """
 prepared = prepare_data(config, RUN_DIR)
-consensus_results = {}
+partition_results = {}
 for role in ROLES:
     role_dir = RUN_DIR / "clustering" / role
     assignments_path = role_dir / "topic_assignments.csv"
     topics_path = role_dir / "topics.csv"
     if not assignments_path.is_file() or not topics_path.is_file():
         raise FileNotFoundError(f"Missing frozen outputs for {role}: run Notebook 1 first.")
-    consensus_results[role] = ConsensusResult(
+    partition_results[role] = PartitionResult(
         role=role,
         assignments=pd.read_csv(assignments_path),
         topics=pd.read_csv(topics_path),
         edges=pd.DataFrame(),
         replications=pd.DataFrame(),
     )
-    print(role, "topics:", len(consensus_results[role].topics), "assigned units:", int(consensus_results[role].assignments["topic_id"].ne("").sum()))
+    print(role, "topics:", len(partition_results[role].topics), "assigned units:", int(partition_results[role].assignments["topic_id"].ne("").sum()))
 topic_dictionary = pd.read_csv(RUN_DIR / "topics" / "topic_dictionary.csv")
 display(topic_dictionary[["topic_id", "role", "label", "n_units", "n_accidents", "stability"]].head(30))
         """
@@ -179,7 +179,7 @@ indicator, not a count.
     code(
         """
 accident_topic_matrix, selected_topics, variable_macro_map = build_accident_topic_matrix(
-    prepared, consensus_results, topic_dictionary, config, RUN_DIR / "matrices"
+    prepared, partition_results, topic_dictionary, config, RUN_DIR / "matrices"
 )
 display(selected_topics)
 display(accident_topic_matrix.head())
@@ -226,7 +226,7 @@ latent_models = {
         no_z_edges,
         config,
         int(n_states),
-        random_state=int(config["consensus"]["random_state"]) + int(n_states),
+        random_state=int(config["random_state"]) + int(n_states),
     )
     for n_states in LATENT_STATES
 }

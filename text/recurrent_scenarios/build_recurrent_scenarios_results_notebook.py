@@ -252,7 +252,7 @@ for role in ROLES:
         """
 if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
-from scenario_pipeline import ConsensusResult, PreparedData, build_topic_dictionary, load_embeddings, load_units
+from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_units
 
 units, _ = load_units(config)
 embedding_cache = RUN_DIR / "embeddings" / "embeddings_encoded.npy"
@@ -282,7 +282,7 @@ for role in ROLES:
             "n_accidents": int(assignments.loc[mask, "accident_id"].nunique()),
             "selected_configuration_id": configuration_id,
         })
-    manual_results[role] = ConsensusResult(
+    manual_results[role] = PartitionResult(
         role=role,
         assignments=assignments,
         topics=pd.DataFrame(topic_rows),

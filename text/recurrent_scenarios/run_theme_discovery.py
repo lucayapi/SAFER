@@ -23,11 +23,6 @@ def main() -> int:
         help="Dataset registered in config.yaml (default: caou).",
     )
     parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Use the short resampling count from the configuration.",
-    )
-    parser.add_argument(
         "--reestimate",
         action="store_true",
         help="Ignore discovery caches and recompute all candidates and resamples.",
@@ -46,7 +41,6 @@ def main() -> int:
     args = parser.parse_args()
     output_dir = run_theme_discovery(
         args.config.resolve(),
-        debug=True if args.debug else None,
         dataset_id=args.dataset,
         reestimate=args.reestimate,
         stage=args.stage,

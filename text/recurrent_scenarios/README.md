@@ -128,10 +128,10 @@ units”, not as proof that the factor was absent from the accident.
 
 Each bootstrap clustering applies UMAP directly to the fixed embeddings and fits HDBSCAN
 directly in the reduced space. The topic dictionary then uses a transparent c-TF-IDF-inspired
-representation on the final consensus assignments. The vocabulary combines the general
+representation on the manually selected Pareto partition assignments. The vocabulary combines the general
 stopwords in `config.yaml` with the business stopwords in `stop_metier.txt`; optional additions
 can be placed in `topics.additional_stopwords`. The custom part is the accident-level
-consensus across UMAP-HDBSCAN repetitions.
+accident-level resampling stability is used to validate each candidate partition; no automatic aggregate partition is constructed.
 
 The `Z` model is implemented as a mixture of constrained binary Bayesian networks sharing
 the same accident-process DAG. `Z` changes the component probabilities and represents latent

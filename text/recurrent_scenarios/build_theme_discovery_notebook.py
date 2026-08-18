@@ -31,8 +31,8 @@ The primary selection plane is:
 - horizontal axis: UMAP-space DBCV `D_U`;
 - vertical axis: accident-level resampling stability `S_R`;
 - no pre-filtering before the Pareto comparison;
-- final configuration: Pareto non-dominated partition with the highest agreement
-  with the other non-dominated partitions (partition medoid).
+- final configuration: selected manually from the Pareto non-dominated
+  candidates after substantive review.
 
 Noise (`-1`) remains unassigned and is never treated as a theme. The second notebook
 loads the frozen outputs written here and therefore does not rerun UMAP or HDBSCAN.
@@ -140,7 +140,6 @@ HDBSCAN_PARAMETERS = {
     "metric": "euclidean",  # Metric in the UMAP clustering coordinates.
     "prediction_data": True,  # Retain prediction metadata for auditability.
 }
-MAX_PARAMETER_COMBINATIONS = 50  # Explicit computational budget; None evaluates the full Cartesian grid.
         """
     ),
     markdown(
@@ -159,8 +158,6 @@ explicit approximation and is saved in the diagnostics table.
         """
 RESAMPLING_FRACTION = 0.80  # Fraction of distinct accidents retained in each replicate.
 N_RESAMPLING = 50  # Monte-Carlo repetitions for the primary stability estimate.
-DEBUG_RESAMPLING = 5  # Used only when USE_DEBUG_REPETITIONS=True.
-USE_DEBUG_REPETITIONS = True  # Short audit run; set False for the planned analysis.
 DBCV_SAMPLE_SIZE = None  # None = exact role calculation; finite value = explicit speed approximation.
 SHOW_PROGRESS = True
         """
@@ -175,8 +172,7 @@ number of clusters, coverage, noise fraction and accident support are retained
 only as diagnostics. The main figure is a two-dimensional scatter plot: leaf
 configurations use circles, dominated points are shown as open grey markers,
 and Pareto points are shown in orange. Pareto
-solutions are joined in increasing `D_U` order, and the representative medoid
-is marked with a star. The complete Pareto diagnostic table is saved separately
+solutions are joined in increasing `D_U` order. The complete Pareto diagnostic table is saved separately
 for each role.
         """
     ),
@@ -220,16 +216,13 @@ config = {
         "umap": UMAP_PARAMETERS,
         "hdbscan": HDBSCAN_PARAMETERS,
     },
+    "random_state": RANDOM_SEED,
     "pareto": {
-        "random_state": RANDOM_SEED,
-        "max_parameter_combinations": MAX_PARAMETER_COMBINATIONS,
         "n_resampling": N_RESAMPLING,
-        "debug_resampling": DEBUG_RESAMPLING,
         "resampling_fraction": RESAMPLING_FRACTION,
         "dbcv_sample_size": DBCV_SAMPLE_SIZE,
         "show_progress": SHOW_PROGRESS,
     },
-    "consensus": {"random_state": RANDOM_SEED},
     "topics": {
         "top_words": TOP_WORDS,
         "top_sentences": TOP_SENTENCES,
@@ -240,7 +233,7 @@ config = {
         "stopwords": [],
         "additional_stopwords": [],
     },
-    "runtime": {"use_debug_repetitions": USE_DEBUG_REPETITIONS, "save_intermediate_assignments": True},
+    "runtime": {"save_intermediate_assignments": True},
 }
 (RUN_DIR / "theme_discovery_parameters.json").write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
         """
@@ -273,8 +266,7 @@ grid = pd.DataFrame([
     for n_neighbors, n_components, min_dist, min_cluster_size, min_samples, method
     in product(UMAP_PARAMETERS["n_neighbors"], UMAP_PARAMETERS["n_components"], UMAP_PARAMETERS["min_dist"], HDBSCAN_PARAMETERS["min_cluster_size"], HDBSCAN_PARAMETERS["min_samples"], HDBSCAN_PARAMETERS["cluster_selection_method"])
 ])
-if MAX_PARAMETER_COMBINATIONS is not None and len(grid) > MAX_PARAMETER_COMBINATIONS:
-    print(f"The grid contains {len(grid)} combinations; the pipeline will keep the declared budget of {MAX_PARAMETER_COMBINATIONS}.")
+print(f"The full grid contains {len(grid)} combinations and will be evaluated.")
 display(grid)
         """
     ),
