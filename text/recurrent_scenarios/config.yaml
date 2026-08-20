@@ -83,20 +83,24 @@ descriptive:
   cooccurrence_min_support: 5
 
 bayesian_networks:
+  parallel:
+    enabled: true
+    n_workers: auto
+    max_workers: 2
+    backend: loky
   min_theme_support_count: 20
   d_max: 2
-  latent_states: [2, 3, 4, 5, 6, 7, 8]
-  n_initializations: 20
-  em_max_iter: 500
+  latent_states: [3, 4, 8, 10]
+  n_initializations: 10
+  em_max_iter: 100
   em_tol: 0.000001
   structure_max_iter: 100
   structure_epsilon: 0.000001
   min_latent_effective_n: 25
   alpha: 0.5
   top_m_mpe: 3
-  exact_inference: true
-  exact_mpe_max_variables: 20
   probability_floor: 0.000000000001
+  show_progress: true
 
 runtime:
   overwrite: false

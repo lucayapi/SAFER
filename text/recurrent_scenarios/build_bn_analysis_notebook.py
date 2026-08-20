@@ -43,18 +43,36 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from IPython.display import display
 
-SCENARIO_DIR = Path.cwd() / "text" / "recurrent_scenarios"
-if not (SCENARIO_DIR / "scenario_pipeline.py").is_file():
-    SCENARIO_DIR = Path.cwd()
+SCENARIO_DIR = None
+for base_dir in (Path.cwd(), *Path.cwd().parents):
+    candidates = (
+        base_dir / "text" / "recurrent_scenarios",
+        base_dir,
+    )
+    for candidate in candidates:
+        if (candidate / "scenario_pipeline.py").is_file():
+            SCENARIO_DIR = candidate
+            break
+    if SCENARIO_DIR is not None:
+        break
+if SCENARIO_DIR is None:
+    raise FileNotFoundError(
+        "Impossible de trouver text/recurrent_scenarios/scenario_pipeline.py "
+        "depuis le répertoire courant."
+    )
 if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 
 from scenario_pipeline import (
+    build_frozen_bn_inputs,
+    extract_latent_bn_scenarios,
+    finalize_latent_bn,
+    fit_latent_bn_analysis,
     load_yaml_config,
     select_dataset_config,
     resolve_config_paths,
     load_units,
-    run_frozen_bn_analysis,
+    write_final_bn_outputs,
 )
         """),
         markdown("""
@@ -79,9 +97,8 @@ config = resolve_config_paths(
 )
 config["bayesian_networks"]["min_theme_support_count"] = 20
 config["bayesian_networks"]["d_max"] = 2
-config["bayesian_networks"]["latent_states"] = list(range(2, 9))
-config["bayesian_networks"]["n_initializations"] = 20
 config["bayesian_networks"]["alpha"] = 0.5
+config["bayesian_networks"]["show_progress"] = True
 
 print("Dataset:", DATASET_ID)
 print("Partitions:", BN_PARTITION_SELECTIONS)
@@ -89,39 +106,137 @@ print("Partitions:", BN_PARTITION_SELECTIONS)
         markdown("## 2. Matrice accident × facteurs figés"),
         code("""
 units, _ = load_units(config)
-analysis = run_frozen_bn_analysis(
-    config=config,
-    run_dir=RUN_DIR,
-    partition_selections=BN_PARTITION_SELECTIONS,
-    output_dir=BN_OUTPUT_DIR,
-    units=units,
+BN_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+matrix, theme_dictionary, excluded_themes, roles = build_frozen_bn_inputs(
+    units,
+    RUN_DIR,
+    BN_PARTITION_SELECTIONS,
+    config,
+    BN_OUTPUT_DIR,
 )
-
-matrix = analysis["matrix"]
-theme_dictionary = analysis["theme_dictionary"]
-excluded_themes = analysis["excluded_themes"]
-print("Accidents:", len(matrix), "Variables BN:", len(theme_dictionary))
+factor_columns = list(theme_dictionary["variable_name"])
+print("Dimensions de la matrice :", matrix.shape)
+print("Accidents :", len(matrix), "Facteurs inclus :", len(factor_columns))
+display(pd.DataFrame({"role": list(roles.values())}).value_counts().rename("n_facteurs").reset_index())
 display(theme_dictionary)
 display(excluded_themes)
         """),
+        markdown("### Visualisation de la matrice multi-hot"),
+        code("""
+ordered_columns = [
+    column for role in ("A0", "A1", "B", "C")
+    for column in factor_columns
+    if roles[column] == role
+]
+prevalence = matrix[ordered_columns].mean(axis=0).to_numpy(dtype=float)
+heatmap_data = matrix[ordered_columns].to_numpy(dtype=np.int8)
+row_order = np.argsort(heatmap_data.sum(axis=1), kind="stable")
+max_heatmap_rows = 600
+if len(row_order) > max_heatmap_rows:
+    selected_rows = np.linspace(0, len(row_order) - 1, max_heatmap_rows, dtype=int)
+    row_order = row_order[selected_rows]
+heatmap_data = heatmap_data[row_order]
+
+figure_width = max(12, len(ordered_columns) * 0.18)
+fig, (prevalence_axis, heatmap_axis) = plt.subplots(
+    2,
+    1,
+    figsize=(figure_width, 10),
+    sharex=True,
+    gridspec_kw={"height_ratios": [1.4, 6]},
+)
+factor_positions = np.arange(len(ordered_columns))
+prevalence_axis.bar(factor_positions, prevalence * 100, color="#4C78A8", width=0.82)
+prevalence_axis.set_ylabel("Prévalence (%)")
+prevalence_axis.set_title(f"Prévalence accident-level — {matrix.shape[0]} accidents")
+prevalence_axis.set_ylim(0, max(5, float(prevalence.max() * 100 * 1.15)))
+prevalence_axis.grid(alpha=0.2, axis="y")
+prevalence_axis.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
+
+heatmap_axis.imshow(heatmap_data, aspect="auto", interpolation="nearest", cmap="Greys", vmin=0, vmax=1)
+heatmap_axis.set_xlabel("Facteurs BN (mêmes colonnes que le barplot de prévalence)")
+heatmap_axis.set_ylabel("Accidents (lignes échantillonnées et triées par nombre de facteurs)")
+heatmap_axis.set_title(f"Matrice accident × facteurs — {matrix.shape[0]} × {len(ordered_columns)}")
+heatmap_axis.set_xticks(factor_positions)
+heatmap_axis.set_xticklabels(ordered_columns, rotation=90, fontsize=7)
+heatmap_axis.set_yticks([])
+offset = 0
+for role in ("A0", "A1", "B", "C"):
+    count = sum(roles[column] == role for column in ordered_columns)
+    for current_axis in (prevalence_axis, heatmap_axis):
+        current_axis.axvline(offset - 0.5, color="tab:red", linewidth=0.8)
+    prevalence_axis.text(offset + max(count - 1, 0) / 2, 1.05, role, transform=prevalence_axis.get_xaxis_transform(), ha="center", va="bottom", fontweight="bold")
+    offset += count
+for current_axis in (prevalence_axis, heatmap_axis):
+    current_axis.axvline(len(ordered_columns) - 0.5, color="tab:red", linewidth=0.8)
+fig.tight_layout()
+fig.savefig(BN_OUTPUT_DIR / "accident_factor_matrix_heatmap.png", dpi=220, bbox_inches="tight")
+display(fig)
+        """),
         markdown("## 3. Sélection de K par BIC"),
         code("""
-k_selection = analysis["selection"]
+selected_result, k_selection = fit_latent_bn_analysis(
+    matrix,
+    roles,
+    config,
+    BN_OUTPUT_DIR,
+)
 display(k_selection.sort_values(["K", "bic"]))
-selected_result = analysis["result"]
 print("K sélectionné:", selected_result.n_states)
         """),
         code("""
-fig, axis = plt.subplots(figsize=(8, 5))
-summary = k_selection.groupby("K", as_index=False)["bic"].min()
-axis.plot(summary["K"], summary["bic"], marker="o")
-axis.set(xlabel="Nombre de familles latentes K", ylabel="BIC", title="Sélection de K par BIC")
-axis.grid(alpha=0.25)
+plot_data = k_selection.copy()
+plot_data["init_rank"] = plot_data.groupby("K").cumcount()
+plot_data["n_initializations_K"] = plot_data.groupby("K")["K"].transform("size")
+plot_data["x_plot"] = plot_data["K"] + (
+    plot_data["init_rank"] - (plot_data["n_initializations_K"] - 1) / 2
+) * 0.018
+
+fig, axis = plt.subplots(figsize=(10, 6))
+admissible = plot_data[plot_data["admissible"]]
+inadmissible = plot_data[~plot_data["admissible"]]
+axis.scatter(inadmissible["x_plot"], inadmissible["bic"], s=28, color="#BDBDBD", alpha=0.8, label="Initialisation non admissible")
+axis.scatter(admissible["x_plot"], admissible["bic"], s=32, color="#4C78A8", alpha=0.75, label="Initialisation admissible")
+
+best_per_k = plot_data[plot_data["selected_for_K"]].sort_values("K")
+axis.plot(best_per_k["K"], best_per_k["bic"], color="#1F4E79", linewidth=2, marker="o", markersize=8, label="Meilleur BIC par K")
+
+selected_k = plot_data[plot_data["selected_final"]]
+axis.scatter(selected_k["K"], selected_k["bic"], s=180, marker="*", color="#D62728", edgecolor="black", linewidth=0.7, zorder=5, label=f"K⋆ = {selected_result.n_states}")
+axis.set_xticks(sorted(plot_data["K"].unique()))
+axis.set_xlabel("Nombre de familles latentes K")
+axis.set_ylabel("BIC observé (plus faible = meilleur)")
+axis.set_title("BIC selon K et les initialisations Structural EM")
+axis.grid(alpha=0.25, axis="y")
+axis.legend(loc="best")
 fig.tight_layout()
+fig.savefig(BN_OUTPUT_DIR / "bic_by_k_initializations.png", dpi=220, bbox_inches="tight")
 display(fig)
         """),
         markdown("## 4. Familles latentes, profils et scénarios"),
         code("""
+final_result = finalize_latent_bn(selected_result, matrix, roles, config)
+write_final_bn_outputs(final_result, BN_OUTPUT_DIR)
+scenarios, supports, prototypes, profiles = extract_latent_bn_scenarios(
+    final_result,
+    matrix,
+    roles,
+    units,
+    config,
+    BN_OUTPUT_DIR,
+)
+analysis = {
+    "matrix": matrix,
+    "theme_dictionary": theme_dictionary,
+    "excluded_themes": excluded_themes,
+    "selection": k_selection,
+    "result": final_result,
+    "scenarios": scenarios,
+    "supports": supports,
+    "prototypes": prototypes,
+    "profiles": profiles,
+}
+print("BN finalise :", len(final_result.nodes), "facteurs,", len(final_result.edges), "arcs")
 display(analysis["profiles"].head(50))
 display(analysis["scenarios"])
 display(analysis["supports"])

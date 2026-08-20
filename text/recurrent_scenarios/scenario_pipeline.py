@@ -18,7 +18,7 @@ import warnings
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -84,6 +84,26 @@ def resolve_n_workers(config: Mapping[str, Any]) -> int:
     if max_workers not in (None, ""):
         workers = min(workers, int(max_workers))
     return max(1, workers)
+
+
+def _bn_parallel_config(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return BN-specific parallel settings, falling back to global settings."""
+    bayesian_networks = config.get("bayesian_networks", {})
+    nested = bayesian_networks.get("parallel", {}) if isinstance(bayesian_networks, Mapping) else {}
+    if isinstance(nested, Mapping) and nested:
+        return nested
+    return config.get("parallel", {})
+
+
+def resolve_bn_n_workers(config: Mapping[str, Any]) -> int:
+    """Resolve the worker count for independent latent-BN fits."""
+    bayesian_networks = config.get("bayesian_networks", {})
+    has_nested_settings = isinstance(bayesian_networks, Mapping) and bool(bayesian_networks.get("parallel"))
+    if not has_nested_settings and "parallel" not in config:
+        return 1
+    worker_config = dict(config)
+    worker_config["parallel"] = dict(_bn_parallel_config(config))
+    return resolve_n_workers(worker_config)
 
 
 def _parallel_map(
@@ -249,7 +269,6 @@ def load_embeddings(config: Mapping[str, Any], units: pd.DataFrame, cache_dir: P
             matrix = lookup.loc[units["_fact_id"], dimension_columns].to_numpy(dtype=np.float32)
         elif len(embeddings) == len(units):
             matrix = embeddings[dimension_columns].to_numpy(dtype=np.float32)
-        else:
             raise ValueError("Impossible d'aligner les embeddings et les unités par fact_id ou par ordre.")
     else:
         model_name = str(data_cfg.get("encoder_name", "Qwen/Qwen3-Embedding-0.6B"))
@@ -1820,9 +1839,9 @@ def _bn_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("structure_epsilon", 1e-6)
     values.setdefault("alpha", 0.5)
     values.setdefault("probability_floor", 1e-12)
-    values.setdefault("exact_inference", True)
     values.setdefault("top_m_mpe", 3)
     values.setdefault("min_latent_effective_n", 25)
+    values.setdefault("show_progress", False)
     return values
 
 
@@ -1990,24 +2009,94 @@ def _bn_mle_parameters(data: np.ndarray, nodes: Sequence[str], roles: Mapping[st
 def _bn_log_joint(data: np.ndarray, nodes: Sequence[str], roles: Mapping[str, str], edges: Sequence[tuple[str, str]], weights: np.ndarray, upstream: Mapping[tuple[str, int, tuple[int, ...]], float], downstream: Mapping[tuple[str, tuple[int, ...]], float], floor: float = 1e-12) -> np.ndarray:
     index = {node: position for position, node in enumerate(nodes)}
     parents = _bn_parent_map(nodes, edges)
-    output = np.zeros((len(data), len(weights)), dtype=float)
-    for row_index, row in enumerate(data):
-        for state in range(len(weights)):
-            value = math.log(max(float(weights[state]), floor))
-            for node in nodes:
-                parent_values = tuple(int(row[index[parent]]) for parent in parents[node])
-                probability = upstream.get((node, state, parent_values)) if roles[node] in {"A0", "A1"} else downstream.get((node, parent_values))
-                probability = min(max(float(probability if probability is not None else 0.5), floor), 1.0 - floor)
-                value += math.log(probability if int(row[index[node]]) else 1.0 - probability)
-            output[row_index, state] = value
+    output = np.broadcast_to(
+        np.log(np.clip(np.asarray(weights, dtype=float), floor, 1.0))[None, :],
+        (len(data), len(weights)),
+    ).copy()
+    for node in nodes:
+        node_index = index[node]
+        node_values = data[:, node_index].astype(bool)
+        node_parents = parents[node]
+        parent_indices = [index[parent] for parent in node_parents]
+        combinations = list(itertools.product((0, 1), repeat=len(parent_indices)))
+        if parent_indices:
+            codes = sum(
+                data[:, parent_index].astype(int) * (2 ** (len(parent_indices) - offset - 1))
+                for offset, parent_index in enumerate(parent_indices)
+            )
+        else:
+            codes = np.zeros(len(data), dtype=int)
+        if roles[node] in {"A0", "A1"}:
+            for state in range(len(weights)):
+                probabilities = np.asarray(
+                    [upstream.get((node, state, values), 0.5) for values in combinations],
+                    dtype=float,
+                )
+                probabilities = np.clip(probabilities, floor, 1.0 - floor)[codes]
+                output[:, state] += np.where(
+                    node_values,
+                    np.log(probabilities),
+                    np.log1p(-probabilities),
+                )
+        else:
+            probabilities = np.asarray(
+                [downstream.get((node, values), 0.5) for values in combinations],
+                dtype=float,
+            )
+            probabilities = np.clip(probabilities, floor, 1.0 - floor)[codes]
+            contribution = np.where(
+                node_values,
+                np.log(probabilities),
+                np.log1p(-probabilities),
+            )
+            output += contribution[:, None]
     return output
 
 
+def _bn_local_bic(data: np.ndarray, nodes: Sequence[str], roles: Mapping[str, str], node: str, parent_nodes: Sequence[str], tau: np.ndarray, n_states: int, floor: float) -> float:
+    index = {name: position for position, name in enumerate(nodes)}
+    parent_indices = [index[parent] for parent in parent_nodes]
+    node_values = data[:, index[node]].astype(float)
+    combinations = list(itertools.product((0, 1), repeat=len(parent_indices)))
+    if parent_indices:
+        codes = sum(
+            data[:, parent_index].astype(int) * (2 ** (len(parent_indices) - offset - 1))
+            for offset, parent_index in enumerate(parent_indices)
+        )
+    else:
+        codes = np.zeros(len(data), dtype=int)
+    q_value = 0.0
+    for combination_index, _ in enumerate(combinations):
+        mask = codes == combination_index
+        if roles[node] in {"A0", "A1"}:
+            for state in range(n_states):
+                mass = tau[:, state] * mask
+                denominator = float(mass.sum())
+                numerator = float((mass * node_values).sum())
+                probability = numerator / denominator if denominator > floor else 0.5
+                probability = float(np.clip(probability, floor, 1.0 - floor))
+                q_value += numerator * math.log(probability)
+                q_value += (denominator - numerator) * math.log1p(-probability)
+        else:
+            denominator = float(mask.sum())
+            numerator = float((mask * node_values).sum())
+            probability = numerator / denominator if denominator > floor else 0.5
+            probability = float(np.clip(probability, floor, 1.0 - floor))
+            q_value += numerator * math.log(probability)
+            q_value += (denominator - numerator) * math.log1p(-probability)
+    parameter_count = (n_states if roles[node] in {"A0", "A1"} else 1) * (2 ** len(parent_indices))
+    return -2.0 * q_value + parameter_count * math.log(max(len(data), 1))
+
+
 def _bn_expected_bic(data: np.ndarray, nodes: Sequence[str], roles: Mapping[str, str], edges: Sequence[tuple[str, str]], tau: np.ndarray, n_states: int, floor: float) -> float:
-    weights, upstream, downstream = _bn_mle_parameters(data, nodes, roles, edges, tau, n_states, floor)
-    log_joint = _bn_log_joint(data, nodes, roles, edges, weights, upstream, downstream, floor)
-    q_value = float(np.sum(tau * log_joint))
-    return -2.0 * q_value + _bn_parameter_count(nodes, roles, edges, n_states) * math.log(max(len(data), 1))
+    weights = tau.sum(axis=0)
+    weight_q = float(np.sum(tau * np.log(np.clip(weights / max(weights.sum(), floor), floor, 1.0))[None, :]))
+    parents = _bn_parent_map(nodes, edges)
+    local_scores = sum(
+        _bn_local_bic(data, nodes, roles, node, parents[node], tau, n_states, floor)
+        for node in nodes
+    )
+    return -2.0 * weight_q + (n_states - 1) * math.log(max(len(data), 1)) + local_scores
 
 
 def _random_bn_edges(nodes: Sequence[str], roles: Mapping[str, str], d_max: int, rng: np.random.Generator) -> list[tuple[str, str]]:
@@ -2025,26 +2114,63 @@ def _random_bn_edges(nodes: Sequence[str], roles: Mapping[str, str], d_max: int,
 def _structure_step(data: np.ndarray, nodes: Sequence[str], roles: Mapping[str, str], edges: Sequence[tuple[str, str]], tau: np.ndarray, n_states: int, d_max: int, epsilon: float, max_iter: int, floor: float) -> list[tuple[str, str]]:
     current = set(edges)
     allowed = set(_allowed_bn_edges(roles))
+    parents = _bn_parent_map(nodes, sorted(current))
+    local_cache: dict[tuple[str, tuple[str, ...]], float] = {}
+
+    def local_score(node: str, parent_nodes: Sequence[str]) -> float:
+        key = (node, tuple(sorted(parent_nodes)))
+        if key not in local_cache:
+            local_cache[key] = _bn_local_bic(data, nodes, roles, node, key[1], tau, n_states, floor)
+        return local_cache[key]
+
+    def graph_score(edges_for_graph: set[tuple[str, str]]) -> float:
+        graph_parents = _bn_parent_map(nodes, sorted(edges_for_graph))
+        weights = tau.sum(axis=0)
+        weight_q = float(np.sum(tau * np.log(np.clip(weights / max(weights.sum(), floor), floor, 1.0))[None, :]))
+        return (
+            -2.0 * weight_q
+            + (n_states - 1) * math.log(max(len(data), 1))
+            + sum(local_score(node, graph_parents[node]) for node in nodes)
+        )
+
     for _ in range(max_iter):
-        base_score = _bn_expected_bic(data, nodes, roles, sorted(current), tau, n_states, floor)
-        parents = _bn_parent_map(nodes, sorted(current))
-        moves: list[set[tuple[str, str]]] = []
+        base_score = graph_score(current)
+        moves: list[tuple[set[tuple[str, str]], str, tuple[str, ...]]] = []
         for edge in sorted(allowed - current):
             if len(parents[edge[1]]) < d_max:
-                moves.append(current | {edge})
+                new_parents = tuple(sorted((*parents[edge[1]], edge[0])))
+                moves.append((current | {edge}, edge[1], new_parents))
         for edge in sorted(current):
-            moves.append(current - {edge})
+            new_parents = tuple(parent for parent in parents[edge[1]] if parent != edge[0])
+            moves.append((current - {edge}, edge[1], new_parents))
         if not moves:
             break
-        scored = [(candidate, _bn_expected_bic(data, nodes, roles, sorted(candidate), tau, n_states, floor)) for candidate in moves]
+        current_local = {
+            node: local_score(node, parents[node])
+            for node in nodes
+        }
+        scored = []
+        for candidate, changed_node, changed_parents in moves:
+            candidate_score = base_score - current_local[changed_node] + local_score(changed_node, changed_parents)
+            scored.append((candidate, candidate_score))
         candidate, candidate_score = min(scored, key=lambda item: item[1])
         if base_score - candidate_score <= epsilon:
             break
         current = candidate
+        parents = _bn_parent_map(nodes, sorted(current))
     return sorted(current)
 
 
-def _fit_structural_em_initialization(data: np.ndarray, nodes: list[str], roles: dict[str, str], n_states: int, seed: int, initialization: str, config: Mapping[str, Any]) -> StructuralEMResult:
+def _fit_structural_em_initialization(
+    data: np.ndarray,
+    nodes: list[str],
+    roles: dict[str, str],
+    n_states: int,
+    seed: int,
+    initialization: str,
+    config: Mapping[str, Any],
+    progress_callback: Callable[[int, float, int], None] | None = None,
+) -> StructuralEMResult:
     cfg = _bn_config(config)
     rng = np.random.default_rng(seed)
     d_max = int(cfg["d_max"])
@@ -2063,6 +2189,8 @@ def _fit_structural_em_initialization(data: np.ndarray, nodes: list[str], roles:
         delta = abs(observed_ll - previous_ll) if np.isfinite(previous_ll) else np.inf
         tau = new_tau
         edges = new_edges
+        if progress_callback is not None:
+            progress_callback(iteration, observed_ll, len(edges))
         if same_graph and delta < float(cfg["em_tol"]):
             converged = True
             break
@@ -2160,11 +2288,83 @@ def fit_latent_bn_analysis(matrix: pd.DataFrame, roles: Mapping[str, str], confi
     results: list[StructuralEMResult] = []
     n_initializations = int(cfg["n_initializations"])
     base_seed = int(config.get("random_state", 42))
-    for n_states in [int(value) for value in cfg["latent_states"]]:
-        for init_index in range(n_initializations):
-            initialization = "empty" if init_index == 0 else "random"
-            seed = base_seed + n_states * 100_000 + init_index
-            results.append(_fit_structural_em_initialization(data, nodes, dict(roles), n_states, seed, initialization, config))
+    latent_states = [int(value) for value in cfg["latent_states"]]
+    tasks = [
+        (
+            n_states,
+            init_index,
+            "empty" if init_index == 0 else "random",
+            base_seed + n_states * 100_000 + init_index,
+        )
+        for n_states in latent_states
+        for init_index in range(n_initializations)
+    ]
+    try:
+        from tqdm.auto import tqdm
+    except ImportError:
+        tqdm = None
+    workers = resolve_bn_n_workers(config)
+    progress = tqdm(
+        total=len(tasks),
+        desc="Structural EM",
+        unit="modèle",
+        file=sys.stdout,
+        disable=not bool(cfg["show_progress"]) or tqdm is None or workers > 1,
+    ) if tqdm is not None else None
+    try:
+        if workers > 1:
+            from joblib import Parallel, delayed
+
+            parallel_cfg = _bn_parallel_config(config)
+            iterator = Parallel(
+                n_jobs=workers,
+                backend=str(parallel_cfg.get("backend", "loky")),
+                batch_size=1,
+                verbose=0,
+                return_as="generator",
+            )(
+                delayed(_fit_structural_em_initialization)(
+                    data,
+                    nodes,
+                    dict(roles),
+                    n_states,
+                    seed,
+                    initialization,
+                    config,
+                )
+                for n_states, init_index, initialization, seed in tasks
+            )
+        else:
+            def sequential_iterator() -> Iterable[StructuralEMResult]:
+                for n_states, init_index, initialization, seed in tasks:
+                    def update_progress(iteration: int, log_likelihood: float, n_edges: int) -> None:
+                        if progress is not None:
+                            progress.set_postfix_str(
+                                f"K={n_states} init={init_index + 1}/{n_initializations} "
+                                f"EM={iteration} arcs={n_edges}"
+                            )
+
+                    yield _fit_structural_em_initialization(
+                        data,
+                        nodes,
+                        dict(roles),
+                        n_states,
+                        seed,
+                        initialization,
+                        config,
+                        progress_callback=update_progress,
+                    )
+                    if progress is not None:
+                        progress.update(1)
+
+            iterator = sequential_iterator()
+        if progress is None and tqdm is not None and bool(cfg["show_progress"]):
+            progress = tqdm(iterator, total=len(tasks), desc="Structural EM", unit="modèle", file=sys.stdout, leave=True)
+            iterator = progress
+        results = list(iterator)
+    finally:
+        if progress is not None:
+            progress.close()
     selected, selection = _select_latent_result(results, config)
     output_dir.mkdir(parents=True, exist_ok=True)
     selection.to_csv(output_dir / "all_initializations.csv", index=False)
@@ -2216,6 +2416,59 @@ def _scenario_state_space(result: StructuralEMResult, roles: Mapping[str, str]) 
     return upstream, events, consequences
 
 
+def _exact_constrained_mpe(result: StructuralEMResult, roles: Mapping[str, str], state: int) -> dict[str, int]:
+    """Compute the exact role-constrained MPE with variable elimination."""
+
+    try:
+        from pgmpy.factors.discrete import TabularCPD
+        from pgmpy.inference import VariableElimination
+    except ImportError as error:
+        raise RuntimeError("pgmpy est requis pour calculer le MPE exact.") from error
+
+    constrained_model = result.model.copy()
+    evidence: dict[str, int] = {"Z": int(state)}
+    constraint_cpds = []
+    groups = {
+        "upstream": [node for node in result.nodes if roles[node] in {"A0", "A1"}],
+        "event": [node for node in result.nodes if roles[node] == "B"],
+        "consequence": [node for node in result.nodes if roles[node] == "C"],
+    }
+    for group_name, group_nodes in groups.items():
+        if not group_nodes:
+            raise ValueError(f"Le groupe {group_name} est vide : MPE contraint impossible.")
+        if len(group_nodes) == 1:
+            evidence[group_nodes[0]] = 1
+            continue
+        previous = group_nodes[0]
+        for index, node in enumerate(group_nodes[1:], start=1):
+            helper = f"__mpe_or_{group_name}_{index}"
+            constrained_model.add_node(helper)
+            constrained_model.add_edge(previous, helper)
+            constrained_model.add_edge(node, helper)
+            constraint_cpds.append(TabularCPD(
+                helper,
+                2,
+                [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 1.0, 1.0]],
+                evidence=[previous, node],
+                evidence_card=[2, 2],
+            ))
+            previous = helper
+        evidence[previous] = 1
+    constrained_model.add_cpds(*constraint_cpds)
+    constrained_model.check_model()
+    try:
+        assignment = VariableElimination(constrained_model).map_query(
+            variables=result.nodes,
+            evidence=evidence,
+            show_progress=False,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"L'inférence exacte du MPE a échoué pour la famille {state + 1}."
+        ) from error
+    return {node: int(assignment[node]) for node in result.nodes}
+
+
 def _family_probability(result: StructuralEMResult, values: Mapping[str, int], state: int, config: Mapping[str, Any]) -> float:
     frame = np.asarray([[int(values[node]) for node in result.nodes]], dtype=np.int8)
     log_joint = _bn_log_joint(frame, result.nodes, result.roles, result.edges, result.weights, result.upstream_probabilities, result.downstream_probabilities, float(_bn_config(config)["probability_floor"]))[0, state]
@@ -2237,59 +2490,43 @@ def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame
     profile_rows = []
     for state in range(result.n_states):
         for node in nodes:
-            marginal = float(result.model.predict if False else np.mean(np.exp(log_joint[:, state] - np.log(np.maximum(result.weights[state], cfg["probability_floor"]))) * data[:, nodes.index(node)]))
-            # The exact marginal is obtained from pgmpy when available below.
             try:
                 from pgmpy.inference import VariableElimination
                 query = VariableElimination(result.model).query([node], evidence={"Z": state}, show_progress=False)
                 marginal = float(query.values[1])
-            except Exception:
-                marginal = float(np.average(data[:, nodes.index(node)], weights=responsibilities[:, state]))
+            except Exception as error:
+                raise RuntimeError(
+                    f"L'inférence exacte du profil a échoué pour la famille {state + 1}, variable {node}."
+                ) from error
             profile_rows.append({"family_id": state + 1, "variable_name": node, "role": roles[node], "probability": marginal})
     profiles = pd.DataFrame(profile_rows)
     upstream, events, consequences = _scenario_state_space(result, roles)
     if not upstream or not events or not consequences:
         raise ValueError("Le MPE contraint nécessite au moins un thème upstream, B et C.")
-    exact_limit = int(cfg.get("exact_mpe_max_variables", 20))
     scenario_rows = []
     support_rows = []
     prototype_rows = []
+    if len(nodes) > 20:
+        warnings.warn(
+            "Le MPE exact par élimination de variables peut être coûteux au-delà de 20 facteurs; "
+            "aucune approximation heuristique ne sera utilisée.",
+            RuntimeWarning,
+        )
     for state in range(result.n_states):
-        candidates: list[dict[str, int]] = []
-        exact = bool(cfg.get("exact_inference", True)) and len(nodes) <= exact_limit
-        if exact:
-            for bits in itertools.product((0, 1), repeat=len(nodes)):
-                values = dict(zip(nodes, bits))
-                if any(values[node] for node in upstream) and any(values[node] for node in events) and any(values[node] for node in consequences):
-                    candidates.append(values)
-        else:
-            warnings.warn(f"MPE exact non utilisé pour la famille {state + 1}; repli approximatif explicite.", RuntimeWarning)
-            ranked = profiles[profiles["family_id"].eq(state + 1)].sort_values("probability", ascending=False)
-            top = ranked.groupby(ranked["role"].isin({"A0", "A1", "B", "C"})).head(3)
-            candidates = []
-            for upstream_node in ranked[ranked["role"].isin({"A0", "A1"})]["variable_name"].head(3):
-                for event_node in ranked[ranked["role"].eq("B")]["variable_name"].head(3):
-                    for consequence_node in ranked[ranked["role"].eq("C")]["variable_name"].head(3):
-                        candidates.append({node: int(node in {upstream_node, event_node, consequence_node}) for node in nodes})
-        if not candidates:
-            continue
-        probabilities = [_family_probability(result, candidate, state, config) for candidate in candidates]
-        best_index = int(np.argmax(probabilities))
-        best = candidates[best_index]
+        best = _exact_constrained_mpe(result, roles, state)
+        mpe_probability = _family_probability(result, best, state, config)
         positive = [node for node in nodes if best[node]]
         positive_mask = matrix[positive].all(axis=1).to_numpy(dtype=bool)
         family_support = float(np.sum(responsibilities[:, state] * positive_mask) / max(responsibilities[:, state].sum(), 1e-12))
         global_support = float(positive_mask.mean())
-        exact_vector = np.all(data == np.asarray([best[node] for node in nodes]), axis=1)
-        exact_vector_support = float(np.sum(responsibilities[:, state] * exact_vector) / max(responsibilities[:, state].sum(), 1e-12))
         hard_family = np.argmax(responsibilities, axis=1) == state
         candidate_indices = np.flatnonzero(hard_family)
         if len(candidate_indices) == 0:
             candidate_indices = np.arange(len(matrix))
         prototype_index = max(candidate_indices, key=lambda index: _family_probability(result, dict(zip(nodes, data[index])), state, config))
         prototype_accident = str(matrix.iloc[prototype_index]["accident_id"])
-        scenario_rows.append({"family_id": state + 1, "N_eff": float(responsibilities[:, state].sum()), "omega": float(result.weights[state]), "A0_factors": ";".join(node for node in positive if roles[node] == "A0"), "A1_factors": ";".join(node for node in positive if roles[node] == "A1"), "B_factors": ";".join(node for node in positive if roles[node] == "B"), "C_factors": ";".join(node for node in positive if roles[node] == "C"), "mpe_probability": float(probabilities[best_index]), "family_positive_support": family_support, "global_positive_support": global_support, "exact_vector_support": exact_vector_support, "prototype_accident_id": prototype_accident, "prototype_probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "prototype_posterior_membership": float(responsibilities[prototype_index, state]), "mpe_exact": exact})
-        support_rows.append({"family_id": state + 1, "positive_factors": ";".join(positive), "family_positive_support": family_support, "global_positive_support": global_support, "exact_vector_support": exact_vector_support, "mpe_probability": float(probabilities[best_index])})
+        scenario_rows.append({"family_id": state + 1, "N_eff": float(responsibilities[:, state].sum()), "omega": float(result.weights[state]), "A0_factors": ";".join(node for node in positive if roles[node] == "A0"), "A1_factors": ";".join(node for node in positive if roles[node] == "A1"), "B_factors": ";".join(node for node in positive if roles[node] == "B"), "C_factors": ";".join(node for node in positive if roles[node] == "C"), "mpe_probability": mpe_probability, "mpe_method": "exact_variable_elimination", "family_positive_support": family_support, "global_positive_support": global_support, "prototype_accident_id": prototype_accident, "prototype_probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "prototype_posterior_membership": float(responsibilities[prototype_index, state])})
+        support_rows.append({"family_id": state + 1, "positive_factors": ";".join(positive), "family_positive_support": family_support, "global_positive_support": global_support, "mpe_probability": mpe_probability, "mpe_method": "exact_variable_elimination"})
         prototype_units = units[units["_accident_id"].astype(str).eq(prototype_accident)].copy()
         prototype_rows.append({"family_id": state + 1, "accident_id": prototype_accident, "probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "posterior_membership": float(responsibilities[prototype_index, state]), "fact_ids": ";".join(prototype_units["_fact_id"].astype(str)), "sentences": " || ".join(prototype_units.get("_text", pd.Series(dtype=str)).astype(str)[:20])})
     scenarios = pd.DataFrame(scenario_rows)
