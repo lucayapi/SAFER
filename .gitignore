@@ -37,6 +37,8 @@ text/output_test/
 text/recurrent_scenarios/runs/
 text/recurrent_scenarios/notebooks/*.ipynb
 !text/recurrent_scenarios/notebooks/recurrent_scenarios_results.ipynb
+!text/recurrent_scenarios/notebooks/recurrent_scenarios_bn_analysis_caou.ipynb
+!text/recurrent_scenarios/notebooks/recurrent_scenarios_bn_analysis_metallurgie.ipynb
 text/resultats/
 text/annotation/outputs/**
 !text/annotation/outputs/.gitkeep

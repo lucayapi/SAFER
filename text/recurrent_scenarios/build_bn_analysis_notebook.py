@@ -1,4 +1,4 @@
-"""Build the downstream accident-variable and Bayesian-network notebook."""
+"""Generate one frozen-theme latent-BN notebook per dataset."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-NOTEBOOK_PATH = ROOT / "notebooks" / "recurrent_scenarios_bn_analysis.ipynb"
+NOTEBOOK_DIR = ROOT / "notebooks"
 
 
 def markdown(text: str) -> dict:
@@ -18,26 +18,29 @@ def code(text: str) -> dict:
     return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": [line + "\n" for line in text.strip().splitlines()]}
 
 
-cells = [
-    markdown(
-        """
-# Notebook 2 — Accident variables, Bayesian networks and recurrent scenarios
+DEFAULT_PARTITIONS = {
+    "caou": {"A0": "A0_cfg_005", "A1": "A1_cfg_009", "B": "B_cfg_016", "C": "C_cfg_035"},
+    "metallurgie": {"A0": "A0_cfg_007", "A1": "A1_cfg_010", "B": "B_cfg_011", "C": "C_cfg_019"},
+}
 
-This notebook starts after Notebook 1. It loads the frozen Pareto-medoid theme
-memberships and never reruns UMAP, HDBSCAN, DBCV or resampling stability.
 
-The workflow is: accident-theme matrix → descriptive supports/lift → constrained
-BN without `Z` → latent mixture BN → grouped held-out comparison and bootstrap
-arc stability → traceable recurrent scenarios.
-        """
-    ),
-    code(
-        """
+def build_notebook(dataset_id: str) -> dict:
+    partitions = DEFAULT_PARTITIONS[dataset_id]
+    cells = [
+        markdown(f"""
+# Analyse BN des scénarios récurrents — {dataset_id}
+
+Cette analyse commence après la sélection des partitions Pareto dans le
+notebook `topic_modeling_results_{dataset_id}.ipynb`. Elle ne relance ni UMAP,
+ni HDBSCAN, ni le resampling. Une configuration Pareto est choisie explicitement
+pour chaque rôle, puis un seul réseau bayésien latent est ajusté par Structural EM.
+        """),
+        code("""
 from pathlib import Path
-import json
 import sys
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from IPython.display import display
 
 SCENARIO_DIR = Path.cwd() / "text" / "recurrent_scenarios"
@@ -47,238 +50,120 @@ if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 
 from scenario_pipeline import (
-    PartitionResult,
-    ROLES,
-    bootstrap_arc_stability,
-    build_accident_topic_matrix,
-    descriptive_tables,
-    evaluate_bn_cv,
-    extract_scenarios,
-    fit_latent_model,
-    fit_no_z_model,
-    prepare_data,
-    save_models,
-    write_audit_report,
-    write_descriptive_figures,
-    write_network_figure,
+    load_yaml_config,
+    select_dataset_config,
+    resolve_config_paths,
+    load_units,
+    run_frozen_bn_analysis,
 )
-        """
-    ),
-    markdown(
-        """
-## 1. Paths and downstream model parameters
+        """),
+        markdown("""
+## 1. Configuration des partitions BN
 
-All parameters used by the downstream analysis are kept in this notebook. The
-`RUN_DIR` must point to a completed Notebook 1 run. Changing any parameter below
-requires recording the change and rerunning the affected downstream cells.
-        """
-    ),
-    code(
-        """
-DATASET_ID = "caou"
+Modifie uniquement les identifiants ci-dessous pour analyser d'autres
+partitions Pareto. Il faut exactement une configuration par rôle. Ces choix
+n'entraînent aucune nouvelle étape de clustering.
+        """),
+        code(f"""
+DATASET_ID = {dataset_id!r}
 DISCOVERY_RUN_NAME = "theme_discovery_audit"
 RUN_DIR = SCENARIO_DIR / "runs" / DISCOVERY_RUN_NAME / DATASET_ID
-DATA_ROOT = SCENARIO_DIR.parent / "dataset"
-UNITS_PATH = DATA_ROOT / f"data_{DATASET_ID}.csv"
-EMBEDDINGS_PATH = DATA_ROOT / f"Qwen3-Embedding-0.6B_{DATASET_ID}.csv"
+BN_OUTPUT_DIR = RUN_DIR / "bayesian_networks"
 
-# Matrix construction: rare themes can be retained in the dictionary but excluded
-# from the main BN because their conditional tables are too sparse.
-MIN_TOPIC_ACCIDENT_SUPPORT = 20  # Minimum number of accidents supporting a BN variable.
-MAX_TOPICS_PER_ROLE = 6  # Optional cap on retained variables per role; None keeps all.
+BN_PARTITION_SELECTIONS = {partitions!r}
 
-# BN structure: role-order constraints are implemented in the existing learner.
-N_FOLDS = 5  # Grouped accident-level folds for held-out log likelihood.
-MAX_INDEGREE = 3  # Maximum observed parents; larger values create sparse CPT cells.
-EQUIVALENT_SAMPLE_SIZE = 5.0  # Symmetric smoothing strength for binary CPT estimates.
-INCLUDE_A0_TO_B_DIRECT = True  # Allow the direct context-to-event relation.
-ENSURE_MACRO_CHAIN_BACKBONE = False  # Do not force edges unless substantively justified.
-
-# Latent mixture model: Z captures upstream heterogeneity, not a process cause.
-LATENT_STATES = [2, 3, 4]  # Candidate number of latent accident families.
-LATENT_MAX_ITER = 100  # EM iteration budget per initialization/state count.
-LATENT_TOLERANCE = 1e-4  # Convergence tolerance on mean observed log likelihood.
-
-# Structural uncertainty and scenario output.
-BOOTSTRAP_REPETITIONS = 100  # Accident bootstrap fits for edge selection frequencies.
-BOOTSTRAP_ARC_THRESHOLD = 0.75  # Display/retain learned arcs above this frequency.
-TOP_SCENARIOS = 30  # Maximum scenarios written to the catalogue.
-MIN_SCENARIO_SUPPORT = 3  # Minimum exact number of supporting accidents.
-
-config = {
-    "data": {
-        "dataset_id": DATASET_ID,
-        "units_path": str(UNITS_PATH),
-        "embeddings_path": str(EMBEDDINGS_PATH),
-        "accident_id_col": "accident_id",
-        "fact_id_col": "fact_id",
-        "text_col": "sentence",
-        "role_col": "pred_label",
-        "valid_col": "pred_ok",
-        "keep_valid_only": True,
-        "normalize_embeddings": True,
-        "output_dir": str(RUN_DIR),
-    },
-    "random_state": 42,
-    "topics": {
-        "min_accident_support": MIN_TOPIC_ACCIDENT_SUPPORT,
-        "max_topics_per_role": MAX_TOPICS_PER_ROLE,
-    },
-    "descriptive": {"bootstrap_repetitions": 1000, "cooccurrence_min_support": 5},
-    "bayesian_networks": {
-        "n_folds": N_FOLDS,
-        "max_indegree": MAX_INDEGREE,
-        "equivalent_sample_size": EQUIVALENT_SAMPLE_SIZE,
-        "latent_states": LATENT_STATES,
-        "latent_max_iter": LATENT_MAX_ITER,
-        "latent_tolerance": LATENT_TOLERANCE,
-        "bootstrap_repetitions": BOOTSTRAP_REPETITIONS,
-        "bootstrap_arc_threshold": BOOTSTRAP_ARC_THRESHOLD,
-        "include_a0_to_b_direct": INCLUDE_A0_TO_B_DIRECT,
-        "ensure_macro_chain_backbone": ENSURE_MACRO_CHAIN_BACKBONE,
-        "top_scenarios": TOP_SCENARIOS,
-        "min_scenario_support": MIN_SCENARIO_SUPPORT,
-    },
-}
-(RUN_DIR / "bn_analysis_parameters.json").write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
-print("Using discovery run:", RUN_DIR)
-        """
-    ),
-    markdown("## 2. Validate and load the frozen discovery outputs"),
-    code(
-        """
-prepared = prepare_data(config, RUN_DIR)
-partition_results = {}
-for role in ROLES:
-    role_dir = RUN_DIR / "clustering" / role
-    assignments_path = role_dir / "topic_assignments.csv"
-    topics_path = role_dir / "topics.csv"
-    if not assignments_path.is_file() or not topics_path.is_file():
-        raise FileNotFoundError(f"Missing frozen outputs for {role}: run Notebook 1 first.")
-    partition_results[role] = PartitionResult(
-        role=role,
-        assignments=pd.read_csv(assignments_path),
-        topics=pd.read_csv(topics_path),
-        edges=pd.DataFrame(),
-        replications=pd.DataFrame(),
-    )
-    print(role, "topics:", len(partition_results[role].topics), "assigned units:", int(partition_results[role].assignments["topic_id"].ne("").sum()))
-topic_dictionary = pd.read_csv(RUN_DIR / "topics" / "topic_dictionary.csv")
-display(topic_dictionary[["topic_id", "role", "label", "n_units", "n_accidents", "stability"]].head(30))
-        """
-    ),
-    markdown(
-        """
-## 3. Construct the binary accident-theme matrix
-
-One is “theme observed in the available narrative”; zero is not confirmed absence
-from the real accident. Repeated factual units within one accident produce one binary
-indicator, not a count.
-        """
-    ),
-    code(
-        """
-accident_topic_matrix, selected_topics, variable_macro_map = build_accident_topic_matrix(
-    prepared, partition_results, topic_dictionary, config, RUN_DIR / "matrices"
+CONFIG_PATH = SCENARIO_DIR / "config.yaml"
+config = resolve_config_paths(
+    select_dataset_config(load_yaml_config(CONFIG_PATH), DATASET_ID),
+    CONFIG_PATH,
 )
-display(selected_topics)
-display(accident_topic_matrix.head())
-print("Accidents:", len(accident_topic_matrix), "BN variables:", len(variable_macro_map))
-        """
-    ),
-    markdown("## 4. Descriptive prevalence and pairwise lift"),
-    code(
-        """
-descriptive = descriptive_tables(
-    accident_topic_matrix, selected_topics, config, RUN_DIR / "descriptive"
-)
-display(descriptive["frequencies"].head(30))
-display(descriptive["cooccurrence_lift"].head(30))
-write_descriptive_figures(descriptive, RUN_DIR / "figures")
-        """
-    ),
-    markdown(
-        """
-## 5. Constrained BN without `Z` and held-out comparison
+config["bayesian_networks"]["min_theme_support_count"] = 20
+config["bayesian_networks"]["d_max"] = 2
+config["bayesian_networks"]["latent_states"] = list(range(2, 9))
+config["bayesian_networks"]["n_initializations"] = 20
+config["bayesian_networks"]["alpha"] = 0.5
 
-The learned observed arcs respect the A0/A1/B/C role ordering. They are conditional
-dependencies under constraints, not identified causal effects.
-        """
-    ),
-    code(
-        """
-cv_log_likelihood = evaluate_bn_cv(
-    accident_topic_matrix, variable_macro_map, config, RUN_DIR / "bayesian_networks"
+print("Dataset:", DATASET_ID)
+print("Partitions:", BN_PARTITION_SELECTIONS)
+        """),
+        markdown("## 2. Matrice accident × facteurs figés"),
+        code("""
+units, _ = load_units(config)
+analysis = run_frozen_bn_analysis(
+    config=config,
+    run_dir=RUN_DIR,
+    partition_selections=BN_PARTITION_SELECTIONS,
+    output_dir=BN_OUTPUT_DIR,
+    units=units,
 )
-display(cv_log_likelihood)
-display(cv_log_likelihood.groupby(["model", "latent_states"], dropna=False)["log_likelihood"].agg(["mean", "std"]).reset_index())
-        """
-    ),
-    markdown("## 6. Final latent model, bootstrap arc stability and comparison"),
-    code(
-        """
-no_z_edges, no_z_model = fit_no_z_model(
-    accident_topic_matrix[list(variable_macro_map)], variable_macro_map, config
-)
-latent_models = {
-    int(n_states): fit_latent_model(
-        accident_topic_matrix[list(variable_macro_map)],
-        no_z_edges,
-        config,
-        int(n_states),
-        random_state=int(config["random_state"]) + int(n_states),
-    )
-    for n_states in LATENT_STATES
-}
-arc_stability = bootstrap_arc_stability(
-    accident_topic_matrix, variable_macro_map, config, RUN_DIR / "bayesian_networks"
-)
-save_models(no_z_edges, no_z_model, latent_models, variable_macro_map, RUN_DIR / "bayesian_networks")
-display(arc_stability.sort_values("bootstrap_frequency", ascending=False).head(50))
-        """
-    ),
-    markdown("## 7. Recurrent scenarios supported by the frozen variables and network"),
-    code(
-        """
-latent_summary = cv_log_likelihood[cv_log_likelihood["model"].eq("BN_with_Z")].groupby("latent_states")["log_likelihood"].mean()
-best_latent_state = int(latent_summary.idxmax()) if not latent_summary.empty else int(LATENT_STATES[0])
-scenario_catalog = extract_scenarios(
-    accident_topic_matrix,
-    selected_topics,
-    variable_macro_map,
-    no_z_model,
-    {best_latent_state: latent_models[best_latent_state]},
-    config,
-    RUN_DIR / "scenarios",
-)
-display(scenario_catalog)
-print("Selected latent states:", best_latent_state)
-        """
-    ),
-    markdown("## 8. Export final figures and audit report"),
-    code(
-        """
-write_network_figure(
-    no_z_edges,
-    variable_macro_map,
-    arc_stability,
-    RUN_DIR / "figures" / "constrained_networks_without_with_z.png",
-)
-write_audit_report(config, prepared, selected_topics, cv_log_likelihood, arc_stability, RUN_DIR)
-display(pd.read_csv(RUN_DIR / "audit_input_summary.csv"))
-print("Outputs written to:", RUN_DIR)
-        """
-    ),
-]
 
-NOTEBOOK_PATH.parent.mkdir(parents=True, exist_ok=True)
-NOTEBOOK_PATH.write_text(
-    json.dumps({
+matrix = analysis["matrix"]
+theme_dictionary = analysis["theme_dictionary"]
+excluded_themes = analysis["excluded_themes"]
+print("Accidents:", len(matrix), "Variables BN:", len(theme_dictionary))
+display(theme_dictionary)
+display(excluded_themes)
+        """),
+        markdown("## 3. Sélection de K par BIC"),
+        code("""
+k_selection = analysis["selection"]
+display(k_selection.sort_values(["K", "bic"]))
+selected_result = analysis["result"]
+print("K sélectionné:", selected_result.n_states)
+        """),
+        code("""
+fig, axis = plt.subplots(figsize=(8, 5))
+summary = k_selection.groupby("K", as_index=False)["bic"].min()
+axis.plot(summary["K"], summary["bic"], marker="o")
+axis.set(xlabel="Nombre de familles latentes K", ylabel="BIC", title="Sélection de K par BIC")
+axis.grid(alpha=0.25)
+fig.tight_layout()
+display(fig)
+        """),
+        markdown("## 4. Familles latentes, profils et scénarios"),
+        code("""
+display(analysis["profiles"].head(50))
+display(analysis["scenarios"])
+display(analysis["supports"])
+display(analysis["prototypes"])
+        """),
+        code("""
+profiles = analysis["profiles"].pivot(index="variable_name", columns="family_id", values="probability")
+fig, axis = plt.subplots(figsize=(10, max(5, len(profiles) * 0.22)))
+image = axis.imshow(profiles.fillna(0).to_numpy(), aspect="auto", cmap="viridis", vmin=0, vmax=1)
+axis.set(yticks=np.arange(len(profiles)), yticklabels=profiles.index, xlabel="Famille latente", title="Profils factoriels P(X=1 | Z)")
+fig.colorbar(image, ax=axis, label="Probabilité")
+fig.tight_layout()
+display(fig)
+        """),
+        markdown("""
+## Fichiers produits
+
+Les résultats sont écrits dans `RUN_DIR / "bayesian_networks"`, notamment la
+matrice multi-hot, les responsabilités postérieures, les profils familiaux,
+les CPT finales, les arêtes apprises, les supports et les prototypes observés.
+        """),
+    ]
+    return {
         "cells": cells,
-        "metadata": {"kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"}, "language_info": {"name": "python", "version": "3.10"}},
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python", "version": "3.10"},
+        },
         "nbformat": 4,
         "nbformat_minor": 5,
-    }, ensure_ascii=False, indent=1),
-    encoding="utf-8",
-)
-print(f"Notebook written: {NOTEBOOK_PATH}")
+    }
+
+
+def main() -> None:
+    NOTEBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    for dataset_id in ("caou", "metallurgie"):
+        path = NOTEBOOK_DIR / f"recurrent_scenarios_bn_analysis_{dataset_id}.ipynb"
+        path.write_text(json.dumps(build_notebook(dataset_id), indent=1, ensure_ascii=False), encoding="utf-8")
+    old_path = NOTEBOOK_DIR / "recurrent_scenarios_bn_analysis.ipynb"
+    if old_path.exists():
+        old_path.unlink()
+
+
+if __name__ == "__main__":
+    main()

@@ -83,18 +83,20 @@ descriptive:
   cooccurrence_min_support: 5
 
 bayesian_networks:
-  n_folds: 5
-  max_indegree: 3
-  equivalent_sample_size: 5
-  latent_states: [2, 3, 4]
-  latent_max_iter: 100
-  latent_tolerance: 0.0001
-  bootstrap_repetitions: 100
-  bootstrap_arc_threshold: 0.75
-  include_a0_to_b_direct: true
-  ensure_macro_chain_backbone: false
-  top_scenarios: 30
-  min_scenario_support: 3
+  min_theme_support_count: 20
+  d_max: 2
+  latent_states: [2, 3, 4, 5, 6, 7, 8]
+  n_initializations: 20
+  em_max_iter: 500
+  em_tol: 0.000001
+  structure_max_iter: 100
+  structure_epsilon: 0.000001
+  min_latent_effective_n: 25
+  alpha: 0.5
+  top_m_mpe: 3
+  exact_inference: true
+  exact_mpe_max_variables: 20
+  probability_floor: 0.000000000001
 
 runtime:
   overwrite: false
