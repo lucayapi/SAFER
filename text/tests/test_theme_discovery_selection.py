@@ -172,8 +172,8 @@ def test_parse_evaluator_response_and_mock_scoring():
         role="A0",
         config={"validation": {"semantic_evaluation": {
             "random_state": 0,
-            "evaluator_1": {"model": "gpt-5.4"},
-            "evaluator_2": {"model": "gpt-5"},
+            "evaluator_1": {"model": "gpt-5.6-terra"},
+            "evaluator_2": {"model": "gpt-5.6-luna"},
         }}},
         chat_completion=fake_chat,
     )

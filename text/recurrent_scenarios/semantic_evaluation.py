@@ -32,8 +32,8 @@ def _semantic_evaluation_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("require_api_key", True)
     evaluator_1 = dict(values.get("evaluator_1") or {})
     evaluator_2 = dict(values.get("evaluator_2") or {})
-    evaluator_1.setdefault("model", "gpt-5.4")
-    evaluator_2.setdefault("model", "gpt-5")
+    evaluator_1.setdefault("model", "gpt-5.6-terra")
+    evaluator_2.setdefault("model", "gpt-5.6-luna")
     values["evaluator_1"] = evaluator_1
     values["evaluator_2"] = evaluator_2
     return values
@@ -311,7 +311,7 @@ def _openai_chat_completion(*, model: str, prompt: str) -> str:
             {"role": "user", "content": prompt},
         ],
     }
-    kwargs = apply_openai_chat_temperature(kwargs, model, temperature=0.0)
+    kwargs = apply_openai_chat_temperature(kwargs, model=model, temperature=0.0)
     if openai_chat_uses_max_completion_tokens(model):
         kwargs["max_completion_tokens"] = 4000
     else:

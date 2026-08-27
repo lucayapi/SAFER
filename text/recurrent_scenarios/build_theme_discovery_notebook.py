@@ -178,8 +178,8 @@ config = {
             "enabled": True,
             "units_per_factor": 9,
             "random_state": RANDOM_SEED,
-            "evaluator_1": {"model": "gpt-5.4"},
-            "evaluator_2": {"model": "gpt-5"},
+            "evaluator_1": {"model": "gpt-5.6-terra"},
+            "evaluator_2": {"model": "gpt-5.6-luna"},
         },
     },
     "topics": {

@@ -73,9 +73,9 @@ validation:
     random_state: 42
     require_api_key: true
     evaluator_1:
-      model: gpt-5.4
+      model: gpt-5.6-terra
     evaluator_2:
-      model: gpt-5
+      model: gpt-5.6-luna
 
 topics:
   top_words: 12
