@@ -1038,8 +1038,10 @@ def write_stability_landscape_figure(
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
-            axis.set_title(role)
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
+            axis.set_xlabel("DBCV")
+            axis.set_ylabel(r"$S_R$")
+            axis.text(0.02, 0.98, role, transform=axis.transAxes, ha="left", va="top", fontsize=11)
             continue
         valid = frame["dbcv_umap"].notna() & frame["stability"].notna()
         base = frame.loc[valid].copy()
@@ -1096,9 +1098,9 @@ def write_stability_landscape_figure(
                 linewidths=0.8,
                 zorder=4,
             )
-        axis.set_title(role)
-        axis.set_xlabel("UMAP-space DBCV")
-        axis.set_ylabel("Accident-level resampling stability $S_R$")
+        axis.set_xlabel("DBCV")
+        axis.set_ylabel(r"$S_R$")
+        axis.text(0.02, 0.98, role, transform=axis.transAxes, ha="left", va="top", fontsize=11)
         axis.grid(alpha=0.25)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
@@ -1108,7 +1110,6 @@ def write_stability_landscape_figure(
         Line2D([0], [0], marker="*", linestyle="None", color="black", label="Selected", markerfacecolor=selected_color, markeredgecolor="black", markersize=12),
     ]
     figure.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
-    figure.suptitle("Configuration reproducibility–DBCV landscape", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
