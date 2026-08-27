@@ -2,7 +2,7 @@ data:
   dataset_id: caou
   units_path: ../dataset/data_{dataset_id}.csv
   embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_{dataset_id}.csv
-  output_dir: ./runs/audit_{dataset_id}
+  output_dir: ./runs/theme_discovery_audit/{dataset_id}
   accident_id_col: accident_id
   fact_id_col: fact_id
   text_col: sentence
@@ -35,11 +35,8 @@ parallel:
   max_workers: 2
   backend: loky
 
-# This section defines the single shared UMAP--HDBSCAN candidate grid used by
-# both screening diagnostics and Pareto evaluation.
+# Shared UMAP--HDBSCAN candidate grid used for full-data fits and resampling.
 screening:
-  # The complete grid is evaluated; no combination budget is applied.
-  sampling_fraction: 1.0
   show_progress: true
   umap:
     n_neighbors: [10, 20, 40]
@@ -55,16 +52,20 @@ screening:
     metric: euclidean
     prediction_data: true
 
-pareto:
+# Accident-level reproducibility selection (S_R) with DBCV as diagnostic / tie-break.
+validation:
   random_state: 42
-  # The complete screening grid is evaluated for Pareto analysis.
   resampling_fraction: 0.8
-  # 100 grouped accident-level resamples provide a stable median S_R.
   n_resampling: 30
-  # Full DBCV is quadratic in the number of units; use a fixed reproducible
-  # subsample for a practical and comparable UMAP-space diagnostic.
+  # Full DBCV is quadratic; null = exact role calculation.
   dbcv_sample_size: null
+  selection_metric: stability
+  tie_breaker: dbcv_umap
   show_progress: true
+  seed_sensitivity:
+    enabled: true
+    # Alternative UMAP seeds; primary seed remains validation.random_state / random_state.
+    seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 topics:
   top_words: 12
@@ -75,25 +76,20 @@ topics:
   stopwords_file: stop_metier.txt
   additional_stopwords: []
   stopwords: [le, la, les, un, une, des, de, du, et, en, dans, sur, au, aux, que, qui, est, a, avec, pour, par, ce, cette, son, sa, ses, il, elle, ils, elles]
-  min_accident_support: 20
-  max_topics_per_role: 6
-
-descriptive:
-  bootstrap_repetitions: 1000
-  cooccurrence_min_support: 5
 
 bayesian_networks:
   parallel:
     enabled: true
     n_workers: auto
-    max_workers: 2
+    max_workers: 20
     backend: loky
   min_theme_support_count: 20
   d_max: 2
-  latent_states: [3, 4, 8, 10]
+  latent_states: [2,3,4,5,7,8,10,15]
   n_initializations: 10
   em_max_iter: 100
   em_tol: 0.000001
+  graph_stability_patience: 5
   structure_max_iter: 100
   structure_epsilon: 0.000001
   min_latent_effective_n: 25

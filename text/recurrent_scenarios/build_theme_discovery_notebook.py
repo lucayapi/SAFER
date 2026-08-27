@@ -24,18 +24,12 @@ cells = [
 # Notebook 1 — Role-conditioned stable semantic themes
 
 This notebook discovers stable themes independently for `A0`, `A1`, `B` and `C`.
-It does not run the accident-theme matrix, Bayesian networks or scenario extraction.
+Selection is automatic: maximize accident-level reproducibility `S_R`, with UMAP-space
+DBCV `D_U` as tie-breaker. Seed sensitivity is run after selection.
 
-The primary selection plane is:
-
-- horizontal axis: UMAP-space DBCV `D_U`;
-- vertical axis: accident-level resampling stability `S_R`;
-- no pre-filtering before the Pareto comparison;
-- final configuration: selected manually from the Pareto non-dominated
-  candidates after substantive review.
-
-Noise (`-1`) remains unassigned and is never treated as a theme. The second notebook
-loads the frozen outputs written here and therefore does not rerun UMAP or HDBSCAN.
+After this notebook (or the Slurm discovery job), open
+`topic_modeling_results_{corpus}.ipynb` for semantic labels, then
+`recurrent_scenarios_bn_analysis_{corpus}.ipynb` for the latent BN.
         """
     ),
     code(
@@ -70,12 +64,15 @@ if str(SCENARIO_DIR) not in sys.path:
 
 from scenario_pipeline import (
     ROLES,
-    evaluate_pareto_candidates,
+    evaluate_candidates,
     evaluate_resampling_stability,
+    evaluate_seed_sensitivity,
     load_topic_stopwords,
+    materialize_selected_partition,
     prepare_data,
-    select_pareto_partitions,
-    write_pareto_figure,
+    select_configuration_by_stability,
+    write_factor_stability_figure,
+    write_stability_landscape_figure,
 )
         """
     ),
@@ -83,22 +80,24 @@ from scenario_pipeline import (
         """
 ## 1. Paths, cache policy and random seeds
 
-Edit this cell before a production run. `REESTIMATE=True` invalidates the cached
-candidate fits, DBCV values, resampling values and Pareto selection for this run.
-Keeping it `False` is the normal mode after an intermediate result has been audited.
+Edit this cell before a production run. Prefer the Slurm job for large corpora;
+this notebook mirrors the same API for interactive audits.
         """
     ),
     code(
         """
-DATASET_ID = "caou"  # Registry identifier used in the existing corpus exports.
+DATASET_ID = "caou"
 RUN_NAME = "theme_discovery_audit"
-REESTIMATE = False  # False = reuse saved tables; True = recompute every discovery artifact.
-RANDOM_SEED = 42  # Global seed; changing it measures stochastic UMAP sensitivity.
+REESTIMATE = False
+RANDOM_SEED = 42
 
-# These paths are deliberately visible here rather than hidden in a config file.
-DATA_ROOT = SCENARIO_DIR.parent / "dataset"
+TEXT_ROOT = SCENARIO_DIR.parent
+DATA_ROOT = TEXT_ROOT / "dataset"
+EMBEDDINGS_ROOT = TEXT_ROOT / "embeddings"
 DATASET_PATHS = {
-    "caou": (DATA_ROOT / "data_caou.csv", DATA_ROOT / "Qwen3-Embedding-0.6B_caou.csv"),
+    "caou": (DATA_ROOT / "data_caou.csv", EMBEDDINGS_ROOT / "Qwen3-Embedding-0.6B_caou.csv"),
+    "btp": (DATA_ROOT / "data_btp.csv", EMBEDDINGS_ROOT / "Qwen3-Embedding-0.6B_btp.csv"),
+    "metallurgie": (DATA_ROOT / "data_metallurgie.csv", EMBEDDINGS_ROOT / "Qwen3-Embedding-0.6B_metallurgie.csv"),
 }
 UNITS_PATH, EMBEDDINGS_PATH = DATASET_PATHS[DATASET_ID]
 RUN_DIR = SCENARIO_DIR / "runs" / RUN_NAME / DATASET_ID
@@ -110,89 +109,35 @@ print("Run directory:", RUN_DIR)
 print("Reestimate:", REESTIMATE)
         """
     ),
-    markdown(
-        """
-## 2. UMAP and HDBSCAN parameters
-
-These values define the candidate grid. `n_neighbors` controls the neighbourhood
-scale used by UMAP; higher values favour broader structure. `n_components` controls
-the dimension in which HDBSCAN estimates density; it is not a 2-D plotting setting.
-`min_dist` controls how tightly UMAP packs nearby points. `min_cluster_size` is the
-smallest persistent branch considered a theme. `min_samples` controls density
-conservatism; higher values usually create more noise. The grid uses `leaf` to
-explore finer terminal branches.
-        """
-    ),
+    markdown("## 2. UMAP / HDBSCAN / validation parameters (aligned with config.yaml)"),
     code(
         """
 UMAP_PARAMETERS = {
-    "n_neighbors": [10, 20, 40],  # Local-to-global neighbourhood scale.
-    "n_components": [5, 10, 15],  # Density-clustering dimension, not visualization dimension.
-    "min_dist": [0.0, 0.05, 0.1],  # Minimum packing distance in the UMAP space.
-    "metric": "cosine",  # Distance between frozen normalized sentence embeddings.
-    "low_memory": True,  # Lower memory use at the cost of some runtime.
-    "n_jobs": 1,  # Keep one deterministic UMAP worker; increase only for a planned sensitivity run.
+    "n_neighbors": [10, 20, 40],
+    "n_components": [5, 10, 15],
+    "min_dist": [0.0],
+    "metric": "cosine",
+    "low_memory": True,
+    "n_jobs": 1,
 }
 HDBSCAN_PARAMETERS = {
-    "min_cluster_size": [20, 50, 100],  # Minimum candidate theme mass.
-    "min_samples": [None, 5, 10],  # Local density conservatism; None follows min_cluster_size.
-    "cluster_selection_method": ["leaf"],  # Explore fine terminal branches.
-    "metric": "euclidean",  # Metric in the UMAP clustering coordinates.
-    "prediction_data": True,  # Retain prediction metadata for auditability.
+    "min_cluster_size": [25, 50],
+    "min_samples": [5, 10],
+    "cluster_selection_method": ["leaf"],
+    "metric": "euclidean",
+    "prediction_data": True,
 }
-        """
-    ),
-    markdown(
-        """
-## 3. Resampling and DBCV parameters
-
-Stability resamples accidents, not factual-unit rows, so units from one narrative
-remain together. For each theme, stability is the mean of its best-match Jaccard
-values across resampling repetitions, and `S_R` is the mean of the resulting theme
-stabilities. DBCV is computed in the UMAP space used by HDBSCAN. Set
-`DBCV_SAMPLE_SIZE=None` for the exact full-role calculation; a finite value is an
-explicit approximation and is saved in the diagnostics table.
-        """
-    ),
-    code(
-        """
-RESAMPLING_FRACTION = 0.80  # Fraction of distinct accidents retained in each replicate.
-N_RESAMPLING = 50  # Monte-Carlo repetitions for the primary stability estimate.
-DBCV_SAMPLE_SIZE = None  # None = exact role calculation; finite value = explicit speed approximation.
+RESAMPLING_FRACTION = 0.80
+N_RESAMPLING = 30
+DBCV_SAMPLE_SIZE = None
+SEED_SENSITIVITY_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 SHOW_PROGRESS = True
-        """
-    ),
-    markdown(
-        """
-## 4. Pareto objectives
-
-The main Pareto front uses only UMAP-space DBCV `D_U` and resampling stability
-`S_R`. No pre-filtering threshold is applied before the Pareto comparison. The
-number of clusters, coverage, noise fraction and accident support are retained
-only as diagnostics. The main figure is a two-dimensional scatter plot: leaf
-configurations use circles, dominated points are shown as open grey markers,
-and Pareto points are shown in orange. Pareto
-solutions are joined in increasing `D_U` order. The complete Pareto diagnostic table is saved separately
-for each role.
-        """
-    ),
-    markdown(
-        """
-## 5. Text representation parameters
-
-These parameters are applied only after the selected memberships are frozen. They
-describe themes with c-TF-IDF-inspired terms and representative sentences; they do
-not change UMAP, HDBSCAN, DBCV, stability or Pareto selection.
-        """
-    ),
-    code(
-        """
-TOP_WORDS = 12  # Number of discriminative terms retained per theme.
-TOP_SENTENCES = 5  # Number of central/boundary examples retained per theme.
-N_GRAM_RANGE = (1, 2)  # Unigrams and bigrams for audit labels.
-MIN_TOPIC_FREQUENCY = 1  # Minimum number of themes containing a term.
-IDF_SMOOTHING = 1.0  # Additive smoothing in the c-TF-IDF-inspired score.
-STOPWORDS_FILE = SCENARIO_DIR / "stop_metier.txt"  # Domain terms excluded from labels.
+TOP_WORDS = 12
+TOP_SENTENCES = 5
+N_GRAM_RANGE = (1, 2)
+MIN_TOPIC_FREQUENCY = 1
+IDF_SMOOTHING = 1.0
+STOPWORDS_FILE = SCENARIO_DIR / "stop_metier.txt"
         """
     ),
     code(
@@ -217,11 +162,15 @@ config = {
         "hdbscan": HDBSCAN_PARAMETERS,
     },
     "random_state": RANDOM_SEED,
-    "pareto": {
+    "validation": {
+        "random_state": RANDOM_SEED,
         "n_resampling": N_RESAMPLING,
         "resampling_fraction": RESAMPLING_FRACTION,
         "dbcv_sample_size": DBCV_SAMPLE_SIZE,
+        "selection_metric": "stability",
+        "tie_breaker": "dbcv_umap",
         "show_progress": SHOW_PROGRESS,
+        "seed_sensitivity": {"enabled": True, "seeds": SEED_SENSITIVITY_SEEDS},
     },
     "topics": {
         "top_words": TOP_WORDS,
@@ -238,138 +187,84 @@ config = {
 (RUN_DIR / "theme_discovery_parameters.json").write_text(json.dumps(config, indent=2, default=str), encoding="utf-8")
         """
     ),
-    markdown("## 6. Load and audit the role-labelled corpus"),
+    markdown("## 3. Load corpus"),
     code(
         """
 prepared = prepare_data(config, RUN_DIR)
 display(prepared.input_summary)
-display(prepared.units[["_accident_id", "_fact_id", "_role", "_text"]].head())
 print("Embedding matrix:", prepared.embeddings.shape)
 display(prepared.units.groupby("_role").agg(n_units=("_fact_id", "size"), n_accidents=("_accident_id", "nunique")))
-topic_stopwords = load_topic_stopwords(config)
-print("Loaded domain stopwords:", len(topic_stopwords))
-        """
-    ),
-    markdown("## 7. Candidate grid"),
-    code(
-        """
-from itertools import product
-grid = pd.DataFrame([
-    {
-        "umap_n_neighbors": n_neighbors,
-        "umap_n_components": n_components,
-        "umap_min_dist": min_dist,
-        "hdbscan_min_cluster_size": min_cluster_size,
-        "hdbscan_min_samples": min_samples,
-        "hdbscan_cluster_selection_method": method,
-    }
-    for n_neighbors, n_components, min_dist, min_cluster_size, min_samples, method
-    in product(UMAP_PARAMETERS["n_neighbors"], UMAP_PARAMETERS["n_components"], UMAP_PARAMETERS["min_dist"], HDBSCAN_PARAMETERS["min_cluster_size"], HDBSCAN_PARAMETERS["min_samples"], HDBSCAN_PARAMETERS["cluster_selection_method"])
-])
-print(f"The full grid contains {len(grid)} combinations and will be evaluated.")
-display(grid)
+print("Loaded domain stopwords:", len(load_topic_stopwords(config)))
         """
     ),
     code(
         """
 candidate_tables = {}
 theme_stability = {}
-stability_summary = {}
 selection_tables = {}
+selections = {}
         """
     ),
 ]
 
 for role in ("A0", "A1", "B", "C"):
     cells.extend([
-        markdown(f"## 8.{role} Compute validation metrics"),
+        markdown(f"## 4.{role} Metrics + selection"),
         code(
             f"""
 role = "{role}"
-candidate_tables[role] = evaluate_pareto_candidates(
+candidates = evaluate_candidates(
     role, prepared.units, prepared.embeddings, config, RUN_DIR, reestimate=REESTIMATE
 )
-theme_stability[role], stability_summary[role] = evaluate_resampling_stability(
+theme_stability[role], summary = evaluate_resampling_stability(
     role, prepared.units, prepared.embeddings, config, RUN_DIR,
-    candidate_tables[role], reestimate=REESTIMATE
+    candidates, reestimate=REESTIMATE
 )
-candidate_tables[role] = candidate_tables[role].merge(
-    stability_summary[role], on=["role", "configuration_id"], how="left"
-)
-display(candidate_tables[role].sort_values(["dbcv_umap", "stability"], ascending=False)[[
-    "configuration_id", "hdbscan_cluster_selection_method", "dbcv_umap",
-    "stability", "n_clusters", "noise_fraction", "coverage", "median_accident_support",
-]])
-            """
-        ),
-        markdown(f"## 8.{role} Construct the Pareto front"),
-        code(
-            f"""
-role = "{role}"
-selection_tables[role], _, _ = select_pareto_partitions(
-    role, candidate_tables[role], RUN_DIR,
-)
-display(selection_tables[role].sort_values(["pareto_non_dominated", "dbcv_umap"], ascending=False)[[
-    "configuration_id", "hdbscan_cluster_selection_method", "dbcv_umap",
-    "stability", "n_clusters", "noise_fraction", "coverage", "median_accident_support",
-    "pareto_non_dominated", "candidate_only",
-]])
-print("Pareto candidates retained; no configuration is selected automatically.")
-role_figure = RUN_DIR / "figures" / f"pareto_validation_{{role}}.png"
-write_pareto_figure(
-    {{role: selection_tables[role]}},
-    RUN_DIR / "figures",
-    roles=[role],
-    filename=role_figure.name,
-)
-display(Image(filename=str(role_figure)))
+merged = candidates.merge(summary, on=["role", "configuration_id"], how="left")
+selection_tables[role], selected_id = select_configuration_by_stability(merged)
+candidate_tables[role] = selection_tables[role]
+selections[role] = selected_id
+materialize_selected_partition(role, prepared.units, selected_id, RUN_DIR, theme_stability[role])
+write_factor_stability_figure(role, theme_stability[role], selected_id, RUN_DIR / "figures")
+display(selection_tables[role].sort_values(["stability", "dbcv_umap"], ascending=False)[[
+    "configuration_id", "stability", "dbcv_umap", "n_clusters", "noise_fraction", "coverage", "selected",
+]].head(12))
+print("Selected:", selected_id)
             """
         ),
     ])
 
 cells.extend([
-    markdown(
-        """
-## 9. Pareto validation plot
-
-The figure is a two-dimensional scatter plot with `D_U` on the horizontal axis
-and `S_R` on the vertical axis. Leaf configurations use circles. Dominated
-configurations are open grey markers and Pareto configurations are orange
-markers. There are deliberately no universal vertical or horizontal cut-offs
-for DBCV or stability. All non-dominated candidates are retained for
-post-hoc human or LLM comparison.
-        """
-    ),
+    markdown("## 5. Landscape and seed sensitivity"),
     code(
         """
-write_pareto_figure(selection_tables, RUN_DIR / "figures")
-display(Image(filename=str(RUN_DIR / "figures" / "pareto_validation_all_roles.png")))
-summary = pd.DataFrame([
-    {
+write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
+display(Image(filename=str(RUN_DIR / "figures" / "stability_landscape_all_roles.png")))
+selected_rows = []
+for role in ROLES:
+    row = selection_tables[role].loc[selection_tables[role]["selected"]].iloc[0]
+    selected_rows.append({
         "role": role,
-        "n_candidates": len(selection_tables[role]),
-        "n_pareto": int(selection_tables[role]["pareto_non_dominated"].sum()),
-    }
-    for role in ROLES
-])
-display(summary)
-summary.to_csv(RUN_DIR / "pareto_selection_summary.csv", index=False)
-        """
-    ),
-    markdown(
-        """
-## 10. Candidate partitions remain available
-
-No Pareto candidate is frozen here. The results notebook asks the analyst to
-enter one or more configuration IDs per role. Those explicit choices control
-the cluster inspection, narrative colouring, 2-D map and subsequent human/LLM
-theme annotation.
-        """
-    ),
-    code(
-        """
-print("Candidate labels:", RUN_DIR / "pareto" / "<role>" / "candidate_partitions")
-print("Edit PARTITION_SELECTIONS in topic_modeling_results.ipynb before running the analysis cells.")
+        "configuration_id": selections[role],
+        "stability": row["stability"],
+        "dbcv_umap": row["dbcv_umap"],
+        "n_clusters": row["n_clusters"],
+        "noise_fraction": row["noise_fraction"],
+        "coverage": row["coverage"],
+    })
+    evaluate_seed_sensitivity(
+        role,
+        prepared.units,
+        prepared.embeddings,
+        config,
+        RUN_DIR,
+        selections[role],
+        row.to_dict(),
+        reestimate=REESTIMATE,
+    )
+pd.DataFrame(selected_rows).to_csv(RUN_DIR / "selected_configurations.csv", index=False)
+display(pd.DataFrame(selected_rows))
+print("Open topic_modeling_results_<corpus>.ipynb for labels, then the BN notebook.")
         """
     ),
 ])

@@ -63,6 +63,8 @@ def test_structural_em_normalization_and_pgmpy_model():
         result, selection = pipeline.fit_latent_bn_analysis(matrix, roles, _small_config(), Path(temporary_directory))
     final = pipeline.finalize_latent_bn(result, matrix, roles, _small_config())
     assert selection["selected_final"].sum() == 1
+    assert {"last_loglik_delta", "relative_loglik_delta", "same_graph", "edges_added_last", "edges_removed_last"}.issubset(selection.columns)
+    assert {"last_10_log_likelihoods", "last_10_loglik_deltas", "last_10_edge_counts"}.issubset(selection.columns)
     assert np.allclose(final.responsibilities.sum(axis=1), 1.0)
     assert np.isclose(final.weights.sum(), 1.0)
     assert final.model.check_model()
@@ -81,7 +83,7 @@ def test_frozen_inputs_exclude_noise_and_preserve_configuration():
         root = Path(temporary_directory)
         run_dir = root / "run"
         for role in pipeline.ROLES:
-            role_dir = run_dir / "pareto" / role / "candidate_partitions"
+            role_dir = run_dir / "discovery" / role / "candidate_partitions"
             role_dir.mkdir(parents=True, exist_ok=True)
             np.save(role_dir / f"{role}_cfg_001_labels.npy", np.array([0, 1, 1, -1]))
             np.save(role_dir / f"{role}_cfg_001_membership_strength.npy", np.array([0.9, 0.8, 0.7, 0.1]))
@@ -144,6 +146,6 @@ def test_exact_mpe_and_positive_support_above_twenty_variables():
         scenarios, supports, _, _ = pipeline.extract_latent_bn_scenarios(
             final, matrix, roles, units, config, Path(temporary_directory)
         )
-    assert (scenarios["mpe_method"] == "exact_variable_elimination").all()
+    assert (scenarios["mpe_method"] == "exact_local_factor_milp").all()
     assert "exact_vector_support" not in scenarios.columns
     assert "exact_vector_support" not in supports.columns

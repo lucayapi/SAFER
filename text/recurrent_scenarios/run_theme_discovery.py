@@ -10,7 +10,7 @@ from scenario_pipeline import run_theme_discovery
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Run parallel D_U/S_R recurrent-accident theme discovery."
+        description="Run recurrent-accident theme discovery with S_R selection."
     )
     parser.add_argument(
         "--config",
@@ -25,18 +25,21 @@ def main() -> int:
     parser.add_argument(
         "--reestimate",
         action="store_true",
-        help="Ignore discovery caches and recompute all candidates and resamples.",
+        help="Ignore discovery caches and recompute candidates, resampling and seeds.",
     )
     parser.add_argument(
         "--stage",
-        choices=("all", "metrics", "pareto"),
+        choices=("all", "metrics", "select", "seed"),
         default="all",
-        help="Run all stages, metrics/stability only, or Pareto selection only.",
+        help=(
+            "all = metrics+select+seed; metrics = D_U/S_R only; "
+            "select = argmax S_R + materialize; seed = UMAP seed sensitivity."
+        ),
     )
     parser.add_argument(
         "--run-dir",
         type=Path,
-        help="Existing run directory for --stage pareto, or an explicit output directory.",
+        help="Existing run directory for --stage select/seed, or an explicit output directory.",
     )
     args = parser.parse_args()
     output_dir = run_theme_discovery(

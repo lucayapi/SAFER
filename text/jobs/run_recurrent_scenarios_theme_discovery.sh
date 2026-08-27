@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Parallel D_U/S_R theme discovery for the recurrent-accident analysis.
+# Theme discovery with accident-level S_R selection and UMAP seed sensitivity.
 #
 # Usage from text/:
-#   REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   STAGE=pareto RUN_DIR=recurrent_scenarios/runs/audit_caou sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=caou STAGE=select RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
+#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=caou STAGE=seed RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
+#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
 #SBATCH --job-name=accident_themes
 #SBATCH --partition=normal
@@ -40,7 +43,6 @@ export NUMEXPR_NUM_THREADS=1
 DATASET="${DATASET:-}"
 CONFIG_PATH="${CONFIG_PATH:-recurrent_scenarios/config.yaml}"
 REESTIMATE="${REESTIMATE:-0}"
-DEBUG="${DEBUG:-0}"
 STAGE="${STAGE:-all}"
 RUN_DIR="${RUN_DIR:-}"
 
@@ -50,9 +52,6 @@ if [[ -n "${DATASET}" ]]; then
 fi
 if [[ "${REESTIMATE}" == "1" ]]; then
   ARGS+=(--reestimate)
-fi
-if [[ "${DEBUG}" == "1" ]]; then
-  ARGS+=(--debug)
 fi
 if [[ -n "${RUN_DIR}" ]]; then
   ARGS+=(--run-dir "${RUN_DIR}")

@@ -1,8 +1,13 @@
-"""Auditable Python implementation of the recurrent-accident protocol.
+"""Auditable implementation of the recurrent-accident protocol.
 
-The module is deliberately independent from the production training pipelines. It
-accepts the existing annotated unit table and frozen embedding export, then writes
-all intermediate objects needed to audit the analysis.
+Workflow:
+1. theme discovery — UMAP--HDBSCAN candidates per role, ``D_U`` / ``S_R``;
+2. automatic selection by max ``S_R`` (``D_U`` tie-break) + UMAP seed sensitivity;
+3. topic dictionary / labels (results notebook) on the frozen partition;
+4. corpus-specific latent BN (Structural EM with ``Z``) and constrained MPE scenarios.
+
+Independent from SCGM / contrastive / BERTopic training pipelines. Inputs are the
+annotated unit table and frozen Qwen embedding export.
 """
 
 from __future__ import annotations
@@ -140,7 +145,7 @@ def _parallel_map(
         )(
             delayed(function)(task) for task in tasks
         )
-    if progress_label and config.get("pareto", {}).get("show_progress", True):
+    if progress_label and config.get("validation", config.get("pareto", {})).get("show_progress", True):
         try:
             from tqdm.auto import tqdm
 
@@ -310,10 +315,6 @@ def _grid_values(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
-def _same_parameter_value(left: Any, right: Any) -> bool:
-    return json.dumps(_to_python_value(left), sort_keys=True, ensure_ascii=False) == json.dumps(_to_python_value(right), sort_keys=True, ensure_ascii=False)
-
-
 def _to_python_value(value: Any) -> Any:
     if isinstance(value, np.generic):
         return _to_python_value(value.item())
@@ -332,17 +333,11 @@ def _normalize_hdbscan_min_samples(value: Any, default: int) -> int:
     return int(value)
 
 
-def parameter_plan(
-    config: Mapping[str, Any],
-    *,
-    role: str | None = None,
-    apply_selection: bool = True,
-    budget_override: int | None = None,
-) -> list[dict[str, Any]]:
+def parameter_plan(config: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Expand the shared UMAP--HDBSCAN candidate grid from ``config["screening"]``."""
     screening_cfg = config["screening"]
-    cfg = screening_cfg
-    umap_cfg = cfg["umap"]
-    hdbscan_cfg = cfg["hdbscan"]
+    umap_cfg = screening_cfg["umap"]
+    hdbscan_cfg = screening_cfg["hdbscan"]
     keys = [
         ("umap_n_neighbors", _grid_values(umap_cfg["n_neighbors"])),
         ("umap_n_components", _grid_values(umap_cfg["n_components"])),
@@ -352,34 +347,8 @@ def parameter_plan(
         ("hdbscan_cluster_selection_method", _grid_values(hdbscan_cfg["cluster_selection_method"])),
     ]
     names = [name for name, _ in keys]
-    values = [values for _, values in keys]
-    combinations = [dict(zip(names, combination)) for combination in itertools.product(*values)]
-    selection = None
-    if True:
-        if False:
-            combinations = [
-                combination
-                for combination in combinations
-                if any(
-                    all(
-                        key in selected
-                        and _same_parameter_value(combination[key], selected[key])
-                        for key in PARAMETER_KEYS
-                    )
-                    for selected in selection
-                )
-            ]
-            if not combinations:
-                raise ValueError(
-                    f"Aucune configuration sélectionnée ne correspond à la grille pour le rôle {role or 'global'}."
-                )
-    budget = budget_override
-    if selection is not None:
-        budget = None
-    if budget is not None and int(budget) < len(combinations):
-        indices = np.linspace(0, len(combinations) - 1, int(budget), dtype=int)
-        combinations = [combinations[int(index)] for index in np.unique(indices)]
-    return combinations
+    values = [vals for _, vals in keys]
+    return [dict(zip(names, combination)) for combination in itertools.product(*values)]
 
 
 def _sample_accidents(units: pd.DataFrame, fraction: float, rng: np.random.Generator) -> set[str]:
@@ -387,16 +356,6 @@ def _sample_accidents(units: pd.DataFrame, fraction: float, rng: np.random.Gener
     size = max(1, int(round(len(accidents) * float(fraction))))
     return set(rng.choice(accidents, size=min(size, len(accidents)), replace=False).tolist())
 
-
-def _fit_cluster(
-    texts: Sequence[str],
-    embeddings: np.ndarray,
-    params: Mapping[str, Any],
-    random_state: int,
-    config: Mapping[str, Any],
-) -> np.ndarray:
-    labels, _ = _fit_cluster_with_embedding(texts, embeddings, params, random_state, config)
-    return labels
 
 
 def _fit_cluster_with_embedding(
@@ -484,410 +443,6 @@ def _screening_metrics(
         "max_accident_support": int(supports.max()) if not supports.empty else 0,
         "n_single_accident_clusters": int((supports == 1).sum()) if not supports.empty else 0,
     }
-
-
-def screen_clustering_parameters(
-    role: str,
-    units: pd.DataFrame,
-    embeddings: np.ndarray,
-    config: Mapping[str, Any],
-    output_dir: Path,
-    *,
-    reestimate: bool = False,
-) -> pd.DataFrame:
-    """Run the UMAP-HDBSCAN diagnostics for the shared candidate grid.
-
-    Each candidate configuration is fitted once on a deterministic accident sample.
-    This stage reports usability diagnostics only; it does not select a best score.
-    """
-    role_mask = units["_role"].eq(role).to_numpy()
-    role_units = units.loc[role_mask].reset_index(drop=True)
-    screening_dir = output_dir / "screening"
-    screening_dir.mkdir(parents=True, exist_ok=True)
-    cache_path = screening_dir / f"parameter_screening_{role}.csv"
-    required_columns = {
-        "role",
-        "configuration_id",
-        *PARAMETER_KEYS,
-        "n_clusters",
-        "noise_fraction",
-        "coverage",
-        "median_accident_support",
-        "n_single_accident_clusters",
-        "random_state",
-    }
-    if cache_path.is_file() and not reestimate:
-        cached = pd.read_csv(cache_path)
-        expected_random_state = int(config.get("random_state", 42))
-        if required_columns.issubset(cached.columns) and cached["random_state"].astype(int).eq(expected_random_state).all():
-            return cached
-    role_embeddings = embeddings[role_mask]
-    screening_cfg = config.get("screening", {})
-    fraction = float(screening_cfg.get("sampling_fraction", 1.0))
-    rng = np.random.default_rng(int(config.get("random_state", 42)) + 10000 + ROLE_RANK[role])
-    accidents = _sample_accidents(role_units, fraction, rng)
-    selected = role_units["_accident_id"].isin(accidents).to_numpy()
-    selected_indices = np.flatnonzero(selected)
-    plan = parameter_plan(
-        config,
-        apply_selection=False,
-        budget_override=None,
-    )
-    rows: list[dict[str, Any]] = []
-    iterator: Iterable[tuple[int, dict[str, Any]]] = enumerate(plan)
-    if screening_cfg.get("show_progress", True):
-        try:
-            from tqdm.auto import tqdm
-
-            iterator = tqdm(iterator, total=len(plan), desc=f"Screening {role}", unit="config", leave=True)
-        except ImportError:
-            pass
-    for configuration_index, params in iterator:
-        labels = np.full(len(selected_indices), -1, dtype=int)
-        if len(selected_indices) >= 3:
-            labels = _fit_cluster(
-                role_units.iloc[selected_indices]["_text"].tolist(),
-                role_embeddings[selected_indices],
-                params,
-                int(config.get("random_state", 42)),
-                config,
-            )
-        metrics = _screening_metrics(role_units, selected_indices, labels)
-        rows.append({
-            "role": role,
-            "configuration_id": f"{role}_cfg_{configuration_index:03d}",
-            "random_state": int(config.get("random_state", 42)),
-            **params,
-            **metrics,
-        })
-    frame = pd.DataFrame(rows)
-    frame.to_csv(cache_path, index=False)
-    return frame
-
-
-def mark_admissible_configurations(
-    frame: pd.DataFrame,
-    rules: Mapping[str, Any] | None = None,
-) -> pd.DataFrame:
-    """Add transparent admissibility flags without optimizing a single configuration."""
-    rules = dict(rules or {})
-    result = frame.copy()
-    admissible = pd.Series(True, index=result.index)
-    rule_columns = {
-        "max_noise_fraction": ("noise_fraction", "le"),
-        "min_coverage": ("coverage", "ge"),
-        "min_median_accident_support": ("median_accident_support", "ge"),
-        "min_clusters": ("n_clusters", "ge"),
-        "max_clusters": ("n_clusters", "le"),
-        "max_single_accident_clusters": ("n_single_accident_clusters", "le"),
-    }
-    for rule_name, (column, operator) in rule_columns.items():
-        threshold = rules.get(rule_name)
-        if threshold is None:
-            continue
-        if operator == "le":
-            admissible &= result[column] <= float(threshold)
-        else:
-            admissible &= result[column] >= float(threshold)
-    result["admissible"] = admissible.astype(bool)
-    result["admissibility_reason"] = np.where(result["admissible"], "passes configured rules", "fails configured rules")
-    return result
-
-
-def resolve_admissibility_rules(
-    config: Mapping[str, Any],
-    role: str,
-    n_accidents_role: int,
-) -> dict[str, Any]:
-    """Resolve role-specific admissibility thresholds from the configuration."""
-    admissibility_cfg = config.get("screening", {}).get("admissibility", {})
-    role_cfg = admissibility_cfg.get("by_role", {}).get(role, {})
-    rules = {
-        key: admissibility_cfg.get(key)
-        for key in (
-            "max_noise_fraction",
-            "min_coverage",
-            "min_median_accident_support",
-            "min_clusters",
-            "max_clusters",
-            "max_single_accident_clusters",
-        )
-    }
-    rules.update({key: value for key, value in role_cfg.items() if key in rules})
-    if rules["min_median_accident_support"] is None:
-        floor = role_cfg.get(
-            "min_median_accident_support_floor",
-            admissibility_cfg.get("min_median_accident_support_floor"),
-        )
-        fraction = role_cfg.get(
-            "min_median_accident_support_fraction_of_role_accidents",
-            admissibility_cfg.get("min_median_accident_support_fraction_of_role_accidents"),
-        )
-        denominator = role_cfg.get(
-            "support_denominator",
-            admissibility_cfg.get("support_denominator", "max_clusters"),
-        )
-        if fraction is not None:
-            denominator_value = rules.get("max_clusters") if denominator == "max_clusters" else float(denominator)
-            denominator_value = max(1.0, float(denominator_value or 1.0))
-            computed = math.ceil(float(fraction) * int(n_accidents_role) / denominator_value)
-            rules["min_median_accident_support"] = max(int(floor or 0), computed)
-        elif floor is not None:
-            rules["min_median_accident_support"] = int(floor)
-    return rules
-
-
-def select_admissible_parameter_combinations(
-    screening_results: Mapping[str, pd.DataFrame],
-    rules: Mapping[str, Any] | None = None,
-    rules_by_role: Mapping[str, Mapping[str, Any]] | None = None,
-) -> dict[str, list[dict[str, Any]]]:
-    """Convert configured screening rules into role-specific candidate plans."""
-    selected: dict[str, list[dict[str, Any]]] = {}
-    for role, frame in screening_results.items():
-        role_rules = rules_by_role.get(role, {}) if rules_by_role is not None else rules
-        marked = mark_admissible_configurations(frame, role_rules)
-        combinations = []
-        for _, row in marked.loc[marked["admissible"]].iterrows():
-            combinations.append({key: _to_python_value(row[key]) for key in PARAMETER_KEYS})
-        if not combinations:
-            raise ValueError(f"Aucune configuration admissible pour le rôle {role} avec les règles fournies.")
-        selected[role] = combinations
-    return selected
-
-
-def write_screening_figures(
-    screening_results: Mapping[str, pd.DataFrame],
-    output_dir: Path,
-    rules: Mapping[str, Any] | None = None,
-) -> None:
-    """Write the four-panel parameter-region diagnostic and per-role copies."""
-    import matplotlib.pyplot as plt
-    from matplotlib.colors import Normalize
-    from matplotlib.lines import Line2D
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    frames = {role: mark_admissible_configurations(frame, rules) for role, frame in screening_results.items()}
-    all_frames = pd.concat(frames.values(), ignore_index=True) if frames else pd.DataFrame()
-    screening_dir = output_dir.parent / "screening"
-    screening_dir.mkdir(parents=True, exist_ok=True)
-    for role, frame in frames.items():
-        frame.to_csv(screening_dir / f"parameter_screening_{role}_marked.csv", index=False)
-    if not all_frames.empty:
-        all_frames.to_csv(screening_dir / "parameter_screening_all_roles.csv", index=False)
-    figure, axes = plt.subplots(2, 2, figsize=(15, 11), constrained_layout=True)
-    norm = Normalize(vmin=0.0, vmax=1.0)
-    cmap = plt.get_cmap("viridis_r")
-    markers = {5: "o", 10: "s", 15: "^"}
-    for axis, role in zip(axes.flat, ROLES):
-        frame = frames.get(role, pd.DataFrame())
-        if frame.empty:
-            axis.set_title(role)
-            axis.text(0.5, 0.5, "No screening results", ha="center", va="center", transform=axis.transAxes)
-            continue
-        support = frame["median_accident_support"].to_numpy(dtype=float)
-        size = 45.0 + 180.0 * np.sqrt(support / max(1.0, float(np.nanmax(support))))
-        for n_components, marker in markers.items():
-            subset = frame[frame["umap_n_components"] == n_components]
-            if subset.empty:
-                continue
-            subset_positions = subset.index.to_numpy()
-            axis.scatter(
-                subset["umap_n_neighbors"],
-                subset["hdbscan_min_cluster_size"],
-                c=subset["noise_fraction"],
-                s=size[subset_positions],
-                marker=marker,
-                cmap=cmap,
-                norm=norm,
-                alpha=0.82,
-                edgecolors=np.where(subset["admissible"], "black", "white"),
-                linewidths=np.where(subset["admissible"], 2.0, 0.6),
-            )
-            for _, row in subset.iterrows():
-                axis.annotate(
-                    f"K={int(row['n_clusters'])}",
-                    (row["umap_n_neighbors"], row["hdbscan_min_cluster_size"]),
-                    xytext=(4, 4),
-                    textcoords="offset points",
-                    fontsize=7,
-                )
-        axis.set_title(role)
-        axis.set_xlabel("UMAP n_neighbors")
-        axis.set_ylabel("HDBSCAN min_cluster_size")
-        axis.grid(alpha=0.2)
-    if axes.size:
-        scalar = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-        scalar.set_array([])
-        figure.colorbar(scalar, ax=axes, shrink=0.8, label="Noise fraction")
-        legend = [
-            Line2D([0], [0], marker=marker, color="w", label=f"UMAP dimension = {dimension}", markerfacecolor="grey", markersize=8)
-            for dimension, marker in markers.items()
-        ]
-        legend.append(Line2D([0], [0], marker="o", color="black", label="Admissible configuration", markerfacecolor="white", markersize=8, linewidth=0))
-        figure.legend(handles=legend, loc="upper center", ncol=4, frameon=False)
-    figure.suptitle("UMAP-HDBSCAN parameter screening by role")
-    figure.savefig(output_dir / "parameter_screening_region_all_roles.png", dpi=250, bbox_inches="tight")
-    plt.close(figure)
-
-
-def consensus_role(
-    role: str,
-    units: pd.DataFrame,
-    embeddings: np.ndarray,
-    config: Mapping[str, Any],
-    output_dir: Path,
-    *,
-    reestimate: bool = False,
-) -> PartitionResult:
-    role_mask = units["_role"].eq(role).to_numpy()
-    role_units = units.loc[role_mask].reset_index(drop=True)
-    role_embeddings = embeddings[role_mask]
-    clustering_embeddings = role_embeddings
-    n_units = len(role_units)
-    if n_units > int(config["consensus"].get("max_dense_units", 6000)) and int(config["consensus"].get("consensus_knn", 50)) <= 0:
-        raise ValueError("Legacy consensus execution is no longer supported.")
-    role_dir = output_dir / "clustering" / role
-    role_dir.mkdir(parents=True, exist_ok=True)
-    cache_files = [
-        role_dir / "topic_assignments.csv",
-        role_dir / "topics.csv",
-        role_dir / "coassociation_edges.csv",
-        role_dir / "replications.csv",
-        role_dir / "cache_metadata.json",
-    ]
-    if not reestimate and all(path.is_file() for path in cache_files):
-        metadata = json.loads((role_dir / "cache_metadata.json").read_text(encoding="utf-8"))
-        if metadata.get("version") == "direct_umap_hdbscan_consensus_v1":
-            return PartitionResult(
-                role=role,
-                assignments=pd.read_csv(role_dir / "topic_assignments.csv"),
-                topics=pd.read_csv(role_dir / "topics.csv"),
-                edges=pd.read_csv(role_dir / "coassociation_edges.csv"),
-                replications=pd.read_csv(role_dir / "replications.csv"),
-            )
-    plan = parameter_plan(config, role=role)
-    consensus_cfg = config["consensus"]
-    repetitions = int(consensus_cfg.get("n_repetitions", 100))
-    rng = np.random.default_rng(int(consensus_cfg.get("random_state", 42)) + ROLE_RANK[role])
-    pairs = _neighbor_pairs(clustering_embeddings, int(consensus_cfg.get("consensus_knn", 50)))
-    co_present = np.zeros(len(pairs), dtype=np.int32)
-    co_cluster = np.zeros(len(pairs), dtype=np.int32)
-    rep_rows: list[dict[str, Any]] = []
-    labels_store = np.full((repetitions, n_units), -1, dtype=np.int16)
-    repetition_iterator: Iterable[int] = range(repetitions)
-    if consensus_cfg.get("show_progress", True):
-        try:
-            from tqdm.auto import tqdm
-
-            repetition_iterator = tqdm(
-                repetition_iterator,
-                desc=f"Consensus {role}",
-                unit="rep",
-                leave=True,
-            )
-        except ImportError:
-            pass
-    for repetition in repetition_iterator:
-        params = plan[repetition % len(plan)]
-        accident_sample = _sample_accidents(role_units, float(consensus_cfg.get("sampling_fraction", 0.8)), rng)
-        selected = role_units["_accident_id"].isin(accident_sample).to_numpy()
-        selected_indices = np.flatnonzero(selected)
-        labels = np.full(n_units, -1, dtype=int)
-        if len(selected_indices) >= 3:
-            labels[selected_indices] = _fit_cluster(
-                role_units.loc[selected_indices, "_text"].tolist(),
-                clustering_embeddings[selected_indices],
-                params,
-                int(consensus_cfg.get("random_state", 42)) + repetition,
-                config,
-            )
-        labels_store[repetition] = labels.astype(np.int16)
-        valid_selected = labels[selected_indices] >= 0
-        run_coverage = float(valid_selected.mean()) if len(valid_selected) else 0.0
-        if len(pairs):
-            both_present = selected[pairs[:, 0]] & selected[pairs[:, 1]]
-            if consensus_cfg.get("ignore_noise_pairs", True):
-                both_present &= (labels[pairs[:, 0]] >= 0) & (labels[pairs[:, 1]] >= 0)
-            same_cluster = both_present & (labels[pairs[:, 0]] == labels[pairs[:, 1]])
-            run_stability = float(same_cluster.sum() / max(1, both_present.sum()))
-            co_present += both_present.astype(np.int32)
-            co_cluster += same_cluster.astype(np.int32)
-        else:
-            run_stability = 0.0
-        valid_labels = labels[labels >= 0]
-        rep_rows.append({
-            "role": role,
-            "repetition": repetition,
-            "n_accidents_sampled": len(accident_sample),
-            "n_units_sampled": int(selected.sum()),
-            "n_clusters": int(len(set(valid_labels.tolist()))) if len(valid_labels) else 0,
-            "noise_fraction_sampled": float(np.mean(labels[selected_indices] < 0)) if len(selected_indices) else 1.0,
-            "coverage": run_coverage,
-            "stability": run_stability,
-            **params,
-        })
-    if config.get("runtime", {}).get("save_intermediate_assignments", True):
-        np.save(role_dir / "replication_labels.npy", labels_store)
-    replications = pd.DataFrame(rep_rows)
-    replications.to_csv(role_dir / "replications.csv", index=False)
-    similarity = co_cluster / np.maximum(co_present, 1)
-    try:
-        from scipy.sparse import coo_matrix
-        from scipy.sparse.csgraph import connected_components
-    except ImportError as error:
-        raise ImportError("scipy est requis pour la partition de consensus.") from error
-    threshold = float(consensus_cfg.get("consensus_edge_threshold", 0.6))
-    keep = (co_present > 0) & (similarity >= threshold)
-    graph = coo_matrix((np.ones(int(keep.sum())), (pairs[keep, 0], pairs[keep, 1])), shape=(n_units, n_units)).tocsr()
-    graph = graph + graph.T
-    _, labels = connected_components(graph, directed=False, return_labels=True)
-    topic_sizes = pd.Series(labels).value_counts()
-    order = topic_sizes.index.tolist()
-    remap = {int(old): index for index, old in enumerate(order)}
-    topic_numbers = np.array([remap[int(label)] for label in labels], dtype=int)
-    edge_frame = pd.DataFrame({
-        "role": role,
-        "unit_i": pairs[:, 0] if len(pairs) else [],
-        "unit_j": pairs[:, 1] if len(pairs) else [],
-        "co_present": co_present,
-        "co_cluster": co_cluster,
-        "similarity": similarity,
-        "selected_at_threshold": keep,
-    })
-    edge_frame.to_csv(role_dir / "coassociation_edges.csv", index=False)
-    assignment_rows = role_units[["_accident_id", "_fact_id", "_text"]].copy()
-    assignment_rows["role"] = role
-    assignment_rows["topic_id"] = [f"{role}_{number:03d}" for number in topic_numbers]
-    assignment_rows.rename(columns={"_accident_id": "accident_id", "_fact_id": "fact_id", "_text": "sentence"}, inplace=True)
-    assignment_rows.to_csv(role_dir / "topic_assignments.csv", index=False)
-    topic_rows = []
-    for number in sorted(set(topic_numbers.tolist())):
-        mask = topic_numbers == number
-        topic_id = f"{role}_{number:03d}"
-        topic_stability = _topic_stability(number, topic_numbers, pairs, similarity)
-        topic_rows.append({
-            "topic_id": topic_id,
-            "role": role,
-            "n_units": int(mask.sum()),
-            "n_accidents": int(role_units.loc[mask, "_accident_id"].nunique()),
-            "stability": topic_stability,
-            "consensus_threshold": threshold,
-        })
-    topics = pd.DataFrame(topic_rows)
-    topics.to_csv(role_dir / "topics.csv", index=False)
-    (role_dir / "cache_metadata.json").write_text(
-        json.dumps({"version": "direct_umap_hdbscan_consensus_v1", "role": role}, indent=2),
-        encoding="utf-8",
-    )
-    return PartitionResult(role=role, assignments=assignment_rows, topics=topics, edges=edge_frame, replications=replications)
-
-
-def _topic_stability(topic_number: int, labels: np.ndarray, pairs: np.ndarray, similarity: np.ndarray) -> float:
-    if len(pairs) == 0:
-        return 0.0
-    same = (labels[pairs[:, 0]] == topic_number) & (labels[pairs[:, 1]] == topic_number)
-    return float(np.mean(similarity[same])) if same.any() else 0.0
 
 
 def _dbcv(X: np.ndarray, labels: np.ndarray) -> float:
@@ -1007,7 +562,53 @@ def _configuration_id(role: str, index: int) -> str:
     return f"{role}_cfg_{int(index):03d}"
 
 
-def evaluate_pareto_candidates(
+def _validation_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Resolve validation settings with backward-compatible ``pareto`` fallback."""
+    values = dict(config.get("validation") or config.get("pareto") or {})
+    values.setdefault("random_state", int(config.get("random_state", 42)))
+    values.setdefault("resampling_fraction", 0.8)
+    values.setdefault("n_resampling", 30)
+    values.setdefault("dbcv_sample_size", None)
+    values.setdefault("selection_metric", "stability")
+    values.setdefault("tie_breaker", "dbcv_umap")
+    values.setdefault("show_progress", True)
+    seed_cfg = dict(values.get("seed_sensitivity") or {})
+    seed_cfg.setdefault("enabled", True)
+    seed_cfg.setdefault("seeds", list(range(1, 11)))
+    values["seed_sensitivity"] = seed_cfg
+    return values
+
+
+def _discovery_role_dir(output_dir: Path, role: str) -> Path:
+    return Path(output_dir) / "discovery" / role
+
+
+def _resolve_partition_artifact_paths(run_dir: Path, role: str, configuration_id: str) -> tuple[Path, Path]:
+    """Prefer frozen selected artifacts, then discovery candidates, then legacy pareto paths."""
+    candidates = [
+        (
+            run_dir / "discovery" / role / "selected" / "labels.npy",
+            run_dir / "discovery" / role / "selected" / "membership_strength.npy",
+        ),
+        (
+            run_dir / "discovery" / role / "candidate_partitions" / f"{configuration_id}_labels.npy",
+            run_dir / "discovery" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy",
+        ),
+        (
+            run_dir / "pareto" / role / "candidate_partitions" / f"{configuration_id}_labels.npy",
+            run_dir / "pareto" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy",
+        ),
+    ]
+    for labels_path, strength_path in candidates:
+        if labels_path.is_file() and strength_path.is_file():
+            return labels_path, strength_path
+    raise FileNotFoundError(
+        f"Artefacts de partition absents pour {role}/{configuration_id} "
+        f"sous discovery/ ou pareto/ dans {run_dir}"
+    )
+
+
+def evaluate_candidates(
     role: str,
     units: pd.DataFrame,
     embeddings: np.ndarray,
@@ -1020,12 +621,12 @@ def evaluate_pareto_candidates(
     role_mask = units["_role"].eq(role).to_numpy()
     role_units = units.loc[role_mask].reset_index(drop=True)
     role_embeddings = np.asarray(embeddings[role_mask])
-    pareto_cfg = config.get("pareto", {})
-    pareto_dir = output_dir / "pareto" / role
-    candidate_dir = pareto_dir / "candidate_partitions"
+    validation_cfg = _validation_config(config)
+    role_dir = _discovery_role_dir(output_dir, role)
+    candidate_dir = role_dir / "candidate_partitions"
     candidate_dir.mkdir(parents=True, exist_ok=True)
-    metrics_path = pareto_dir / "candidate_metrics.csv"
-    expected_random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
+    metrics_path = role_dir / "candidate_metrics.csv"
+    expected_random_state = int(validation_cfg["random_state"])
     if metrics_path.is_file() and not reestimate:
         cached = pd.read_csv(metrics_path)
         membership_files_present = all(
@@ -1039,24 +640,17 @@ def evaluate_pareto_candidates(
         if {"configuration_id", "dbcv_umap"}.issubset(cached.columns) and membership_files_present and cache_has_expected_seed:
             _log_progress(f"[{role}] candidats: cache réutilisé ({metrics_path})")
             return cached.loc[:, ~cached.columns.str.contains("semantic", case=False)]
-    clustering_input = role_embeddings
-    plan = parameter_plan(
-        config,
-        role=None,
-        apply_selection=False,
-        budget_override=None,
-    )
-    random_state = expected_random_state
-    dbcv_sample_size = pareto_cfg.get("dbcv_sample_size")
+    plan = parameter_plan(config)
+    dbcv_sample_size = validation_cfg.get("dbcv_sample_size")
     tasks = [
         {
             "index": index,
             "role": role,
             "configuration_id": _configuration_id(role, index),
             "params": params,
-            "embeddings": clustering_input,
+            "embeddings": role_embeddings,
             "accident_ids": role_units["_accident_id"].astype(str).to_numpy(),
-            "random_state": random_state,
+            "random_state": expected_random_state,
             "config": config,
             "dbcv_sample_size": dbcv_sample_size,
         }
@@ -1093,9 +687,9 @@ def evaluate_pareto_candidates(
     result = pd.DataFrame(rows)
     result.to_csv(metrics_path, index=False)
     _log_progress(f"[{role}] candidats: terminé ({len(result)} configurations)")
-    (pareto_dir / "candidate_metadata.json").write_text(
+    (role_dir / "candidate_metadata.json").write_text(
         json.dumps({
-            "version": "pareto_candidates_parallel_v3_membership_strength",
+            "version": "discovery_candidates_v1_membership_strength",
             "role": role,
             "n_candidates": len(result),
             "n_workers": resolve_n_workers(config),
@@ -1103,6 +697,10 @@ def evaluate_pareto_candidates(
         encoding="utf-8",
     )
     return result
+
+
+# Backward-compatible alias
+evaluate_pareto_candidates = evaluate_candidates
 
 
 def _best_jaccard(reference: np.ndarray, candidate: np.ndarray, reference_label: int) -> float:
@@ -1116,6 +714,64 @@ def _best_jaccard(reference: np.ndarray, candidate: np.ndarray, reference_label:
         if union:
             best = max(best, len(reference_set & candidate_set) / len(union))
     return float(best)
+
+
+def _aggregate_resampling_stability(
+    theme_frame: pd.DataFrame,
+    *,
+    n_repetitions: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate factor-level mean Jaccard and observability into configuration S_R."""
+    if theme_frame.empty:
+        empty_theme = pd.DataFrame(
+            columns=[
+                "role", "configuration_id", "cluster_label", "theme_stability",
+                "observability", "n_observable_reps", "n_repetitions",
+            ]
+        )
+        empty_summary = pd.DataFrame(
+            columns=["role", "configuration_id", "stability", "n_themes", "n_repetitions"]
+        )
+        return empty_theme, empty_summary
+
+    observable = theme_frame.loc[theme_frame["n_reference_units"].astype(int) > 0].copy()
+    if observable.empty:
+        empty_theme = pd.DataFrame(
+            columns=[
+                "role", "configuration_id", "cluster_label", "theme_stability",
+                "observability", "n_observable_reps", "n_repetitions",
+            ]
+        )
+        empty_summary = pd.DataFrame(
+            columns=["role", "configuration_id", "stability", "n_themes", "n_repetitions"]
+        )
+        return empty_theme, empty_summary
+
+    theme_summary = (
+        observable.groupby(["role", "configuration_id", "cluster_label"], as_index=False)
+        .agg(
+            theme_stability=("best_jaccard", "mean"),
+            n_observable_reps=("repetition", "nunique"),
+        )
+    )
+    theme_summary["n_repetitions"] = int(n_repetitions)
+    theme_summary["observability"] = theme_summary["n_observable_reps"] / float(max(1, n_repetitions))
+    theme_frame = theme_frame.merge(
+        theme_summary[
+            ["role", "configuration_id", "cluster_label", "theme_stability", "observability", "n_observable_reps", "n_repetitions"]
+        ],
+        on=["role", "configuration_id", "cluster_label"],
+        how="left",
+    )
+    summary = (
+        theme_summary.groupby(["role", "configuration_id"], as_index=False)
+        .agg(
+            stability=("theme_stability", "mean"),
+            n_themes=("cluster_label", "nunique"),
+        )
+    )
+    summary["n_repetitions"] = int(n_repetitions)
+    return theme_frame, summary
 
 
 def evaluate_resampling_stability(
@@ -1132,19 +788,21 @@ def evaluate_resampling_stability(
     role_mask = units["_role"].eq(role).to_numpy()
     role_units = units.loc[role_mask].reset_index(drop=True)
     role_embeddings = np.asarray(embeddings[role_mask])
-    pareto_cfg = config.get("pareto", {})
-    pareto_dir = output_dir / "pareto" / role
-    theme_path = pareto_dir / "stability_theme.csv"
-    summary_path = pareto_dir / "stability_summary.csv"
-    n_repetitions = int(pareto_cfg.get("n_resampling", 30))
-    fraction = float(pareto_cfg.get("resampling_fraction", 0.8))
-    random_state = int(pareto_cfg.get("random_state", config.get("random_state", 42)))
-    stability_metadata_path = pareto_dir / "stability_metadata.json"
+    validation_cfg = _validation_config(config)
+    role_dir = _discovery_role_dir(output_dir, role)
+    role_dir.mkdir(parents=True, exist_ok=True)
+    theme_path = role_dir / "stability_theme.csv"
+    summary_path = role_dir / "stability_summary.csv"
+    n_repetitions = int(validation_cfg["n_resampling"])
+    fraction = float(validation_cfg["resampling_fraction"])
+    random_state = int(validation_cfg["random_state"])
+    stability_metadata_path = role_dir / "stability_metadata.json"
     expected_stability_metadata = {
-        "version": "fixed_main_seed_v1",
+        "version": "mean_sr_observability_v1",
         "random_state": random_state,
         "n_repetitions": n_repetitions,
         "resampling_fraction": fraction,
+        "aggregation": "mean_over_observable_replicates",
     }
     cached_stability_metadata = {}
     if stability_metadata_path.is_file():
@@ -1160,12 +818,10 @@ def evaluate_resampling_stability(
     ):
         _log_progress(f"[{role}] resampling: cache réutilisé ({summary_path})")
         return pd.read_csv(theme_path), pd.read_csv(summary_path)
-    candidate_dir = pareto_dir / "candidate_partitions"
-    clustering_input = role_embeddings
+    candidate_dir = role_dir / "candidate_partitions"
     all_tasks: list[dict[str, Any]] = []
     candidates = candidates.reset_index(drop=True)
-    accident_ids = role_units["_accident_id"].astype(str).to_numpy()
-    for candidate_index, candidate in candidates.iterrows():
+    for _, candidate in candidates.iterrows():
         configuration_id = str(candidate["configuration_id"])
         labels_path = candidate_dir / f"{configuration_id}_labels.npy"
         reference = np.load(labels_path).astype(int)
@@ -1185,7 +841,7 @@ def evaluate_resampling_stability(
                 "reference_clusters": reference_clusters,
                 "selected_indices": selected_indices,
                 "params": params,
-                "embeddings": clustering_input,
+                "embeddings": role_embeddings,
                 "random_state": random_state + repetition,
                 "config": config,
             })
@@ -1201,22 +857,7 @@ def evaluate_resampling_stability(
     )
     all_rows = [row for task_rows in task_results for row in task_rows]
     theme_frame = pd.DataFrame(all_rows)
-    if theme_frame.empty:
-        summary = pd.DataFrame(columns=["role", "configuration_id", "stability", "n_themes", "n_repetitions"])
-    else:
-        theme_summary = (
-            theme_frame.groupby(["role", "configuration_id", "cluster_label"], as_index=False)["best_jaccard"]
-            .median()
-            .rename(columns={"best_jaccard": "theme_stability"})
-        )
-        theme_frame = theme_frame.merge(theme_summary, on=["role", "configuration_id", "cluster_label"], how="left")
-        summary = (
-            theme_summary.groupby(["role", "configuration_id"], as_index=False)["theme_stability"]
-            .median()
-            .rename(columns={"theme_stability": "stability"})
-        )
-        summary["n_themes"] = theme_summary.groupby(["role", "configuration_id"])["cluster_label"].nunique().to_numpy()
-        summary["n_repetitions"] = n_repetitions
+    theme_frame, summary = _aggregate_resampling_stability(theme_frame, n_repetitions=n_repetitions)
     theme_frame.to_csv(theme_path, index=False)
     summary.to_csv(summary_path, index=False)
     stability_metadata_path.write_text(json.dumps(expected_stability_metadata, indent=2), encoding="utf-8")
@@ -1227,148 +868,112 @@ def evaluate_resampling_stability(
     return theme_frame, summary
 
 
-def _pareto_mask(values: pd.DataFrame, objectives: Sequence[str]) -> pd.Series:
-    mask = pd.Series(True, index=values.index)
-    usable = values[list(objectives)].notna().all(axis=1)
-    indices = values.index[usable].tolist()
-    for left in indices:
-        for right in indices:
-            if left == right:
-                continue
-            left_values = values.loc[left, list(objectives)].to_numpy(dtype=float)
-            right_values = values.loc[right, list(objectives)].to_numpy(dtype=float)
-            if np.all(right_values >= left_values) and np.any(right_values > left_values):
-                mask.loc[left] = False
-                break
-    mask.loc[~usable] = False
-    return mask
+def select_configuration_by_stability(merged: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Select the configuration maximizing S_R, with D_U as tie-breaker."""
+    result = merged.copy()
+    result["selected"] = False
+    if result.empty or "stability" not in result.columns:
+        return result, ""
+    usable = result["stability"].notna()
+    if not usable.any():
+        return result, ""
+    pool = result.loc[usable].copy()
+    max_stability = float(pool["stability"].max())
+    tied = pool.loc[np.isclose(pool["stability"].astype(float), max_stability, rtol=0.0, atol=1e-12)]
+    if "dbcv_umap" in tied.columns and tied["dbcv_umap"].notna().any():
+        selected_id = str(tied.sort_values("dbcv_umap", ascending=False).iloc[0]["configuration_id"])
+    else:
+        selected_id = str(tied.iloc[0]["configuration_id"])
+    result.loc[result["configuration_id"].astype(str).eq(selected_id), "selected"] = True
+    return result, selected_id
 
 
-def _ordered_pareto_export(table: pd.DataFrame) -> pd.DataFrame:
-    """Order the complete per-role Pareto export without dropping diagnostics."""
-    preferred = [
-        "role", "configuration_id", "pareto_non_dominated", "candidate_only",
-        "dbcv_umap", "stability",
-        "n_clusters", "noise_fraction", "coverage", "median_accident_support",
-        "mean_accident_support", "min_accident_support", "max_accident_support",
-        "n_single_accident_clusters", "median_cluster_size",
-        "min_cluster_size_observed", "max_cluster_size_observed",
-        "n_units_sampled", "n_units_noise", "n_accidents_sampled",
-        "n_themes", "n_repetitions", "dbcv_n_units",
-        *PARAMETER_KEYS, "random_state",
-    ]
-    columns = [column for column in preferred if column in table.columns]
-    columns.extend(column for column in table.columns if column not in columns)
-    return table.loc[:, columns]
-
-
-def select_pareto_partitions(
+def materialize_selected_partition(
     role: str,
-    candidates: pd.DataFrame,
+    units: pd.DataFrame,
+    configuration_id: str,
     output_dir: Path,
-) -> tuple[pd.DataFrame, pd.DataFrame, str]:
-    """Identify the D_U/S_R Pareto frontier without selecting a partition."""
-    _log_progress(f"[{role}] Pareto: démarrage sur {len(candidates)} configurations")
-    pareto_dir = output_dir / "pareto" / role
-    pareto_dir.mkdir(parents=True, exist_ok=True)
-    result = candidates.copy()
-    pool = result
-    result["pareto_pool"] = result["configuration_id"].isin(pool["configuration_id"])
-    result["pareto_non_dominated"] = False
-    if not pool.empty:
-        result.loc[pool.index, "pareto_non_dominated"] = _pareto_mask(pool, ["dbcv_umap", "stability"])
-    pareto = result[result["pareto_non_dominated"]].copy()
-    agreement = pd.DataFrame()
-    result["candidate_only"] = True
-    result.to_csv(pareto_dir / "pareto_selection_table.csv", index=False)
-    _ordered_pareto_export(pareto.assign(candidate_only=True)).to_csv(
-        pareto_dir / "pareto_frontier.csv", index=False
+    theme_stability: pd.DataFrame | None = None,
+) -> None:
+    """Copy the selected candidate artifacts into discovery/<role>/selected/."""
+    role_dir = _discovery_role_dir(output_dir, role)
+    candidate_dir = role_dir / "candidate_partitions"
+    selected_dir = role_dir / "selected"
+    selected_dir.mkdir(parents=True, exist_ok=True)
+    labels_path = candidate_dir / f"{configuration_id}_labels.npy"
+    strength_path = candidate_dir / f"{configuration_id}_membership_strength.npy"
+    umap_path = candidate_dir / f"{configuration_id}_umap.npy"
+    if not labels_path.is_file() or not strength_path.is_file():
+        raise FileNotFoundError(f"Missing candidate artifacts for {role}/{configuration_id}")
+    labels = np.load(labels_path).astype(np.int32)
+    strengths = np.load(strength_path).astype(np.float32)
+    np.save(selected_dir / "labels.npy", labels)
+    np.save(selected_dir / "membership_strength.npy", strengths)
+    if umap_path.is_file():
+        np.save(selected_dir / "umap.npy", np.load(umap_path).astype(np.float32))
+
+    role_units = units.loc[units["_role"].eq(role)].reset_index(drop=True)
+    if len(role_units) != len(labels):
+        raise ValueError(f"Label/unit mismatch for {role}/{configuration_id}")
+    assignments = role_units[["_accident_id", "_fact_id", "_text"]].copy()
+    assignments.rename(
+        columns={"_accident_id": "accident_id", "_fact_id": "fact_id", "_text": "sentence"},
+        inplace=True,
     )
-    _ordered_pareto_export(pareto.assign(candidate_only=True)).to_csv(
-        pareto_dir / "pareto_optimal_configurations.csv", index=False
+    assignments["role"] = role
+    assignments["configuration_id"] = configuration_id
+    assignments["topic_id"] = [f"{role}_{int(label):03d}" if int(label) >= 0 else "" for label in labels]
+    assignments["membership_strength"] = strengths
+    assignments.to_csv(selected_dir / "topic_assignments.csv", index=False)
+
+    stability_lookup = {}
+    observability_lookup = {}
+    if theme_stability is not None and not theme_stability.empty:
+        selected_themes = theme_stability[
+            theme_stability["configuration_id"].astype(str).eq(str(configuration_id))
+        ]
+        if "theme_stability" in selected_themes.columns:
+            stability_lookup = {
+                int(row["cluster_label"]): float(row["theme_stability"])
+                for _, row in selected_themes.drop_duplicates("cluster_label").iterrows()
+            }
+        if "observability" in selected_themes.columns:
+            observability_lookup = {
+                int(row["cluster_label"]): float(row["observability"])
+                for _, row in selected_themes.drop_duplicates("cluster_label").iterrows()
+            }
+    topic_rows = []
+    for label in sorted(int(value) for value in np.unique(labels) if int(value) >= 0):
+        mask = labels == label
+        topic_rows.append({
+            "topic_id": f"{role}_{label:03d}",
+            "role": role,
+            "configuration_id": configuration_id,
+            "cluster_label": label,
+            "n_units": int(mask.sum()),
+            "n_accidents": int(role_units.loc[mask, "_accident_id"].nunique()),
+            "theme_stability": stability_lookup.get(label, np.nan),
+            "observability": observability_lookup.get(label, np.nan),
+        })
+    pd.DataFrame(topic_rows).to_csv(selected_dir / "topics.csv", index=False)
+    (selected_dir / "selection_metadata.json").write_text(
+        json.dumps({
+            "version": "sr_selected_partition_v1",
+            "role": role,
+            "configuration_id": configuration_id,
+        }, indent=2),
+        encoding="utf-8",
     )
-    selected_id = ""
-    selected_metrics = ""
-    _log_progress(
-        f"[{role}] Pareto: terminé — {len(pareto)} non-dominées, "
-        f"sélection={selected_id or 'aucune'}{selected_metrics}"
-    )
-    return result, agreement, ""
 
 
-def _symmetric_partition_jaccard(left: np.ndarray, right: np.ndarray) -> float:
-    def directional(source: np.ndarray, target: np.ndarray) -> float:
-        labels = [int(label) for label in np.unique(source) if label >= 0]
-        if not labels:
-            return 0.0
-        scores = []
-        for label in labels:
-            source_set = set(np.flatnonzero(source == label).tolist())
-            best = 0.0
-            for target_label in np.unique(target[target >= 0]):
-                target_set = set(np.flatnonzero(target == target_label).tolist())
-                union = source_set | target_set
-                if union:
-                    best = max(best, len(source_set & target_set) / len(union))
-            scores.append(best)
-        return float(np.mean(scores))
-    return float((directional(left, right) + directional(right, left)) / 2.0)
-
-
-def build_selected_partition_results(
-    prepared: PreparedData,
-    config: Mapping[str, Any],
-    output_dir: Path,
-    selections: Mapping[str, str],
-    stability_themes: Mapping[str, pd.DataFrame] | None = None,
-) -> dict[str, PartitionResult]:
-    """Materialize the manually selected Pareto partition for downstream analysis."""
-    results: dict[str, PartitionResult] = {}
-    for role in ROLES:
-        role_mask = prepared.units["_role"].eq(role).to_numpy()
-        role_units = prepared.units.loc[role_mask].reset_index(drop=True)
-        pareto_dir = output_dir / "pareto" / role
-        labels = np.load(pareto_dir / "selected_labels.npy").astype(int)
-        selected_id = selections[role]
-        theme_stability = {}
-        if stability_themes and role in stability_themes and not stability_themes[role].empty:
-            grouped = stability_themes[role].groupby("cluster_label")["theme_stability"].first()
-            theme_stability = {int(key): float(value) for key, value in grouped.items()}
-        topic_ids = np.where(labels >= 0, [f"{role}_{int(label):03d}" for label in labels], "")
-        assignments = role_units[["_accident_id", "_fact_id", "_text"]].copy()
-        assignments["role"] = role
-        assignments["topic_id"] = topic_ids
-        assignments.rename(columns={"_accident_id": "accident_id", "_fact_id": "fact_id", "_text": "sentence"}, inplace=True)
-        topic_rows = []
-        for label in sorted(int(value) for value in np.unique(labels) if value >= 0):
-            mask = labels == label
-            topic_rows.append({
-                "topic_id": f"{role}_{label:03d}",
-                "role": role,
-                "n_units": int(mask.sum()),
-                "n_accidents": int(role_units.loc[mask, "_accident_id"].nunique()),
-                "stability": theme_stability.get(label, np.nan),
-                "selected_configuration_id": selected_id,
-            })
-        topics = pd.DataFrame(topic_rows)
-        role_dir = output_dir / "clustering" / role
-        role_dir.mkdir(parents=True, exist_ok=True)
-        assignments.to_csv(role_dir / "topic_assignments.csv", index=False)
-        topics.to_csv(role_dir / "topics.csv", index=False)
-        (role_dir / "cache_metadata.json").write_text(json.dumps({"version": "pareto_medoid_partition_v1", "role": role, "configuration_id": selected_id}, indent=2), encoding="utf-8")
-        results[role] = PartitionResult(role=role, assignments=assignments, topics=topics, edges=pd.DataFrame(), replications=pd.DataFrame())
-    return results
-
-
-def write_pareto_figure(
+def write_stability_landscape_figure(
     selection_tables: Mapping[str, pd.DataFrame],
     output_dir: Path,
     *,
-    show_all_candidates: bool = True,
     roles: Sequence[str] | None = None,
-    filename: str = "pareto_validation_all_roles.png",
+    filename: str = "stability_landscape_all_roles.png",
 ) -> None:
-    """Save the two-objective D_U versus S_R Pareto scatter plot."""
+    """Scatter D_U versus S_R and highlight the configuration maximizing S_R."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
@@ -1382,49 +987,43 @@ def write_pareto_figure(
         figsize=(14, 10) if len(plot_roles) > 1 else (8, 6),
         squeeze=False,
     )
-    method_markers = {"leaf": "o"}
-    pareto_color = "#f28e2b"
-    dominated_color = "#9e9e9e"
+    selected_color = "#d62728"
+    other_color = "#9e9e9e"
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
             axis.set_title(role)
-            axis.text(0.5, 0.5, "Aucune configuration", ha="center", va="center")
+            axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
             continue
-        frame["hdbscan_cluster_selection_method"] = frame["hdbscan_cluster_selection_method"].astype(str)
-        base = frame if show_all_candidates else frame[frame["pareto_pool"]]
-        valid = base["dbcv_umap"].notna() & base["stability"].notna()
-        base = base[valid].copy()
-        pareto_mask = base["pareto_non_dominated"].fillna(False).astype(bool)
-        dominated = base[~pareto_mask]
-        frontier = base[pareto_mask].sort_values("dbcv_umap")
-        for method, marker in method_markers.items():
-            subset = dominated[dominated["hdbscan_cluster_selection_method"].eq(method)]
-            if not subset.empty:
-                axis.scatter(
-                    subset["dbcv_umap"],
-                    subset["stability"],
-                    marker=marker,
-                    facecolors=dominated_color,
-                    edgecolors="black",
-                    alpha=0.65,
-                    s=48,
-                    linewidths=0.9,
-                    zorder=1,
-                )
-            subset = frontier[frontier["hdbscan_cluster_selection_method"].eq(method)]
-            if not subset.empty:
-                axis.scatter(
-                    subset["dbcv_umap"],
-                    subset["stability"],
-                    marker=marker,
-                    facecolors=pareto_color,
-                    edgecolors="black",
-                    alpha=0.95,
-                    s=68,
-                    linewidths=0.8,
-                    zorder=4,
-                )
+        valid = frame["dbcv_umap"].notna() & frame["stability"].notna()
+        base = frame.loc[valid].copy()
+        selected_mask = base.get("selected", pd.Series(False, index=base.index)).fillna(False).astype(bool)
+        others = base.loc[~selected_mask]
+        selected = base.loc[selected_mask]
+        if not others.empty:
+            axis.scatter(
+                others["dbcv_umap"],
+                others["stability"],
+                marker="o",
+                facecolors=other_color,
+                edgecolors="black",
+                alpha=0.65,
+                s=48,
+                linewidths=0.9,
+                zorder=1,
+            )
+        if not selected.empty:
+            axis.scatter(
+                selected["dbcv_umap"],
+                selected["stability"],
+                marker="*",
+                facecolors=selected_color,
+                edgecolors="black",
+                alpha=0.95,
+                s=220,
+                linewidths=0.8,
+                zorder=4,
+            )
         axis.set_title(role)
         axis.set_xlabel("UMAP-space DBCV $D_U$")
         axis.set_ylabel("Accident-level resampling stability $S_R$")
@@ -1432,14 +1031,218 @@ def write_pareto_figure(
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Dominated configurations", markerfacecolor=dominated_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Pareto frontier", markerfacecolor=pareto_color, markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidates", markerfacecolor=other_color, markeredgecolor="black", markersize=7),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", label=r"Selected ($\arg\max S_R$)", markerfacecolor=selected_color, markeredgecolor="black", markersize=12),
     ]
     figure.legend(handles=handles, loc="upper center", ncol=2, frameon=False)
-    figure.suptitle("Pareto validation of UMAP--HDBSCAN partitions", y=0.98)
+    figure.suptitle("Configuration reproducibility landscape", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
+
+
+def write_factor_stability_figure(
+    role: str,
+    theme_stability: pd.DataFrame,
+    configuration_id: str,
+    output_dir: Path,
+) -> None:
+    """Box-like summary of factor-level Jaccard for the selected configuration."""
+    import matplotlib.pyplot as plt
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frame = theme_stability[
+        theme_stability["configuration_id"].astype(str).eq(str(configuration_id))
+        & (theme_stability["n_reference_units"].astype(int) > 0)
+    ].copy()
+    if frame.empty:
+        return
+    order = (
+        frame.groupby("cluster_label")["best_jaccard"].mean().sort_values(ascending=True).index.tolist()
+    )
+    data = [frame.loc[frame["cluster_label"].eq(label), "best_jaccard"].to_numpy(dtype=float) for label in order]
+    labels = [f"{role}_{int(label):03d}" for label in order]
+    fig_height = max(4.0, 0.35 * len(order))
+    figure, axis = plt.subplots(figsize=(10, fig_height))
+    axis.boxplot(data, vert=False, labels=labels, showfliers=False)
+    means = [float(np.mean(values)) if len(values) else np.nan for values in data]
+    axis.scatter(means, np.arange(1, len(means) + 1), color="#d62728", zorder=3, label=r"$S_{ck}$")
+    if "observability" in frame.columns:
+        obs = (
+            frame.drop_duplicates("cluster_label")
+            .set_index("cluster_label")
+            .loc[order, "observability"]
+            .to_numpy(dtype=float)
+        )
+        for y_pos, observability in enumerate(obs, start=1):
+            axis.text(1.02, y_pos, f"O={observability:.2f}", va="center", fontsize=8, transform=axis.get_yaxis_transform())
+    axis.set_xlim(0, 1.05)
+    axis.set_xlabel("Best-match Jaccard")
+    axis.set_title(f"{role} factor-level resampling — {configuration_id}")
+    axis.grid(axis="x", alpha=0.25)
+    axis.legend(loc="lower right")
+    figure.tight_layout()
+    figure.savefig(output_dir / f"factor_resampling_{role}.png", dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _evaluate_seed_task(task: Mapping[str, Any]) -> dict[str, Any]:
+    labels, reduced, membership_strength = _fit_cluster_with_embedding(
+        (),
+        task["embeddings"],
+        task["params"],
+        int(task["seed"]),
+        task["config"],
+        return_membership_strength=True,
+    )
+    reference = np.asarray(task["reference_labels"], dtype=int)
+    rows = []
+    for cluster_label in task["reference_clusters"]:
+        rows.append({
+            "cluster_label": int(cluster_label),
+            "best_jaccard": _best_jaccard(reference, labels, int(cluster_label)),
+        })
+    metrics = _candidate_metrics_from_accident_ids(task["accident_ids"], labels)
+    return {
+        "seed": int(task["seed"]),
+        "labels": np.asarray(labels, dtype=np.int32),
+        "membership_strength": np.asarray(membership_strength, dtype=np.float32),
+        "n_clusters": int(metrics["n_clusters"]),
+        "noise_fraction": float(metrics["noise_fraction"]),
+        "dbcv_umap": float(_dbcv(reduced, labels)),
+        "factor_rows": rows,
+    }
+
+
+def evaluate_seed_sensitivity(
+    role: str,
+    units: pd.DataFrame,
+    embeddings: np.ndarray,
+    config: Mapping[str, Any],
+    output_dir: Path,
+    configuration_id: str,
+    candidate_row: Mapping[str, Any],
+    *,
+    reestimate: bool = False,
+) -> pd.DataFrame:
+    """Refit the selected configuration under alternative UMAP seeds."""
+    validation_cfg = _validation_config(config)
+    seed_cfg = validation_cfg["seed_sensitivity"]
+    if not bool(seed_cfg.get("enabled", True)):
+        return pd.DataFrame()
+    seeds = [int(seed) for seed in seed_cfg.get("seeds", [])]
+    primary_seed = int(validation_cfg["random_state"])
+    seeds = [seed for seed in seeds if seed != primary_seed]
+    role_dir = _discovery_role_dir(output_dir, role)
+    selected_dir = role_dir / "selected"
+    seed_dir = role_dir / "seed_sensitivity"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    summary_path = seed_dir / "seed_summary.csv"
+    factor_path = seed_dir / "seed_factor_jaccard.csv"
+    metadata_path = seed_dir / "seed_metadata.json"
+    expected_metadata = {
+        "version": "umap_seed_sensitivity_v1",
+        "configuration_id": configuration_id,
+        "primary_seed": primary_seed,
+        "seeds": seeds,
+    }
+    if (
+        summary_path.is_file()
+        and factor_path.is_file()
+        and metadata_path.is_file()
+        and not reestimate
+    ):
+        try:
+            cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached_metadata = {}
+        if cached_metadata == expected_metadata:
+            _log_progress(f"[{role}] seed sensitivity: cache réutilisé")
+            return pd.read_csv(summary_path)
+
+    role_mask = units["_role"].eq(role).to_numpy()
+    role_units = units.loc[role_mask].reset_index(drop=True)
+    role_embeddings = np.asarray(embeddings[role_mask])
+    reference_path = selected_dir / "labels.npy"
+    if not reference_path.is_file():
+        reference_path = role_dir / "candidate_partitions" / f"{configuration_id}_labels.npy"
+    reference = np.load(reference_path).astype(int)
+    reference_clusters = [int(label) for label in np.unique(reference) if label >= 0]
+    params = {key: _to_python_value(candidate_row[key]) for key in PARAMETER_KEYS if key in candidate_row}
+    tasks = [
+        {
+            "seed": seed,
+            "params": params,
+            "embeddings": role_embeddings,
+            "accident_ids": role_units["_accident_id"].astype(str).to_numpy(),
+            "reference_labels": reference,
+            "reference_clusters": reference_clusters,
+            "config": config,
+        }
+        for seed in seeds
+    ]
+    _log_progress(f"[{role}] seed sensitivity: {len(tasks)} seeds for {configuration_id}")
+    results = _parallel_map(_evaluate_seed_task, tasks, config, progress_label=f"{role} seeds")
+    factor_rows: list[dict[str, Any]] = []
+    summary_rows: list[dict[str, Any]] = []
+    for result in sorted(results, key=lambda item: int(item["seed"])):
+        seed = int(result["seed"])
+        np.save(seed_dir / f"seed_{seed}_labels.npy", result["labels"])
+        np.save(seed_dir / f"seed_{seed}_membership_strength.npy", result["membership_strength"])
+        seed_jaccards = []
+        for row in result["factor_rows"]:
+            factor_rows.append({
+                "role": role,
+                "configuration_id": configuration_id,
+                "seed": seed,
+                "cluster_label": int(row["cluster_label"]),
+                "best_jaccard": float(row["best_jaccard"]),
+            })
+            seed_jaccards.append(float(row["best_jaccard"]))
+        summary_rows.append({
+            "role": role,
+            "configuration_id": configuration_id,
+            "seed": seed,
+            "seed_stability": float(np.mean(seed_jaccards)) if seed_jaccards else np.nan,
+            "n_clusters": int(result["n_clusters"]),
+            "noise_fraction": float(result["noise_fraction"]),
+            "dbcv_umap": float(result["dbcv_umap"]),
+        })
+    factor_frame = pd.DataFrame(factor_rows)
+    summary = pd.DataFrame(summary_rows)
+    if not factor_frame.empty:
+        factor_means = (
+            factor_frame.groupby(["role", "configuration_id", "cluster_label"], as_index=False)["best_jaccard"]
+            .mean()
+            .rename(columns={"best_jaccard": "seed_theme_stability"})
+        )
+        factor_means.to_csv(seed_dir / "seed_theme_stability.csv", index=False)
+    summary.to_csv(summary_path, index=False)
+    factor_frame.to_csv(factor_path, index=False)
+    metadata_path.write_text(json.dumps(expected_metadata, indent=2), encoding="utf-8")
+
+    if not summary.empty:
+        import matplotlib.pyplot as plt
+
+        figure, axes = plt.subplots(1, 3, figsize=(12, 4))
+        axes[0].plot(summary["seed"], summary["seed_stability"], marker="o")
+        axes[0].set_ylim(0, 1.05)
+        axes[0].set_title(r"$S_{\mathrm{seed}}$")
+        axes[0].set_xlabel("UMAP seed")
+        axes[1].plot(summary["seed"], summary["n_clusters"], marker="o")
+        axes[1].set_title("K")
+        axes[1].set_xlabel("UMAP seed")
+        axes[2].plot(summary["seed"], summary["dbcv_umap"], marker="o")
+        axes[2].set_title(r"$D_U$")
+        axes[2].set_xlabel("UMAP seed")
+        for axis in axes:
+            axis.grid(alpha=0.25)
+        figure.suptitle(f"{role} seed sensitivity — {configuration_id}")
+        figure.tight_layout()
+        figure.savefig(seed_dir / f"seed_sensitivity_{role}.png", dpi=220, bbox_inches="tight")
+        plt.close(figure)
+    return summary
+
 
 
 def load_topic_stopwords(config: Mapping[str, Any]) -> set[str]:
@@ -1554,241 +1357,14 @@ def build_topic_dictionary(
     return dictionary
 
 
-def build_accident_topic_matrix(
-    prepared: PreparedData,
-    partition_results: Mapping[str, PartitionResult],
-    topic_dictionary: pd.DataFrame,
-    config: Mapping[str, Any],
-    output_dir: Path,
-) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
-    topics_cfg = config.get("topics", {})
-    min_support = int(topics_cfg.get("min_accident_support", 20))
-    max_topics = topics_cfg.get("max_topics_per_role")
-    selected_parts: list[pd.DataFrame] = []
-    selected_rows: list[dict[str, Any]] = []
-    for role in ROLES:
-        role_topics = topic_dictionary[topic_dictionary["role"] == role].copy()
-        role_topics = role_topics[role_topics["n_accidents"] >= min_support].sort_values("n_accidents", ascending=False)
-        if max_topics is not None:
-            role_topics = role_topics.head(int(max_topics))
-        selected_parts.append(role_topics)
-        selected_rows.extend(role_topics.to_dict("records"))
-    selected = pd.DataFrame(selected_rows)
-    accident_ids = prepared.units["_accident_id"].drop_duplicates().sort_values().tolist()
-    matrix = pd.DataFrame({"accident_id": accident_ids})
-    for topic_id in selected.get("topic_id", pd.Series(dtype=str)).astype(str):
-        role = topic_id.split("_", 1)[0]
-        assignments = partition_results[role].assignments
-        present = assignments.loc[assignments["topic_id"] == topic_id, "accident_id"].drop_duplicates()
-        matrix[topic_id] = matrix["accident_id"].isin(set(present)).astype(int)
-    topic_columns = [column for column in selected.get("topic_id", pd.Series(dtype=str)).astype(str) if column in matrix.columns]
-    variable_columns = [column for column in topic_columns if matrix[column].nunique(dropna=False) > 1]
-    selected = selected[selected["topic_id"].astype(str).isin(variable_columns)].copy() if not selected.empty else selected
-    matrix = matrix.drop(columns=[column for column in topic_columns if column not in variable_columns])
-    for role in ROLES:
-        role_cols = [column for column in variable_columns if column.startswith(f"{role}_")]
-        matrix[f"n_topics_{role}"] = matrix[role_cols].sum(axis=1) if role_cols else 0
-    matrix["n_topics_observed"] = matrix[[f"n_topics_{role}" for role in ROLES]].sum(axis=1)
-    matrix["incomplete_report"] = (matrix[[f"n_topics_{role}" for role in ROLES]] == 0).any(axis=1).astype(int)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    matrix.to_csv(output_dir / "accident_topic_matrix.csv", index=False)
-    selected.to_csv(output_dir / "selected_topics.csv", index=False)
-    variable_map = {str(row["topic_id"]): str(row["role"]) for _, row in selected.iterrows()}
-    (output_dir / "variable_macro_map.json").write_text(json.dumps(variable_map, indent=2), encoding="utf-8")
-    return matrix, selected, variable_map
-
-
-def descriptive_tables(
-    matrix: pd.DataFrame,
-    selected_topics: pd.DataFrame,
-    config: Mapping[str, Any],
-    output_dir: Path,
-) -> dict[str, pd.DataFrame]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    topic_columns = [column for column in selected_topics.get("topic_id", pd.Series(dtype=str)).astype(str) if column in matrix.columns]
-    rng = np.random.default_rng(int(config.get("random_state", 42)))
-    n_boot = int(config.get("descriptive", {}).get("bootstrap_repetitions", 1000))
-    n_accidents = len(matrix)
-    frequency_rows = []
-    values = matrix[topic_columns].to_numpy(dtype=float) if topic_columns else np.empty((n_accidents, 0))
-    for index, topic_id in enumerate(topic_columns):
-        observed = values[:, index]
-        estimates = np.empty(n_boot, dtype=float)
-        for bootstrap_index in range(n_boot):
-            sample = rng.integers(0, n_accidents, size=n_accidents)
-            estimates[bootstrap_index] = observed[sample].mean()
-        frequency_rows.append({
-            "topic_id": topic_id,
-            "n_accidents": int(observed.sum()),
-            "frequency": float(observed.mean()),
-            "bootstrap_low": float(np.quantile(estimates, 0.025)),
-            "bootstrap_high": float(np.quantile(estimates, 0.975)),
-        })
-    frequencies = pd.DataFrame(frequency_rows).sort_values("frequency", ascending=False)
-    frequencies.to_csv(output_dir / "topic_frequencies.csv", index=False)
-    pair_rows = []
-    for left_index, left in enumerate(topic_columns):
-        for right in topic_columns[left_index + 1 :]:
-            support_left = float(matrix[left].mean())
-            support_right = float(matrix[right].mean())
-            joint = float((matrix[left] * matrix[right]).mean())
-            pair_rows.append({
-                "topic_left": left,
-                "topic_right": right,
-                "role_left": left.split("_", 1)[0],
-                "role_right": right.split("_", 1)[0],
-                "support_left": support_left,
-                "support_right": support_right,
-                "joint_frequency": joint,
-                "lift": joint / max(support_left * support_right, 1e-12),
-                "n_joint_accidents": int((matrix[left] * matrix[right]).sum()),
-            })
-    pairs = pd.DataFrame(pair_rows).sort_values("lift", ascending=False) if pair_rows else pd.DataFrame()
-    pairs.to_csv(output_dir / "topic_cooccurrence_lift.csv", index=False)
-    return {"frequencies": frequencies, "cooccurrence_lift": pairs}
-
-
-def _role_color(role: str) -> str:
-    return {"A0": "#A6CEE3", "A1": "#FDBF6F", "B": "#B2DF8A", "C": "#FB9A99", "Z": "#CAB2D6"}.get(role, "#DDDDDD")
-
-
-def write_descriptive_figures(tables: Mapping[str, pd.DataFrame], output_dir: Path) -> None:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    frequencies = tables["frequencies"].head(30)
-    if not frequencies.empty:
-        fig, axis = plt.subplots(figsize=(10, max(5, len(frequencies) * 0.24)))
-        plot = frequencies.sort_values("frequency")
-        axis.barh(plot["topic_id"], plot["frequency"] * 100, color="#4C78A8")
-        axis.set_xlabel("Accidents containing topic (%)")
-        axis.set_ylabel("Topic")
-        axis.set_title("Consensus topic frequency")
-        fig.tight_layout()
-        fig.savefig(output_dir / "topic_frequencies.png", dpi=220, bbox_inches="tight")
-        plt.close(fig)
-    pairs = tables["cooccurrence_lift"]
-    if not pairs.empty:
-        top = pairs.head(30)
-        pivot = top.pivot_table(index="topic_left", columns="topic_right", values="lift", aggfunc="max")
-        fig, axis = plt.subplots(figsize=(10, 7))
-        sns.heatmap(pivot, ax=axis, cmap="viridis", annot=False)
-        axis.set_title("Cross-topic lift")
-        fig.tight_layout()
-        fig.savefig(output_dir / "topic_lift_heatmap.png", dpi=220, bbox_inches="tight")
-        plt.close(fig)
-
-
-def write_consensus_figures(
-    partition_results: Mapping[str, PartitionResult],
-    config: Mapping[str, Any],
-    output_dir: Path,
-) -> None:
-    """Write the protocol's stability/coverage/granularity and co-association figures."""
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tradeoff_frames = []
-    for role, result in partition_results.items():
-        repetitions = result.replications.copy()
-        repetitions["configuration"] = (
-            repetitions["umap_n_neighbors"].astype(str)
-            + "/"
-            + repetitions["hdbscan_min_cluster_size"].astype(str)
-        )
-        grouped = repetitions.groupby("configuration", sort=False).agg(
-            stability=("stability", "mean"),
-            coverage=("coverage", "mean"),
-            n_topics=("n_clusters", "mean"),
-        ).reset_index()
-        grouped["role"] = role
-        tradeoff_frames.append(grouped)
-        _plot_tradeoff(grouped, role, output_dir / f"consensus_tradeoff_{role}.png")
-    if tradeoff_frames:
-        combined = pd.concat(tradeoff_frames, ignore_index=True)
-        combined.to_csv(output_dir / "consensus_tradeoff_summary.csv", index=False)
-        fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharey=True)
-        for axis, role in zip(axes.flat, ROLES):
-            role_frame = combined[combined["role"] == role]
-            _plot_tradeoff(role_frame, role, None, axis=axis)
-        fig.suptitle("Granularity–coverage–stability trade-off by role")
-        fig.tight_layout()
-        fig.savefig(output_dir / "consensus_tradeoff_all_roles.png", dpi=250, bbox_inches="tight")
-        plt.close(fig)
-    max_units = int(config.get("figures", {}).get("coassociation_plot_max_units", 250))
-    roles = config.get("figures", {}).get("coassociation_roles", list(ROLES))
-    for role in roles:
-        if role in partition_results:
-            _plot_coassociation(partition_results[role], max_units, output_dir / f"coassociation_matrix_{role}.png")
-
-
-def _plot_tradeoff(frame: pd.DataFrame, role: str, output_path: Path | None, axis: Any = None) -> None:
-    import matplotlib.pyplot as plt
-
-    if frame.empty:
-        return
-    owns_figure = axis is None
-    if owns_figure:
-        _, axis = plt.subplots(figsize=(11, 6))
-    x = np.arange(len(frame))
-    axis.plot(x, frame["stability"], marker="o", label="Stability")
-    axis.plot(x, 1.0 - frame["coverage"], marker="s", label="Not assigned")
-    right_axis = axis.twinx()
-    right_axis.plot(x, frame["n_topics"], marker="^", linestyle="--", label="Number of topics")
-    axis.set_title(f"Granularity–coverage–stability trade-off — {role}")
-    axis.set_xlabel("UMAP n_neighbors / HDBSCAN min_cluster_size")
-    axis.set_ylabel("Proportion")
-    right_axis.set_ylabel("Number of topics")
-    axis.set_xticks(x, frame["configuration"], rotation=45, ha="right")
-    axis.set_ylim(0, 1)
-    handles_left, labels_left = axis.get_legend_handles_labels()
-    handles_right, labels_right = right_axis.get_legend_handles_labels()
-    axis.legend(handles_left + handles_right, labels_left + labels_right, loc="best")
-    axis.grid(axis="y", alpha=0.25)
-    if owns_figure:
-        axis.figure.tight_layout()
-        axis.figure.savefig(output_path, dpi=250, bbox_inches="tight")
-        plt.close(axis.figure)
-
-
-def _plot_coassociation(result: PartitionResult, max_units: int, output_path: Path) -> None:
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-
-    assignments = result.assignments.sort_values("topic_id")
-    selected_indices = assignments.index.to_numpy()[: min(max_units, len(assignments))]
-    index_lookup = {int(original): position for position, original in enumerate(selected_indices)}
-    matrix = np.zeros((len(selected_indices), len(selected_indices)), dtype=float)
-    np.fill_diagonal(matrix, 1.0)
-    edges = result.edges
-    for _, edge in edges.iterrows():
-        left = index_lookup.get(int(edge["unit_i"]))
-        right = index_lookup.get(int(edge["unit_j"]))
-        if left is not None and right is not None:
-            matrix[left, right] = float(edge["similarity"])
-            matrix[right, left] = float(edge["similarity"])
-    fig, axis = plt.subplots(figsize=(8, 7))
-    sns.heatmap(
-        matrix,
-        ax=axis,
-        cmap="Greys",
-        vmin=0,
-        vmax=1,
-        cbar_kws={"label": "Co-association frequency"},
-    )
-    axis.set_title(f"Co-association matrix — {result.role} (illustration)")
-    axis.set_xlabel("Units ordered by consensus topic")
-    axis.set_ylabel("Units ordered by consensus topic")
-    fig.tight_layout()
-    fig.savefig(output_path, dpi=250, bbox_inches="tight")
-    plt.close(fig)
-
 
 # ---------------------------------------------------------------------------
 # Frozen-theme latent BN analysis
 # ---------------------------------------------------------------------------
+
+def _role_color(role: str) -> str:
+    return {"A0": "#A6CEE3", "A1": "#FDBF6F", "B": "#B2DF8A", "C": "#FB9A99", "Z": "#CAB2D6"}.get(role, "#DDDDDD")
+
 
 BN_ROLE_ARCS = (("A0", "A1"), ("A0", "B"), ("A1", "B"), ("B", "C"))
 
@@ -1812,6 +1388,12 @@ class StructuralEMResult:
     seed: int
     initialization: str
     model: Any | None = None
+    iteration_history: list[dict[str, Any]] | None = None
+    last_loglik_delta: float = math.inf
+    relative_loglik_delta: float = math.inf
+    same_graph: bool = False
+    edges_added_last: int = 0
+    edges_removed_last: int = 0
 
     @property
     def parent_map(self) -> dict[str, list[str]]:
@@ -1835,6 +1417,7 @@ def _bn_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("n_initializations", 20)
     values.setdefault("em_max_iter", 500)
     values.setdefault("em_tol", 1e-6)
+    values.setdefault("graph_stability_patience", 5)
     values.setdefault("structure_max_iter", 100)
     values.setdefault("structure_epsilon", 1e-6)
     values.setdefault("alpha", 0.5)
@@ -1878,11 +1461,12 @@ def build_frozen_bn_inputs(
     config: Mapping[str, Any],
     output_dir: Path,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, str]]:
-    """Load one explicitly selected Pareto partition per role.
+    """Load one explicitly selected partition per role.
 
-    The labels are read from Notebook 1 candidate artifacts. No clustering or
-    resampling is performed here. The returned matrix contains one row per
-    accident and one binary variable per sufficiently supported theme.
+    Labels come from ``discovery/<role>/selected/`` or candidate artifacts.
+    No clustering or resampling is performed here. The returned matrix has one
+    row per accident and one binary variable per theme that passes
+    ``min_theme_support_count``.
     """
 
     units = _validate_bn_units(units)
@@ -1902,10 +1486,7 @@ def build_frozen_bn_inputs(
 
     for role in ROLES:
         configuration_id = selections[role]
-        labels_path = run_dir / "pareto" / role / "candidate_partitions" / f"{configuration_id}_labels.npy"
-        strength_path = run_dir / "pareto" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy"
-        if not labels_path.is_file() or not strength_path.is_file():
-            raise FileNotFoundError(f"Artefacts Pareto absents pour {role}/{configuration_id}")
+        labels_path, strength_path = _resolve_partition_artifact_paths(run_dir, role, configuration_id)
         role_units = units[units["_role"].eq(role)].reset_index(drop=True)
         labels = np.load(labels_path).astype(int)
         strengths = np.load(strength_path).astype(float)
@@ -2179,6 +1760,13 @@ def _fit_structural_em_initialization(
     tau = rng.dirichlet(np.ones(n_states), size=len(data))
     previous_ll = -np.inf
     converged = False
+    iteration_history: list[dict[str, Any]] = []
+    last_loglik_delta = math.inf
+    relative_loglik_delta = math.inf
+    same_graph = False
+    edges_added_last = 0
+    edges_removed_last = 0
+    graph_stable_streak = 0
     for iteration in range(1, int(cfg["em_max_iter"]) + 1):
         weights, upstream, downstream = _bn_mle_parameters(data, nodes, roles, edges, tau, n_states, floor)
         log_joint = _bn_log_joint(data, nodes, roles, edges, weights, upstream, downstream, floor)
@@ -2187,11 +1775,31 @@ def _fit_structural_em_initialization(
         new_edges = _structure_step(data, nodes, roles, edges, new_tau, n_states, d_max, float(cfg["structure_epsilon"]), int(cfg["structure_max_iter"]), floor)
         same_graph = new_edges == edges
         delta = abs(observed_ll - previous_ll) if np.isfinite(previous_ll) else np.inf
+        relative_delta = delta / max(abs(previous_ll), 1.0) if np.isfinite(previous_ll) else np.inf
+        old_edge_set = set(edges)
+        new_edge_set = set(new_edges)
+        edges_added_last = len(new_edge_set - old_edge_set)
+        edges_removed_last = len(old_edge_set - new_edge_set)
+        graph_stable_streak = graph_stable_streak + 1 if same_graph else 0
+        last_loglik_delta = delta
+        relative_loglik_delta = relative_delta
+        iteration_history.append({
+            "iteration": iteration,
+            "log_likelihood": observed_ll,
+            "loglik_delta": delta,
+            "relative_loglik_delta": relative_delta,
+            "same_graph": same_graph,
+            "graph_stable_streak": graph_stable_streak,
+            "edges": len(new_edges),
+            "edges_added": edges_added_last,
+            "edges_removed": edges_removed_last,
+        })
+        iteration_history = iteration_history[-10:]
         tau = new_tau
         edges = new_edges
         if progress_callback is not None:
             progress_callback(iteration, observed_ll, len(edges))
-        if same_graph and delta < float(cfg["em_tol"]):
+        if graph_stable_streak >= int(cfg["graph_stability_patience"]) and relative_delta < float(cfg["em_tol"]):
             converged = True
             break
         previous_ll = observed_ll
@@ -2202,28 +1810,74 @@ def _fit_structural_em_initialization(
     final_log_joint = _bn_log_joint(data, nodes, roles, edges, final_weights, final_upstream, final_downstream, floor)
     final_ll = float(_bn_logsumexp(final_log_joint, axis=1).sum())
     bic = -2.0 * final_ll + _bn_parameter_count(nodes, roles, edges, n_states) * math.log(max(len(data), 1))
-    return StructuralEMResult(nodes, roles, edges, n_states, final_weights, tau, final_upstream, final_downstream, final_ll, bic, iteration, converged, seed, initialization)
+    return StructuralEMResult(
+        nodes, roles, edges, n_states, final_weights, tau,
+        final_upstream, final_downstream, final_ll, bic, iteration,
+        converged, seed, initialization, None, iteration_history,
+        last_loglik_delta, relative_loglik_delta, same_graph,
+        edges_added_last, edges_removed_last,
+    )
 
 
-def _select_latent_result(results: Sequence[StructuralEMResult], config: Mapping[str, Any]) -> tuple[StructuralEMResult, pd.DataFrame]:
+def _select_latent_result(results: Sequence[StructuralEMResult], config: Mapping[str, Any], diagnostic_output_dir: Path | None = None) -> tuple[StructuralEMResult, pd.DataFrame]:
     minimum = float(_bn_config(config)["min_latent_effective_n"])
     rows = []
     admissible = []
     for result in results:
         effective = result.effective_sizes
-        valid = result.converged and bool(np.all(effective >= minimum)) and bool(np.all(result.weights > 0))
-        rows.append({"K": result.n_states, "seed": result.seed, "initialization": result.initialization, "converged": result.converged, "n_iter": result.n_iter, "log_likelihood": result.log_likelihood, "bic": result.bic, "min_effective_n": float(effective.min()), "admissible": valid, "edges": len(result.edges)})
+        min_effective_n = float(effective.min())
+        min_weight = float(result.weights.min())
+        rejection_reasons = []
+        if not result.converged:
+            rejection_reasons.append("not_converged")
+        if min_effective_n < minimum:
+            rejection_reasons.append("min_effective_n_below_threshold")
+        if min_weight <= 0:
+            rejection_reasons.append("non_positive_weight")
+        valid = not rejection_reasons
+        history = result.iteration_history or []
+        rows.append({
+            "K": result.n_states,
+            "seed": result.seed,
+            "initialization": result.initialization,
+            "converged": result.converged,
+            "n_iter": result.n_iter,
+            "log_likelihood": result.log_likelihood,
+            "bic": result.bic,
+            "min_effective_n": min_effective_n,
+            "min_weight": min_weight,
+            "admissible": valid,
+            "rejection_reason": "|".join(rejection_reasons),
+            "edges": len(result.edges),
+            "last_loglik_delta": result.last_loglik_delta,
+            "relative_loglik_delta": result.relative_loglik_delta,
+            "same_graph": result.same_graph,
+            "edges_added_last": result.edges_added_last,
+            "edges_removed_last": result.edges_removed_last,
+            "last_10_log_likelihoods": json.dumps([item["log_likelihood"] for item in history]),
+            "last_10_loglik_deltas": json.dumps([item["loglik_delta"] for item in history]),
+            "last_10_edge_counts": json.dumps([item["edges"] for item in history]),
+        })
         if valid:
             admissible.append(result)
+    selection = pd.DataFrame(rows).sort_values(["K", "bic"], na_position="last").reset_index(drop=True)
+    selection["selected_for_K"] = False
+    selection["selected_final"] = False
+    if diagnostic_output_dir is not None:
+        diagnostic_output_dir.mkdir(parents=True, exist_ok=True)
+        selection.to_csv(diagnostic_output_dir / "all_initializations.csv", index=False)
+        selection.groupby("K", as_index=False).agg(
+            best_bic=("bic", "min"), best_log_likelihood=("log_likelihood", "max"),
+            n_admissible=("admissible", "sum"), min_effective_n=("min_effective_n", "max"),
+        ).to_csv(diagnostic_output_dir / "K_selection.csv", index=False)
     if not admissible:
-        raise RuntimeError("Aucune initialisation Structural-EM n'est admissible.")
+        summary = selection["rejection_reason"].value_counts().to_dict()
+        raise RuntimeError(f"Aucune initialisation Structural-EM n'est admissible. Motifs: {summary}")
     per_k = {result.n_states: min((item for item in admissible if item.n_states == result.n_states), key=lambda item: item.bic, default=None) for result in admissible}
     per_k = {key: value for key, value in per_k.items() if value is not None}
     if not per_k:
         raise RuntimeError("Aucun K ne satisfait les critères de convergence et de taille effective.")
     selected = min(per_k.values(), key=lambda item: item.bic)
-    selection = pd.DataFrame(rows).sort_values(["K", "bic"], na_position="last").reset_index(drop=True)
-    selection["selected_for_K"] = False
     for result in per_k.values():
         selection.loc[(selection["K"] == result.n_states) & (selection["seed"] == result.seed), "selected_for_K"] = True
     selection["selected_final"] = (selection["K"] == selected.n_states) & (selection["seed"] == selected.seed)
@@ -2365,7 +2019,7 @@ def fit_latent_bn_analysis(matrix: pd.DataFrame, roles: Mapping[str, str], confi
     finally:
         if progress is not None:
             progress.close()
-    selected, selection = _select_latent_result(results, config)
+    selected, selection = _select_latent_result(results, config, output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     selection.to_csv(output_dir / "all_initializations.csv", index=False)
     selection.groupby("K", as_index=False).agg(
@@ -2404,7 +2058,14 @@ def finalize_latent_bn(result: StructuralEMResult, matrix: pd.DataFrame, roles: 
         denominator = float(mask.sum())
         numerator = float((mask * data[:, index[node]]).sum())
         smoothed_downstream[key] = (numerator + alpha) / (denominator + 2.0 * alpha)
-    final = StructuralEMResult(result.nodes, dict(roles), result.edges, result.n_states, weights, tau, smoothed_upstream, smoothed_downstream, result.log_likelihood, result.bic, result.n_iter, result.converged, result.seed, result.initialization)
+    final = StructuralEMResult(
+        result.nodes, dict(roles), result.edges, result.n_states, weights, tau,
+        smoothed_upstream, smoothed_downstream, result.log_likelihood,
+        result.bic, result.n_iter, result.converged, result.seed,
+        result.initialization, None, result.iteration_history,
+        result.last_loglik_delta, result.relative_loglik_delta,
+        result.same_graph, result.edges_added_last, result.edges_removed_last,
+    )
     final.model = _build_pgmpy_model(final, smooth=False, alpha=alpha)
     return final
 
@@ -2417,56 +2078,94 @@ def _scenario_state_space(result: StructuralEMResult, roles: Mapping[str, str]) 
 
 
 def _exact_constrained_mpe(result: StructuralEMResult, roles: Mapping[str, str], state: int) -> dict[str, int]:
-    """Compute the exact role-constrained MPE with variable elimination."""
+    """Solve the exact role-constrained MPE as a local-factor MILP."""
 
     try:
-        from pgmpy.factors.discrete import TabularCPD
-        from pgmpy.inference import VariableElimination
+        from scipy.optimize import Bounds, LinearConstraint, milp
+        from scipy.sparse import lil_matrix
     except ImportError as error:
-        raise RuntimeError("pgmpy est requis pour calculer le MPE exact.") from error
+        raise RuntimeError("scipy.optimize.milp est requis pour calculer le MPE exact.") from error
 
-    constrained_model = result.model.copy()
-    evidence: dict[str, int] = {"Z": int(state)}
-    constraint_cpds = []
-    groups = {
-        "upstream": [node for node in result.nodes if roles[node] in {"A0", "A1"}],
-        "event": [node for node in result.nodes if roles[node] == "B"],
-        "consequence": [node for node in result.nodes if roles[node] == "C"],
-    }
-    for group_name, group_nodes in groups.items():
-        if not group_nodes:
-            raise ValueError(f"Le groupe {group_name} est vide : MPE contraint impossible.")
-        if len(group_nodes) == 1:
-            evidence[group_nodes[0]] = 1
-            continue
-        previous = group_nodes[0]
-        for index, node in enumerate(group_nodes[1:], start=1):
-            helper = f"__mpe_or_{group_name}_{index}"
-            constrained_model.add_node(helper)
-            constrained_model.add_edge(previous, helper)
-            constrained_model.add_edge(node, helper)
-            constraint_cpds.append(TabularCPD(
-                helper,
-                2,
-                [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 1.0, 1.0]],
-                evidence=[previous, node],
-                evidence_card=[2, 2],
-            ))
-            previous = helper
-        evidence[previous] = 1
-    constrained_model.add_cpds(*constraint_cpds)
-    constrained_model.check_model()
-    try:
-        assignment = VariableElimination(constrained_model).map_query(
-            variables=result.nodes,
-            evidence=evidence,
-            show_progress=False,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"L'inférence exacte du MPE a échoué pour la famille {state + 1}."
-        ) from error
-    return {node: int(assignment[node]) for node in result.nodes}
+    nodes = list(result.nodes)
+    node_index = {node: index for index, node in enumerate(nodes)}
+    parents = _bn_parent_map(nodes, result.edges)
+    objective: list[float] = [0.0] * len(nodes)
+    local_assignments: list[tuple[str, tuple[int, ...], int, float]] = []
+    floor = 1e-12
+
+    for node in nodes:
+        parent_nodes = parents[node]
+        for parent_values in itertools.product((0, 1), repeat=len(parent_nodes)):
+            if roles[node] in {"A0", "A1"}:
+                probability_one = result.upstream_probabilities.get((node, int(state), tuple(parent_values)), 0.5)
+            else:
+                probability_one = result.downstream_probabilities.get((node, tuple(parent_values)), 0.5)
+            probability_one = float(np.clip(probability_one, floor, 1.0 - floor))
+            for node_value in (0, 1):
+                probability = probability_one if node_value else 1.0 - probability_one
+                local_assignments.append((node, tuple(parent_values), node_value, -math.log(probability)))
+
+    objective.extend(item[3] for item in local_assignments)
+    n_variables = len(objective)
+    rows: list[tuple[int, int, float]] = []
+    lower: list[float] = []
+    upper: list[float] = []
+    local_offset = len(nodes)
+    assignment_offsets: dict[str, list[int]] = {node: [] for node in nodes}
+    for offset, (node, parent_values, node_value, _) in enumerate(local_assignments):
+        assignment_offsets[node].append(local_offset + offset)
+
+    def add_constraint(entries: Mapping[int, float], lower_bound: float, upper_bound: float) -> None:
+        row_index = len(lower)
+        rows.extend((row_index, column, coefficient) for column, coefficient in entries.items())
+        lower.append(lower_bound)
+        upper.append(upper_bound)
+
+    for node in nodes:
+        node_assignments = assignment_offsets[node]
+        add_constraint({column: 1.0 for column in node_assignments}, 1.0, 1.0)
+        node_one_assignments = [
+            local_offset + index
+            for index, (assignment_node, _, node_value, _) in enumerate(local_assignments)
+            if assignment_node == node and node_value == 1
+        ]
+        entries = {node_index[node]: 1.0}
+        entries.update({column: -1.0 for column in node_one_assignments})
+        add_constraint(entries, 0.0, 0.0)
+        parent_nodes = parents[node]
+        for parent_position, parent in enumerate(parent_nodes):
+            parent_one_assignments = [
+                local_offset + index
+                for index, (assignment_node, parent_values, _, _) in enumerate(local_assignments)
+                if assignment_node == node and parent_values[parent_position] == 1
+            ]
+            entries = {node_index[parent]: 1.0}
+            entries.update({column: -1.0 for column in parent_one_assignments})
+            add_constraint(entries, 0.0, 0.0)
+    role_groups = (
+        {node for node in nodes if roles[node] in {"A0", "A1"}},
+        {node for node in nodes if roles[node] == "B"},
+        {node for node in nodes if roles[node] == "C"},
+    )
+    if any(not group for group in role_groups):
+        raise ValueError("Le MPE contraint nécessite au moins un thème upstream, B et C.")
+    for group in role_groups:
+        add_constraint({node_index[node]: 1.0 for node in group}, 1.0, np.inf)
+
+    constraint_matrix = lil_matrix((len(lower), n_variables), dtype=float)
+    for row_index, column, coefficient in rows:
+        constraint_matrix[row_index, column] = coefficient
+    solution = milp(
+        c=np.asarray(objective, dtype=float),
+        integrality=np.ones(n_variables, dtype=np.int8),
+        bounds=Bounds(np.zeros(n_variables), np.ones(n_variables)),
+        constraints=LinearConstraint(constraint_matrix.tocsr(), np.asarray(lower), np.asarray(upper)),
+        options={"mip_rel_gap": 0.0},
+    )
+    if not solution.success or solution.x is None:
+        raise RuntimeError(f"Le MPE MILP exact a échoué pour la famille {state + 1}: {solution.message}")
+    assignment = np.rint(solution.x[:len(nodes)]).astype(int)
+    return {node: int(assignment[node_index[node]]) for node in nodes}
 
 
 def _family_probability(result: StructuralEMResult, values: Mapping[str, int], state: int, config: Mapping[str, Any]) -> float:
@@ -2475,10 +2174,135 @@ def _family_probability(result: StructuralEMResult, values: Mapping[str, int], s
     return float(np.exp(log_joint - math.log(max(float(result.weights[state]), float(_bn_config(config)["probability_floor"])))))
 
 
-def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame, roles: Mapping[str, str], units: pd.DataFrame, config: Mapping[str, Any], output_dir: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def _theme_label_map(theme_dictionary: pd.DataFrame | None) -> dict[str, str]:
+    if theme_dictionary is None or theme_dictionary.empty:
+        return {}
+    if not {"variable_name", "topic_label"}.issubset(theme_dictionary.columns):
+        return {}
+    return {
+        str(row.variable_name): str(row.topic_label)
+        for row in theme_dictionary[["variable_name", "topic_label"]].itertuples(index=False)
+    }
+
+
+def _write_recurrent_scenarios_graph(
+    scenarios: pd.DataFrame,
+    result: StructuralEMResult,
+    label_map: Mapping[str, str],
+    output_dir: Path,
+) -> None:
+    try:
+        import matplotlib.pyplot as plt
+        import networkx as nx
+    except ImportError as error:
+        warnings.warn(f"Graphe des scénarios non généré: {error}", RuntimeWarning)
+        return
+    if scenarios.empty:
+        return
+    from scenario_figures import normalize_scenario_table, render_compact_scenarios_figure
+
+    scenario_table = scenarios.copy()
+    scenario_table["scenario_id"] = scenario_table["family_id"].map(lambda value: f"S{int(value)}")
+    scenario_table["latent_family"] = scenario_table["family_id"].map(lambda value: str(int(value)))
+    scenario_table["heading"] = scenario_table.apply(
+        lambda row: " -> ".join(
+            str(row[column])
+            for column in ("A0_labels", "A1_labels", "B_labels", "C_labels")
+            if str(row.get(column, "")).strip()
+        ),
+        axis=1,
+    )
+    scenario_table["factor_codes"] = scenario_table.apply(
+        lambda row: ";".join(
+            str(row[column])
+            for column in ("A0_factors", "A1_factors", "B_factors", "C_factors")
+            if str(row.get(column, "")).strip()
+        ),
+        axis=1,
+    )
+    scenario_table = scenario_table.rename(columns={
+        "A0_labels": "A0_label",
+        "A1_labels": "A1_label",
+        "B_labels": "B_label",
+        "C_labels": "C_label",
+        "family_positive_support": "family_support",
+        "global_positive_support": "global_support",
+    })
+    render_compact_scenarios_figure(
+        scenario_table,
+        output_dir,
+        learned_edges=result.edges,
+        stem="recurrent_scenarios_graph",
+    )
+    return
+
+    family_count = len(scenarios)
+    n_columns = min(2, family_count)
+    n_rows = math.ceil(family_count / n_columns)
+    figure, axes = plt.subplots(
+        n_rows,
+        n_columns,
+        figsize=(10 * n_columns, 6 * n_rows),
+        squeeze=False,
+    )
+    role_order = ("A0", "A1", "B", "C")
+    role_colors = {"A0": "#4C78A8", "A1": "#F58518", "B": "#54A24B", "C": "#E45756"}
+    for plot_index, (_, scenario) in enumerate(scenarios.iterrows()):
+        axis = axes.flat[plot_index]
+        graph = nx.DiGraph()
+        active_nodes = []
+        for role in role_order:
+            column = f"{role}_factors"
+            active_nodes.extend(node for node in str(scenario.get(column, "")).split(";") if node)
+        graph.add_nodes_from(active_nodes)
+        graph.add_edges_from(
+            (parent, child)
+            for parent, child in result.edges
+            if parent in graph and child in graph
+        )
+        positions = {}
+        for role_index, role in enumerate(role_order):
+            role_nodes = [node for node in active_nodes if result.roles[node] == role]
+            for node_index, node in enumerate(role_nodes):
+                positions[node] = (role_index, -node_index)
+        labels = {
+            node: f"{node}\n{label_map.get(node, node)}"
+            for node in active_nodes
+        }
+        nx.draw_networkx(
+            graph,
+            positions,
+            ax=axis,
+            labels=labels,
+            node_color=[role_colors[result.roles[node]] for node in graph.nodes],
+            node_size=2200,
+            font_size=8,
+            arrows=True,
+            edge_color="#555555",
+            linewidths=0.8,
+        )
+        axis.set_title(
+            f"Famille {int(scenario['family_id'])} — "
+            f"support familial {float(scenario['family_positive_support']):.1%}, "
+            f"support global {float(scenario['global_positive_support']):.1%}"
+        )
+        axis.set_xlim(-0.5, 3.5)
+        axis.axis("off")
+        for role_index, role in enumerate(role_order):
+            axis.text(role_index, 0.04, role, transform=axis.get_xaxis_transform(), ha="center", fontweight="bold")
+    for axis in axes.flat[family_count:]:
+        axis.axis("off")
+    figure.suptitle("Scénarios récurrents — MPE contraint et labels OpenAI", fontsize=16)
+    figure.tight_layout()
+    figure.savefig(output_dir / "recurrent_scenarios_graph.png", dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame, roles: Mapping[str, str], units: pd.DataFrame, config: Mapping[str, Any], output_dir: Path, theme_dictionary: pd.DataFrame | None = None) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Extract constrained MPEs, supports and observed accident prototypes."""
 
     cfg = _bn_config(config)
+    label_map = _theme_label_map(theme_dictionary)
     nodes = result.nodes
     data = matrix[nodes].to_numpy(dtype=np.int8)
     log_joint = _bn_log_joint(data, nodes, roles, result.edges, result.weights, result.upstream_probabilities, result.downstream_probabilities, float(cfg["probability_floor"]))
@@ -2506,12 +2330,6 @@ def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame
     scenario_rows = []
     support_rows = []
     prototype_rows = []
-    if len(nodes) > 20:
-        warnings.warn(
-            "Le MPE exact par élimination de variables peut être coûteux au-delà de 20 facteurs; "
-            "aucune approximation heuristique ne sera utilisée.",
-            RuntimeWarning,
-        )
     for state in range(result.n_states):
         best = _exact_constrained_mpe(result, roles, state)
         mpe_probability = _family_probability(result, best, state, config)
@@ -2525,8 +2343,8 @@ def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame
             candidate_indices = np.arange(len(matrix))
         prototype_index = max(candidate_indices, key=lambda index: _family_probability(result, dict(zip(nodes, data[index])), state, config))
         prototype_accident = str(matrix.iloc[prototype_index]["accident_id"])
-        scenario_rows.append({"family_id": state + 1, "N_eff": float(responsibilities[:, state].sum()), "omega": float(result.weights[state]), "A0_factors": ";".join(node for node in positive if roles[node] == "A0"), "A1_factors": ";".join(node for node in positive if roles[node] == "A1"), "B_factors": ";".join(node for node in positive if roles[node] == "B"), "C_factors": ";".join(node for node in positive if roles[node] == "C"), "mpe_probability": mpe_probability, "mpe_method": "exact_variable_elimination", "family_positive_support": family_support, "global_positive_support": global_support, "prototype_accident_id": prototype_accident, "prototype_probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "prototype_posterior_membership": float(responsibilities[prototype_index, state])})
-        support_rows.append({"family_id": state + 1, "positive_factors": ";".join(positive), "family_positive_support": family_support, "global_positive_support": global_support, "mpe_probability": mpe_probability, "mpe_method": "exact_variable_elimination"})
+        scenario_rows.append({"family_id": state + 1, "N_eff": float(responsibilities[:, state].sum()), "omega": float(result.weights[state]), "A0_factors": ";".join(node for node in positive if roles[node] == "A0"), "A1_factors": ";".join(node for node in positive if roles[node] == "A1"), "B_factors": ";".join(node for node in positive if roles[node] == "B"), "C_factors": ";".join(node for node in positive if roles[node] == "C"), "A0_labels": ";".join(label_map.get(node, node) for node in positive if roles[node] == "A0"), "A1_labels": ";".join(label_map.get(node, node) for node in positive if roles[node] == "A1"), "B_labels": ";".join(label_map.get(node, node) for node in positive if roles[node] == "B"), "C_labels": ";".join(label_map.get(node, node) for node in positive if roles[node] == "C"), "mpe_probability": mpe_probability, "mpe_method": "exact_local_factor_milp", "family_positive_support": family_support, "global_positive_support": global_support, "prototype_accident_id": prototype_accident, "prototype_probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "prototype_posterior_membership": float(responsibilities[prototype_index, state])})
+        support_rows.append({"family_id": state + 1, "positive_factors": ";".join(positive), "family_positive_support": family_support, "global_positive_support": global_support, "mpe_probability": mpe_probability, "mpe_method": "exact_local_factor_milp"})
         prototype_units = units[units["_accident_id"].astype(str).eq(prototype_accident)].copy()
         prototype_rows.append({"family_id": state + 1, "accident_id": prototype_accident, "probability": _family_probability(result, dict(zip(nodes, data[prototype_index])), state, config), "posterior_membership": float(responsibilities[prototype_index, state]), "fact_ids": ";".join(prototype_units["_fact_id"].astype(str)), "sentences": " || ".join(prototype_units.get("_text", pd.Series(dtype=str)).astype(str)[:20])})
     scenarios = pd.DataFrame(scenario_rows)
@@ -2539,12 +2357,138 @@ def extract_latent_bn_scenarios(result: StructuralEMResult, matrix: pd.DataFrame
     scenarios.to_csv(output_dir / "recurrent_scenarios.csv", index=False)
     supports.to_csv(output_dir / "scenario_support.csv", index=False)
     prototypes.to_csv(output_dir / "prototypes.csv", index=False)
+    _write_recurrent_scenarios_graph(scenarios, result, label_map, output_dir)
     return scenarios, supports, prototypes, profiles
 
 
-def write_final_bn_outputs(result: StructuralEMResult, output_dir: Path) -> None:
+def _short_semantic_label(label: str, max_length: int = 32) -> str:
+    text = re.sub(r"\s+", " ", str(label)).strip()
+    return text if len(text) <= max_length else text[: max_length - 1].rstrip() + "…"
+
+
+def _edge_conditional_strength(result: StructuralEMResult, parent: str, child: str) -> float:
+    parents = _bn_parent_map(result.nodes, result.edges)[child]
+    parent_position = parents.index(parent)
+    contrasts = []
+    other_positions = [index for index in range(len(parents)) if index != parent_position]
+    for other_values in itertools.product((0, 1), repeat=len(other_positions)):
+        parent_values = [0] * len(parents)
+        for index, value in zip(other_positions, other_values):
+            parent_values[index] = value
+        probabilities = []
+        for parent_value in (0, 1):
+            parent_values[parent_position] = parent_value
+            key_values = tuple(parent_values)
+            if result.roles[child] in {"A0", "A1"}:
+                probability = sum(
+                    float(result.weights[state])
+                    * float(result.upstream_probabilities.get((child, state, key_values), 0.5))
+                    for state in range(result.n_states)
+                )
+            else:
+                probability = float(result.downstream_probabilities.get((child, key_values), 0.5))
+            probabilities.append(probability)
+        contrasts.append(abs(probabilities[1] - probabilities[0]))
+    return float(np.mean(contrasts)) if contrasts else 0.0
+
+
+def _write_conceptual_bn_architecture(output_dir: Path) -> None:
+    try:
+        import matplotlib.pyplot as plt
+        import networkx as nx
+    except ImportError as error:
+        warnings.warn(f"Architecture conceptuelle non générée: {error}", RuntimeWarning)
+        return
+    graph = nx.DiGraph([
+        ("Z", "A0"), ("Z", "A1"), ("A0", "A1"),
+        ("A0", "B"), ("A1", "B"), ("B", "C"),
+    ])
+    positions = {"Z": (0.0, 1.0), "A0": (1.0, 1.5), "A1": (1.0, 0.5), "B": (2.0, 1.0), "C": (3.0, 1.0)}
+    labels = {"Z": "Z\nFamille latente", "A0": "A0\nContexte", "A1": "A1\nCondition adverse", "B": "B\nÉvénement", "C": "C\nConséquence"}
+    figure, axis = plt.subplots(figsize=(12, 5))
+    nx.draw_networkx(
+        graph,
+        positions,
+        labels=labels,
+        ax=axis,
+        node_color=[_role_color(node) for node in graph.nodes],
+        node_size=2800,
+        font_size=10,
+        arrows=True,
+        arrowsize=22,
+        edge_color="#555555",
+        width=2.0,
+    )
+    axis.set_title("Architecture conceptuelle du modèle bayésien latent")
+    axis.axis("off")
+    figure.tight_layout()
+    figure.savefig(output_dir / "conceptual_bn_architecture.png", dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def _write_simplified_learned_bn_graph(result: StructuralEMResult, label_map: Mapping[str, str], output_dir: Path) -> None:
+    try:
+        import matplotlib.pyplot as plt
+        import networkx as nx
+    except ImportError as error:
+        warnings.warn(f"Réseau appris simplifié non généré: {error}", RuntimeWarning)
+        return
+    graph = nx.DiGraph()
+    graph.add_nodes_from(result.nodes)
+    graph.add_edges_from(result.edges)
+    strengths = {(parent, child): _edge_conditional_strength(result, parent, child) for parent, child in result.edges}
+    max_strength = max(strengths.values(), default=1.0)
+    positions = {}
+    for role_index, role in enumerate(ROLES):
+        role_nodes = [node for node in result.nodes if result.roles[node] == role]
+        center = (len(role_nodes) - 1) / 2
+        for node_index, node in enumerate(sorted(role_nodes)):
+            positions[node] = (role_index, center - node_index)
+    labels = {node: _short_semantic_label(label_map.get(node, node)) for node in result.nodes}
+    figure, axis = plt.subplots(figsize=(18, max(9, len(result.nodes) * 0.22)))
+    nx.draw_networkx_nodes(
+        graph,
+        positions,
+        ax=axis,
+        node_color=[_role_color(result.roles[node]) for node in graph.nodes],
+        node_size=1700,
+        edgecolors="#444444",
+        linewidths=0.7,
+    )
+    nx.draw_networkx_labels(graph, positions, labels=labels, ax=axis, font_size=7)
+    nx.draw_networkx_edges(
+        graph,
+        positions,
+        ax=axis,
+        arrows=True,
+        arrowsize=16,
+        edge_color="#555555",
+        width=[1.0 + 4.0 * strengths[edge] / max_strength for edge in graph.edges],
+        connectionstyle="arc3,rad=0.03",
+    )
+    axis.set_title("Réseau appris simplifié — arcs observés entre facteurs")
+    axis.text(0.5, -0.04, "Épaisseur : contraste conditionnel moyen | aucune arête Z affichée", transform=axis.transAxes, ha="center", fontsize=9)
+    axis.axis("off")
+    figure.tight_layout()
+    figure.savefig(output_dir / "learned_bn_simplified.png", dpi=220, bbox_inches="tight")
+    plt.close(figure)
+
+
+def write_final_bn_outputs(result: StructuralEMResult, output_dir: Path, theme_dictionary: pd.DataFrame | None = None) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(result.edges, columns=["parent", "child"]).assign(parent_role=lambda frame: frame["parent"].map(result.roles), child_role=lambda frame: frame["child"].map(result.roles)).to_csv(output_dir / "learned_edges.csv", index=False)
+    label_map = _theme_label_map(theme_dictionary)
+    learned_edges = pd.DataFrame(result.edges, columns=["parent", "child"])
+    learned_edges["parent_role"] = learned_edges["parent"].map(result.roles)
+    learned_edges["child_role"] = learned_edges["child"].map(result.roles)
+    learned_edges["parent_label"] = learned_edges["parent"].map(lambda node: label_map.get(node, node))
+    learned_edges["child_label"] = learned_edges["child"].map(lambda node: label_map.get(node, node))
+    learned_edges["conditional_strength"] = [
+        _edge_conditional_strength(result, parent, child)
+        for parent, child in result.edges
+    ]
+    learned_edges.to_csv(output_dir / "learned_edges.csv", index=False)
+    _write_conceptual_bn_architecture(output_dir)
+    _write_simplified_learned_bn_graph(result, label_map, output_dir)
     rows = []
     parents = _bn_parent_map(result.nodes, result.edges)
     for node in result.nodes:
@@ -2566,7 +2510,9 @@ def write_final_bn_outputs(result: StructuralEMResult, output_dir: Path) -> None
             for index, node in enumerate(sorted(role_nodes)):
                 positions[node] = (role_index, -float(index))
         figure, axis = plt.subplots(figsize=(16, max(8, len(result.nodes) * 0.18)))
-        nx.draw_networkx(graph, positions, ax=axis, node_size=500, font_size=7, node_color=[_role_color(result.roles.get(node, "Z")) for node in graph.nodes], arrows=True)
+        label_map = _theme_label_map(theme_dictionary)
+        labels = {node: f"{node}\n{label_map.get(node, 'Famille latente')}" if node != "Z" else "Z\nFamille latente" for node in graph.nodes}
+        nx.draw_networkx(graph, positions, ax=axis, labels=labels, node_size=900, font_size=7, node_color=[_role_color(result.roles.get(node, "Z")) for node in graph.nodes], arrows=True)
         axis.axis("off")
         figure.tight_layout()
         figure.savefig(output_dir / "final_bn.png", dpi=220, bbox_inches="tight")
@@ -2583,9 +2529,24 @@ def run_frozen_bn_analysis(config: Mapping[str, Any], run_dir: Path, partition_s
     matrix, included, excluded, roles = build_frozen_bn_inputs(units, run_dir, partition_selections, config, output_dir)
     selected, selection = fit_latent_bn_analysis(matrix, roles, config, output_dir)
     final = finalize_latent_bn(selected, matrix, roles, config)
-    write_final_bn_outputs(final, output_dir)
-    scenarios, supports, prototypes, profiles = extract_latent_bn_scenarios(final, matrix, roles, units, config, output_dir)
+    write_final_bn_outputs(final, output_dir, included)
+    scenarios, supports, prototypes, profiles = extract_latent_bn_scenarios(final, matrix, roles, units, config, output_dir, included)
     return {"matrix": matrix, "theme_dictionary": included, "excluded_themes": excluded, "selection": selection, "result": final, "scenarios": scenarios, "supports": supports, "prototypes": prototypes, "profiles": profiles}
+
+
+def load_selected_configurations(run_dir: Path) -> dict[str, str]:
+    """Load role -> configuration_id from selected_configurations.csv."""
+    path = Path(run_dir) / "selected_configurations.csv"
+    if not path.is_file():
+        raise FileNotFoundError(f"selected_configurations.csv introuvable: {path}")
+    frame = pd.read_csv(path)
+    if not {"role", "configuration_id"}.issubset(frame.columns):
+        raise ValueError("selected_configurations.csv must contain role and configuration_id")
+    return {
+        str(row["role"]): str(row["configuration_id"])
+        for _, row in frame.iterrows()
+        if str(row["role"]) in ROLES and str(row["configuration_id"]).strip()
+    }
 
 
 def run_theme_discovery(
@@ -2596,17 +2557,19 @@ def run_theme_discovery(
     stage: str = "all",
     run_dir: Path | None = None,
 ) -> Path:
-    """Run the theme-discovery workflow.
+    """Run theme discovery with S_R selection and optional seed sensitivity.
 
-    ``metrics`` computes or reuses candidate and resampling metrics,
-    ``pareto`` regenerates only the Pareto selection from an existing run,
-    and ``all`` performs both stages. Partition selection is manual and occurs
-    in the results notebook.
+    Stages:
+    - ``metrics``: candidate ``D_U`` and accident-level ``S_R``;
+    - ``select``: argmax ``S_R`` (+ ``D_U`` tie-break), materialize partitions, figures;
+    - ``seed``: UMAP seed sensitivity for selected configurations;
+    - ``all``: metrics then select then seed.
     """
-    if stage not in {"all", "metrics", "pareto"}:
-        raise ValueError("stage must be one of: all, metrics, pareto")
-    if stage == "pareto" and run_dir is None:
-        raise ValueError("run_dir is required when stage='pareto'")
+    if stage not in {"all", "metrics", "select", "seed"}:
+        raise ValueError("stage must be one of: all, metrics, select, seed")
+    if stage in {"select", "seed"} and run_dir is None:
+        # Allow omitting run_dir when output_dir already exists from config.
+        pass
 
     raw_config = select_dataset_config(load_yaml_config(config_path), dataset_id)
     config = resolve_config_paths(raw_config, config_path)
@@ -2615,10 +2578,17 @@ def run_theme_discovery(
         output_base = Path(run_dir).expanduser().resolve()
     else:
         output_base = Path(config["data"]["output_dir"])
-        if output_base.exists() and any(output_base.iterdir()) and not config.get("runtime", {}).get("overwrite", False):
-            output_base = output_base.with_name(output_base.name + "_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
+        if (
+            stage in {"all", "metrics"}
+            and output_base.exists()
+            and any(output_base.iterdir())
+            and not config.get("runtime", {}).get("overwrite", False)
+        ):
+            output_base = output_base.with_name(
+                output_base.name + "_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            )
 
-    if stage == "pareto" and not output_base.is_dir():
+    if stage in {"select", "seed"} and not output_base.is_dir():
         raise FileNotFoundError(f"Existing run directory not found: {output_base}")
     output_base.mkdir(parents=True, exist_ok=True)
     _log_progress(
@@ -2626,7 +2596,7 @@ def run_theme_discovery(
         f"output={output_base} workers={resolve_n_workers(config)}"
     )
 
-    if stage != "pareto":
+    if stage in {"all", "metrics"}:
         (output_base / "config_resolved.yaml").write_text(
             yaml.safe_dump(config, sort_keys=False, allow_unicode=True), encoding="utf-8"
         )
@@ -2641,13 +2611,9 @@ def run_theme_discovery(
         )
 
     candidate_tables: dict[str, pd.DataFrame] = {}
-    stability_themes: dict[str, pd.DataFrame] = {}
-    stability_summaries: dict[str, pd.DataFrame] = {}
-    selections: dict[str, str] = {}
-    selection_tables: dict[str, pd.DataFrame] = {}
-    agreements: dict[str, pd.DataFrame] = {}
-
+    theme_tables: dict[str, pd.DataFrame] = {}
     prepared: PreparedData | None = None
+
     if stage in {"all", "metrics"}:
         prepared = prepare_data(config, output_base)
         _log_progress(
@@ -2655,106 +2621,148 @@ def run_theme_discovery(
             f"{prepared.units['_accident_id'].nunique()} accidents"
         )
         for role in ROLES:
-            candidates = evaluate_pareto_candidates(
+            candidates = evaluate_candidates(
                 role, prepared.units, prepared.embeddings, config, output_base, reestimate=reestimate
             )
             theme_frame, summary = evaluate_resampling_stability(
                 role, prepared.units, prepared.embeddings, config, output_base, candidates, reestimate=reestimate
             )
-            merged = candidates.merge(summary, on=["role", "configuration_id"], how="left")
-            candidate_tables[role] = merged
-            stability_themes[role] = theme_frame
-            stability_summaries[role] = summary
-    else:
+            candidate_tables[role] = candidates.merge(summary, on=["role", "configuration_id"], how="left")
+            theme_tables[role] = theme_frame
+    elif stage in {"select", "seed"}:
         for role in ROLES:
-            candidate_path = output_base / "pareto" / role / "candidate_metrics.csv"
-            stability_path = output_base / "pareto" / role / "stability_summary.csv"
+            role_dir = _discovery_role_dir(output_base, role)
+            candidate_path = role_dir / "candidate_metrics.csv"
+            stability_path = role_dir / "stability_summary.csv"
+            theme_path = role_dir / "stability_theme.csv"
             missing = [str(path) for path in (candidate_path, stability_path) if not path.is_file()]
             if missing:
                 raise FileNotFoundError(
-                    "Cannot run Pareto-only stage; missing metric artifacts: " + ", ".join(missing)
+                    "Cannot run select/seed stage; missing metric artifacts: " + ", ".join(missing)
                 )
             candidates = pd.read_csv(candidate_path)
             summary = pd.read_csv(stability_path)
             required = {"role", "configuration_id"}
             if not required.issubset(candidates.columns) or not required.issubset(summary.columns):
-                raise ValueError(f"Invalid cached metric tables for role {role}: missing role/configuration_id")
+                raise ValueError(f"Invalid cached metric tables for role {role}")
             candidate_tables[role] = candidates.merge(summary, on=["role", "configuration_id"], how="left")
-            stability_summaries[role] = summary
+            theme_tables[role] = pd.read_csv(theme_path) if theme_path.is_file() else pd.DataFrame()
 
     if stage == "metrics":
         _log_progress(f"DONE stage=metrics output={output_base}")
         return output_base
 
-    _log_progress("Pareto: sélection des partitions non-dominées par rôle")
-    for role in ROLES:
-        merged = candidate_tables[role]
-        table, agreement, selected_id = select_pareto_partitions(
-            role,
-            merged,
-            output_base,
-        )
-        selection_tables[role] = table
-        agreements[role] = agreement
-        selections[role] = selected_id
-    pareto_frontiers = []
-    for role in ROLES:
-        table = selection_tables.get(role, pd.DataFrame())
-        if table.empty:
-            continue
-        frontier = table[table["pareto_non_dominated"].fillna(False)].copy()
-        if not frontier.empty:
-            pareto_frontiers.append(_ordered_pareto_export(frontier))
-    if pareto_frontiers:
-        pd.concat(pareto_frontiers, ignore_index=True).to_csv(
-            output_base / "pareto_frontier_all_roles.csv", index=False
-        )
-    write_pareto_figure(selection_tables, output_base / "figures")
-    summary_rows = []
-    for role in ROLES:
-        table = selection_tables.get(role, pd.DataFrame())
-        summary_rows.append({
-            "Role": role,
-            "n_candidates": int(len(table)),
-            "n_pareto": int(table["pareto_non_dominated"].sum()) if not table.empty else 0,
-        })
-    pareto_summary = pd.DataFrame(summary_rows)
-    pareto_summary.to_csv(output_base / "pareto_selection_summary.csv", index=False)
-    selected_metrics = pareto_summary
-    _log_progress("métriques des configurations Pareto retenues:\n" + selected_metrics.to_string(index=False))
-    if stage == "manual_selection" and prepared is not None:
-        _log_progress("matérialisation: thèmes sélectionnés et dictionnaire")
-        partition_results = build_selected_partition_results(
-            prepared, config, output_base, selections, stability_themes
-        )
-        topic_dictionary = build_topic_dictionary(prepared, partition_results, config, output_base / "topics")
-        pd.DataFrame([{"role": role, "configuration_id": selections[role]} for role in ROLES]).to_csv(
-            output_base / "selected_configurations.csv", index=False
-        )
+    selection_tables: dict[str, pd.DataFrame] = {}
+    selections: dict[str, str] = {}
+
+    if stage in {"all", "select"}:
+        if prepared is None:
+            prepared = prepare_data(config, output_base)
+        _log_progress("Sélection: argmax S_R par rôle (tie-break D_U)")
+        selected_rows = []
+        for role in ROLES:
+            table, selected_id = select_configuration_by_stability(candidate_tables[role])
+            if not selected_id:
+                raise RuntimeError(f"Aucune configuration sélectionnable pour le rôle {role}")
+            selection_tables[role] = table
+            selections[role] = selected_id
+            table.to_csv(_discovery_role_dir(output_base, role) / "selection_table.csv", index=False)
+            materialize_selected_partition(
+                role, prepared.units, selected_id, output_base, theme_tables.get(role)
+            )
+            write_factor_stability_figure(
+                role,
+                theme_tables.get(role, pd.DataFrame()),
+                selected_id,
+                output_base / "figures",
+            )
+            row = table.loc[table["configuration_id"].astype(str).eq(selected_id)].iloc[0].to_dict()
+            selected_rows.append({
+                "role": role,
+                "configuration_id": selected_id,
+                "stability": row.get("stability"),
+                "dbcv_umap": row.get("dbcv_umap"),
+                "n_clusters": row.get("n_clusters"),
+                "noise_fraction": row.get("noise_fraction"),
+                "coverage": row.get("coverage"),
+                **{key: row.get(key) for key in PARAMETER_KEYS},
+            })
+            _log_progress(f"[{role}] sélectionné {selected_id} (S_R={row.get('stability')})")
+        selected_frame = pd.DataFrame(selected_rows)
+        selected_frame.to_csv(output_base / "selected_configurations.csv", index=False)
+        write_stability_landscape_figure(selection_tables, output_base / "figures")
         (output_base / "theme_discovery_manifest.json").write_text(
             json.dumps({
-                "version": "parallel_du_sr_discovery_v1",
+                "version": "sr_selection_seed_sensitivity_v1",
                 "dataset_id": config["data"].get("dataset_id"),
-                "selection_objectives": ["dbcv_umap", "stability"],
-                "n_workers": resolve_n_workers(config),
-                "n_topics": int(len(topic_dictionary)),
+                "selection_metric": "stability",
+                "tie_breaker": "dbcv_umap",
                 "selected_configurations": selections,
+                "n_workers": resolve_n_workers(config),
             }, indent=2),
             encoding="utf-8",
         )
+    else:
+        selections = load_selected_configurations(output_base)
+        for role in ROLES:
+            selection_tables[role] = candidate_tables[role]
+
+    if stage == "select":
+        _log_progress(f"DONE stage=select output={output_base}")
+        return output_base
+
+    # seed stage
+    if prepared is None:
+        prepared = prepare_data(config, output_base)
+    validation_cfg = _validation_config(config)
+    if bool(validation_cfg["seed_sensitivity"].get("enabled", True)):
+        _log_progress("Seed sensitivity sur les configurations sélectionnées")
+        for role in ROLES:
+            configuration_id = selections[role]
+            table = candidate_tables[role]
+            row = table.loc[table["configuration_id"].astype(str).eq(configuration_id)]
+            if row.empty:
+                raise ValueError(f"Configuration sélectionnée introuvable dans les candidats: {role}/{configuration_id}")
+            evaluate_seed_sensitivity(
+                role,
+                prepared.units,
+                prepared.embeddings,
+                config,
+                output_base,
+                configuration_id,
+                row.iloc[0].to_dict(),
+                reestimate=reestimate,
+            )
     _log_progress(f"DONE stage={stage} output={output_base}")
     return output_base
 
 
 __all__ = [
-    "ROLES", "PreparedData", "PartitionResult", "StructuralEMResult", "load_yaml_config",
-    "select_dataset_config", "resolve_config_paths", "prepare_data", "parameter_plan",
+    "ROLES",
+    "PreparedData",
+    "PartitionResult",
+    "StructuralEMResult",
+    "load_yaml_config",
+    "select_dataset_config",
+    "resolve_config_paths",
+    "prepare_data",
+    "parameter_plan",
+    "load_topic_stopwords",
     "build_topic_dictionary",
-    "build_accident_topic_matrix", "descriptive_tables", "build_frozen_bn_inputs",
-    "fit_latent_bn_analysis", "finalize_latent_bn", "extract_latent_bn_scenarios",
-    "run_frozen_bn_analysis", "run_theme_discovery", "resolve_n_workers",
-    "screen_clustering_parameters", "mark_admissible_configurations", "resolve_admissibility_rules", "load_topic_stopwords",
-    "select_admissible_parameter_combinations", "write_screening_figures",
-    "evaluate_pareto_candidates", "evaluate_resampling_stability",
-    "select_pareto_partitions", "build_selected_partition_results", "write_pareto_figure",
+    "build_frozen_bn_inputs",
+    "load_selected_configurations",
+    "fit_latent_bn_analysis",
+    "finalize_latent_bn",
+    "extract_latent_bn_scenarios",
+    "write_final_bn_outputs",
+    "run_frozen_bn_analysis",
+    "run_theme_discovery",
+    "resolve_n_workers",
+    "evaluate_candidates",
+    "evaluate_pareto_candidates",
+    "evaluate_resampling_stability",
+    "select_configuration_by_stability",
+    "materialize_selected_partition",
+    "evaluate_seed_sensitivity",
+    "write_stability_landscape_figure",
 ]

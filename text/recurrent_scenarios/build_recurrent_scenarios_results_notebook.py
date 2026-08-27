@@ -1,4 +1,4 @@
-"""Build the post-run results notebook for recurrent-accident discovery."""
+"""Build post-run results notebooks for recurrent-accident discovery (one per corpus)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
-NOTEBOOK_PATH = ROOT / "notebooks" / "topic_modeling_results.ipynb"
+NOTEBOOK_DIR = ROOT / "notebooks"
+DATASETS = ("caou", "btp", "metallurgie")
 
 
 def markdown(text: str) -> dict:
@@ -18,19 +19,25 @@ def code(text: str) -> dict:
     return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": [line + "\n" for line in text.strip().splitlines()]}
 
 
-cells = [
+def build_cells(dataset_id: str) -> list[dict]:
+    return [
     markdown(
-        """
-# Recurrent accident scenarios — results notebook
+        f"""
+# Recurrent accident scenarios — results notebook ({dataset_id})
 
-This notebook reads a completed run and does not rerun the discovery pipeline.
-The run directory, the number of representative sentences, the role prompts,
-the OpenAI model and the two-dimensional UMAP settings are editable in the
-configuration cell below.
+This notebook starts after theme discovery (`run_theme_discovery.py`) for corpus
+`{dataset_id}`. It does not rerun UMAP, HDBSCAN, resampling or configuration selection.
+
+1. Load `selected_configurations.csv` produced by the discovery job.
+2. Build the topic dictionary and optional LLM labels on the frozen partition.
+3. Continue with `recurrent_scenarios_bn_analysis_{dataset_id}.ipynb`.
+
+Editable below: representative sentences, role prompts, OpenAI model,
+and 2-D UMAP display settings. The run directory is fixed to this corpus.
         """
     ),
     code(
-        """
+        f"""
 from pathlib import Path
 import json
 import os
@@ -74,10 +81,9 @@ try:
 except ImportError:
     warnings.warn("python-dotenv n'est pas installé; les variables d'environnement existantes seront utilisées.")
 
-# Use either an absolute path or a path relative to this project directory.
-# Examples: "runs/theme_discovery_audit/caou" or
-# "runs/theme_discovery_audit/caou/audit_caou_20260812T150807Z".
-RUN_DIRECTORY = "runs/theme_discovery_audit/caou"
+DATASET_ID = {dataset_id!r}
+DISCOVERY_RUN_NAME = "theme_discovery_audit"
+RUN_DIRECTORY = f"runs/{{DISCOVERY_RUN_NAME}}/{{DATASET_ID}}"
 OPENAI_ENABLED = True
 OPENAI_MODEL = "gpt-4o-mini"
 LLM_OUTPUT_LANGUAGE = "Français"
@@ -90,12 +96,12 @@ UMAP_2D_RANDOM_STATE = 42
 MAX_POINTS_PER_ROLE_PLOT = 12000
 print("OPENAI_API_KEY disponible :", bool(os.environ.get("OPENAI_API_KEY")))
 
-ROLE_PROMPTS = {
+ROLE_PROMPTS = {{
     "A0": '''Vous analysez des thèmes d'accidents du travail décrivant le contexte de travail, l'activité, le lieu, les équipements ou l'environnement opérationnel. Donnez à chaque thème un intitulé court et naturel. Ne décrivez pas la conséquence de l'accident et n'inventez aucune information absente des exemples.''',
     "A1": '''Vous analysez des thèmes d'accidents du travail décrivant des conditions défavorables, des dangers, des situations dangereuses, des protections absentes ou des équipements défectueux. Donnez à chaque thème un intitulé court et naturel. Ne décrivez pas l'événement ou la blessure, sauf si cela est nécessaire pour distinguer la condition défavorable.''',
     "B": '''Vous analysez des thèmes d'accidents du travail décrivant l'événement, la déviation, la perte de contrôle ou le mécanisme de l'accident. Donnez à chaque thème un intitulé court et naturel. Concentrez-vous sur ce qui s'est produit, et non uniquement sur le contexte de travail ou la blessure finale.''',
     "C": '''Vous analysez des thèmes d'accidents du travail décrivant les conséquences, les blessures, les parties du corps touchées ou les dommages. Donnez à chaque thème un intitulé court et naturel. Concentrez-vous sur la conséquence observée plutôt que sur sa cause.''',
-}
+}}
 
 def resolve_run_directory(value):
     requested = Path(value).expanduser()
@@ -110,17 +116,18 @@ def resolve_run_directory(value):
     for candidate in candidates:
         if candidate.is_dir():
             return candidate.resolve()
-    searched = "\\n".join(f"- {candidate.resolve()}" for candidate in candidates)
+    searched = "\\n".join(f"- {{candidate.resolve()}}" for candidate in candidates)
     available = sorted(path.name for path in (SCENARIO_DIR / "runs").glob("**/*") if path.is_dir())
     available_text = ", ".join(available[-20:]) if available else "aucun dossier de run trouvé"
     raise FileNotFoundError(
-        f"Run directory not found for RUN_DIRECTORY={value!r}.\\n"
-        f"Paths searched:\\n{searched}\\n"
-        f"Recent run directories: {available_text}"
+        f"Run directory not found for RUN_DIRECTORY={{value!r}}.\\n"
+        f"Paths searched:\\n{{searched}}\\n"
+        f"Recent run directories: {{available_text}}"
     )
 
 RUN_DIR = resolve_run_directory(RUN_DIRECTORY)
 ROLES = ("A0", "A1", "B", "C")
+print("Dataset:", DATASET_ID)
 print("Scenario directory:", SCENARIO_DIR)
 print("Run directory:", RUN_DIR)
         """
@@ -179,7 +186,7 @@ config.setdefault("topics", {})["top_sentences"] = max(
 )
 display(pd.DataFrame([{
     "dataset": manifest.get("dataset_id", config.get("data", {}).get("dataset_id")),
-    "selection_objectives": ", ".join(manifest.get("selection_objectives", ["dbcv_umap", "stability"])),
+    "selection_metric": manifest.get("selection_metric", "stability"),
     "n_workers": parallel.get("n_workers", manifest.get("n_workers")),
     "slurm_cpus_per_task": parallel.get("slurm_cpus_per_task"),
     "backend": parallel.get("backend"),
@@ -190,117 +197,78 @@ if summary_path.is_file():
     display(pd.read_csv(summary_path))
         """
     ),
-    markdown("## 2. Pareto candidates"),
+    markdown("## 2. Selected configurations"),
     code(
         """
-selection_rows = []
-for role in ROLES:
-    path = RUN_DIR / "pareto" / role / "pareto_frontier.csv"
-    if path.is_file():
-        print(f"{role} — Pareto frontier")
-        frontier = pd.read_csv(path)
-        chosen_ids = []
-        frontier_ids = set(frontier["configuration_id"].astype(str))
-        selection_rows.extend(
-            {
-                "role": role,
-                "configuration_id": chosen_id,
-                "is_pareto_candidate": chosen_id in frontier_ids,
-            }
-            for chosen_id in chosen_ids
-        )
-        display(frontier)
-        print()
-selection_check = pd.DataFrame(selection_rows)
-display(selection_check)
-if False and (
-    selection_check.empty
-    or set(selection_check["role"]) != set(ROLES)
-    or not selection_check["is_pareto_candidate"].all()
-):
-    raise ValueError(
-        "PARTITION_SELECTIONS doit contenir au moins un configuration_id Pareto valide pour chaque rôle."
-    )
+selected_path = RUN_DIR / "selected_configurations.csv"
+if selected_path.is_file():
+    display(pd.read_csv(selected_path))
+else:
+    raise FileNotFoundError("selected_configurations.csv manquant — lancer le job discovery (stage select/all).")
         """
     ),
     markdown(
         """
 ## 3. Validation landscapes
 
-The figures show dominated configurations and the Pareto frontier in the
-(D_U, S_R) plane. The axes are UMAP-space DBCV and accident-level
-resampling stability; the plot contains only the fixed extraction strategy.
+The figures show all candidates in the (D_U, S_R) plane and highlight the
+configuration maximizing S_R. Factor-level resampling and seed-sensitivity
+figures are shown when present.
         """
     ),
     code(
         """
-figure_path = RUN_DIR / "figures" / "pareto_validation_all_roles.png"
+figure_path = RUN_DIR / "figures" / "stability_landscape_all_roles.png"
 if figure_path.is_file():
     display(Image(filename=str(figure_path)))
 for role in ROLES:
-    figure_path = RUN_DIR / "figures" / f"pareto_validation_{role}.png"
-    if figure_path.is_file():
-        display(Image(filename=str(figure_path)))
+    for name in (f"factor_resampling_{role}.png",):
+        figure_path = RUN_DIR / "figures" / name
+        if figure_path.is_file():
+            display(Image(filename=str(figure_path)))
+    seed_fig = RUN_DIR / "discovery" / role / "seed_sensitivity" / f"seed_sensitivity_{role}.png"
+    if seed_fig.is_file():
+        display(Image(filename=str(seed_fig)))
         """
     ),
     markdown("## 4. Candidate diagnostics and stability"),
+
     code(
         """
 for role in ROLES:
-    metrics_path = RUN_DIR / "pareto" / role / "candidate_metrics.csv"
-    stability_path = RUN_DIR / "pareto" / role / "stability_summary.csv"
-    theme_path = RUN_DIR / "pareto" / role / "stability_theme.csv"
+    metrics_path = RUN_DIR / "discovery" / role / "candidate_metrics.csv"
+    stability_path = RUN_DIR / "discovery" / role / "stability_summary.csv"
+    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
     print(f"### {role}")
-    frontier_path = RUN_DIR / "pareto" / role / "pareto_frontier.csv"
+    frontier_path = RUN_DIR / "discovery" / role / "selection_table.csv"
     if frontier_path.is_file():
-        pareto = pd.read_csv(frontier_path)
-        if "pareto_non_dominated" in pareto.columns:
-            is_nondominated = pareto["pareto_non_dominated"].astype(str).str.lower().isin({"true", "1", "yes"})
-            pareto = pareto.loc[is_nondominated].copy()
-        pareto = pareto.sort_values("coverage", ascending=False, na_position="last")
-        print("Pareto non-dominated candidates — sorted by coverage (descending)")
-        display(pareto)
+        selection = pd.read_csv(frontier_path).sort_values(["stability", "dbcv_umap"], ascending=False)
+        print("configuration search (selected flagged)")
+        display(selection.head(20))
     elif metrics_path.is_file():
-        # Fallback for runs created before pareto_frontier.csv was exported.
+        # Fallback if selection_table is missing.
         metrics = pd.read_csv(metrics_path)
         if stability_path.is_file():
             metrics = metrics.merge(pd.read_csv(stability_path), on=["role", "configuration_id"], how="left")
-        display(metrics.sort_values("coverage", ascending=False, na_position="last"))
+        display(metrics.sort_values("stability", ascending=False, na_position="last"))
     if theme_path.is_file():
-        print("Theme-level median Jaccard stability")
-        display(pd.read_csv(theme_path).sort_values(["configuration_id", "theme_stability"], ascending=[True, False]))
+        print("Theme-level mean Jaccard stability (S_ck) and observability")
+        themes = pd.read_csv(theme_path)
+        cols = [c for c in ["configuration_id", "cluster_label", "theme_stability", "observability"] if c in themes.columns]
+        display(themes.sort_values(["configuration_id", "theme_stability"], ascending=[True, False])[cols])
         """
     ),
     code(
         """
-# Choose one or more Pareto configurations per role after inspecting sections 2--4.
-PARTITION_SELECTIONS = {
-    "A0": [],  # Example: ["A0_cfg_005", "A0_cfg_012"]
-    "A1": [],  # Example: ["A1_cfg_033"]
-    "B": [],   # Example: ["B_cfg_029", "B_cfg_041"]
-    "C": [],   # Example: ["C_cfg_015"]
-}
-PARTITION_SELECTION = {role: (values[0] if values else "") for role, values in PARTITION_SELECTIONS.items()}
+if str(SCENARIO_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIO_DIR))
+from scenario_pipeline import load_selected_configurations
 
-selection_rows = []
-for role in ROLES:
-    frontier_path = RUN_DIR / "pareto" / role / "pareto_frontier.csv"
-    frontier = pd.read_csv(frontier_path) if frontier_path.is_file() else pd.DataFrame()
-    frontier_ids = set(frontier.get("configuration_id", pd.Series(dtype=str)).astype(str))
-    for configuration_id in PARTITION_SELECTIONS.get(role, []):
-        selection_rows.append({
-            "role": role,
-            "configuration_id": str(configuration_id),
-            "is_pareto_candidate": str(configuration_id) in frontier_ids,
-        })
-selection_check = pd.DataFrame(selection_rows)
+PARTITION_SELECTION = load_selected_configurations(RUN_DIR)
+PARTITION_SELECTIONS = {role: [PARTITION_SELECTION[role]] for role in ROLES}
+selection_check = pd.read_csv(RUN_DIR / "selected_configurations.csv")
 display(selection_check)
-if (
-    selection_check.empty
-    or set(selection_check["role"]) != set(ROLES)
-    or not selection_check["is_pareto_candidate"].all()
-):
-    raise ValueError("PARTITION_SELECTIONS doit contenir au moins un configuration_id Pareto valide pour chaque rôle.")
+print("Frozen partitions:", PARTITION_SELECTION)
         """
     ),
     markdown("## 5. Frozen themes and audit dictionary"),
@@ -310,12 +278,11 @@ if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_units
 
-missing_selection_roles = [role for role in ROLES if not PARTITION_SELECTIONS.get(role)]
+missing_selection_roles = [role for role in ROLES if role not in PARTITION_SELECTION]
 if missing_selection_roles:
     raise ValueError(
-        "Renseigne PARTITION_SELECTIONS avant cette cellule pour les rôles : "
+        "selected_configurations.csv incomplet pour : "
         + ", ".join(missing_selection_roles)
-        + ". Utilise les configuration_id présents dans pareto_frontier.csv."
     )
 
 units, _ = load_units(config)
@@ -328,10 +295,14 @@ manual_results = {}
 partition_frames = {}
 for role in ROLES:
     configuration_id = str(PARTITION_SELECTION[role])
-    labels_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_labels.npy"
-    strength_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy"
+    selected_dir = RUN_DIR / "discovery" / role / "selected"
+    labels_path = selected_dir / "labels.npy"
+    strength_path = selected_dir / "membership_strength.npy"
     if not labels_path.is_file() or not strength_path.is_file():
-        raise FileNotFoundError(f"Missing candidate artifacts for {role}/{configuration_id}")
+        labels_path = RUN_DIR / "discovery" / role / "candidate_partitions" / f"{configuration_id}_labels.npy"
+        strength_path = RUN_DIR / "discovery" / role / "candidate_partitions" / f"{configuration_id}_membership_strength.npy"
+    if not labels_path.is_file() or not strength_path.is_file():
+        raise FileNotFoundError(f"Missing selected/candidate artifacts for {role}/{configuration_id}")
     role_units = units[units["_role"].astype(str).eq(role)].reset_index(drop=True)
     assignments = role_units[["_accident_id", "_fact_id", "_text"]].copy()
     assignments.rename(
@@ -363,19 +334,13 @@ for role in ROLES:
         replications=pd.DataFrame(),
     )
 
-    for candidate_id in [str(value) for value in PARTITION_SELECTIONS[role]]:
-        candidate_labels_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{candidate_id}_labels.npy"
-        candidate_strength_path = RUN_DIR / "pareto" / role / "candidate_partitions" / f"{candidate_id}_membership_strength.npy"
-        candidate_labels = np.load(candidate_labels_path).astype(int)
-        candidate_strength = np.load(candidate_strength_path).astype(float)
-        if len(candidate_labels) != len(assignments) or len(candidate_strength) != len(assignments):
-            raise ValueError(f"Label/assignment mismatch for {role}/{candidate_id}")
-        candidate_frame = assignments[["accident_id", "fact_id", "sentence"]].copy()
-        candidate_frame["Topic"] = candidate_labels
-        candidate_frame["membership_strength"] = candidate_strength
-        candidate_frame["partition_id"] = candidate_id
-        candidate_frame["role"] = role
-        partition_frames[(role, candidate_id)] = candidate_frame
+    candidate_id = configuration_id
+    candidate_frame = assignments[["accident_id", "fact_id", "sentence"]].copy()
+    candidate_frame["Topic"] = labels
+    candidate_frame["membership_strength"] = strengths
+    candidate_frame["partition_id"] = candidate_id
+    candidate_frame["role"] = role
+    partition_frames[(role, candidate_id)] = candidate_frame
 
 prepared_manual = PreparedData(units=units, embeddings=embeddings, input_summary=pd.DataFrame())
 topics = build_topic_dictionary(prepared_manual, manual_results, config, RUN_DIR / "topics_manual")
@@ -406,7 +371,7 @@ representative_lookup = primary_representatives.groupby("topic_id")["sentence"].
 topics["representative_sentences"] = topics["topic_id"].map(representative_lookup).fillna(topics.get("representative_sentences", ""))
 topics.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary.csv", index=False)
 
-# Build a catalog for every selected Pareto partition. The configuration ID is
+# Build a catalog for every selected partition. The configuration ID is
 # part of the topic identity for labels and plots because topic numbers can be
 # reused by different partitions.
 topic_catalog_rows = []
@@ -442,7 +407,7 @@ for role in ROLES:
 ## 6. Membership-strength distributions
 
 These scores are HDBSCAN membership strengths, not posterior probabilities.
-They are shown for every selected Pareto partition. The histogram describes
+They are shown for every selected partition. The histogram describes
 the distribution over units, while the horizontal barplot compares the maximum,
 mean and median strength for each topic. Noise units are excluded from topic
 summaries but remain visible in the diagnostic count.
@@ -480,8 +445,8 @@ for (role, configuration_id), frame in partition_frames.items():
     plot_summary = summary.sort_values("max_strength", ascending=True)
     positions = np.arange(len(plot_summary))
     axes[1].barh(positions, plot_summary["max_strength"], color="#F28E2B", alpha=0.85, label="Maximum")
-    axes[1].scatter(plot_summary["mean_strength"], positions, color="#4C78A8", s=28, label="Moyenne", zorder=3)
-    axes[1].scatter(plot_summary["median_strength"], positions, color="#59A14F", s=28, label="Médiane", zorder=3)
+    axes[1].scatter(plot_summary["mean_strength"], positions, color="#4C78A8", s=28, label="Mean", zorder=3)
+    axes[1].scatter(plot_summary["median_strength"], positions, color="#59A14F", s=28, label="Median", zorder=3)
     axes[1].set_yticks(positions)
     axes[1].set_yticklabels([f"Topic {int(topic)}" for topic in plot_summary.index])
     axes[1].set_xlim(0, 1)
@@ -968,14 +933,14 @@ for role in ROLES:
     code(
         """
 outputs = [
-    "config_resolved.yaml", "parallel_runtime.json", "pareto_selection_summary.csv",
-    "figures/pareto_validation_all_roles.png", "figures/umap_topics_2d_A0.png",
+    "config_resolved.yaml", "parallel_runtime.json", "selected_configurations.csv",
+    "figures/stability_landscape_all_roles.png", "figures/umap_topics_2d_A0.png",
     "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
     "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
     "topics_manual/topic_dictionary_all_selected.csv", "topics_manual/representatives_by_membership.csv",
     "topics_manual/llm_theme_labels.csv", "topics_manual/topic_dictionary_with_llm_labels.csv",
-    "pareto/A0/candidate_partitions/<configuration_id>_labels.npy",
-    "pareto/A0/candidate_partitions/<configuration_id>_membership_strength.npy",
+    "discovery/A0/candidate_partitions/<configuration_id>_labels.npy",
+    "discovery/A0/candidate_partitions/<configuration_id>_membership_strength.npy",
 ]
 display(pd.DataFrame({"path": outputs, "exists": [(RUN_DIR / path).exists() for path in outputs]}))
         """
@@ -983,21 +948,35 @@ display(pd.DataFrame({"path": outputs, "exists": [(RUN_DIR / path).exists() for 
 ]
 
 
-NOTEBOOK_PATH.parent.mkdir(parents=True, exist_ok=True)
-NOTEBOOK_PATH.write_text(
-    json.dumps(
-        {
-            "cells": cells,
-            "metadata": {
-                "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
-                "language_info": {"name": "python", "version": "3.10"},
-            },
-            "nbformat": 4,
-            "nbformat_minor": 5,
+def build_notebook(dataset_id: str) -> dict:
+    return {
+        "cells": build_cells(dataset_id),
+        "metadata": {
+            "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+            "language_info": {"name": "python", "version": "3.10"},
         },
-        ensure_ascii=False,
-        indent=1,
-    ),
-    encoding="utf-8",
-)
-print(f"Notebook written: {NOTEBOOK_PATH}")
+        "nbformat": 4,
+        "nbformat_minor": 5,
+    }
+
+
+def main() -> None:
+    NOTEBOOK_DIR.mkdir(parents=True, exist_ok=True)
+    for dataset_id in DATASETS:
+        path = NOTEBOOK_DIR / f"topic_modeling_results_{dataset_id}.ipynb"
+        path.write_text(
+            json.dumps(build_notebook(dataset_id), ensure_ascii=False, indent=1),
+            encoding="utf-8",
+        )
+        print(f"Notebook written: {path}")
+    # Keep a generic alias pointing at the default corpus for discoverability.
+    alias = NOTEBOOK_DIR / "topic_modeling_results.ipynb"
+    alias.write_text(
+        json.dumps(build_notebook("caou"), ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
+    print(f"Notebook written: {alias} (alias caou)")
+
+
+if __name__ == "__main__":
+    main()

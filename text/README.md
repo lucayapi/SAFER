@@ -39,6 +39,7 @@ Variables d'environnement : `HF_TOKEN` ou `HUGGING_FACE_HUB_TOKEN` dans `.env` (
 | `bn_pipeline/` | Réseaux bayésiens (pgmpy, exports SCGM) |
 | `macro_transfer/` | Transfert macro-guidé + topics intra-macro (cible test) |
 | `annotation/` | Annotation unités factuelles via API OpenAI (notebook + cache JSONL + prompt caching) |
+| `recurrent_scenarios/` | Scénarios récurrents : UMAP–HDBSCAN + Pareto → BN latent \(Z\) → MPE (`README.md` dédié) |
 | `scripts/` | CLI entraînement, export, évaluation, agrégation |
 | `jobs/` | Scripts SLURM Mésocentre |
 | `notebooks/` | Analyse (**.ipynb gitignored**, régénération locale via `scripts/build_*.py`) |
