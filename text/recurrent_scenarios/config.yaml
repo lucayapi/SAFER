@@ -52,20 +52,30 @@ screening:
     metric: euclidean
     prediction_data: true
 
-# Accident-level reproducibility selection (S_R) with DBCV as diagnostic / tie-break.
+# Accident-level reproducibility + DBCV; final pick via Pareto then semantic evaluators.
 validation:
   random_state: 42
   resampling_fraction: 0.8
   n_resampling: 30
   # Full DBCV is quadratic; null = exact role calculation.
   dbcv_sample_size: null
-  selection_metric: stability
-  tie_breaker: dbcv_umap
+  selection_metric: pareto_semantic
+  tie_breaker: stability_then_dbcv
   show_progress: true
   seed_sensitivity:
     enabled: true
     # Alternative UMAP seeds; primary seed remains validation.random_state / random_state.
     seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  # Blinded semantic evaluation of Pareto-supported partitions (evaluator_1 / evaluator_2).
+  semantic_evaluation:
+    enabled: true
+    units_per_factor: 9
+    random_state: 42
+    require_api_key: true
+    evaluator_1:
+      model: gpt-5.4
+    evaluator_2:
+      model: gpt-5
 
 topics:
   top_words: 12

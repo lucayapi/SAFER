@@ -211,9 +211,9 @@ else:
         """
 ## 3. Validation landscapes
 
-The figures show all candidates in the (D_U, S_R) plane and highlight the
-configuration maximizing S_R. Factor-level resampling and seed-sensitivity
-figures are shown when present.
+The figures show all candidates in the (DBCV, S_R) plane, highlight the Pareto
+front, and mark the final selected configuration. Factor-level resampling,
+seed-sensitivity, and evaluator agreement tables are shown when present.
         """
     ),
     code(
@@ -221,6 +221,10 @@ figures are shown when present.
 figure_path = RUN_DIR / "figures" / "stability_landscape_all_roles.png"
 if figure_path.is_file():
     display(Image(filename=str(figure_path)))
+agreement_path = RUN_DIR / "evaluator_agreement_summary.csv"
+if agreement_path.is_file():
+    print("Evaluator agreement (evaluator_1 vs evaluator_2)")
+    display(pd.read_csv(agreement_path))
 for role in ROLES:
     for name in (f"factor_resampling_{role}.png",):
         figure_path = RUN_DIR / "figures" / name
@@ -229,6 +233,10 @@ for role in ROLES:
     seed_fig = RUN_DIR / "discovery" / role / "seed_sensitivity" / f"seed_sensitivity_{role}.png"
     if seed_fig.is_file():
         display(Image(filename=str(seed_fig)))
+    scores_path = RUN_DIR / "discovery" / role / "semantic_evaluation" / "candidate_scores.csv"
+    if scores_path.is_file():
+        print(f"{role} semantic candidate scores")
+        display(pd.read_csv(scores_path))
         """
     ),
     markdown("## 4. Candidate diagnostics and stability"),
@@ -241,12 +249,16 @@ for role in ROLES:
     theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
     print(f"### {role}")
     frontier_path = RUN_DIR / "discovery" / role / "selection_table.csv"
+    pareto_path = RUN_DIR / "discovery" / role / "pareto_front.csv"
     if frontier_path.is_file():
-        selection = pd.read_csv(frontier_path).sort_values(["stability", "dbcv_umap"], ascending=False)
-        print("configuration search (selected flagged)")
-        display(selection.head(20))
+        selection = pd.read_csv(frontier_path)
+        sort_cols = [c for c in ["on_pareto", "stability", "dbcv_umap"] if c in selection.columns]
+        ascending = [False] * len(sort_cols)
+        print("configuration search (Pareto / selected flagged)")
+        display(selection.sort_values(sort_cols, ascending=ascending).head(20))
+    elif pareto_path.is_file():
+        display(pd.read_csv(pareto_path))
     elif metrics_path.is_file():
-        # Fallback if selection_table is missing.
         metrics = pd.read_csv(metrics_path)
         if stability_path.is_file():
             metrics = metrics.merge(pd.read_csv(stability_path), on=["role", "configuration_id"], how="left")

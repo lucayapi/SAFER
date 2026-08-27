@@ -2,7 +2,7 @@
 
 Protocole dédié (indépendant de SCGM / contrastifs / BERTopic) :
 
-**unités annotées + embeddings Qwen figés → UMAP–HDBSCAN par rôle → \(S_R\) / \(D_U\) → sélection \(\arg\max S_R\) → seed sensitivity → labels (notebook) → BN latent (\(Z\)) → MPE → `recurrent_scenarios.csv`.**
+**unités annotées + embeddings Qwen figés → UMAP–HDBSCAN par rôle → \(S_R\) / DBCV → front Pareto → évaluation sémantique blinded (evaluator_1 / evaluator_2) → seed sensitivity → labels (notebook) → BN latent (\(Z\)) → MPE → `recurrent_scenarios.csv`.**
 
 Corpus enregistrés : `btp`, `caou`, `metallurgie`.
 
@@ -10,7 +10,7 @@ Corpus enregistrés : `btp`, `caou`, `metallurgie`.
 
 | Étape | Outil | Rôle |
 |-------|--------|------|
-| 1. Discovery | `run_theme_discovery.py` (+ job Slurm) | Grille UMAP–HDBSCAN, \(D_U\), \(S_R\), sélection auto \(\arg\max S_R\) (tie-break \(D_U\)), sensibilité multi-seeds. |
+| 1. Discovery | `run_theme_discovery.py` (+ job Slurm) | Grille UMAP–HDBSCAN, DBCV, \(S_R\), front Pareto, scores evaluator_1/2 si plusieurs candidats, sensibilité multi-seeds. |
 | 2. Résultats / thèmes | `notebooks/topic_modeling_results_{corpus}.ipynb` | Affiche les artefacts figés, dictionnaire c-TF-IDF, labels LLM (sans rechoisir la config). |
 | 3. BN + scénarios | `notebooks/recurrent_scenarios_bn_analysis_{corpus}.ipynb` | Matrice accident × thèmes, Structural EM avec \(Z\), MPE. |
 
@@ -27,7 +27,7 @@ python recurrent_scenarios/build_bn_analysis_notebook.py
 
 ## Discovery (job / CLI)
 
-`config.yaml` est la source de vérité. Section `validation:` : resampling, sélection \(S_R\), tie-break \(D_U\), `seed_sensitivity`.
+`config.yaml` est la source de vérité. Section `validation:` : resampling, Pareto + `semantic_evaluation` (evaluator_1 / evaluator_2), `seed_sensitivity`.
 
 Depuis `text/` :
 
@@ -42,6 +42,9 @@ DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
 DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
+DATASET=caou STAGE=evaluate RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
+  sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+
 DATASET=caou STAGE=select RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
   sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 
@@ -49,7 +52,7 @@ DATASET=caou STAGE=seed RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/c
   sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 ```
 
-Stages CLI : `all` | `metrics` | `select` | `seed`.
+Stages CLI : `all` | `metrics` | `evaluate` | `select` | `seed`.
 
 Sortie par défaut : `runs/theme_discovery_audit/{dataset_id}/`.
 
@@ -64,16 +67,20 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 ## Choix de modélisation
 
 - Clustering indépendant par rôle sur embeddings figés L2-normalisés.
-- Critère de sélection : \(S_R\) (moyenne non pondérée des \(S_{ck}\) ; \(S_{ck}\) = moyenne des Jaccard best-match sur réplicats où le facteur est observable). \(O_{ck}=B_{ck}/B\) est un diagnostic séparé.
-- \(D_U\) (DBCV dans l'espace UMAP) : diagnostique + tie-break si égalité de \(S_R\).
+- Screening multi-objectif : maximiser \(S_R\) et DBCV sans somme pondérée → **front Pareto**.
+- Si le front a un seul point : sélection directe. Sinon : packages anonymisés scorés par **evaluator_1** et **evaluator_2** (cohérence, distinctivité, pertinence prévention) ; score sémantique = moyenne des deux ; tie-break \(S_R\) puis DBCV.
+- Accords evaluator_1 / evaluator_2 archivés (`evaluator_agreement_summary.csv`, tables par rôle).
 - Sensibilité multi-seeds UMAP après sélection (ne change pas \(c_r^\star\)).
 - BN : mélange contraint A0→A1→B→C avec famille latente \(Z\) (pas de preuve causale).
 
 ## Sorties principales du job
 
 - `audit_input_summary.csv`, `config_resolved.yaml`, `parallel_runtime.json`
-- `selected_configurations.csv` — une config par rôle
+- `selected_configurations.csv` — une config par rôle (+ `selection_rule`, scores)
 - `discovery/<role>/candidate_metrics.csv`, `stability_summary.csv`, `stability_theme.csv`
+- `discovery/<role>/pareto_front.csv`, `pareto_candidates.csv`, `selection_table.csv`
+- `discovery/<role>/semantic_evaluation/` — packages, `factor_scores.csv`, `candidate_scores.csv`, accords
+- `evaluator_agreement_summary.csv`
 - `discovery/<role>/candidate_partitions/*.npy`
 - `discovery/<role>/selected/` — partition figée
 - `discovery/<role>/seed_sensitivity/` — tables + figure

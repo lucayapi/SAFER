@@ -24,8 +24,10 @@ cells = [
 # Notebook 1 — Role-conditioned stable semantic themes
 
 This notebook discovers stable themes independently for `A0`, `A1`, `B` and `C`.
-Selection is automatic: maximize accident-level reproducibility `S_R`, with UMAP-space
-DBCV `D_U` as tie-breaker. Seed sensitivity is run after selection.
+Candidates are screened on the Pareto front of accident-level reproducibility `S_R`
+and UMAP-space DBCV. When several non-dominated configurations remain, blinded
+semantic scores from evaluator_1 and evaluator_2 select the final partition.
+Seed sensitivity is run after selection.
 
 After this notebook (or the Slurm discovery job), open
 `topic_modeling_results_{corpus}.ipynb` for semantic labels, then
@@ -70,10 +72,11 @@ from scenario_pipeline import (
     load_topic_stopwords,
     materialize_selected_partition,
     prepare_data,
-    select_configuration_by_stability,
+    select_configuration_for_role,
     write_factor_stability_figure,
     write_stability_landscape_figure,
 )
+from semantic_evaluation import mark_pareto_front, run_role_semantic_evaluation
         """
     ),
     markdown(
@@ -167,10 +170,17 @@ config = {
         "n_resampling": N_RESAMPLING,
         "resampling_fraction": RESAMPLING_FRACTION,
         "dbcv_sample_size": DBCV_SAMPLE_SIZE,
-        "selection_metric": "stability",
-        "tie_breaker": "dbcv_umap",
+        "selection_metric": "pareto_semantic",
+        "tie_breaker": "stability_then_dbcv",
         "show_progress": SHOW_PROGRESS,
         "seed_sensitivity": {"enabled": True, "seeds": SEED_SENSITIVITY_SEEDS},
+        "semantic_evaluation": {
+            "enabled": True,
+            "units_per_factor": 9,
+            "random_state": RANDOM_SEED,
+            "evaluator_1": {"model": "gpt-5.4"},
+            "evaluator_2": {"model": "gpt-5"},
+        },
     },
     "topics": {
         "top_words": TOP_WORDS,
@@ -220,16 +230,30 @@ theme_stability[role], summary = evaluate_resampling_stability(
     role, prepared.units, prepared.embeddings, config, RUN_DIR,
     candidates, reestimate=REESTIMATE
 )
-merged = candidates.merge(summary, on=["role", "configuration_id"], how="left")
-selection_tables[role], selected_id = select_configuration_by_stability(merged)
+merged = mark_pareto_front(candidates.merge(summary, on=["role", "configuration_id"], how="left"))
+semantic_scores = pd.DataFrame()
+if int(merged["on_pareto"].sum()) > 1:
+    _, semantic_scores, agreement = run_role_semantic_evaluation(
+        role=role,
+        units=prepared.units,
+        output_dir=RUN_DIR,
+        candidate_table=merged,
+        config=config,
+        reestimate=REESTIMATE,
+    )
+    if not agreement.empty:
+        display(agreement)
+selection_tables[role], selected_id, rule = select_configuration_for_role(merged, semantic_scores)
 candidate_tables[role] = selection_tables[role]
 selections[role] = selected_id
 materialize_selected_partition(role, prepared.units, selected_id, RUN_DIR, theme_stability[role])
 write_factor_stability_figure(role, theme_stability[role], selected_id, RUN_DIR / "figures")
-display(selection_tables[role].sort_values(["stability", "dbcv_umap"], ascending=False)[[
-    "configuration_id", "stability", "dbcv_umap", "n_clusters", "noise_fraction", "coverage", "selected",
-]].head(12))
-print("Selected:", selected_id)
+cols = [c for c in [
+    "configuration_id", "stability", "dbcv_umap", "on_pareto", "selected",
+    "semantic_score", "n_clusters", "noise_fraction", "coverage",
+] if c in selection_tables[role].columns]
+display(selection_tables[role].sort_values(["on_pareto", "stability", "dbcv_umap"], ascending=[False, False, False])[cols].head(12))
+print("Selected:", selected_id, "via", rule)
             """
         ),
     ])

@@ -1,10 +1,12 @@
 """Auditable implementation of the recurrent-accident protocol.
 
 Workflow:
-1. theme discovery — UMAP--HDBSCAN candidates per role, ``D_U`` / ``S_R``;
-2. automatic selection by max ``S_R`` (``D_U`` tie-break) + UMAP seed sensitivity;
-3. topic dictionary / labels (results notebook) on the frozen partition;
-4. corpus-specific latent BN (Structural EM with ``Z``) and constrained MPE scenarios.
+1. theme discovery — UMAP--HDBSCAN candidates per role, DBCV / ``S_R``;
+2. Pareto screening on (``S_R``, DBCV), then blinded semantic evaluation
+   (evaluator_1 / evaluator_2) when several non-dominated configs remain;
+3. UMAP seed sensitivity on the selected partition;
+4. topic dictionary / labels (results notebook) on the frozen partition;
+5. corpus-specific latent BN (Structural EM with ``Z``) and constrained MPE scenarios.
 
 Independent from SCGM / contrastive / BERTopic training pipelines. Inputs are the
 annotated unit table and frozen Qwen embedding export.
@@ -569,13 +571,25 @@ def _validation_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("resampling_fraction", 0.8)
     values.setdefault("n_resampling", 30)
     values.setdefault("dbcv_sample_size", None)
-    values.setdefault("selection_metric", "stability")
-    values.setdefault("tie_breaker", "dbcv_umap")
+    values.setdefault("selection_metric", "pareto_semantic")
+    values.setdefault("tie_breaker", "stability_then_dbcv")
     values.setdefault("show_progress", True)
     seed_cfg = dict(values.get("seed_sensitivity") or {})
     seed_cfg.setdefault("enabled", True)
     seed_cfg.setdefault("seeds", list(range(1, 11)))
     values["seed_sensitivity"] = seed_cfg
+    semantic_cfg = dict(values.get("semantic_evaluation") or {})
+    semantic_cfg.setdefault("enabled", True)
+    semantic_cfg.setdefault("units_per_factor", 9)
+    semantic_cfg.setdefault("random_state", int(values["random_state"]))
+    semantic_cfg.setdefault("require_api_key", True)
+    evaluator_1 = dict(semantic_cfg.get("evaluator_1") or {})
+    evaluator_2 = dict(semantic_cfg.get("evaluator_2") or {})
+    evaluator_1.setdefault("model", "gpt-5.4")
+    evaluator_2.setdefault("model", "gpt-5")
+    semantic_cfg["evaluator_1"] = evaluator_1
+    semantic_cfg["evaluator_2"] = evaluator_2
+    values["semantic_evaluation"] = semantic_cfg
     return values
 
 
@@ -869,9 +883,13 @@ def evaluate_resampling_stability(
 
 
 def select_configuration_by_stability(merged: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """Select the configuration maximizing S_R, with D_U as tie-breaker."""
+    """Legacy helper: maximize S_R with DBCV tie-break (kept for older notebooks/tests)."""
     result = merged.copy()
     result["selected"] = False
+    if "on_pareto" not in result.columns:
+        from semantic_evaluation import mark_pareto_front
+
+        result = mark_pareto_front(result)
     if result.empty or "stability" not in result.columns:
         return result, ""
     usable = result["stability"].notna()
@@ -886,6 +904,33 @@ def select_configuration_by_stability(merged: pd.DataFrame) -> tuple[pd.DataFram
         selected_id = str(tied.iloc[0]["configuration_id"])
     result.loc[result["configuration_id"].astype(str).eq(selected_id), "selected"] = True
     return result, selected_id
+
+
+def select_configuration_for_role(
+    merged: pd.DataFrame,
+    semantic_scores: pd.DataFrame | None = None,
+) -> tuple[pd.DataFrame, str, str]:
+    """Select via Pareto front, then semantic scores when several candidates remain.
+
+    Returns ``(table, selected_id, selection_rule)`` where ``selection_rule`` is
+    ``single_pareto`` or ``semantic_score``.
+    """
+    from semantic_evaluation import mark_pareto_front, select_configuration_by_semantic_score
+
+    marked = mark_pareto_front(merged)
+    pareto = marked.loc[marked["on_pareto"]].copy()
+    if pareto.empty:
+        return marked, "", "none"
+    if len(pareto) == 1:
+        selected_id = str(pareto.iloc[0]["configuration_id"])
+        marked["selected"] = marked["configuration_id"].astype(str).eq(selected_id)
+        return marked, selected_id, "single_pareto"
+    if semantic_scores is None:
+        semantic_scores = pd.DataFrame()
+    table, selected_id = select_configuration_by_semantic_score(marked, semantic_scores)
+    if not selected_id:
+        return table, "", "semantic_score_pending"
+    return table, selected_id, "semantic_score"
 
 
 def materialize_selected_partition(
@@ -958,7 +1003,7 @@ def materialize_selected_partition(
     pd.DataFrame(topic_rows).to_csv(selected_dir / "topics.csv", index=False)
     (selected_dir / "selection_metadata.json").write_text(
         json.dumps({
-            "version": "sr_selected_partition_v1",
+            "version": "pareto_semantic_selected_partition_v1",
             "role": role,
             "configuration_id": configuration_id,
         }, indent=2),
@@ -973,7 +1018,7 @@ def write_stability_landscape_figure(
     roles: Sequence[str] | None = None,
     filename: str = "stability_landscape_all_roles.png",
 ) -> None:
-    """Scatter D_U versus S_R and highlight the configuration maximizing S_R."""
+    """Scatter DBCV versus S_R, highlight the Pareto front and the final selection."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
@@ -988,6 +1033,7 @@ def write_stability_landscape_figure(
         squeeze=False,
     )
     selected_color = "#d62728"
+    pareto_color = "#1f77b4"
     other_color = "#9e9e9e"
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
@@ -997,8 +1043,14 @@ def write_stability_landscape_figure(
             continue
         valid = frame["dbcv_umap"].notna() & frame["stability"].notna()
         base = frame.loc[valid].copy()
-        selected_mask = base.get("selected", pd.Series(False, index=base.index)).fillna(False).astype(bool)
-        others = base.loc[~selected_mask]
+        if "on_pareto" not in base.columns:
+            base["on_pareto"] = False
+        if "selected" not in base.columns:
+            base["selected"] = False
+        selected_mask = base["selected"].fillna(False).astype(bool)
+        pareto_mask = base["on_pareto"].fillna(False).astype(bool) & ~selected_mask
+        others = base.loc[~selected_mask & ~pareto_mask]
+        pareto = base.loc[pareto_mask].sort_values("dbcv_umap")
         selected = base.loc[selected_mask]
         if not others.empty:
             axis.scatter(
@@ -1011,6 +1063,26 @@ def write_stability_landscape_figure(
                 s=48,
                 linewidths=0.9,
                 zorder=1,
+            )
+        if not pareto.empty:
+            axis.plot(
+                pareto["dbcv_umap"],
+                pareto["stability"],
+                color=pareto_color,
+                linewidth=1.2,
+                alpha=0.7,
+                zorder=2,
+            )
+            axis.scatter(
+                pareto["dbcv_umap"],
+                pareto["stability"],
+                marker="^",
+                facecolors=pareto_color,
+                edgecolors="black",
+                alpha=0.95,
+                s=90,
+                linewidths=0.8,
+                zorder=3,
             )
         if not selected.empty:
             axis.scatter(
@@ -1032,10 +1104,11 @@ def write_stability_landscape_figure(
         axis.remove()
     handles = [
         Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidates", markerfacecolor=other_color, markeredgecolor="black", markersize=7),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", label=r"Selected ($\arg\max S_R$)", markerfacecolor=selected_color, markeredgecolor="black", markersize=12),
+        Line2D([0], [0], marker="^", linestyle="None", color="black", label="Pareto front", markerfacecolor=pareto_color, markeredgecolor="black", markersize=8),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", label="Selected", markerfacecolor=selected_color, markeredgecolor="black", markersize=12),
     ]
-    figure.legend(handles=handles, loc="upper center", ncol=2, frameon=False)
-    figure.suptitle("Configuration reproducibility landscape", y=0.98)
+    figure.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
+    figure.suptitle("Configuration reproducibility–DBCV landscape", y=0.98)
     figure.tight_layout(rect=(0, 0, 1, 0.94))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
@@ -2556,20 +2629,19 @@ def run_theme_discovery(
     reestimate: bool = False,
     stage: str = "all",
     run_dir: Path | None = None,
+    chat_completion: Callable[..., str] | None = None,
 ) -> Path:
-    """Run theme discovery with S_R selection and optional seed sensitivity.
+    """Run theme discovery with Pareto screening and optional semantic evaluation.
 
     Stages:
-    - ``metrics``: candidate ``D_U`` and accident-level ``S_R``;
-    - ``select``: argmax ``S_R`` (+ ``D_U`` tie-break), materialize partitions, figures;
+    - ``metrics``: candidate DBCV and accident-level ``S_R``;
+    - ``evaluate``: blinded evaluator_1 / evaluator_2 scoring of Pareto packages;
+    - ``select``: Pareto (+ semantic scores if needed), materialize partitions, figures;
     - ``seed``: UMAP seed sensitivity for selected configurations;
-    - ``all``: metrics then select then seed.
+    - ``all``: metrics then evaluate then select then seed.
     """
-    if stage not in {"all", "metrics", "select", "seed"}:
-        raise ValueError("stage must be one of: all, metrics, select, seed")
-    if stage in {"select", "seed"} and run_dir is None:
-        # Allow omitting run_dir when output_dir already exists from config.
-        pass
+    if stage not in {"all", "metrics", "evaluate", "select", "seed"}:
+        raise ValueError("stage must be one of: all, metrics, evaluate, select, seed")
 
     raw_config = select_dataset_config(load_yaml_config(config_path), dataset_id)
     config = resolve_config_paths(raw_config, config_path)
@@ -2588,7 +2660,7 @@ def run_theme_discovery(
                 output_base.name + "_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             )
 
-    if stage in {"select", "seed"} and not output_base.is_dir():
+    if stage in {"evaluate", "select", "seed"} and not output_base.is_dir():
         raise FileNotFoundError(f"Existing run directory not found: {output_base}")
     output_base.mkdir(parents=True, exist_ok=True)
     _log_progress(
@@ -2629,7 +2701,7 @@ def run_theme_discovery(
             )
             candidate_tables[role] = candidates.merge(summary, on=["role", "configuration_id"], how="left")
             theme_tables[role] = theme_frame
-    elif stage in {"select", "seed"}:
+    elif stage in {"evaluate", "select", "seed"}:
         for role in ROLES:
             role_dir = _discovery_role_dir(output_base, role)
             candidate_path = role_dir / "candidate_metrics.csv"
@@ -2638,7 +2710,7 @@ def run_theme_discovery(
             missing = [str(path) for path in (candidate_path, stability_path) if not path.is_file()]
             if missing:
                 raise FileNotFoundError(
-                    "Cannot run select/seed stage; missing metric artifacts: " + ", ".join(missing)
+                    "Cannot run evaluate/select/seed stage; missing metric artifacts: " + ", ".join(missing)
                 )
             candidates = pd.read_csv(candidate_path)
             summary = pd.read_csv(stability_path)
@@ -2652,21 +2724,86 @@ def run_theme_discovery(
         _log_progress(f"DONE stage=metrics output={output_base}")
         return output_base
 
+    from semantic_evaluation import mark_pareto_front, run_role_semantic_evaluation
+
+    # Always mark Pareto so evaluate/select share the same candidate set.
+    for role in ROLES:
+        candidate_tables[role] = mark_pareto_front(candidate_tables[role])
+        marked = candidate_tables[role]
+        marked.loc[marked["on_pareto"]].to_csv(
+            _discovery_role_dir(output_base, role) / "pareto_front.csv",
+            index=False,
+        )
+
+    validation_cfg = _validation_config(config)
+    semantic_enabled = bool(validation_cfg["semantic_evaluation"].get("enabled", True))
+    semantic_scores_by_role: dict[str, pd.DataFrame] = {}
+    agreement_rows: list[pd.DataFrame] = []
+
+    if stage in {"all", "evaluate", "select"} and semantic_enabled:
+        needs_eval = any(
+            int(candidate_tables[role]["on_pareto"].fillna(False).astype(bool).sum()) > 1
+            for role in ROLES
+        )
+        if needs_eval or stage == "evaluate":
+            if prepared is None:
+                prepared = prepare_data(config, output_base)
+            _log_progress("Évaluation sémantique blinded (evaluator_1 / evaluator_2)")
+            for role in ROLES:
+                n_pareto = int(candidate_tables[role]["on_pareto"].fillna(False).astype(bool).sum())
+                if n_pareto <= 1 and stage != "evaluate":
+                    semantic_scores_by_role[role] = pd.DataFrame()
+                    continue
+                _, candidate_scores, agreement = run_role_semantic_evaluation(
+                    role=role,
+                    units=prepared.units,
+                    output_dir=output_base,
+                    candidate_table=candidate_tables[role],
+                    config=config,
+                    chat_completion=chat_completion,
+                    reestimate=reestimate,
+                )
+                semantic_scores_by_role[role] = candidate_scores
+                if not agreement.empty:
+                    agreement_rows.append(agreement)
+            if agreement_rows:
+                pd.concat(agreement_rows, ignore_index=True).to_csv(
+                    output_base / "evaluator_agreement_summary.csv",
+                    index=False,
+                )
+
+    if stage == "evaluate":
+        _log_progress(f"DONE stage=evaluate output={output_base}")
+        return output_base
+
     selection_tables: dict[str, pd.DataFrame] = {}
     selections: dict[str, str] = {}
+    selection_rules: dict[str, str] = {}
 
     if stage in {"all", "select"}:
         if prepared is None:
             prepared = prepare_data(config, output_base)
-        _log_progress("Sélection: argmax S_R par rôle (tie-break D_U)")
+        _log_progress("Sélection: front Pareto (+ score sémantique si plusieurs candidats)")
         selected_rows = []
         for role in ROLES:
-            table, selected_id = select_configuration_by_stability(candidate_tables[role])
+            scores = semantic_scores_by_role.get(role)
+            if scores is None:
+                scores_path = _discovery_role_dir(output_base, role) / "semantic_evaluation" / "candidate_scores.csv"
+                scores = pd.read_csv(scores_path) if scores_path.is_file() else pd.DataFrame()
+            table, selected_id, rule = select_configuration_for_role(candidate_tables[role], scores)
             if not selected_id:
-                raise RuntimeError(f"Aucune configuration sélectionnable pour le rôle {role}")
+                n_pareto = int(table["on_pareto"].fillna(False).astype(bool).sum()) if "on_pareto" in table.columns else 0
+                raise RuntimeError(
+                    f"Aucune configuration sélectionnable pour le rôle {role} "
+                    f"(pareto={n_pareto}, rule={rule}). "
+                    "Lancer --stage evaluate si le front contient plusieurs candidats."
+                )
             selection_tables[role] = table
             selections[role] = selected_id
+            selection_rules[role] = rule
             table.to_csv(_discovery_role_dir(output_base, role) / "selection_table.csv", index=False)
+            pareto_only = table.loc[table["on_pareto"]].copy()
+            pareto_only.to_csv(_discovery_role_dir(output_base, role) / "pareto_candidates.csv", index=False)
             materialize_selected_partition(
                 role, prepared.units, selected_id, output_base, theme_tables.get(role)
             )
@@ -2680,24 +2817,35 @@ def run_theme_discovery(
             selected_rows.append({
                 "role": role,
                 "configuration_id": selected_id,
+                "selection_rule": rule,
                 "stability": row.get("stability"),
                 "dbcv_umap": row.get("dbcv_umap"),
+                "semantic_score": row.get("semantic_score"),
+                "evaluator_1_score": row.get("evaluator_1_score"),
+                "evaluator_2_score": row.get("evaluator_2_score"),
                 "n_clusters": row.get("n_clusters"),
                 "noise_fraction": row.get("noise_fraction"),
                 "coverage": row.get("coverage"),
                 **{key: row.get(key) for key in PARAMETER_KEYS},
             })
-            _log_progress(f"[{role}] sélectionné {selected_id} (S_R={row.get('stability')})")
+            _log_progress(
+                f"[{role}] sélectionné {selected_id} via {rule} "
+                f"(S_R={row.get('stability')}, DBCV={row.get('dbcv_umap')})"
+            )
         selected_frame = pd.DataFrame(selected_rows)
         selected_frame.to_csv(output_base / "selected_configurations.csv", index=False)
         write_stability_landscape_figure(selection_tables, output_base / "figures")
+        eval_cfg = validation_cfg["semantic_evaluation"]
         (output_base / "theme_discovery_manifest.json").write_text(
             json.dumps({
-                "version": "sr_selection_seed_sensitivity_v1",
+                "version": "pareto_semantic_seed_sensitivity_v1",
                 "dataset_id": config["data"].get("dataset_id"),
-                "selection_metric": "stability",
-                "tie_breaker": "dbcv_umap",
+                "selection_metric": "pareto_semantic",
+                "tie_breaker": "stability_then_dbcv",
+                "selection_rules": selection_rules,
                 "selected_configurations": selections,
+                "evaluator_1_model": eval_cfg["evaluator_1"]["model"],
+                "evaluator_2_model": eval_cfg["evaluator_2"]["model"],
                 "n_workers": resolve_n_workers(config),
             }, indent=2),
             encoding="utf-8",
@@ -2714,7 +2862,6 @@ def run_theme_discovery(
     # seed stage
     if prepared is None:
         prepared = prepare_data(config, output_base)
-    validation_cfg = _validation_config(config)
     if bool(validation_cfg["seed_sensitivity"].get("enabled", True)):
         _log_progress("Seed sensitivity sur les configurations sélectionnées")
         for role in ROLES:
@@ -2762,6 +2909,7 @@ __all__ = [
     "evaluate_pareto_candidates",
     "evaluate_resampling_stability",
     "select_configuration_by_stability",
+    "select_configuration_for_role",
     "materialize_selected_partition",
     "evaluate_seed_sensitivity",
     "write_stability_landscape_figure",

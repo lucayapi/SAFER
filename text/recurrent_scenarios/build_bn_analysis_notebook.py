@@ -23,7 +23,7 @@ def build_notebook(dataset_id: str) -> dict:
         markdown(f"""
 # Analyse BN des scénarios récurrents — {dataset_id}
 
-Cette analyse commence après la sélection automatique S_R du job discovery
+Cette analyse commence après la sélection Pareto / sémantique du job discovery
 et le notebook `topic_modeling_results_{dataset_id}.ipynb`. Elle ne relance ni
 UMAP, ni HDBSCAN, ni le resampling. Les partitions figées sont lues depuis
 `selected_configurations.csv`, puis un réseau bayésien latent est ajusté par
