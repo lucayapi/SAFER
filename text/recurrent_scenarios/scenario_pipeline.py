@@ -1025,7 +1025,7 @@ def write_stability_landscape_figure(
                 zorder=4,
             )
         axis.set_title(role)
-        axis.set_xlabel("UMAP-space DBCV $D_U$")
+        axis.set_xlabel("UMAP-space DBCV")
         axis.set_ylabel("Accident-level resampling stability $S_R$")
         axis.grid(alpha=0.25)
     for axis in list(axes.flat)[len(plot_roles):]:
@@ -1233,7 +1233,7 @@ def evaluate_seed_sensitivity(
         axes[1].set_title("K")
         axes[1].set_xlabel("UMAP seed")
         axes[2].plot(summary["seed"], summary["dbcv_umap"], marker="o")
-        axes[2].set_title(r"$D_U$")
+        axes[2].set_title("DBCV")
         axes[2].set_xlabel("UMAP seed")
         for axis in axes:
             axis.grid(alpha=0.25)

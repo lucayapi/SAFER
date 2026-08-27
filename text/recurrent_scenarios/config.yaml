@@ -39,14 +39,14 @@ parallel:
 screening:
   show_progress: true
   umap:
-    n_neighbors: [10, 20, 40]
+    n_neighbors: [10, 30, 60, 120]
     n_components: [5, 10, 15]
     min_dist: [0.0]
     metric: cosine
     low_memory: true
     n_jobs: 1
   hdbscan:
-    min_cluster_size: [25, 50]
+    min_cluster_size: [25, 50, 100]
     min_samples: [5, 10]
     cluster_selection_method: [leaf]
     metric: euclidean
