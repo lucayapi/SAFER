@@ -191,6 +191,75 @@ def test_materialize_and_load_selected_configurations():
         assert loaded[role] == "A0_cfg_001"
 
 
+def test_parameter_plan_has_thirty_six_configurations():
+    config = {
+        "screening": {
+            "umap": {
+                "n_neighbors": [10, 20, 40],
+                "n_components": [5, 10, 15],
+                "min_dist": [0.0],
+            },
+            "hdbscan": {
+                "min_cluster_size": [25, 50],
+                "min_samples": [5, 10],
+                "cluster_selection_method": ["leaf"],
+            },
+        }
+    }
+    assert len(pipeline.parameter_plan(config)) == 36
+
+
+def test_resampling_tasks_use_fixed_primary_umap_seed():
+    config = {"validation": {"random_state": 42, "n_resampling": 3, "resampling_fraction": 0.8}}
+    role_units = pd.DataFrame({
+        "_accident_id": [str(i) for i in range(10)],
+        "_role": ["A0"] * 10,
+    })
+    candidates = pd.DataFrame([
+        {
+            "configuration_id": "A0_cfg_001",
+            "role": "A0",
+            "umap_n_neighbors": 10,
+            "umap_n_components": 5,
+            "umap_min_dist": 0.0,
+            "hdbscan_min_cluster_size": 25,
+            "hdbscan_min_samples": 5,
+            "hdbscan_cluster_selection_method": "leaf",
+        }
+    ])
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        root = Path(temporary_directory)
+        run_dir = root / "run"
+        role_dir = run_dir / "discovery" / "A0" / "candidate_partitions"
+        role_dir.mkdir(parents=True)
+        np.save(role_dir / "A0_cfg_001_labels.npy", np.array([0, 0, 1, 1, -1, 0, 1, 1, 0, -1]))
+        embeddings = np.random.default_rng(0).normal(size=(10, 4))
+        captured_states: list[int] = []
+
+        def fake_parallel(func, tasks, config, progress_label=""):
+            del func, config, progress_label
+            for task in tasks:
+                captured_states.append(int(task["random_state"]))
+            return [[] for _ in tasks]
+
+        original_parallel = pipeline._parallel_map
+        pipeline._parallel_map = fake_parallel
+        try:
+            pipeline.evaluate_resampling_stability(
+                "A0",
+                role_units,
+                embeddings,
+                config,
+                run_dir,
+                candidates,
+                reestimate=True,
+            )
+        finally:
+            pipeline._parallel_map = original_parallel
+    assert captured_states
+    assert set(captured_states) == {42}
+
+
 def test_frozen_inputs_read_discovery_selected_paths():
     units = pd.DataFrame(
         {

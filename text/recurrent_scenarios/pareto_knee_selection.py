@@ -150,7 +150,11 @@ def _select_knee_from_pareto(
     dbcv_col: str = DBCV_COL,
     configuration_col: str = "configuration_id",
 ) -> str:
-    """Return the configuration_id of the geometric knee on a Pareto subset."""
+    """Return the configuration_id of the geometric knee on a Pareto subset.
+
+    Tie-break when ``knee_distance`` ties (``tol=1e-12``):
+    higher raw ``S_R``, then higher raw DBCV, then lexicographic ``configuration_id``.
+    """
     normalized = normalize_pareto_objectives(
         pareto,
         stability_col=stability_col,
@@ -311,6 +315,7 @@ def plot_pareto_raw(
     filename: str = "stability_landscape_all_roles.png",
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
+    suptitle: str | None = None,
 ) -> None:
     """Four-panel scatter of DBCV versus S_R with Pareto front and knee star."""
     import matplotlib.pyplot as plt
@@ -329,14 +334,14 @@ def plot_pareto_raw(
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
             axis.set_xlabel("DBCV")
             axis.set_ylabel(r"$S_R$")
-            axis.set_title(role)
+            axis.set_title(role, fontsize=11, pad=6)
             continue
         valid = frame[dbcv_col].notna() & frame[stability_col].notna()
         base = frame.loc[valid].copy()
         is_pareto = base["is_pareto"].fillna(base.get("on_pareto", False)).astype(bool)
         is_knee = base["is_selected_knee"].fillna(base.get("selected", False)).astype(bool)
         others = base.loc[~is_pareto]
-        pareto = base.loc[is_pareto & ~is_knee].sort_values(dbcv_col)
+        pareto_all = base.loc[is_pareto].sort_values(dbcv_col)
         knee = base.loc[is_knee]
         if not others.empty:
             axis.scatter(
@@ -348,18 +353,31 @@ def plot_pareto_raw(
                 linewidths=0,
                 zorder=1,
             )
-        if not pareto.empty:
-            axis.plot(pareto[dbcv_col], pareto[stability_col], color=pareto_color, linewidth=1.1, alpha=0.75, zorder=2)
-            axis.scatter(
-                pareto[dbcv_col],
-                pareto[stability_col],
-                marker="o",
-                s=70,
-                facecolors=pareto_color,
-                edgecolors="black",
-                linewidths=0.6,
-                zorder=3,
+        if not pareto_all.empty:
+            axis.plot(
+                pareto_all[dbcv_col],
+                pareto_all[stability_col],
+                color=pareto_color,
+                linewidth=1.1,
+                alpha=0.75,
+                zorder=2,
             )
+            if not knee.empty:
+                knee_index = set(knee.index)
+                non_knee = pareto_all.loc[~pareto_all.index.isin(knee_index)]
+            else:
+                non_knee = pareto_all
+            if not non_knee.empty:
+                axis.scatter(
+                    non_knee[dbcv_col],
+                    non_knee[stability_col],
+                    marker="o",
+                    s=70,
+                    facecolors=pareto_color,
+                    edgecolors="black",
+                    linewidths=0.6,
+                    zorder=3,
+                )
         if not knee.empty:
             axis.scatter(
                 knee[dbcv_col],
@@ -371,28 +389,28 @@ def plot_pareto_raw(
                 linewidths=0.8,
                 zorder=4,
             )
-            axis.annotate(
-                "Knee",
-                (float(knee.iloc[0][dbcv_col]), float(knee.iloc[0][stability_col])),
-                textcoords="offset points",
-                xytext=(6, 6),
-                fontsize=9,
-                color=knee_color,
-            )
         axis.set_xlabel("DBCV")
         axis.set_ylabel(r"$S_R$")
-        axis.set_title(role)
+        axis.set_title(role, fontsize=11, pad=6)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidates", markerfacecolor=other_color, markersize=6),
-        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label="Pareto front", markerfacecolor=pareto_color, markersize=7),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", label="Selected knee", markerfacecolor=knee_color, markersize=12),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidate configurations", markerfacecolor=other_color, markersize=6),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label="Pareto-optimal configurations", markerfacecolor=pareto_color, markersize=7),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", label="Geometric knee", markerfacecolor=knee_color, markersize=12),
     ]
-    figure.suptitle("Pareto-based UMAP–HDBSCAN configuration selection", y=1.02, fontsize=13)
-    figure.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
-    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    if suptitle:
+        figure.suptitle(suptitle, y=0.98, fontsize=12)
+    figure.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=3,
+        frameon=False,
+        fontsize=10,
+    )
+    figure.tight_layout(rect=(0, 0.06, 1, 0.97 if suptitle else 1.0))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
 
@@ -405,34 +423,40 @@ def plot_pareto_normalized_with_knee(
     filename: str = "pareto_normalized_knee_all_roles.png",
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
+    suptitle: str = "Normalized Pareto fronts and geometric knee points",
+    show_perpendicular_deviation: bool = True,
+    perpendicular_roles: Sequence[str] | None = None,
 ) -> None:
     """Normalized objective space with reference line, ideal point and knee projection."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
     plot_roles = tuple(roles)
+    deviation_roles = set(perpendicular_roles if perpendicular_roles is not None else (plot_roles[0],))
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
     knee_color = "#d62728"
     pareto_color = "#1f77b4"
+    ref_color = "#888888"
     ref_x = np.linspace(0.0, 1.0, 100)
+    drew_deviation = False
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
-        axis.plot(ref_x, 1.0 - ref_x, color="#888888", linestyle="--", linewidth=1.0, label="Reference line")
-        axis.scatter([1.0], [1.0], marker="x", s=80, color="#333333", linewidths=1.5, label="Ideal (1,1)")
+        axis.plot(ref_x, 1.0 - ref_x, color=ref_color, linestyle="--", linewidth=1.0)
+        axis.scatter([1.0], [1.0], marker="x", s=80, color="#333333", linewidths=1.5, zorder=1)
         if frame.empty:
             axis.set_xlim(-0.05, 1.05)
             axis.set_ylim(-0.05, 1.05)
-            axis.set_xlabel("normalized DBCV")
-            axis.set_ylabel("normalized S_R")
-            axis.set_title(role)
+            axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
+            axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
+            axis.set_title(role, fontsize=11, pad=6)
             continue
         pareto = frame.loc[frame["is_pareto"].fillna(frame.get("on_pareto", False)).astype(bool)].copy()
         if pareto.empty:
             axis.set_xlim(-0.05, 1.05)
             axis.set_ylim(-0.05, 1.05)
-            axis.set_title(role)
+            axis.set_title(role, fontsize=11, pad=6)
             continue
         if "dbcv_normalized" not in pareto.columns or pareto["dbcv_normalized"].isna().all():
             pareto = compute_geometric_knee(
@@ -464,8 +488,10 @@ def plot_pareto_normalized_with_knee(
         if not knee.empty:
             x_k = float(knee.iloc[0]["dbcv_normalized"])
             y_k = float(knee.iloc[0]["stability_normalized"])
-            x_h, y_h = project_knee_to_reference_line(x_k, y_k)
-            axis.plot([x_h, x_k], [y_h, y_k], color=knee_color, linestyle=":", linewidth=1.2, zorder=3)
+            if show_perpendicular_deviation and role in deviation_roles:
+                x_h, y_h = project_knee_to_reference_line(x_k, y_k)
+                axis.plot([x_h, x_k], [y_h, y_k], color=knee_color, linestyle=":", linewidth=1.2, zorder=3)
+                drew_deviation = True
             axis.scatter(
                 [x_k],
                 [y_k],
@@ -478,20 +504,33 @@ def plot_pareto_normalized_with_knee(
             )
         axis.set_xlim(-0.05, 1.05)
         axis.set_ylim(-0.05, 1.05)
-        axis.set_xlabel("normalized DBCV")
-        axis.set_ylabel("normalized S_R")
-        axis.set_title(role)
+        axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
+        axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
+        axis.set_title(role, fontsize=11, pad=6)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], color="#888888", linestyle="--", label="Reference line"),
-        Line2D([0], [0], marker="x", linestyle="None", color="#333333", label="Ideal (1,1)"),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", label="Geometric knee", markerfacecolor=knee_color, markersize=12),
+        Line2D([0], [0], color=ref_color, linestyle="--", linewidth=1.2, label="Extreme-point reference line"),
+        Line2D([0], [0], marker="x", linestyle="None", color="#333333", markersize=8, label="Ideal point (1, 1)"),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label="Pareto-optimal configurations"),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=knee_color, markersize=12, label="Geometric knee"),
     ]
-    figure.suptitle("Normalized Pareto front and geometric knee point", y=1.02, fontsize=13)
-    figure.legend(handles=handles, loc="upper center", ncol=3, frameon=False)
-    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    if drew_deviation:
+        handles.append(
+            Line2D([0], [0], color=knee_color, linestyle=":", linewidth=1.2, label="Perpendicular deviation")
+        )
+    if suptitle:
+        figure.suptitle(suptitle, y=0.98, fontsize=12)
+    figure.legend(
+        handles=handles,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=min(5, len(handles)),
+        frameon=False,
+        fontsize=10,
+    )
+    figure.tight_layout(rect=(0, 0.08, 1, 0.97 if suptitle else 1.0))
     figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
     plt.close(figure)
 

@@ -798,11 +798,12 @@ def evaluate_resampling_stability(
     random_state = int(validation_cfg["random_state"])
     stability_metadata_path = role_dir / "stability_metadata.json"
     expected_stability_metadata = {
-        "version": "mean_sr_observability_v1",
+        "version": "mean_sr_observability_v2_fixed_umap_seed",
         "random_state": random_state,
         "n_repetitions": n_repetitions,
         "resampling_fraction": fraction,
         "aggregation": "mean_over_observable_replicates",
+        "umap_random_state_policy": "fixed_primary_seed_during_resampling",
     }
     cached_stability_metadata = {}
     if stability_metadata_path.is_file():
@@ -842,7 +843,7 @@ def evaluate_resampling_stability(
                 "selected_indices": selected_indices,
                 "params": params,
                 "embeddings": role_embeddings,
-                "random_state": random_state + repetition,
+                "random_state": random_state,
                 "config": config,
             })
     _log_progress(
@@ -1031,7 +1032,14 @@ def write_factor_stability_figure(
             .to_numpy(dtype=float)
         )
         for y_pos, observability in enumerate(obs, start=1):
-            axis.text(1.02, y_pos, f"O={observability:.2f}", va="center", fontsize=8, transform=axis.get_yaxis_transform())
+            axis.text(
+                1.02,
+                y_pos,
+                rf"$B_{{ck}}/B={observability:.2f}$",
+                va="center",
+                fontsize=8,
+                transform=axis.get_yaxis_transform(),
+            )
     axis.set_xlim(0, 1.05)
     axis.set_xlabel("Best-match Jaccard")
     axis.set_title(f"{role} factor-level resampling — {configuration_id}")
@@ -1183,7 +1191,8 @@ def evaluate_seed_sensitivity(
         figure, axes = plt.subplots(1, 3, figsize=(12, 4))
         axes[0].plot(summary["seed"], summary["seed_stability"], marker="o")
         axes[0].set_ylim(0, 1.05)
-        axes[0].set_title(r"$S_{\mathrm{seed}}$")
+        axes[0].set_ylabel("Mean best-match Jaccard")
+        axes[0].set_title("Factor stability across UMAP seeds")
         axes[0].set_xlabel("UMAP seed")
         axes[1].plot(summary["seed"], summary["n_clusters"], marker="o")
         axes[1].set_title("K")

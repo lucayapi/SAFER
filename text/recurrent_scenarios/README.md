@@ -65,6 +65,8 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 
 - Clustering indépendant par rôle sur embeddings figés L2-normalisés.
 - Screening multi-objectif : maximiser \(S_R\) et DBCV → **front Pareto** (dominance explicite).
+- Grille : \(3\times3\times2\times2 = 36\) configurations par rôle (`n_neighbors` ∈ {10,20,40}, `n_components` ∈ {5,10,15}, `min_cluster_size` ∈ {25,50}, `min_samples` ∈ {5,10}).
+- \(S_R\) : sous-échantillonnage **accident-level** avec graine UMAP primaire \(s_0\) **fixe** pendant le resampling ; seule la sélection d'accidents varie par répétition.
 - Normalisation min–max des deux objectifs **à l'intérieur du front Pareto du rôle**.
 - Sélection du **geometric knee point** : distance perpendiculaire à la droite de référence \(D_{norm} + S_{norm} = 1\), orientée vers l'idéal \((1,1)\).
 - Si le front a un seul point : sélection directe (`single_pareto`).

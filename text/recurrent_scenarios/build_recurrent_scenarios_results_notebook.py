@@ -28,9 +28,14 @@ def build_cells(dataset_id: str) -> list[dict]:
 This notebook starts after theme discovery (`run_theme_discovery.py`) for corpus
 `{dataset_id}`. It does not rerun UMAP, HDBSCAN, resampling or configuration selection.
 
-1. Load `selected_configurations.csv` produced by the discovery job.
-2. Build the topic dictionary and optional LLM labels on the frozen partition.
-3. Continue with `recurrent_scenarios_bn_analysis_{dataset_id}.ipynb`.
+Reporting structure (manuscript-oriented):
+
+1. Corpus summary by role
+2. Pareto-front and knee-selection tables
+3. Pareto figures, membership-strength boxplots, resampling and seed-sensitivity diagnostics
+4. Topic dictionary, LLM labels and retained-factors summary (Table 4.5)
+5. Narrative inspection and 2-D UMAP maps
+6. Continue with `recurrent_scenarios_bn_analysis_{dataset_id}.ipynb`
 
 Editable below: representative sentences, role prompts, OpenAI model,
 and 2-D UMAP display settings. The run directory is fixed to this corpus.
@@ -142,11 +147,7 @@ ROLES = ("A0", "A1", "B", "C")
 print("Dataset:", DATASET_ID)
 print("Scenario directory:", SCENARIO_DIR)
 print("Run directory:", RUN_DIR)
-        """
-    ),
-    markdown("## 1. Run manifest and resolved parallelism"),
-    code(
-        """
+
 def read_json(name, default=None):
     path = RUN_DIR / name
     return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else default
@@ -173,55 +174,131 @@ def local_path(value):
 def load_run_config():
     yaml_path = RUN_DIR / "config_resolved.yaml"
     if yaml_path.is_file():
-        loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {{}}
     else:
-        loaded = read_json("theme_discovery_parameters.json", {})
+        loaded = read_json("theme_discovery_parameters.json", {{}})
     if "data" not in loaded:
         raise ValueError(
-            f"La configuration du run ne contient pas la section 'data' : {yaml_path}"
+            f"La configuration du run ne contient pas la section 'data' : {{yaml_path}}"
         )
     data_cfg = loaded["data"]
     for key in ("units_path", "embeddings_path"):
         if data_cfg.get(key):
             data_cfg[key] = str(local_path(data_cfg[key]))
-    topics_cfg = loaded.setdefault("topics", {})
+    topics_cfg = loaded.setdefault("topics", {{}})
     if topics_cfg.get("stopwords_file"):
         topics_cfg["stopwords_file"] = str(local_path(topics_cfg["stopwords_file"]))
     return loaded
+        """
+    ),
+    markdown(
+        """
+## 1. Corpus description
 
-manifest = read_json("theme_discovery_manifest.json", {})
-parallel = read_json("parallel_runtime.json", {})
+Role-conditioned factual units retained for theme discovery. *Contributing accidents*
+counts distinct accident identifiers with at least one valid unit in the role.
+        """
+    ),
+    code(
+        """
+if str(SCENARIO_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIO_DIR))
+
+from scenario_pipeline import load_units
+from manuscript_reporting import (
+    PARETO_TABLE_COLUMNS,
+    build_corpus_summary_from_audit,
+    build_corpus_summary_table,
+    build_knee_selection_table,
+    build_pareto_front_summary_table,
+    build_retained_factors_summary_table,
+    build_seed_sensitivity_summary,
+    build_selected_configuration_table,
+    plot_factor_resampling_reproducibility,
+    plot_membership_strength_by_factor,
+    plot_seed_sensitivity_factors,
+)
+
 config = load_run_config()
 config.setdefault("topics", {})["top_sentences"] = max(
     int(config.get("topics", {}).get("top_sentences", 5)),
     N_REPRESENTATIVE_SENTENCES,
 )
-display(pd.DataFrame([{
-    "dataset": manifest.get("dataset_id", config.get("data", {}).get("dataset_id")),
-    "selection_metric": manifest.get("selection_metric", "stability"),
-    "n_workers": parallel.get("n_workers", manifest.get("n_workers")),
-    "slurm_cpus_per_task": parallel.get("slurm_cpus_per_task"),
-    "backend": parallel.get("backend"),
-    "inner_umap_n_jobs": parallel.get("inner_umap_n_jobs"),
-}]))
+manifest = read_json("theme_discovery_manifest.json", {})
+parallel = read_json("parallel_runtime.json", {})
+
+(RUN_DIR / "tables").mkdir(parents=True, exist_ok=True)
 summary_path = RUN_DIR / "audit_input_summary.csv"
 if summary_path.is_file():
-    display(pd.read_csv(summary_path))
+    audit_summary = pd.read_csv(summary_path)
+    corpus_summary = build_corpus_summary_from_audit(audit_summary)
+else:
+    units_preview, audit_summary = load_units(config)
+    corpus_summary = build_corpus_summary_table(units_preview)
+corpus_summary.to_csv(RUN_DIR / "tables" / "corpus_summary_by_role.csv", index=False)
+display(corpus_summary)
         """
     ),
     markdown(
         """
-## 2. Final selected configurations
+## 2. Pareto-optimal configurations (raw objectives)
 
-One row per role: configuration retained after Pareto screening and
-**geometric knee-point** selection on the normalized Pareto front
-(deterministic; no LLM in configuration choice). Use this table in the
-manuscript as the final compromise configuration (`selection_rule`:
-`single_pareto` or `geometric_knee`).
+Configurations on the role-specific Pareto front, sorted by increasing DBCV.
+Candidate IDs (`A0-P1`, …) are reporting aliases ordered on the front; hyperparameters
+and raw $S_R$/DBCV values come from the discovery run.
         """
     ),
     code(
         """
+pareto_front_tables = []
+knee_selection_tables = []
+selected_rows = []
+for role in ROLES:
+    selection_path = RUN_DIR / "discovery" / role / "selection_table.csv"
+    if not selection_path.is_file():
+        print(f"Missing selection_table.csv for {role}")
+        continue
+    selection_table = pd.read_csv(selection_path)
+    pareto_table = build_pareto_front_summary_table(selection_table, role=role)
+    knee_table = build_knee_selection_table(selection_table, role=role)
+    selected_table = build_selected_configuration_table(selection_table, role=role)
+    pareto_front_tables.append(pareto_table.drop(columns=["_configuration_id", "_candidate_rank"], errors="ignore"))
+    knee_selection_tables.append(knee_table)
+    if not selected_table.empty:
+        selected_rows.append(selected_table)
+    print(f"### {role} — Pareto front")
+    display(pareto_table[PARETO_TABLE_COLUMNS])
+
+if pareto_front_tables:
+    pd.concat(pareto_front_tables, ignore_index=True).to_csv(
+        RUN_DIR / "tables" / "pareto_front_summary_all_roles.csv", index=False
+    )
+        """
+    ),
+    markdown(
+        """
+## 3. Geometric knee selection (normalized Pareto objectives)
+
+Normalized scores are computed on the Pareto set only. $d_K$ is the signed
+perpendicular distance toward the ideal point; **Selected = Yes** marks the
+geometric knee configuration retained for the role.
+        """
+    ),
+    code(
+        """
+for role in ROLES:
+    selection_path = RUN_DIR / "discovery" / role / "selection_table.csv"
+    if not selection_path.is_file():
+        continue
+    knee_table = build_knee_selection_table(pd.read_csv(selection_path), role=role)
+    print(f"### {role}")
+    display(knee_table)
+
+if knee_selection_tables:
+    pd.concat(knee_selection_tables, ignore_index=True).to_csv(
+        RUN_DIR / "tables" / "knee_selection_all_roles.csv", index=False
+    )
+
 selected_path = RUN_DIR / "selected_configurations.csv"
 if selected_path.is_file():
     selected = pd.read_csv(selected_path)
@@ -241,11 +318,12 @@ else:
     ),
     markdown(
         """
-## 3. Pareto landscape and geometric knee selection
+## 4. Pareto figures
 
-All candidates in the (DBCV, $S_R$) plane; Pareto-optimal points, the
-geometric knee (star), and the normalized objective-space figure with the
-reference line $D_{norm} + S_{norm} = 1$.
+**Figure 4.2 (raw)** — all candidate configurations in $(\\mathrm{DBCV}, S_R)$ with the
+Pareto front and geometric knee.
+
+**Figure 4.2 (normalized)** — Pareto points only, reference line, ideal point and knee.
         """
     ),
     code(
@@ -256,76 +334,38 @@ if figure_path.is_file():
 normalized_path = RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png"
 if normalized_path.is_file():
     display(Image(filename=str(normalized_path)))
-summary_path = RUN_DIR / "selected_configurations_summary.csv"
+        """
+    ),
+    markdown("## 5. Run manifest and technical diagnostics"),
+    code(
+        """
+display(pd.DataFrame([{
+    "dataset": manifest.get("dataset_id", config.get("data", {}).get("dataset_id")),
+    "selection_metric": manifest.get("selection_metric", "pareto_geometric_knee"),
+    "n_workers": parallel.get("n_workers", manifest.get("n_workers")),
+    "slurm_cpus_per_task": parallel.get("slurm_cpus_per_task"),
+    "backend": parallel.get("backend"),
+    "inner_umap_n_jobs": parallel.get("inner_umap_n_jobs"),
+}]))
 if summary_path.is_file():
-    display(pd.read_csv(summary_path))
-for role in ROLES:
-    for name in (f"factor_resampling_{role}.png",):
-        figure_path = RUN_DIR / "figures" / name
-        if figure_path.is_file():
-            display(Image(filename=str(figure_path)))
-    seed_fig = RUN_DIR / "discovery" / role / "seed_sensitivity" / f"seed_sensitivity_{role}.png"
-    if seed_fig.is_file():
-        display(Image(filename=str(seed_fig)))
+    display(audit_summary)
         """
     ),
-    markdown("## 4. Full candidate diagnostics and stability"),
-
+    markdown("## 6. Frozen themes and audit dictionary"),
     code(
         """
-for role in ROLES:
-    metrics_path = RUN_DIR / "discovery" / role / "candidate_metrics.csv"
-    stability_path = RUN_DIR / "discovery" / role / "stability_summary.csv"
-    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
-    print(f"### {role}")
-    frontier_path = RUN_DIR / "discovery" / role / "selection_table.csv"
-    pareto_path = RUN_DIR / "discovery" / role / "pareto_front.csv"
-    if frontier_path.is_file():
-        selection = pd.read_csv(frontier_path)
-        sort_cols = [c for c in ["is_pareto", "is_selected_knee", "knee_distance", "stability", "dbcv_umap"] if c in selection.columns]
-        ascending = [False] * len(sort_cols)
-        print("configuration search (Pareto / selected flagged)")
-        display(selection.sort_values(sort_cols, ascending=ascending).head(20))
-    elif pareto_path.is_file():
-        display(pd.read_csv(pareto_path))
-    elif metrics_path.is_file():
-        metrics = pd.read_csv(metrics_path)
-        if stability_path.is_file():
-            metrics = metrics.merge(pd.read_csv(stability_path), on=["role", "configuration_id"], how="left")
-        display(metrics.sort_values("stability", ascending=False, na_position="last"))
-    if theme_path.is_file():
-        print("Theme-level mean Jaccard stability (S_ck) and observability")
-        themes = pd.read_csv(theme_path)
-        cols = [c for c in ["configuration_id", "cluster_label", "theme_stability", "observability"] if c in themes.columns]
-        display(themes.sort_values(["configuration_id", "theme_stability"], ascending=[True, False])[cols])
-        """
-    ),
-    code(
-        """
-if str(SCENARIO_DIR) not in sys.path:
-    sys.path.insert(0, str(SCENARIO_DIR))
-from scenario_pipeline import load_selected_configurations
+from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_selected_configurations, load_units
 
 PARTITION_SELECTION = load_selected_configurations(RUN_DIR)
 PARTITION_SELECTIONS = {role: [PARTITION_SELECTION[role]] for role in ROLES}
-selection_check = pd.read_csv(RUN_DIR / "selected_configurations.csv")
-display(selection_check)
-print("Frozen partitions:", PARTITION_SELECTION)
-        """
-    ),
-    markdown("## 5. Frozen themes and audit dictionary"),
-    code(
-        """
-if str(SCENARIO_DIR) not in sys.path:
-    sys.path.insert(0, str(SCENARIO_DIR))
-from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_units
-
 missing_selection_roles = [role for role in ROLES if role not in PARTITION_SELECTION]
 if missing_selection_roles:
     raise ValueError(
         "selected_configurations.csv incomplet pour : "
         + ", ".join(missing_selection_roles)
     )
+display(pd.read_csv(RUN_DIR / "selected_configurations.csv"))
+print("Frozen partitions:", PARTITION_SELECTION)
 
 units, _ = load_units(config)
 embedding_cache = RUN_DIR / "embeddings" / "embeddings_encoded.npy"
@@ -446,69 +486,139 @@ for role in ROLES:
     ),
     markdown(
         """
-## 6. Membership-strength distributions
+## 7. Membership-strength distributions for retained factors
 
-These scores are HDBSCAN membership strengths, not posterior probabilities.
-They are shown for every selected partition. The histogram describes
-the distribution over units, while the horizontal barplot compares the maximum,
-mean and median strength for each topic. Noise units are excluded from topic
-summaries but remain visible in the diagnostic count.
+**Figure 4.3** — For each retained factor, distribution of observation-level membership
+strengths $q_i$ among assigned factual units (horizontal boxplots). Factors are ordered
+by median membership strength; annotations give the number of factual units and distinct
+supporting accidents. Noise is summarized separately and is not treated as a factor.
         """
     ),
     code(
         """
-from matplotlib.ticker import MaxNLocator
-
-
-membership_summaries = {}
-for (role, configuration_id), frame in partition_frames.items():
-    valid = frame[frame["Topic"].astype(int).ge(0)].copy()
-    valid["Topic"] = valid["Topic"].astype(int)
-    summary = valid.groupby("Topic")["membership_strength"].agg(
-        n_units="size",
-        max_strength="max",
-        mean_strength="mean",
-        median_strength="median",
-    ).sort_values("max_strength", ascending=False)
-    summary.insert(0, "role", role)
-    summary.insert(1, "configuration_id", configuration_id)
-    membership_summaries[(role, configuration_id)] = summary.reset_index()
-    display(summary.reset_index())
-
-    figure, axes = plt.subplots(1, 2, figsize=(17, 6), gridspec_kw={"width_ratios": [1, 1.7]})
-    strengths = valid["membership_strength"].astype(float)
-    axes[0].hist(strengths, bins=np.linspace(0, 1, 21), color="#4C78A8", edgecolor="white")
-    axes[0].set_title(f"{role} — {configuration_id}: distribution")
-    axes[0].set_xlabel("HDBSCAN membership strength")
-    axes[0].set_ylabel("Number of units")
-    axes[0].set_xlim(0, 1)
-    axes[0].xaxis.set_major_locator(MaxNLocator(6))
-
-    plot_summary = summary.sort_values("max_strength", ascending=True)
-    positions = np.arange(len(plot_summary))
-    axes[1].barh(positions, plot_summary["max_strength"], color="#F28E2B", alpha=0.85, label="Maximum")
-    axes[1].scatter(plot_summary["mean_strength"], positions, color="#4C78A8", s=28, label="Mean", zorder=3)
-    axes[1].scatter(plot_summary["median_strength"], positions, color="#59A14F", s=28, label="Median", zorder=3)
-    axes[1].set_yticks(positions)
-    axes[1].set_yticklabels([f"Topic {int(topic)}" for topic in plot_summary.index])
-    axes[1].set_xlim(0, 1)
-    axes[1].set_xlabel("Membership strength")
-    axes[1].set_title(f"{role} — {configuration_id}: strength by topic")
-    axes[1].legend(frameon=False)
-    axes[1].grid(axis="x", alpha=0.2)
-    figure.tight_layout()
-    (RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
-    figure.savefig(RUN_DIR / "figures" / f"membership_strength_{role}_{configuration_id}.png", dpi=250, bbox_inches="tight")
-    display(figure)
-    plt.close(figure)
-
-membership_summary_table = pd.concat(membership_summaries.values(), ignore_index=True) if membership_summaries else pd.DataFrame()
-membership_summary_table.to_csv(RUN_DIR / "topics_manual" / "membership_strength_summary.csv", index=False)
+for role in ROLES:
+    configuration_id = str(PARTITION_SELECTION[role])
+    frame = partition_frames[(role, configuration_id)]
+    output_path = RUN_DIR / "figures" / f"membership_strength_factors_{role}.png"
+    figure = plot_membership_strength_by_factor(
+        frame,
+        role=role,
+        configuration_id=configuration_id,
+        output_path=output_path,
+    )
+    if figure is not None:
+        display(figure)
+        plt.close(figure)
+    noise_count = int(frame["Topic"].astype(int).lt(0).sum())
+    if noise_count:
+        print(f"{role}: {noise_count} noise units (membership strength at zero, not shown as a factor)")
         """
     ),
     markdown(
         """
-## 7. Natural-language theme labels with the OpenAI API
+## 8. Factor-level accident-resampling reproducibility
+
+**Figure 4.4** — For each retained factor, distribution of best-match Jaccard values
+$J^{(b)}_{ck}$ across accident-resampling replicates in which the factor is observable,
+together with mean $S_{ck}$ and $B_{ck}/B$. Factors are ordered by $S_{ck}$.
+        """
+    ),
+    code(
+        """
+resampling_summaries = []
+for role in ROLES:
+    configuration_id = str(PARTITION_SELECTION[role])
+    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
+    if not theme_path.is_file():
+        print(f"Missing stability_theme.csv for {role}")
+        continue
+    theme_stability = pd.read_csv(theme_path)
+    selected_theme = theme_stability[
+        theme_stability["configuration_id"].astype(str).eq(configuration_id)
+    ].copy()
+    if selected_theme.empty:
+        print(f"No resampling rows for selected configuration {role}/{configuration_id}")
+        continue
+    output_path = RUN_DIR / "figures" / f"factor_resampling_{role}.png"
+    figure = plot_factor_resampling_reproducibility(
+        theme_stability,
+        role=role,
+        configuration_id=configuration_id,
+        output_path=output_path,
+    )
+    if figure is not None:
+        display(figure)
+        plt.close(figure)
+    factor_summary = (
+        selected_theme.groupby("cluster_label", as_index=False)
+        .agg(
+            S_ck=("theme_stability", "first"),
+            B_ck_over_B=("observability", "first"),
+            n_replicates=("repetition", "nunique"),
+        )
+        .sort_values("S_ck", ascending=True)
+    )
+    factor_summary.insert(0, "role", role)
+    resampling_summaries.append(factor_summary)
+    print(f"### {role}")
+    display(factor_summary)
+
+if resampling_summaries:
+    pd.concat(resampling_summaries, ignore_index=True).to_csv(
+        RUN_DIR / "tables" / "factor_resampling_summary_all_roles.csv", index=False
+    )
+        """
+    ),
+    markdown(
+        """
+## 9. Sensitivity of the selected partitions to UMAP random seeds
+
+**Figure 4.5** — For each alternative UMAP seed, best-match Jaccard between each reference
+factor and its closest non-noise counterpart. Adjacent table: DBCV, number-of-factor and
+noise-fraction ranges across seeds (no seed is chosen as “best”).
+        """
+    ),
+    code(
+        """
+seed_summary_tables = []
+for role in ROLES:
+    configuration_id = str(PARTITION_SELECTION[role])
+    seed_dir = RUN_DIR / "discovery" / role / "seed_sensitivity"
+    factor_path = seed_dir / "seed_factor_jaccard.csv"
+    summary_path = seed_dir / "seed_summary.csv"
+    if not factor_path.is_file() or not summary_path.is_file():
+        print(f"Missing seed sensitivity artifacts for {role}")
+        continue
+    seed_factors = pd.read_csv(factor_path)
+    seed_summary = pd.read_csv(summary_path)
+    output_path = RUN_DIR / "figures" / f"seed_sensitivity_factors_{role}.png"
+    figure = plot_seed_sensitivity_factors(
+        seed_factors,
+        role=role,
+        configuration_id=configuration_id,
+        output_path=output_path,
+    )
+    if figure is not None:
+        display(figure)
+        plt.close(figure)
+    role_seed_summary = build_seed_sensitivity_summary(seed_summary)
+    if not role_seed_summary.empty:
+        seed_summary_tables.append(role_seed_summary)
+        print(f"### {role} — seed ranges")
+        display(role_seed_summary)
+    pipeline_fig = seed_dir / f"seed_sensitivity_{role}.png"
+    if pipeline_fig.is_file():
+        display(Image(filename=str(pipeline_fig)))
+
+if seed_summary_tables:
+    pd.concat(seed_summary_tables, ignore_index=True).to_csv(
+        RUN_DIR / "tables" / "seed_sensitivity_summary_all_roles.csv", index=False
+    )
+        """
+    ),
+    markdown(
+        """
+## 10. Natural-language theme labels with the OpenAI API
 
 The prompts are defined in the first code cell, separately for A0, A1, B and
 C. For each role, the API receives the topic identifiers, top words and the
@@ -730,7 +840,44 @@ display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "l
     ),
     markdown(
         """
-## 8. Narrative text coloured by topic
+## 11. Summary of retained factors (Table 4.5)
+
+Illustrative summary after LLM labelling: units, contributing accidents, resampling
+stability $S_{ck}$, median membership strength, and illustrative content.
+        """
+    ),
+    code(
+        """
+factor_stability_by_role = []
+for role in ROLES:
+    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
+    if not theme_path.is_file():
+        continue
+    theme_stability = pd.read_csv(theme_path)
+    configuration_id = str(PARTITION_SELECTION[role])
+    selected = theme_stability[
+        theme_stability["configuration_id"].astype(str).eq(configuration_id)
+    ].drop_duplicates("cluster_label")
+    if not selected.empty:
+        factor_stability_by_role.append(selected)
+factor_stability = pd.concat(factor_stability_by_role, ignore_index=True) if factor_stability_by_role else pd.DataFrame()
+
+primary_theme_labels = theme_labels[
+    theme_labels["configuration_id"].astype(str).eq(theme_labels["role"].map(PARTITION_SELECTION).astype(str))
+]
+retained_factors_table = build_retained_factors_summary_table(
+    primary_theme_labels,
+    partition_frames,
+    factor_stability=factor_stability if not factor_stability.empty else None,
+    partition_selection=PARTITION_SELECTION,
+)
+retained_factors_table.to_csv(RUN_DIR / "tables" / "retained_factors_summary.csv", index=False)
+display(retained_factors_table)
+        """
+    ),
+    markdown(
+        """
+## 12. Narrative text coloured by topic
 
 Each selected non-dominated partition can be inspected directly on the source
 accident narrative. The colours are local to the displayed partition and the
@@ -872,7 +1019,7 @@ for (role, configuration_id) in partition_frames:
     ),
     markdown(
         """
-## 9. Two-dimensional UMAP topic map
+## 13. Two-dimensional UMAP topic map
 
 Publication-style 2-D UMAP (visualization only; not used for clustering or
 selection). Topic labels use the full LLM / top-term text (wrapped, not
@@ -1110,12 +1257,22 @@ for role in ROLES:
         plt.close(figure)
         """
     ),
-    markdown("## 10. Export locations"),
+    markdown("## 14. Export locations"),
     code(
         """
 outputs = [
+    "tables/corpus_summary_by_role.csv",
+    "tables/pareto_front_summary_all_roles.csv",
+    "tables/knee_selection_all_roles.csv",
+    "tables/factor_resampling_summary_all_roles.csv",
+    "tables/seed_sensitivity_summary_all_roles.csv",
+    "tables/retained_factors_summary.csv",
     "config_resolved.yaml", "parallel_runtime.json", "selected_configurations.csv",
-    "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_knee_all_roles.png", "figures/umap_topics_2d_A0.png",
+    "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_knee_all_roles.png",
+    "figures/membership_strength_factors_A0.png",
+    "figures/factor_resampling_A0.png",
+    "figures/seed_sensitivity_factors_A0.png",
+    "figures/umap_topics_2d_A0.png",
     "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
     "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
     "topics_manual/topic_dictionary_all_selected.csv", "topics_manual/representatives_by_membership.csv",
