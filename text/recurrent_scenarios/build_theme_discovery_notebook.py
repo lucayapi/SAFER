@@ -25,12 +25,12 @@ cells = [
 
 This notebook discovers stable themes independently for `A0`, `A1`, `B` and `C`.
 Candidates are screened on the Pareto front of accident-level reproducibility `S_R`
-and UMAP-space DBCV. When several non-dominated configurations remain, blinded
-semantic scores from evaluator_1 and evaluator_2 select the final partition.
+and UMAP-space DBCV. The geometric knee point on the normalized Pareto front
+selects the final partition (deterministic, no LLM in configuration choice).
 Seed sensitivity is run after selection.
 
 After this notebook (or the Slurm discovery job), open
-`topic_modeling_results_{corpus}.ipynb` for semantic labels, then
+`topic_modeling_results_{corpus}.ipynb` for LLM cluster labels, then
 `recurrent_scenarios_bn_analysis_{corpus}.ipynb` for the latent BN.
         """
     ),
@@ -74,9 +74,10 @@ from scenario_pipeline import (
     prepare_data,
     select_configuration_for_role,
     write_factor_stability_figure,
+    write_pareto_normalized_knee_figure,
     write_stability_landscape_figure,
 )
-from semantic_evaluation import mark_pareto_front, run_role_semantic_evaluation
+from pareto_knee_selection import identify_pareto_front, print_role_selection_summary
         """
     ),
     markdown(
@@ -170,17 +171,9 @@ config = {
         "n_resampling": N_RESAMPLING,
         "resampling_fraction": RESAMPLING_FRACTION,
         "dbcv_sample_size": DBCV_SAMPLE_SIZE,
-        "selection_metric": "pareto_semantic",
-        "tie_breaker": "stability_then_dbcv",
+        "selection_metric": "pareto_geometric_knee",
         "show_progress": SHOW_PROGRESS,
         "seed_sensitivity": {"enabled": True, "seeds": SEED_SENSITIVITY_SEEDS},
-        "semantic_evaluation": {
-            "enabled": True,
-            "units_per_factor": 9,
-            "random_state": RANDOM_SEED,
-            "evaluator_1": {"model": "gpt-5.6-terra"},
-            "evaluator_2": {"model": "gpt-5.6-luna"},
-        },
     },
     "topics": {
         "top_words": TOP_WORDS,
@@ -230,48 +223,44 @@ theme_stability[role], summary = evaluate_resampling_stability(
     role, prepared.units, prepared.embeddings, config, RUN_DIR,
     candidates, reestimate=REESTIMATE
 )
-merged = mark_pareto_front(candidates.merge(summary, on=["role", "configuration_id"], how="left"))
-semantic_scores = pd.DataFrame()
-if int(merged["on_pareto"].sum()) > 1:
-    _, semantic_scores, agreement = run_role_semantic_evaluation(
-        role=role,
-        units=prepared.units,
-        output_dir=RUN_DIR,
-        candidate_table=merged,
-        config=config,
-        reestimate=REESTIMATE,
-    )
-    if not agreement.empty:
-        display(agreement)
-selection_tables[role], selected_id, rule = select_configuration_for_role(merged, semantic_scores)
+merged = identify_pareto_front(candidates.merge(summary, on=["role", "configuration_id"], how="left"))
+selection_tables[role], selected_id, rule = select_configuration_for_role(merged)
 candidate_tables[role] = selection_tables[role]
 selections[role] = selected_id
 materialize_selected_partition(role, prepared.units, selected_id, RUN_DIR, theme_stability[role])
 write_factor_stability_figure(role, theme_stability[role], selected_id, RUN_DIR / "figures")
+print_role_selection_summary(role, selection_tables[role], selected_id=selected_id)
 cols = [c for c in [
-    "configuration_id", "stability", "dbcv_umap", "on_pareto", "selected",
-    "semantic_score", "n_clusters", "noise_fraction", "coverage",
+    "configuration_id", "stability", "dbcv_umap", "is_pareto", "is_selected_knee",
+    "stability_normalized", "dbcv_normalized", "knee_distance",
+    "n_clusters", "noise_fraction", "coverage",
 ] if c in selection_tables[role].columns]
-display(selection_tables[role].sort_values(["on_pareto", "stability", "dbcv_umap"], ascending=[False, False, False])[cols].head(12))
+display(selection_tables[role].sort_values(["is_pareto", "dbcv_umap", "stability"], ascending=[False, True, False])[cols].head(12))
 print("Selected:", selected_id, "via", rule)
             """
         ),
     ])
 
 cells.extend([
-    markdown("## 5. Landscape and seed sensitivity"),
+    markdown("## 5. Pareto figures and seed sensitivity"),
     code(
         """
 write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
+write_pareto_normalized_knee_figure(selection_tables, RUN_DIR / "figures")
 display(Image(filename=str(RUN_DIR / "figures" / "stability_landscape_all_roles.png")))
+display(Image(filename=str(RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png")))
 selected_rows = []
 for role in ROLES:
-    row = selection_tables[role].loc[selection_tables[role]["selected"]].iloc[0]
+    row = selection_tables[role].loc[selection_tables[role]["is_selected_knee"]].iloc[0]
     selected_rows.append({
         "role": role,
         "configuration_id": selections[role],
+        "selection_rule": "geometric_knee" if int(selection_tables[role]["is_pareto"].sum()) > 1 else "single_pareto",
         "stability": row["stability"],
         "dbcv_umap": row["dbcv_umap"],
+        "stability_normalized": row.get("stability_normalized"),
+        "dbcv_normalized": row.get("dbcv_normalized"),
+        "knee_distance": row.get("knee_distance"),
         "n_clusters": row["n_clusters"],
         "noise_fraction": row["noise_fraction"],
         "coverage": row["coverage"],
@@ -288,7 +277,7 @@ for role in ROLES:
     )
 pd.DataFrame(selected_rows).to_csv(RUN_DIR / "selected_configurations.csv", index=False)
 display(pd.DataFrame(selected_rows))
-print("Open topic_modeling_results_<corpus>.ipynb for labels, then the BN notebook.")
+print("Open topic_modeling_results_<corpus>.ipynb for LLM labels, then the BN notebook.")
         """
     ),
 ])

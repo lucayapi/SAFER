@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
-# Theme discovery with Pareto screening, semantic evaluators, and UMAP seed sensitivity.
+# Theme discovery with Pareto screening, geometric knee selection, and UMAP seed sensitivity.
 #
 # Usage from text/:
 #   DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
-#   DATASET=caou STAGE=evaluate RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
-#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=select RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
 #     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=seed RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \

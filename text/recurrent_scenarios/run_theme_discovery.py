@@ -12,7 +12,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Run recurrent-accident theme discovery with Pareto screening "
-            "and blinded semantic evaluation (evaluator_1 / evaluator_2)."
+            "and geometric knee-point selection."
         )
     )
     parser.add_argument(
@@ -28,23 +28,23 @@ def main() -> int:
     parser.add_argument(
         "--reestimate",
         action="store_true",
-        help="Ignore discovery caches and recompute candidates, resampling, evaluation and seeds.",
+        help="Ignore discovery caches and recompute candidates, resampling and seeds.",
     )
     parser.add_argument(
         "--stage",
-        choices=("all", "metrics", "evaluate", "select", "seed"),
+        choices=("all", "metrics", "select", "seed", "evaluate"),
         default="all",
         help=(
-            "all = metrics+evaluate+select+seed; metrics = DBCV/S_R only; "
-            "evaluate = evaluator_1/2 on Pareto packages; "
-            "select = Pareto (+ semantic scores) + materialize; "
-            "seed = UMAP seed sensitivity."
+            "all = metrics+select+seed; metrics = DBCV/S_R only; "
+            "select = Pareto + geometric knee + materialize; "
+            "seed = UMAP seed sensitivity. "
+            "evaluate is deprecated (alias for select)."
         ),
     )
     parser.add_argument(
         "--run-dir",
         type=Path,
-        help="Existing run directory for --stage evaluate/select/seed, or an explicit output directory.",
+        help="Existing run directory for --stage select/seed, or an explicit output directory.",
     )
     args = parser.parse_args()
     output_dir = run_theme_discovery(

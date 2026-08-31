@@ -46,6 +46,14 @@ import textwrap
 import warnings
 
 import numpy as np
+
+if int(np.__version__.split(".")[0]) >= 2:
+    raise ImportError(
+        "numpy>=2 détecté (kernel Anaconda/base). "
+        "Ce projet attend numpy==1.26.4 (text/requirements.txt). "
+        "Activez le venv du projet (text/.venv) et sélectionnez ce kernel dans Jupyter."
+    )
+
 import pandas as pd
 import yaml
 import matplotlib.pyplot as plt
@@ -87,20 +95,24 @@ RUN_DIRECTORY = f"runs/{{DISCOVERY_RUN_NAME}}/{{DATASET_ID}}"
 OPENAI_ENABLED = True
 OPENAI_MODEL = "gpt-4o-mini"
 LLM_OUTPUT_LANGUAGE = "Français"
-N_REPRESENTATIVE_SENTENCES = 25
+N_REPRESENTATIVE_SENTENCES = 50
 MAX_TOPICS_PER_ROLE_FOR_LLM = None
 FALLBACK_TOPICS_PER_ROLE = None
 UMAP_2D_N_NEIGHBORS = 15
 UMAP_2D_MIN_DIST = 0.1
 UMAP_2D_RANDOM_STATE = 42
 MAX_POINTS_PER_ROLE_PLOT = 12000
+UMAP_2D_FIGSIZE = (14, 12)
+UMAP_2D_LABEL_WRAP_WIDTH = 44
+UMAP_2D_DPI = 300
+UMAP_2D_SHOW_DENSITY = True
 print("OPENAI_API_KEY disponible :", bool(os.environ.get("OPENAI_API_KEY")))
 
 ROLE_PROMPTS = {{
-    "A0": '''Vous analysez des thèmes d'accidents du travail décrivant le contexte de travail, l'activité, le lieu, les équipements ou l'environnement opérationnel. Donnez à chaque thème un intitulé court et naturel. Ne décrivez pas la conséquence de l'accident et n'inventez aucune information absente des exemples.''',
-    "A1": '''Vous analysez des thèmes d'accidents du travail décrivant des conditions défavorables, des dangers, des situations dangereuses, des protections absentes ou des équipements défectueux. Donnez à chaque thème un intitulé court et naturel. Ne décrivez pas l'événement ou la blessure, sauf si cela est nécessaire pour distinguer la condition défavorable.''',
-    "B": '''Vous analysez des thèmes d'accidents du travail décrivant l'événement, la déviation, la perte de contrôle ou le mécanisme de l'accident. Donnez à chaque thème un intitulé court et naturel. Concentrez-vous sur ce qui s'est produit, et non uniquement sur le contexte de travail ou la blessure finale.''',
-    "C": '''Vous analysez des thèmes d'accidents du travail décrivant les conséquences, les blessures, les parties du corps touchées ou les dommages. Donnez à chaque thème un intitulé court et naturel. Concentrez-vous sur la conséquence observée plutôt que sur sa cause.''',
+    "A0": '''Vous nommez des facteurs sémantiques A0 (situation de travail avant l'accident). Chaque intitulé doit désigner un motif factuel précis et observable : activité concrète, type de poste, équipement, lieu ou configuration opérationnelle. Interdit : libellés méta ou vagues (« contexte de travail », « situation de travail », « environnement de travail », « activité professionnelle », « travail en général »). L'intitulé doit permettre de distinguer ce thème des autres du même rôle. 4 à 10 mots, ancré dans les exemples. Pas de conséquence ni d'événement accidentel.''',
+    "A1": '''Vous nommez des facteurs sémantiques A1 (condition défavorable ou danger avant l'événement). Chaque intitulé doit nommer le danger, la défaillance, l'absence de protection ou la condition dangereuse de façon spécifique. Interdit : libellés méta (« facteur défavorable », « condition dangereuse », « risque », « danger général »). 4 à 10 mots, ancré dans les exemples. Pas l'événement ni la blessure, sauf si indispensable pour distinguer la condition.''',
+    "B": '''Vous nommez des facteurs sémantiques B (événement ou mécanisme immédiat). Chaque intitulé doit décrire ce qui s'est produit ou le mécanisme de façon concrète (chute, heurt, coincement, démarrage intempestif, etc.). Interdit : libellés méta (« événement accidentel », « accident », « incident », « déviation générale »). 4 à 10 mots, ancré dans les exemples. Pas le contexte amont ni la blessure finale.''',
+    "C": '''Vous nommez des facteurs sémantiques C (conséquence ou lésion). Chaque intitulé doit préciser la nature du dommage ou la localisation (type de lésion, partie du corps, gravité si visible dans les exemples). Interdit : libellés méta (« conséquence », « blessure », « lésion », « dommage » seuls). 4 à 10 mots, ancré dans les exemples. Pas la cause ni le contexte de travail.''',
 }}
 
 def resolve_run_directory(value):
@@ -197,23 +209,43 @@ if summary_path.is_file():
     display(pd.read_csv(summary_path))
         """
     ),
-    markdown("## 2. Selected configurations"),
+    markdown(
+        """
+## 2. Final selected configurations
+
+One row per role: configuration retained after Pareto screening and
+**geometric knee-point** selection on the normalized Pareto front
+(deterministic; no LLM in configuration choice). Use this table in the
+manuscript as the final compromise configuration (`selection_rule`:
+`single_pareto` or `geometric_knee`).
+        """
+    ),
     code(
         """
 selected_path = RUN_DIR / "selected_configurations.csv"
 if selected_path.is_file():
-    display(pd.read_csv(selected_path))
+    selected = pd.read_csv(selected_path)
+    display_cols = [
+        c for c in [
+            "role", "configuration_id", "selection_rule",
+            "stability", "dbcv_umap",
+            "stability_normalized", "dbcv_normalized", "knee_distance",
+            "n_clusters", "noise_fraction",
+        ]
+        if c in selected.columns
+    ]
+    display(selected[display_cols] if display_cols else selected)
 else:
     raise FileNotFoundError("selected_configurations.csv manquant — lancer le job discovery (stage select/all).")
         """
     ),
     markdown(
         """
-## 3. Validation landscapes
+## 3. Pareto landscape and geometric knee selection
 
-The figures show all candidates in the (DBCV, S_R) plane, highlight the Pareto
-front, and mark the final selected configuration. Factor-level resampling,
-seed-sensitivity, and evaluator agreement tables are shown when present.
+All candidates in the (DBCV, $S_R$) plane; Pareto-optimal points, the
+geometric knee (star), and the normalized objective-space figure with the
+reference line $D_{norm} + S_{norm} = 1$.
         """
     ),
     code(
@@ -221,10 +253,12 @@ seed-sensitivity, and evaluator agreement tables are shown when present.
 figure_path = RUN_DIR / "figures" / "stability_landscape_all_roles.png"
 if figure_path.is_file():
     display(Image(filename=str(figure_path)))
-agreement_path = RUN_DIR / "evaluator_agreement_summary.csv"
-if agreement_path.is_file():
-    print("Evaluator agreement (evaluator_1 vs evaluator_2)")
-    display(pd.read_csv(agreement_path))
+normalized_path = RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png"
+if normalized_path.is_file():
+    display(Image(filename=str(normalized_path)))
+summary_path = RUN_DIR / "selected_configurations_summary.csv"
+if summary_path.is_file():
+    display(pd.read_csv(summary_path))
 for role in ROLES:
     for name in (f"factor_resampling_{role}.png",):
         figure_path = RUN_DIR / "figures" / name
@@ -233,13 +267,9 @@ for role in ROLES:
     seed_fig = RUN_DIR / "discovery" / role / "seed_sensitivity" / f"seed_sensitivity_{role}.png"
     if seed_fig.is_file():
         display(Image(filename=str(seed_fig)))
-    scores_path = RUN_DIR / "discovery" / role / "semantic_evaluation" / "candidate_scores.csv"
-    if scores_path.is_file():
-        print(f"{role} semantic candidate scores")
-        display(pd.read_csv(scores_path))
         """
     ),
-    markdown("## 4. Candidate diagnostics and stability"),
+    markdown("## 4. Full candidate diagnostics and stability"),
 
     code(
         """
@@ -252,7 +282,7 @@ for role in ROLES:
     pareto_path = RUN_DIR / "discovery" / role / "pareto_front.csv"
     if frontier_path.is_file():
         selection = pd.read_csv(frontier_path)
-        sort_cols = [c for c in ["on_pareto", "stability", "dbcv_umap"] if c in selection.columns]
+        sort_cols = [c for c in ["is_pareto", "is_selected_knee", "knee_distance", "stability", "dbcv_umap"] if c in selection.columns]
         ascending = [False] * len(sort_cols)
         print("configuration search (Pareto / selected flagged)")
         display(selection.sort_values(sort_cols, ascending=ascending).head(20))
@@ -538,10 +568,21 @@ def request_role_labels(client, role, records):
     instruction = f'''
 Retournez un seul objet JSON contenant un tableau `themes`, avec un élément
 pour chaque `topic_id`. Rédigez l'intitulé, la description et les éléments de
-preuve en {LLM_OUTPUT_LANGUAGE}. L'intitulé doit être court, précis et adapté à
-une figure. La description doit tenir en une phrase. Utilisez uniquement les
-mots-clés et les phrases représentatives fournis.
-Chaque élément doit contenir : `topic_id`, `label`, `description` et `evidence`.
+preuve en {LLM_OUTPUT_LANGUAGE}.
+
+Règles pour `label` :
+- 4 à 10 mots, nominal ou locution nominale, adapté à une légende de figure.
+- Doit nommer un motif factuel précis visible dans les exemples (objet, action,
+  équipement, lieu, mécanisme ou lésion selon le rôle).
+- Interdit : intitulés génériques qui ne discriminent pas les thèmes (ex. seulement
+  le nom du rôle, « contexte de travail », « facteur défavorable », « événement »,
+  « conséquence », « accident », « risque »).
+- Si les exemples sont hétérogènes, choisissez la formulation la plus spécifique
+  supportée par au moins deux exemples ; ne résumez pas tout le rôle A0/A1/B/C.
+- N'inventez aucune information absente des mots-clés et phrases fournis.
+
+`description` : une phrase expliquant le motif. `evidence` : 2 à 4 fragments
+textuels courts tirés des exemples (citations ou paraphrases minimales).
 
 Consigne spécifique au rôle :
 {prompt}
@@ -833,11 +874,11 @@ for (role, configuration_id) in partition_frames:
         """
 ## 9. Two-dimensional UMAP topic map
 
-This is a descriptive BERTopic-style map. A separate two-dimensional UMAP is
-fit for visualization only; it is not used for clustering or model selection.
-Points are colored by retained topic, while noise and topics not retained for
-downstream modelling are shown in light gray. The labels are the OpenAI labels
-when available and otherwise the top-word labels.
+Publication-style 2-D UMAP (visualization only; not used for clustering or
+selection). Topic labels use the full LLM / top-term text (wrapped, not
+truncated), are placed outside clusters with leader lines, and match cluster
+colors. Optional soft density shading per topic. For best label placement,
+install `adjustText` (`pip install adjustText`).
         """
     ),
     code(
@@ -845,6 +886,7 @@ when available and otherwise the top-word labels.
 if str(SCENARIO_DIR) not in sys.path:
     sys.path.insert(0, str(SCENARIO_DIR))
 from scenario_pipeline import load_embeddings, load_units
+import matplotlib.colors as mcolors
 
 
 def load_assignments():
@@ -870,9 +912,103 @@ label_lookup = primary_theme_labels.set_index("topic_id")["plot_label"].astype(s
 import umap
 
 
-def shorten_label(value, width=32):
-    value = str(value).strip()
-    return textwrap.shorten(value, width=width, placeholder="…") or "Topic"
+def wrap_topic_label(value, width=None):
+    text = str(value).strip()
+    if not text or text.lower() == "nan":
+        return "Topic"
+    wrap_width = int(width or UMAP_2D_LABEL_WRAP_WIDTH)
+    lines = textwrap.wrap(text, width=wrap_width, break_long_words=False, break_on_hyphens=False)
+    return "\\n".join(lines) if lines else text
+
+
+def _topic_density_contour(axis, subset, color, *, alpha=0.18):
+    if len(subset) < 12:
+        return
+    try:
+        from scipy.stats import gaussian_kde
+    except ImportError:
+        return
+    xs = subset["x"].astype(float).to_numpy()
+    ys = subset["y"].astype(float).to_numpy()
+    if len(xs) < 12:
+        return
+    try:
+        kde = gaussian_kde(np.vstack([xs, ys]))
+    except (np.linalg.LinAlgError, ValueError):
+        return
+    xmin, xmax = xs.min(), xs.max()
+    ymin, ymax = ys.min(), ys.max()
+    pad_x = max(0.08 * (xmax - xmin), 0.05)
+    pad_y = max(0.08 * (ymax - ymin), 0.05)
+    grid_x = np.linspace(xmin - pad_x, xmax + pad_x, 80)
+    grid_y = np.linspace(ymin - pad_y, ymax + pad_y, 80)
+    mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
+    density = kde(np.vstack([mesh_x.ravel(), mesh_y.ravel()])).reshape(mesh_x.shape)
+    axis.contourf(
+        mesh_x,
+        mesh_y,
+        density,
+        levels=6,
+        colors=[color],
+        alpha=alpha,
+        antialiased=True,
+        zorder=0,
+    )
+
+
+def _place_topic_labels(axis, label_specs):
+    # Place labels with leader lines; prefer adjustText when available.
+    texts = []
+    for spec in label_specs:
+        text = axis.text(
+            spec["x"],
+            spec["y"],
+            spec["label"],
+            fontsize=spec.get("fontsize", 8.5),
+            color=spec["color"],
+            ha="center",
+            va="center",
+            linespacing=1.15,
+            zorder=5,
+        )
+        texts.append(text)
+    try:
+        from adjustText import adjust_text
+
+        adjust_text(
+            texts,
+            arrowprops={
+                "arrowstyle": "-",
+                "color": "#8a8a8a",
+                "lw": 0.7,
+                "alpha": 0.85,
+                "shrinkA": 6,
+                "shrinkB": 4,
+            },
+            expand_points=(1.35, 1.45),
+            expand_text=(1.15, 1.25),
+            force_text=(0.35, 0.55),
+            force_points=(0.2, 0.35),
+            only_move={"text": "xy", "points": "y", "objects": "xy"},
+        )
+        return
+    except ImportError:
+        pass
+    center_x = float(np.mean([spec["x"] for spec in label_specs]))
+    center_y = float(np.mean([spec["y"] for spec in label_specs]))
+    x_span = axis.get_xlim()[1] - axis.get_xlim()[0]
+    y_span = axis.get_ylim()[1] - axis.get_ylim()[0]
+    offset_scale = 0.12 * max(x_span, y_span)
+    for spec, text in zip(label_specs, texts):
+        cx, cy = float(spec["x"]), float(spec["y"])
+        dx, dy = cx - center_x, cy - center_y
+        norm = float(np.hypot(dx, dy))
+        if norm < 1e-9:
+            dx, dy, norm = 1.0, 0.0, 1.0
+        lx = cx + offset_scale * dx / norm
+        ly = cy + offset_scale * dy / norm
+        text.set_position((lx, ly))
+        axis.plot([cx, lx], [cy, ly], color="#9a9a9a", linewidth=0.7, alpha=0.85, zorder=4)
 
 
 def plot_role_umap(role):
@@ -900,32 +1036,63 @@ def plot_role_umap(role):
     role_plot["x"] = role_plot["local_index"].map(lambda index: coordinate_lookup[int(index)][0])
     role_plot["y"] = role_plot["local_index"].map(lambda index: coordinate_lookup[int(index)][1])
     role_plot = role_plot.dropna(subset=["x", "y"])
-    figure, axis = plt.subplots(figsize=(12, 9))
+
+    figure, axis = plt.subplots(figsize=UMAP_2D_FIGSIZE, facecolor="white")
+    axis.set_facecolor("white")
+
     noise = role_plot[role_plot["plot_topic_id"].eq("")]
     if not noise.empty:
-        axis.scatter(noise["x"], noise["y"], s=6, c="#7f7f7f", alpha=0.45, linewidths=0, rasterized=True, label="Bruit / non assigné")
+        axis.scatter(
+            noise["x"],
+            noise["y"],
+            s=3.5,
+            c="#d9d9d9",
+            alpha=0.35,
+            linewidths=0,
+            rasterized=True,
+            zorder=1,
+        )
+
     active_topics = [topic_id for topic_id in sorted(role_plot["plot_topic_id"].unique()) if topic_id]
-    colors = plt.get_cmap("tab20", max(1, len(active_topics)))
+    cmap = plt.get_cmap("tab20", max(1, len(active_topics)))
+    label_specs = []
     for index, topic_id in enumerate(active_topics):
         subset = role_plot[role_plot["plot_topic_id"].eq(topic_id)]
-        color = colors(index)
-        axis.scatter(subset["x"], subset["y"], s=8, color=color, alpha=0.72, linewidths=0, rasterized=True)
-        center_x = float(subset["x"].mean())
-        center_y = float(subset["y"].mean())
-        axis.text(
-            center_x,
-            center_y,
-            shorten_label(label_lookup.get(topic_id, topic_id)),
-            fontsize=9,
-            ha="center",
-            va="center",
-            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "alpha": 0.8, "edgecolor": color},
+        color = cmap(index)
+        if bool(UMAP_2D_SHOW_DENSITY):
+            _topic_density_contour(axis, subset, color)
+        axis.scatter(
+            subset["x"],
+            subset["y"],
+            s=5.5,
+            color=color,
+            alpha=0.78,
+            linewidths=0,
+            rasterized=True,
+            zorder=2,
         )
-    axis.set_title(f"{role} — partition {PARTITION_SELECTION[role]}")
-    axis.set_xlabel("UMAP-1")
-    axis.set_ylabel("UMAP-2")
-    axis.grid(alpha=0.15)
-    figure.tight_layout()
+        label_specs.append({
+            "x": float(subset["x"].mean()),
+            "y": float(subset["y"].mean()),
+            "label": wrap_topic_label(label_lookup.get(topic_id, topic_id)),
+            "color": mcolors.to_hex(color) if not isinstance(color, str) else color,
+        })
+
+    margin_x = 0.08 * (role_plot["x"].max() - role_plot["x"].min() + 1e-9)
+    margin_y = 0.08 * (role_plot["y"].max() - role_plot["y"].min() + 1e-9)
+    axis.set_xlim(role_plot["x"].min() - margin_x, role_plot["x"].max() + margin_x * 2.5)
+    axis.set_ylim(role_plot["y"].min() - margin_y, role_plot["y"].max() + margin_y * 2.5)
+    if label_specs:
+        _place_topic_labels(axis, label_specs)
+
+    axis.set_xlabel("UMAP-1", fontsize=11)
+    axis.set_ylabel("UMAP-2", fontsize=11)
+    axis.tick_params(labelsize=9, colors="#666666")
+    for spine in axis.spines.values():
+        spine.set_color("#cccccc")
+        spine.set_linewidth(0.8)
+    axis.grid(False)
+    figure.subplots_adjust(left=0.06, right=0.98, top=0.98, bottom=0.07)
     return figure
 
 
@@ -934,9 +1101,11 @@ role_figures = {}
 for role in ROLES:
     figure = plot_role_umap(role)
     if figure is not None:
-        output_path = RUN_DIR / "figures" / f"umap_topics_2d_{role}.png"
-        figure.savefig(output_path, dpi=250, bbox_inches="tight")
-        role_figures[role] = output_path
+        png_path = RUN_DIR / "figures" / f"umap_topics_2d_{role}.png"
+        pdf_path = RUN_DIR / "figures" / f"umap_topics_2d_{role}.pdf"
+        figure.savefig(png_path, dpi=int(UMAP_2D_DPI), bbox_inches="tight", facecolor="white")
+        figure.savefig(pdf_path, bbox_inches="tight", facecolor="white")
+        role_figures[role] = png_path
         display(figure)
         plt.close(figure)
         """
@@ -946,7 +1115,7 @@ for role in ROLES:
         """
 outputs = [
     "config_resolved.yaml", "parallel_runtime.json", "selected_configurations.csv",
-    "figures/stability_landscape_all_roles.png", "figures/umap_topics_2d_A0.png",
+    "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_knee_all_roles.png", "figures/umap_topics_2d_A0.png",
     "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
     "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
     "topics_manual/topic_dictionary_all_selected.csv", "topics_manual/representatives_by_membership.csv",

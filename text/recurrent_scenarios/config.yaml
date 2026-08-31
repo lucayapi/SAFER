@@ -52,30 +52,19 @@ screening:
     metric: euclidean
     prediction_data: true
 
-# Accident-level reproducibility + DBCV; final pick via Pareto then semantic evaluators.
+# Accident-level reproducibility + DBCV; final pick via Pareto geometric knee point.
 validation:
   random_state: 42
   resampling_fraction: 0.8
   n_resampling: 30
   # Full DBCV is quadratic; null = exact role calculation.
   dbcv_sample_size: null
-  selection_metric: pareto_semantic
-  tie_breaker: stability_then_dbcv
+  selection_metric: pareto_geometric_knee
   show_progress: true
   seed_sensitivity:
     enabled: true
     # Alternative UMAP seeds; primary seed remains validation.random_state / random_state.
     seeds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
-  # Blinded semantic evaluation of Pareto-supported partitions (evaluator_1 / evaluator_2).
-  semantic_evaluation:
-    enabled: true
-    units_per_factor: 9
-    random_state: 42
-    require_api_key: true
-    evaluator_1:
-      model: gpt-5.6-terra
-    evaluator_2:
-      model: gpt-5.6-luna
 
 topics:
   top_words: 12

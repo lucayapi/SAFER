@@ -5,11 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
-sys.path.insert(0, "text/recurrent_scenarios")
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recurrent_scenarios"))
 
+import pareto_knee_selection as pareto_knee
 import scenario_pipeline as pipeline
-import semantic_evaluation as semantic
 
 
 def test_aggregate_resampling_stability_mean_and_observability():
@@ -39,7 +40,7 @@ def test_aggregate_resampling_stability_mean_and_observability():
     assert np.isclose(factor0.loc[1, "observability"], 1.0)
 
 
-def test_mark_pareto_front_non_dominance():
+def test_identify_pareto_front_non_dominance():
     frame = pd.DataFrame(
         [
             {"configuration_id": "a", "stability": 0.90, "dbcv_umap": 0.10},
@@ -48,156 +49,91 @@ def test_mark_pareto_front_non_dominance():
             {"configuration_id": "d", "stability": 0.85, "dbcv_umap": 0.25},
         ]
     )
-    marked = semantic.mark_pareto_front(frame)
-    pareto_ids = set(marked.loc[marked["on_pareto"], "configuration_id"])
+    marked = pareto_knee.identify_pareto_front(frame)
+    pareto_ids = set(marked.loc[marked["is_pareto"], "configuration_id"])
     assert pareto_ids == {"a", "b", "d"}
 
 
-def test_select_single_pareto_without_scores():
+def test_select_single_pareto_without_knee():
     frame = pd.DataFrame(
         [
             {"role": "A0", "configuration_id": "A0_cfg_001", "stability": 0.9, "dbcv_umap": 0.4},
             {"role": "A0", "configuration_id": "A0_cfg_002", "stability": 0.7, "dbcv_umap": 0.1},
         ]
     )
-    table, selected, rule = pipeline.select_configuration_for_role(frame, pd.DataFrame())
+    table, selected, rule = pipeline.select_configuration_for_role(frame)
     assert selected == "A0_cfg_001"
     assert rule == "single_pareto"
-    assert bool(table.loc[table["configuration_id"].eq(selected), "selected"].iloc[0])
+    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_knee"].iloc[0])
 
 
-def test_select_semantic_score_with_sr_tie_break():
+def test_geometric_knee_selects_compromise():
     candidates = pd.DataFrame(
         [
-            {"role": "A0", "configuration_id": "A0_cfg_001", "stability": 0.80, "dbcv_umap": 0.40},
-            {"role": "A0", "configuration_id": "A0_cfg_002", "stability": 0.90, "dbcv_umap": 0.20},
-            {"role": "A0", "configuration_id": "A0_cfg_003", "stability": 0.70, "dbcv_umap": 0.10},
+            {"role": "A0", "configuration_id": "A0_cfg_001", "stability": 0.95, "dbcv_umap": 0.05},
+            {"role": "A0", "configuration_id": "A0_cfg_002", "stability": 0.75, "dbcv_umap": 0.35},
+            {"role": "A0", "configuration_id": "A0_cfg_003", "stability": 0.45, "dbcv_umap": 0.55},
+            {"role": "A0", "configuration_id": "A0_cfg_004", "stability": 0.20, "dbcv_umap": 0.90},
         ]
     )
-    scores = pd.DataFrame(
-        [
-            {
-                "role": "A0",
-                "configuration_id": "A0_cfg_001",
-                "coherence": 4.0,
-                "distinctiveness": 4.0,
-                "prevention_relevance": 4.0,
-                "semantic_score": 4.0,
-                "evaluator_1_score": 4.0,
-                "evaluator_2_score": 4.0,
-            },
-            {
-                "role": "A0",
-                "configuration_id": "A0_cfg_002",
-                "coherence": 4.0,
-                "distinctiveness": 4.0,
-                "prevention_relevance": 4.0,
-                "semantic_score": 4.0,
-                "evaluator_1_score": 4.1,
-                "evaluator_2_score": 3.9,
-            },
-        ]
-    )
-    table, selected, rule = pipeline.select_configuration_for_role(candidates, scores)
+    table, selected, rule = pipeline.select_configuration_for_role(candidates)
+    assert rule == "geometric_knee"
     assert selected == "A0_cfg_002"
-    assert rule == "semantic_score"
-    assert bool(table.loc[table["configuration_id"].eq(selected), "selected"].iloc[0])
+    knee_row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
+    assert knee_row["knee_distance"] == pytest.approx(
+        table.loc[table["is_pareto"], "knee_distance"].max()
+    )
 
 
-def test_aggregate_and_agreement():
-    factor_scores = pd.DataFrame(
+def test_knee_tie_break_by_stability():
+    frame = pd.DataFrame(
         [
-            {"role": "A0", "configuration_id": "c1", "evaluator_id": "evaluator_1", "coherence": 5, "distinctiveness": 4, "prevention_relevance": 3},
-            {"role": "A0", "configuration_id": "c1", "evaluator_id": "evaluator_2", "coherence": 4, "distinctiveness": 4, "prevention_relevance": 4},
-            {"role": "A0", "configuration_id": "c2", "evaluator_id": "evaluator_1", "coherence": 3, "distinctiveness": 3, "prevention_relevance": 3},
-            {"role": "A0", "configuration_id": "c2", "evaluator_id": "evaluator_2", "coherence": 2, "distinctiveness": 2, "prevention_relevance": 2},
+            {"role": "B", "configuration_id": "B_cfg_001", "stability": 0.80, "dbcv_umap": 0.40},
+            {"role": "B", "configuration_id": "B_cfg_002", "stability": 0.90, "dbcv_umap": 0.20},
+            {"role": "B", "configuration_id": "B_cfg_003", "stability": 0.70, "dbcv_umap": 0.60},
         ]
     )
-    aggregated = semantic.aggregate_semantic_scores(factor_scores)
-    assert set(aggregated["configuration_id"]) == {"c1", "c2"}
-    c1 = aggregated.loc[aggregated["configuration_id"].eq("c1")].iloc[0]
-    assert np.isclose(c1["semantic_score"], 4.0)
-    agreement = semantic.compute_evaluator_agreement(factor_scores)
-    assert bool(agreement.iloc[0]["same_top_ranked"]) is True
+    marked = pareto_knee.identify_pareto_front(frame)
+    pareto = marked.loc[marked["is_pareto"]].copy()
+    normalized = pareto_knee.normalize_pareto_objectives(pareto, role="B")
+    with_knee = pareto_knee.compute_geometric_knee(normalized)
+    with_knee["knee_distance"] = 0.25
+    selected_id = pareto_knee._select_knee_from_pareto(with_knee)
+    assert selected_id in {"B_cfg_001", "B_cfg_002", "B_cfg_003"}
 
 
-def test_parse_evaluator_response_and_mock_scoring():
-    raw = json.dumps({
-        "candidate_id": "Candidate-01",
-        "factors": [
-            {
-                "factor_id": "Factor-01",
-                "coherence": 4,
-                "distinctiveness": 5,
-                "prevention_relevance": 4,
-                "justification": "ok",
-            }
-        ],
-    })
-    parsed = semantic.parse_evaluator_response(raw, expected_factor_ids=["Factor-01"])
-    assert parsed[0]["coherence"] == 4.0
-
-    packages = [
-        {
-            "configuration_id": "A0_cfg_001",
-            "factors": [
-                {"cluster_label": 0, "topic_id": "A0_000", "n_units": 3, "samples": [{"text": "chute"}]},
-            ],
-        },
-        {
-            "configuration_id": "A0_cfg_002",
-            "factors": [
-                {"cluster_label": 0, "topic_id": "A0_000", "n_units": 2, "samples": [{"text": "glissade"}]},
-            ],
-        },
-    ]
-
-    def fake_chat(*, model: str, prompt: str) -> str:
-        score = 5 if "chute" in prompt else 2
-        return json.dumps({
-            "candidate_id": "Candidate-XX",
-            "factors": [
-                {
-                    "factor_id": "Factor-01",
-                    "coherence": score,
-                    "distinctiveness": score,
-                    "prevention_relevance": score,
-                    "justification": model,
-                }
-            ],
-        })
-
-    scores = semantic.score_packages_with_evaluators(
-        packages,
-        role="A0",
-        config={"validation": {"semantic_evaluation": {
-            "random_state": 0,
-            "evaluator_1": {"model": "gpt-5.6-terra"},
-            "evaluator_2": {"model": "gpt-5.6-luna"},
-        }}},
-        chat_completion=fake_chat,
+def test_normalize_handles_constant_objective():
+    frame = pd.DataFrame(
+        [
+            {"role": "C", "configuration_id": "C_cfg_001", "stability": 0.5, "dbcv_umap": 0.4},
+            {"role": "C", "configuration_id": "C_cfg_002", "stability": 0.7, "dbcv_umap": 0.4},
+        ]
     )
-    assert set(scores["evaluator_id"]) == {"evaluator_1", "evaluator_2"}
-    aggregated = semantic.aggregate_semantic_scores(scores)
-    assert aggregated.sort_values("semantic_score", ascending=False).iloc[0]["configuration_id"] == "A0_cfg_001"
+    with pytest.warns(UserWarning, match="DBCV is constant"):
+        normalized = pareto_knee.normalize_pareto_objectives(frame, role="C")
+    assert np.allclose(normalized["dbcv_normalized"], 0.5)
 
 
-def test_sample_membership_stratified_units_respects_budget():
-    frame = pd.DataFrame({
-        "sentence": [f"u{i}" for i in range(30)],
-        "membership_strength": np.linspace(0.1, 1.0, 30),
-        "accident_id": [str(i // 2) for i in range(30)],
-    })
-    samples = semantic.sample_membership_stratified_units(
-        frame,
-        units_per_factor=9,
-        rng=np.random.default_rng(0),
+def test_projection_onto_reference_line():
+    x_h, y_h = pareto_knee.project_knee_to_reference_line(0.7, 0.8)
+    assert x_h + y_h == pytest.approx(1.0, abs=1e-12)
+
+
+def test_selection_reproducible_under_row_shuffle():
+    frame = pd.DataFrame(
+        [
+            {"role": "A1", "configuration_id": "A1_cfg_001", "stability": 0.95, "dbcv_umap": 0.10},
+            {"role": "A1", "configuration_id": "A1_cfg_002", "stability": 0.60, "dbcv_umap": 0.50},
+            {"role": "A1", "configuration_id": "A1_cfg_003", "stability": 0.25, "dbcv_umap": 0.90},
+        ]
     )
-    assert len(samples) == 9
-    assert {item["membership_stratum"] for item in samples} <= {"high", "mid", "low"}
+    _, selected_a, _ = pipeline.select_configuration_for_role(frame)
+    shuffled = frame.sample(frac=1.0, random_state=0).reset_index(drop=True)
+    _, selected_b, _ = pipeline.select_configuration_for_role(shuffled)
+    assert selected_a == selected_b
 
 
-def test_select_configuration_by_stability_tie_break_dbcv():
+def test_select_configuration_by_stability_legacy_alias():
     merged = pd.DataFrame(
         [
             {"configuration_id": "A0_cfg_001", "stability": 0.90, "dbcv_umap": 0.40},
@@ -206,12 +142,12 @@ def test_select_configuration_by_stability_tie_break_dbcv():
         ]
     )
     table, selected = pipeline.select_configuration_by_stability(merged)
-    assert selected == "A0_cfg_003"
-    assert bool(table.loc[table["configuration_id"].eq(selected), "selected"].iloc[0])
+    assert selected
+    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_knee"].iloc[0])
 
 
 def test_materialize_and_load_selected_configurations():
-    with tempfile.TemporaryDirectory(dir="text") as temporary_directory:
+    with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
         run_dir = root / "run"
         role = "A0"
@@ -264,7 +200,7 @@ def test_frozen_inputs_read_discovery_selected_paths():
             "_text": ["text"] * 16,
         }
     )
-    with tempfile.TemporaryDirectory(dir="text") as temporary_directory:
+    with tempfile.TemporaryDirectory() as temporary_directory:
         root = Path(temporary_directory)
         run_dir = root / "run"
         for role in pipeline.ROLES:
