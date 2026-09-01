@@ -1004,50 +1004,52 @@ def write_factor_stability_figure(
     configuration_id: str,
     output_dir: Path,
 ) -> None:
-    """Box-like summary of factor-level Jaccard for the selected configuration."""
-    import matplotlib.pyplot as plt
+    """Legacy hook kept for compatibility; combined figures are written after all roles."""
+    del role, theme_stability, configuration_id, output_dir
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    frame = theme_stability[
-        theme_stability["configuration_id"].astype(str).eq(str(configuration_id))
-        & (theme_stability["n_reference_units"].astype(int) > 0)
-    ].copy()
-    if frame.empty:
-        return
-    order = (
-        frame.groupby("cluster_label")["best_jaccard"].mean().sort_values(ascending=True).index.tolist()
+
+def write_factor_resampling_manuscript_figures(
+    theme_tables: Mapping[str, pd.DataFrame],
+    selections: Mapping[str, str],
+    output_dir: Path,
+) -> None:
+    """Write ``factor_resampling_A0.png`` and ``factor_resampling_A1_B_C.png``."""
+    from manuscript_reporting import (
+        FIGURE_FACTOR_RESAMPLING_A0,
+        FIGURE_FACTOR_RESAMPLING_A1_B_C,
+        plot_factor_resampling_multi_panel,
+        plot_factor_resampling_reproducibility,
     )
-    data = [frame.loc[frame["cluster_label"].eq(label), "best_jaccard"].to_numpy(dtype=float) for label in order]
-    labels = [f"{role}_{int(label):03d}" for label in order]
-    fig_height = max(4.0, 0.35 * len(order))
-    figure, axis = plt.subplots(figsize=(10, fig_height))
-    axis.boxplot(data, vert=False, labels=labels, showfliers=False)
-    means = [float(np.mean(values)) if len(values) else np.nan for values in data]
-    axis.scatter(means, np.arange(1, len(means) + 1), color="#d62728", zorder=3, label=r"$S_{ck}$")
-    if "observability" in frame.columns:
-        obs = (
-            frame.drop_duplicates("cluster_label")
-            .set_index("cluster_label")
-            .loc[order, "observability"]
-            .to_numpy(dtype=float)
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if "A0" in selections and "A0" in theme_tables:
+        plot_factor_resampling_reproducibility(
+            theme_tables["A0"],
+            role="A0",
+            configuration_id=str(selections["A0"]),
+            output_path=output_dir / FIGURE_FACTOR_RESAMPLING_A0,
         )
-        for y_pos, observability in enumerate(obs, start=1):
-            axis.text(
-                1.02,
-                y_pos,
-                rf"$B_{{ck}}/B={observability:.2f}$",
-                va="center",
-                fontsize=8,
-                transform=axis.get_yaxis_transform(),
-            )
-    axis.set_xlim(0, 1.05)
-    axis.set_xlabel("Best-match Jaccard")
-    axis.set_title(f"{role} factor-level resampling — {configuration_id}")
-    axis.grid(axis="x", alpha=0.25)
-    axis.legend(loc="lower right")
-    figure.tight_layout()
-    figure.savefig(output_dir / f"factor_resampling_{role}.png", dpi=220, bbox_inches="tight")
-    plt.close(figure)
+    combo_roles = [role for role in ("A1", "B", "C") if role in selections and role in theme_tables]
+    if combo_roles:
+        plot_factor_resampling_multi_panel(
+            {role: theme_tables[role] for role in combo_roles},
+            roles=combo_roles,
+            configuration_ids={role: str(selections[role]) for role in combo_roles},
+            output_path=output_dir / FIGURE_FACTOR_RESAMPLING_A1_B_C,
+        )
+
+
+def write_umap_seed_sensitivity_all_roles_figure(output_dir: Path, *, run_dir: Path | None = None) -> None:
+    """Write ``umap_seed_sensitivity_all_roles.png`` when seed artifacts exist."""
+    from manuscript_reporting import FIGURE_UMAP_SEED_SENSITIVITY, plot_umap_seed_sensitivity_all_roles
+
+    if run_dir is None:
+        run_dir = Path(output_dir).parent
+    plot_umap_seed_sensitivity_all_roles(
+        run_dir,
+        output_path=Path(output_dir) / FIGURE_UMAP_SEED_SENSITIVITY,
+    )
 
 
 def _evaluate_seed_task(task: Mapping[str, Any]) -> dict[str, Any]:
@@ -1192,19 +1194,17 @@ def evaluate_seed_sensitivity(
         axes[0].plot(summary["seed"], summary["seed_stability"], marker="o")
         axes[0].set_ylim(0, 1.05)
         axes[0].set_ylabel("Mean best-match Jaccard")
-        axes[0].set_title("Factor stability across UMAP seeds")
         axes[0].set_xlabel("UMAP seed")
         axes[1].plot(summary["seed"], summary["n_clusters"], marker="o")
-        axes[1].set_title("K")
         axes[1].set_xlabel("UMAP seed")
         axes[2].plot(summary["seed"], summary["dbcv_umap"], marker="o")
-        axes[2].set_title("DBCV")
         axes[2].set_xlabel("UMAP seed")
         for axis in axes:
             axis.grid(alpha=0.25)
-        figure.suptitle(f"{role} seed sensitivity — {configuration_id}")
         figure.tight_layout()
-        figure.savefig(seed_dir / f"seed_sensitivity_{role}.png", dpi=220, bbox_inches="tight")
+        from manuscript_reporting import save_manuscript_figure
+
+        save_manuscript_figure(figure, seed_dir / f"seed_sensitivity_{role}.png", dpi=220)
         plt.close(figure)
     return summary
 
@@ -2259,7 +2259,7 @@ def _write_recurrent_scenarios_graph(
         axis.axis("off")
     figure.suptitle("Scénarios récurrents — MPE contraint et labels OpenAI", fontsize=16)
     figure.tight_layout()
-    figure.savefig(output_dir / "recurrent_scenarios_graph.png", dpi=220, bbox_inches="tight")
+    figure.savefig(output_dir / "recurrent_scenarios_graph.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
     plt.close(figure)
 
 
@@ -2387,7 +2387,7 @@ def _write_conceptual_bn_architecture(output_dir: Path) -> None:
     axis.set_title("Architecture conceptuelle du modèle bayésien latent")
     axis.axis("off")
     figure.tight_layout()
-    figure.savefig(output_dir / "conceptual_bn_architecture.png", dpi=220, bbox_inches="tight")
+    figure.savefig(output_dir / "conceptual_bn_architecture.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
     plt.close(figure)
 
 
@@ -2435,7 +2435,7 @@ def _write_simplified_learned_bn_graph(result: StructuralEMResult, label_map: Ma
     axis.text(0.5, -0.04, "Épaisseur : contraste conditionnel moyen | aucune arête Z affichée", transform=axis.transAxes, ha="center", fontsize=9)
     axis.axis("off")
     figure.tight_layout()
-    figure.savefig(output_dir / "learned_bn_simplified.png", dpi=220, bbox_inches="tight")
+    figure.savefig(output_dir / "learned_bn_simplified.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
     plt.close(figure)
 
 
@@ -2480,7 +2480,7 @@ def write_final_bn_outputs(result: StructuralEMResult, output_dir: Path, theme_d
         nx.draw_networkx(graph, positions, ax=axis, labels=labels, node_size=900, font_size=7, node_color=[_role_color(result.roles.get(node, "Z")) for node in graph.nodes], arrows=True)
         axis.axis("off")
         figure.tight_layout()
-        figure.savefig(output_dir / "final_bn.png", dpi=220, bbox_inches="tight")
+        figure.savefig(output_dir / "final_bn.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
         plt.close(figure)
     except Exception as error:
         warnings.warn(f"Figure BN non générée: {error}", RuntimeWarning)
@@ -2665,12 +2665,6 @@ def run_theme_discovery(
             materialize_selected_partition(
                 role, prepared.units, selected_id, output_base, theme_tables.get(role)
             )
-            write_factor_stability_figure(
-                role,
-                theme_tables.get(role, pd.DataFrame()),
-                selected_id,
-                output_base / "figures",
-            )
             print_role_selection_summary(role, table, selected_id=selected_id)
             row = table.loc[table["configuration_id"].astype(str).eq(selected_id)].iloc[0].to_dict()
             selected_rows.append({
@@ -2700,6 +2694,7 @@ def run_theme_discovery(
         )
         write_stability_landscape_figure(selection_tables, output_base / "figures")
         write_pareto_normalized_knee_figure(selection_tables, output_base / "figures")
+        write_factor_resampling_manuscript_figures(theme_tables, selections, output_base / "figures")
         (output_base / "theme_discovery_manifest.json").write_text(
             json.dumps({
                 "version": "pareto_geometric_knee_seed_sensitivity_v1",
@@ -2741,6 +2736,7 @@ def run_theme_discovery(
                 row.iloc[0].to_dict(),
                 reestimate=reestimate,
             )
+        write_umap_seed_sensitivity_all_roles_figure(output_base / "figures", run_dir=output_base)
     _log_progress(f"DONE stage={stage} output={output_base}")
     return output_base
 
@@ -2775,4 +2771,7 @@ __all__ = [
     "evaluate_seed_sensitivity",
     "write_stability_landscape_figure",
     "write_pareto_normalized_knee_figure",
+    "write_factor_stability_figure",
+    "write_factor_resampling_manuscript_figures",
+    "write_umap_seed_sensitivity_all_roles_figure",
 ]

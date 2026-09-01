@@ -10,6 +10,61 @@ import pandas as pd
 
 ROLES = ("A0", "A1", "B", "C")
 
+ROLE_RETAINED_FACTOR_TITLES = {
+    "A0": "A0 — Work-context factors",
+    "A1": "A1 — Adverse-condition factors",
+    "B": "B — Event/deviation factors",
+    "C": "C — Consequence factors",
+}
+
+ROLE_RETAINED_FACTOR_TITLES_SHORT = {
+    "A0": "A0 — Work context",
+    "A1": "A1 — Adverse conditions",
+    "B": "B — Events/deviations",
+    "C": "C — Consequences",
+}
+
+FIGURE_STABILITY_LANDSCAPE = "stability_landscape_all_roles.png"
+FIGURE_PARETO_NORMALIZED = "pareto_normalized_knee_all_roles.png"
+FIGURE_FACTOR_RESAMPLING_A0 = "factor_resampling_A0.png"
+FIGURE_FACTOR_RESAMPLING_A1_B_C = "factor_resampling_A1_B_C.png"
+FIGURE_UMAP_SEED_SENSITIVITY = "umap_seed_sensitivity_all_roles.png"
+
+MANUSCRIPT_FIGURE_PAD_INCHES = 0.02
+
+
+def save_manuscript_figure(
+    figure,
+    output_path: Path | str,
+    *,
+    dpi: float = 250,
+    facecolor: str = "white",
+    pad_inches: float | None = None,
+) -> None:
+    """Save a figure with tight bounding box and minimal outer padding."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(
+        output_path,
+        dpi=dpi,
+        bbox_inches="tight",
+        pad_inches=MANUSCRIPT_FIGURE_PAD_INCHES if pad_inches is None else pad_inches,
+        facecolor=facecolor,
+    )
+FIGURE_RETAINED_FACTORS_A0 = "retained_factors_A0.png"
+
+
+def retained_factors_figure_name(role: str) -> str:
+    """Manuscript filename for one role UMAP map."""
+    return f"retained_factors_{role}.png"
+
+
+def membership_strength_figure_name(role: str) -> str:
+    """Appendix filename for one role membership-strength boxplot."""
+    return f"membership_strength_{role}.png"
+
+PARETO_OBJECTIVE_DECIMALS = 4
+
 PARETO_TABLE_COLUMNS = [
     "Role",
     "Candidate ID",
@@ -39,10 +94,60 @@ RETAINED_FACTOR_COLUMNS = [
     "Factor",
     "Units",
     "Accidents",
-    "S_ck",
+    "S_cg",
     "Median membership strength",
     "Illustrative content",
 ]
+
+_MISSING_TEXT = {"", "nan", "none", "null", "<na>"}
+
+
+def sanitize_label_text(value) -> str:
+    """Treat NaN/None/empty and literal ``nan`` strings as missing."""
+    if value is None:
+        return ""
+    if isinstance(value, float) and np.isnan(value):
+        return ""
+    text = str(value).strip()
+    if text.lower() in _MISSING_TEXT:
+        return ""
+    return text
+
+
+def coalesce_text(*values, default: str = "") -> str:
+    """Return the first non-missing text value."""
+    for value in values:
+        text = sanitize_label_text(value)
+        if text:
+            return text
+    return default
+
+
+def coalesce_factor_label(
+    label_row: pd.Series | None,
+    *,
+    topic_id: str,
+) -> str:
+    """Display label for manuscript tables: LLM only, else topic id."""
+    if label_row is not None and isinstance(label_row, pd.Series):
+        label = coalesce_text(label_row.get("llm_label"), default="")
+        if label:
+            return label
+    return topic_id
+
+
+def coalesce_illustrative_content(label_row: pd.Series | None) -> str:
+    """Illustrative text: LLM evidence, else representative sentences (never top terms)."""
+    if label_row is None or not isinstance(label_row, pd.Series):
+        return ""
+    evidence = coalesce_text(
+        label_row.get("llm_evidence"),
+        label_row.get("representative_sentences"),
+        label_row.get("llm_description"),
+    )
+    if " || " in evidence:
+        evidence = ", ".join(part.strip() for part in evidence.split(" || ")[:4])
+    return evidence
 
 
 def build_corpus_summary_table(units: pd.DataFrame) -> pd.DataFrame:
@@ -138,8 +243,8 @@ def build_knee_selection_table(selection_table: pd.DataFrame, *, role: str) -> p
         rows.append({
             "Role": role,
             "Candidate": row["Candidate ID"],
-            "SR": round(float(source.get("stability", row["SR"])), 2) if pd.notna(source.get("stability", row["SR"])) else np.nan,
-            "DBCV": round(float(source.get("dbcv_umap", row["DBCV"])), 2) if pd.notna(source.get("dbcv_umap", row["DBCV"])) else np.nan,
+            "SR": round(float(source.get("stability", row["SR"])), PARETO_OBJECTIVE_DECIMALS) if pd.notna(source.get("stability", row["SR"])) else np.nan,
+            "DBCV": round(float(source.get("dbcv_umap", row["DBCV"])), PARETO_OBJECTIVE_DECIMALS) if pd.notna(source.get("dbcv_umap", row["DBCV"])) else np.nan,
             "S_norm": round(float(source.get("stability_normalized")), 2) if pd.notna(source.get("stability_normalized")) else np.nan,
             "D_norm": round(float(source.get("dbcv_normalized")), 2) if pd.notna(source.get("dbcv_normalized")) else np.nan,
             "dK": round(float(source.get("knee_distance")), 3) if pd.notna(source.get("knee_distance")) else np.nan,
@@ -176,16 +281,131 @@ def build_selected_configuration_table(selection_table: pd.DataFrame, *, role: s
     }])
 
 
+def appendix_figure_path(run_dir: Path, filename: str) -> Path:
+    """Path under ``figs_ch4/appendix/`` for supplementary figures."""
+    path = Path(run_dir) / "figs_ch4" / "appendix" / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def combine_figure_images(
+    image_paths: Sequence[Path],
+    output_path: Path,
+    *,
+    ncol: int = 3,
+    dpi: float = 250.0,
+) -> None:
+    """Stitch saved PNG panels into one manuscript figure."""
+    import matplotlib.pyplot as plt
+
+    paths = [Path(path) for path in image_paths if Path(path).is_file()]
+    if not paths:
+        return
+    nrow = int(np.ceil(len(paths) / ncol))
+    figure, axes = plt.subplots(nrow, ncol, figsize=(5.5 * ncol, 5.0 * nrow))
+    axes = np.atleast_1d(axes).ravel()
+    for axis, path in zip(axes, paths):
+        axis.imshow(plt.imread(path))
+        axis.axis("off")
+    for axis in axes[len(paths):]:
+        axis.axis("off")
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    figure.tight_layout(pad=0.2)
+    save_manuscript_figure(figure, output_path, dpi=dpi)
+    plt.close(figure)
+
+
+def _resampling_panel_data(
+    theme_stability: pd.DataFrame,
+    *,
+    role: str,
+    configuration_id: str,
+) -> tuple[list, list, np.ndarray, pd.DataFrame] | None:
+    frame = theme_stability[
+        theme_stability["configuration_id"].astype(str).eq(str(configuration_id))
+        & theme_stability["n_reference_units"].astype(int).gt(0)
+    ].copy()
+    if frame.empty:
+        return None
+    theme_summary = frame.drop_duplicates("cluster_label").set_index("cluster_label")
+    order = (
+        theme_summary["theme_stability"]
+        .astype(float)
+        .sort_values(ascending=True)
+        .index.tolist()
+    )
+    data = [
+        frame.loc[frame["cluster_label"].eq(label), "best_jaccard"].astype(float).to_numpy()
+        for label in order
+    ]
+    positions = np.arange(1, len(order) + 1)
+    return data, order, positions, theme_summary
+
+
+def _draw_factor_resampling_panel(
+    axis,
+    theme_stability: pd.DataFrame,
+    *,
+    role: str,
+    configuration_id: str,
+    show_legend: bool = False,
+) -> bool:
+    """Draw one resampling boxplot panel; return False when no data."""
+    panel = _resampling_panel_data(theme_stability, role=role, configuration_id=configuration_id)
+    if panel is None:
+        axis.text(0.5, 0.5, "No resampling data", ha="center", va="center")
+        axis.axis("off")
+        return False
+    data, order, positions, theme_summary = panel
+    axis.boxplot(
+        data,
+        vert=False,
+        positions=positions,
+        widths=0.55,
+        showfliers=True,
+        patch_artist=True,
+        boxprops={"facecolor": "#FEE0D2", "edgecolor": "#DE2D26"},
+        medianprops={"color": "#A50F15", "linewidth": 1.4},
+    )
+    for position, label in zip(positions, order):
+        if label not in theme_summary.index:
+            continue
+        row = theme_summary.loc[label]
+        s_cg = float(row.get("theme_stability", np.nan))
+        if np.isfinite(s_cg):
+            axis.scatter(
+                [s_cg],
+                [position],
+                color="#D62728",
+                s=36,
+                zorder=4,
+                label=r"Mean $S_{cg}$" if show_legend and position == positions[0] else "",
+            )
+    axis.set_yticks(positions)
+    axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
+    axis.set_xlim(0, 1.05)
+    axis.set_xlabel("Best-match Jaccard across accident resamples")
+    axis.grid(axis="x", alpha=0.2)
+    if show_legend:
+        handles, labels = axis.get_legend_handles_labels()
+        if handles:
+            axis.legend(handles[:1], labels[:1], loc="lower right", frameon=False, fontsize=8)
+    return True
+
+
 def plot_membership_strength_by_factor(
     partition_frame: pd.DataFrame,
     *,
     role: str,
     configuration_id: str,
     output_path: Path | None = None,
+    show_unit_annotations: bool = False,
 ) -> object:
     """Horizontal boxplots of membership strength per retained factor."""
     import matplotlib.pyplot as plt
 
+    del configuration_id
     valid = partition_frame.loc[partition_frame["Topic"].astype(int).ge(0)].copy()
     if valid.empty:
         return None
@@ -213,27 +433,24 @@ def plot_membership_strength_by_factor(
         boxprops={"facecolor": "#C6DBEF", "edgecolor": "#4C78A8"},
         medianprops={"color": "#D62728", "linewidth": 1.4},
     )
-    ylabels = []
-    for item, position in zip(summaries, positions):
-        ylabels.append(f"{role}_{item['topic']:03d}")
-        axis.text(
-            1.02,
-            position,
-            f"n={item['n_units']}, accidents={item['n_accidents']}",
-            va="center",
-            fontsize=8,
-            transform=axis.get_yaxis_transform(),
-        )
+    if show_unit_annotations:
+        for item, position in zip(summaries, positions):
+            axis.text(
+                1.02,
+                position,
+                f"n={item['n_units']}, accidents={item['n_accidents']}",
+                va="center",
+                fontsize=8,
+                transform=axis.get_yaxis_transform(),
+            )
     axis.set_yticks(positions)
-    axis.set_yticklabels(ylabels)
+    axis.set_yticklabels([f"{role}_{item['topic']:03d}" for item in summaries])
     axis.set_xlim(0, 1.05)
     axis.set_xlabel("HDBSCAN membership strength")
-    axis.set_title(f"{role} — membership-strength distributions ({configuration_id})")
     axis.grid(axis="x", alpha=0.2)
     figure.tight_layout()
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(output_path, dpi=250, bbox_inches="tight")
+        save_manuscript_figure(figure, output_path)
     return figure
 
 
@@ -244,63 +461,63 @@ def plot_factor_resampling_reproducibility(
     configuration_id: str,
     output_path: Path | None = None,
 ) -> object:
-    """Factor-level best-match Jaccard distributions with S_ck and B_ck/B."""
+    """Factor-level best-match Jaccard distributions with mean $S_{cg}$."""
     import matplotlib.pyplot as plt
 
-    frame = theme_stability[
-        theme_stability["configuration_id"].astype(str).eq(str(configuration_id))
-        & theme_stability["n_reference_units"].astype(int).gt(0)
-    ].copy()
-    if frame.empty:
+    panel = _resampling_panel_data(theme_stability, role=role, configuration_id=configuration_id)
+    if panel is None:
         return None
-    order = (
-        frame.groupby("cluster_label")["best_jaccard"]
-        .mean()
-        .sort_values(ascending=True)
-        .index.tolist()
-    )
-    data = [frame.loc[frame["cluster_label"].eq(label), "best_jaccard"].astype(float).to_numpy() for label in order]
+    _, order, _, _ = panel
     figure, axis = plt.subplots(figsize=(10, max(4.0, 0.45 * len(order))))
-    positions = np.arange(1, len(order) + 1)
-    axis.boxplot(
-        data,
-        vert=False,
-        positions=positions,
-        widths=0.55,
-        showfliers=True,
-        patch_artist=True,
-        boxprops={"facecolor": "#FEE0D2", "edgecolor": "#DE2D26"},
-        medianprops={"color": "#A50F15", "linewidth": 1.4},
+    _draw_factor_resampling_panel(
+        axis,
+        theme_stability,
+        role=role,
+        configuration_id=configuration_id,
+        show_legend=True,
     )
-    theme_summary = frame.drop_duplicates("cluster_label").set_index("cluster_label")
-    for position, label in zip(positions, order):
-        if label not in theme_summary.index:
-            continue
-        row = theme_summary.loc[label]
-        s_ck = float(row.get("theme_stability", np.nan))
-        observability = float(row.get("observability", np.nan))
-        axis.scatter([s_ck], [position], color="#D62728", s=36, zorder=4, label="Mean $S_{ck}$" if position == positions[0] else "")
-        axis.text(
-            1.02,
-            position,
-            rf"$S_{{ck}}$={s_ck:.2f}, $B_{{ck}}/B$={observability:.2f}",
-            va="center",
-            fontsize=8,
-            transform=axis.get_yaxis_transform(),
-        )
-    axis.set_yticks(positions)
-    axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
-    axis.set_xlim(0, 1.05)
-    axis.set_xlabel("Best-match Jaccard across accident resamples")
-    axis.set_title(f"{role} — factor-level resampling reproducibility ({configuration_id})")
-    axis.grid(axis="x", alpha=0.2)
-    handles, labels = axis.get_legend_handles_labels()
-    if handles:
-        axis.legend(handles[:1], labels[:1], loc="lower right", frameon=False)
     figure.tight_layout()
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(output_path, dpi=250, bbox_inches="tight")
+        save_manuscript_figure(figure, output_path)
+    return figure
+
+
+def plot_factor_resampling_multi_panel(
+    theme_stability_by_role: Mapping[str, pd.DataFrame],
+    *,
+    roles: Sequence[str],
+    configuration_ids: Mapping[str, str],
+    output_path: Path | None = None,
+) -> object:
+    """Three-panel resampling figure for A1, B and C."""
+    import matplotlib.pyplot as plt
+
+    plot_roles = [role for role in roles if role in theme_stability_by_role]
+    if not plot_roles:
+        return None
+    max_factors = 1
+    for role in plot_roles:
+        panel = _resampling_panel_data(
+            theme_stability_by_role[role],
+            role=role,
+            configuration_id=str(configuration_ids[role]),
+        )
+        if panel is not None:
+            max_factors = max(max_factors, len(panel[1]))
+    figure_height = max(4.5, 0.42 * max_factors)
+    figure, axes = plt.subplots(1, len(plot_roles), figsize=(4.8 * len(plot_roles), figure_height))
+    axes = np.atleast_1d(axes).ravel()
+    for axis, role in zip(axes, plot_roles):
+        _draw_factor_resampling_panel(
+            axis,
+            theme_stability_by_role[role],
+            role=role,
+            configuration_id=str(configuration_ids[role]),
+            show_legend=role == plot_roles[0],
+        )
+    figure.tight_layout()
+    if output_path is not None:
+        save_manuscript_figure(figure, output_path)
     return figure
 
 
@@ -334,10 +551,8 @@ def plot_seed_sensitivity_factors(
     """Factor-level Jaccard distributions across alternative UMAP seeds."""
     import matplotlib.pyplot as plt
 
-    frame = seed_factor_frame[
-        seed_factor_frame["role"].astype(str).eq(role)
-        & seed_factor_frame["configuration_id"].astype(str).eq(str(configuration_id))
-    ].copy()
+    del configuration_id
+    frame = seed_factor_frame[seed_factor_frame["role"].astype(str).eq(role)].copy()
     if frame.empty:
         return None
     order = (
@@ -363,12 +578,53 @@ def plot_seed_sensitivity_factors(
     axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
     axis.set_xlim(0, 1.05)
     axis.set_xlabel("Best-match Jaccard across UMAP seeds")
-    axis.set_title(f"{role} — UMAP seed sensitivity ({configuration_id})")
     axis.grid(axis="x", alpha=0.2)
     figure.tight_layout()
     if output_path is not None:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        figure.savefig(output_path, dpi=250, bbox_inches="tight")
+        save_manuscript_figure(figure, output_path)
+    return figure
+
+
+def plot_umap_seed_sensitivity_all_roles(
+    run_dir: Path,
+    *,
+    roles: Sequence[str] = ROLES,
+    output_path: Path | None = None,
+) -> object:
+    """Four-panel summary of UMAP seed sensitivity (mean Jaccard, K, DBCV)."""
+    import matplotlib.pyplot as plt
+
+    run_dir = Path(run_dir)
+    figure, axes = plt.subplots(2, 2, figsize=(12, 8), squeeze=False)
+    drew_any = False
+    for axis, role in zip(axes.flat, roles):
+        summary_path = run_dir / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
+        if not summary_path.is_file():
+            axis.text(0.5, 0.5, "No seed data", ha="center", va="center")
+            axis.axis("off")
+            continue
+        summary = pd.read_csv(summary_path)
+        if summary.empty:
+            axis.axis("off")
+            continue
+        drew_any = True
+        axis.plot(summary["seed"], summary["seed_stability"], marker="o", color="#1f77b4", label="Mean Jaccard")
+        axis2 = axis.twinx()
+        axis2.plot(summary["seed"], summary["n_clusters"], marker="s", color="#ff7f0e", alpha=0.8, label="K")
+        axis2.plot(summary["seed"], summary["dbcv_umap"], marker="^", color="#2ca02c", alpha=0.8, label="DBCV")
+        axis.set_ylim(0, 1.05)
+        axis.set_xlabel("UMAP seed")
+        axis.set_ylabel("Mean best-match Jaccard")
+        axis2.set_ylabel("K / DBCV")
+        axis.grid(alpha=0.2)
+    for axis in list(axes.flat)[len(roles):]:
+        axis.remove()
+    if not drew_any:
+        plt.close(figure)
+        return None
+    figure.tight_layout()
+    if output_path is not None:
+        save_manuscript_figure(figure, output_path)
     return figure
 
 
@@ -405,28 +661,60 @@ def build_retained_factors_summary_table(
             subset = valid.loc[valid["Topic"].eq(topic)]
             topic_id = f"{role}_{topic:03d}"
             label_row = label_lookup.loc[topic_id] if topic_id in label_lookup.index else None
-            if label_row is not None and isinstance(label_row, pd.Series):
-                factor_name = str(
-                    label_row.get("plot_label")
-                    or label_row.get("llm_label")
-                    or label_row.get("top_terms")
-                    or topic_id
-                ).strip()
-                evidence = str(label_row.get("llm_evidence") or "").strip()
-                if not evidence:
-                    evidence = str(label_row.get("representative_sentences") or "").strip()
-                if " || " in evidence:
-                    evidence = ", ".join(part.strip() for part in evidence.split(" || ")[:4])
-            else:
-                factor_name = topic_id
-                evidence = ""
+            factor_name = coalesce_factor_label(label_row, topic_id=topic_id)
+            evidence = coalesce_illustrative_content(label_row)
             rows.append({
                 "Role": role,
                 "Factor": factor_name,
                 "Units": int(len(subset)),
                 "Accidents": int(subset["accident_id"].nunique()),
-                "S_ck": round(stability_lookup.get(topic, np.nan), 2) if topic in stability_lookup else np.nan,
+                "S_cg": round(stability_lookup.get(topic, np.nan), 2) if topic in stability_lookup else np.nan,
                 "Median membership strength": round(float(subset["membership_strength"].median()), 2),
                 "Illustrative content": evidence,
             })
     return pd.DataFrame(rows)
+
+
+def format_manuscript_table(
+    frame: pd.DataFrame,
+    columns: Sequence[str] | None = None,
+    *,
+    column_decimals: Mapping[str, int] | None = None,
+) -> pd.DataFrame:
+    """Return a display-ready copy with manuscript column order."""
+    if frame.empty:
+        return frame.copy()
+    ordered = [column for column in (columns or frame.columns) if column in frame.columns]
+    display_frame = frame.loc[:, ordered].copy()
+    decimals = {"SR": PARETO_OBJECTIVE_DECIMALS, "DBCV": PARETO_OBJECTIVE_DECIMALS}
+    if column_decimals:
+        decimals.update(column_decimals)
+
+    def _format_cell(value, *, decimals: int = 3):
+        if pd.isna(value):
+            return value
+        if isinstance(value, (int, np.integer)):
+            return int(value)
+        if isinstance(value, (float, np.floating)):
+            numeric = float(value)
+            return int(numeric) if numeric.is_integer() and decimals == 0 else round(numeric, decimals)
+        return value
+
+    for column in display_frame.columns:
+        if column in {"Role", "Factor", "Illustrative content", "Candidate", "Candidate ID"}:
+            continue
+        if display_frame[column].dtype.kind in "fi":
+            column_precision = decimals.get(column, 3)
+            display_frame[column] = display_frame[column].map(
+                lambda value, precision=column_precision: _format_cell(value, decimals=precision)
+            )
+    return display_frame
+
+
+def display_manuscript_table(frame: pd.DataFrame, *, columns: Sequence[str] | None = None) -> pd.DataFrame:
+    """Format and display a manuscript table (returns the formatted frame)."""
+    from IPython.display import display
+
+    formatted = format_manuscript_table(frame, columns)
+    display(formatted)
+    return formatted

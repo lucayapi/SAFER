@@ -24,6 +24,7 @@ KNEE_TOLERANCE = 1e-12
 NORM_TOLERANCE = 1e-9
 STABILITY_COL = "stability"
 DBCV_COL = "dbcv_umap"
+SELECTED_CONFIGURATION_LEGEND = "Selected configuration"
 
 
 def identify_pareto_front(
@@ -99,19 +100,19 @@ def normalize_pareto_objectives(
     if math.isclose(d_max, d_min, rel_tol=0.0, abs_tol=KNEE_TOLERANCE):
         warnings.warn(
             f"[{role_label}] DBCV is constant on the Pareto front; "
-            "dbcv_normalized set to 0.5 for all Pareto configurations.",
+            "dbcv_normalized left undefined (NaN).",
             stacklevel=2,
         )
-        result["dbcv_normalized"] = 0.5
+        result["dbcv_normalized"] = np.nan
     else:
         result["dbcv_normalized"] = (dbcvs - d_min) / (d_max - d_min)
     if math.isclose(s_max, s_min, rel_tol=0.0, abs_tol=KNEE_TOLERANCE):
         warnings.warn(
             f"[{role_label}] S_R is constant on the Pareto front; "
-            "stability_normalized set to 0.5 for all Pareto configurations.",
+            "stability_normalized left undefined (NaN).",
             stacklevel=2,
         )
-        result["stability_normalized"] = 0.5
+        result["stability_normalized"] = np.nan
     else:
         result["stability_normalized"] = (stabilities - s_min) / (s_max - s_min)
     return result
@@ -191,6 +192,9 @@ def select_knee_configuration(
         return marked, "", "none"
     if len(pareto) == 1:
         selected_id = str(pareto.iloc[0]["configuration_id"])
+        marked["stability_normalized"] = np.nan
+        marked["dbcv_normalized"] = np.nan
+        marked["knee_distance"] = np.nan
         marked["is_selected_knee"] = marked["configuration_id"].astype(str).eq(selected_id)
         marked["selected"] = marked["is_selected_knee"]
         return marked, selected_id, "single_pareto"
@@ -307,6 +311,33 @@ def print_role_selection_summary(
     print("-" * 50)
 
 
+def roles_with_multi_point_pareto_front(
+    selection_tables: Mapping[str, pd.DataFrame],
+    roles: Sequence[str] = ("A0", "A1", "B", "C"),
+) -> tuple[str, ...]:
+    """Return roles whose Pareto front contains more than one configuration."""
+    eligible: list[str] = []
+    for role in roles:
+        frame = selection_tables.get(role, pd.DataFrame())
+        if frame.empty:
+            continue
+        pareto_mask = frame["is_pareto"].fillna(frame.get("on_pareto", False)).astype(bool)
+        if int(pareto_mask.sum()) > 1:
+            eligible.append(role)
+    return tuple(eligible)
+
+
+def _pareto_subplot_layout(n_roles: int) -> tuple[int, int, tuple[float, float]]:
+    """Return ``(n_rows, n_cols, figsize)`` for a role-wise Pareto panel grid."""
+    if n_roles <= 0:
+        return 1, 1, (7.0, 6.0)
+    if n_roles == 1:
+        return 1, 1, (7.0, 6.0)
+    if n_roles == 2:
+        return 1, 2, (14.0, 5.5)
+    return 2, 2, (14.0, 10.0)
+
+
 def plot_pareto_raw(
     selection_tables: Mapping[str, pd.DataFrame],
     output_dir: Path,
@@ -327,14 +358,13 @@ def plot_pareto_raw(
     figure, axes = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
     knee_color = "#d62728"
     pareto_color = "#1f77b4"
-    other_color = "#bdbdbd"
+    other_color = "#757575"
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
             axis.set_xlabel("DBCV")
             axis.set_ylabel(r"$S_R$")
-            axis.set_title(role, fontsize=11, pad=6)
             continue
         valid = frame[dbcv_col].notna() & frame[stability_col].notna()
         base = frame.loc[valid].copy()
@@ -349,7 +379,7 @@ def plot_pareto_raw(
                 others[stability_col],
                 s=18,
                 c=other_color,
-                alpha=0.55,
+                alpha=0.78,
                 linewidths=0,
                 zorder=1,
             )
@@ -391,14 +421,13 @@ def plot_pareto_raw(
             )
         axis.set_xlabel("DBCV")
         axis.set_ylabel(r"$S_R$")
-        axis.set_title(role, fontsize=11, pad=6)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
         Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidate configurations", markerfacecolor=other_color, markersize=6),
         Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label="Pareto-optimal configurations", markerfacecolor=pareto_color, markersize=7),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", label="Geometric knee", markerfacecolor=knee_color, markersize=12),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", label=SELECTED_CONFIGURATION_LEGEND, markerfacecolor=knee_color, markersize=12),
     ]
     if suptitle:
         figure.suptitle(suptitle, y=0.98, fontsize=12)
@@ -411,7 +440,9 @@ def plot_pareto_raw(
         fontsize=10,
     )
     figure.tight_layout(rect=(0, 0.06, 1, 0.97 if suptitle else 1.0))
-    figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
+    from manuscript_reporting import save_manuscript_figure
+
+    save_manuscript_figure(figure, output_dir / filename)
     plt.close(figure)
 
 
@@ -423,24 +454,44 @@ def plot_pareto_normalized_with_knee(
     filename: str = "pareto_normalized_knee_all_roles.png",
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
-    suptitle: str = "Normalized Pareto fronts and geometric knee points",
+    suptitle: str | None = None,
     show_perpendicular_deviation: bool = True,
     perpendicular_roles: Sequence[str] | None = None,
+    multi_pareto_only: bool = True,
 ) -> None:
     """Normalized objective space with reference line, ideal point and knee projection."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
-    plot_roles = tuple(roles)
-    deviation_roles = set(perpendicular_roles if perpendicular_roles is not None else (plot_roles[0],))
+    candidate_roles = tuple(roles)
+    plot_roles = (
+        roles_with_multi_point_pareto_front(selection_tables, candidate_roles)
+        if multi_pareto_only
+        else candidate_roles
+    )
+    deviation_roles = set(perpendicular_roles if perpendicular_roles is not None else plot_roles)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    figure, axes = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
+    n_rows, n_cols, figsize = _pareto_subplot_layout(len(plot_roles))
+    figure, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
     knee_color = "#d62728"
     pareto_color = "#1f77b4"
     ref_color = "#888888"
     ref_x = np.linspace(0.0, 1.0, 100)
     drew_deviation = False
+    if not plot_roles:
+        axis = axes.flat[0]
+        axis.axis("off")
+        axis.text(
+            0.5,
+            0.5,
+            "No role with a multi-point Pareto front",
+            ha="center",
+            va="center",
+            fontsize=11,
+        )
+        for extra_axis in list(axes.flat)[1:]:
+            extra_axis.remove()
     for axis, role in zip(axes.flat, plot_roles):
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         axis.plot(ref_x, 1.0 - ref_x, color=ref_color, linestyle="--", linewidth=1.0)
@@ -450,13 +501,11 @@ def plot_pareto_normalized_with_knee(
             axis.set_ylim(-0.05, 1.05)
             axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
             axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
-            axis.set_title(role, fontsize=11, pad=6)
             continue
         pareto = frame.loc[frame["is_pareto"].fillna(frame.get("on_pareto", False)).astype(bool)].copy()
-        if pareto.empty:
+        if pareto.empty or len(pareto) <= 1:
             axis.set_xlim(-0.05, 1.05)
             axis.set_ylim(-0.05, 1.05)
-            axis.set_title(role, fontsize=11, pad=6)
             continue
         if "dbcv_normalized" not in pareto.columns or pareto["dbcv_normalized"].isna().all():
             pareto = compute_geometric_knee(
@@ -484,29 +533,37 @@ def plot_pareto_normalized_with_knee(
             linewidths=0.5,
             zorder=2,
         )
-        knee = frame.loc[frame["is_selected_knee"].fillna(frame.get("selected", False)).astype(bool)]
+        # Prefer recomputed Pareto coordinates: single-optimum roles may lack
+        # normalized columns on the full selection table.
+        selected_mask = frame["is_selected_knee"].fillna(frame.get("selected", False)).astype(bool)
+        selected_ids = set(frame.loc[selected_mask, "configuration_id"].astype(str))
+        knee = pareto.loc[pareto["configuration_id"].astype(str).isin(selected_ids)]
+        if knee.empty and selected_mask.any():
+            knee = frame.loc[selected_mask]
         if not knee.empty:
-            x_k = float(knee.iloc[0]["dbcv_normalized"])
-            y_k = float(knee.iloc[0]["stability_normalized"])
-            if show_perpendicular_deviation and role in deviation_roles:
-                x_h, y_h = project_knee_to_reference_line(x_k, y_k)
-                axis.plot([x_h, x_k], [y_h, y_k], color=knee_color, linestyle=":", linewidth=1.2, zorder=3)
-                drew_deviation = True
-            axis.scatter(
-                [x_k],
-                [y_k],
-                marker="*",
-                s=320,
-                facecolors=knee_color,
-                edgecolors="black",
-                linewidths=0.8,
-                zorder=4,
-            )
+            x_k = knee.iloc[0].get("dbcv_normalized")
+            y_k = knee.iloc[0].get("stability_normalized")
+            if pd.notna(x_k) and pd.notna(y_k):
+                x_k = float(x_k)
+                y_k = float(y_k)
+                if show_perpendicular_deviation and role in deviation_roles and len(pareto) > 1:
+                    x_h, y_h = project_knee_to_reference_line(x_k, y_k)
+                    axis.plot([x_h, x_k], [y_h, y_k], color=knee_color, linestyle=":", linewidth=1.2, zorder=3)
+                    drew_deviation = True
+                axis.scatter(
+                    [x_k],
+                    [y_k],
+                    marker="*",
+                    s=320,
+                    facecolors=knee_color,
+                    edgecolors="black",
+                    linewidths=0.8,
+                    zorder=4,
+                )
         axis.set_xlim(-0.05, 1.05)
         axis.set_ylim(-0.05, 1.05)
         axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
         axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
-        axis.set_title(role, fontsize=11, pad=6)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
@@ -514,7 +571,7 @@ def plot_pareto_normalized_with_knee(
         Line2D([0], [0], color=ref_color, linestyle="--", linewidth=1.2, label="Extreme-point reference line"),
         Line2D([0], [0], marker="x", linestyle="None", color="#333333", markersize=8, label="Ideal point (1, 1)"),
         Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label="Pareto-optimal configurations"),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=knee_color, markersize=12, label="Geometric knee"),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=knee_color, markersize=12, label=SELECTED_CONFIGURATION_LEGEND),
     ]
     if drew_deviation:
         handles.append(
@@ -531,7 +588,9 @@ def plot_pareto_normalized_with_knee(
         fontsize=10,
     )
     figure.tight_layout(rect=(0, 0.08, 1, 0.97 if suptitle else 1.0))
-    figure.savefig(output_dir / filename, dpi=250, bbox_inches="tight")
+    from manuscript_reporting import save_manuscript_figure
+
+    save_manuscript_figure(figure, output_dir / filename)
     plt.close(figure)
 
 
@@ -546,6 +605,8 @@ __all__ = [
     "select_configuration_for_role",
     "summarize_selected_configurations",
     "print_role_selection_summary",
+    "SELECTED_CONFIGURATION_LEGEND",
+    "roles_with_multi_point_pareto_front",
     "plot_pareto_raw",
     "plot_pareto_normalized_with_knee",
 ]

@@ -111,7 +111,31 @@ def test_normalize_handles_constant_objective():
     )
     with pytest.warns(UserWarning, match="DBCV is constant"):
         normalized = pareto_knee.normalize_pareto_objectives(frame, role="C")
-    assert np.allclose(normalized["dbcv_normalized"], 0.5)
+    assert normalized["dbcv_normalized"].isna().all()
+
+
+def test_roles_with_multi_point_pareto_front():
+    tables = {
+        "A0": pd.DataFrame({"is_pareto": [True, True, False]}),
+        "B": pd.DataFrame({"is_pareto": [True, False, False]}),
+    }
+    assert pareto_knee.roles_with_multi_point_pareto_front(tables) == ("A0",)
+
+
+def test_single_pareto_leaves_normalized_columns_nan():
+    frame = pd.DataFrame(
+        [
+            {"role": "B", "configuration_id": "B_cfg_001", "stability": 0.9, "dbcv_umap": 0.4},
+            {"role": "B", "configuration_id": "B_cfg_002", "stability": 0.7, "dbcv_umap": 0.1},
+        ]
+    )
+    marked = pareto_knee.identify_pareto_front(frame)
+    table, selected, rule = pareto_knee.select_knee_configuration(marked)
+    assert rule == "single_pareto"
+    row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
+    assert pd.isna(row["stability_normalized"])
+    assert pd.isna(row["dbcv_normalized"])
+    assert pd.isna(row["knee_distance"])
 
 
 def test_projection_onto_reference_line():

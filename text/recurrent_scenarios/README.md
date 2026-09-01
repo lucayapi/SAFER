@@ -85,9 +85,12 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 - `discovery/<role>/candidate_partitions/*.npy`
 - `discovery/<role>/selected/` — partition figée
 - `discovery/<role>/seed_sensitivity/` — tables + figure
-- `figures/stability_landscape_all_roles.png` — espace original (DBCV, \(S_R\))
-- `figures/pareto_normalized_knee_all_roles.png` — espace normalisé + knee
-- `figures/factor_resampling_<role>.png`
+- `figures/stability_landscape_all_roles.png` — espace original (DBCV, \(S_R\)), 4 rôles
+- `figures/pareto_normalized_knee_all_roles.png` — espace normalisé + knee (rôles à front multi-points seulement, typ. A0/A1)
+- `figures/factor_resampling_A0.png`, `figures/factor_resampling_A1_B_C.png`
+- `figures/umap_seed_sensitivity_all_roles.png`
+- `figures/retained_factors_<role>.png` (A0, A1, B, C — notebook résultats)
+- `figs_ch4/appendix/membership_strength_<role>.png` (A0, A1, B, C — annexe)
 
 Après notebook résultats : `topics_manual/…`
 

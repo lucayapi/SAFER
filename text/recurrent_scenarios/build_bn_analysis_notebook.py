@@ -165,7 +165,7 @@ for role in ("A0", "A1", "B", "C"):
 for current_axis in (prevalence_axis, heatmap_axis):
     current_axis.axvline(len(ordered_columns) - 0.5, color="tab:red", linewidth=0.8)
 fig.tight_layout()
-fig.savefig(BN_OUTPUT_DIR / "accident_factor_matrix_heatmap.png", dpi=220, bbox_inches="tight")
+fig.savefig(BN_OUTPUT_DIR / "accident_factor_matrix_heatmap.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
 display(fig)
         """),
         markdown("## 3. Sélection de K par BIC"),
@@ -222,7 +222,7 @@ fig.suptitle("Observed-data BIC across candidate latent cardinalities", fontsize
 fig.text(0.5, 0.01, "Small points: individual initialisations. Large connected points: best admissible solution for each K. Lower BIC is preferred.", ha="center", fontsize=9, color="#555555")
 fig.tight_layout()
 fig.subplots_adjust(bottom=0.13, top=0.86)
-fig.savefig(BN_OUTPUT_DIR / "bic_by_k_initializations.png", dpi=220, bbox_inches="tight")
+fig.savefig(BN_OUTPUT_DIR / "bic_by_k_initializations.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
 display(fig)
         """),
         markdown("## 4. Familles latentes, profils et scénarios"),

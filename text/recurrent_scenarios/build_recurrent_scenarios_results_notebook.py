@@ -32,7 +32,7 @@ Reporting structure (manuscript-oriented):
 
 1. Corpus summary by role
 2. Pareto-front and knee-selection tables
-3. Pareto figures, membership-strength boxplots, resampling and seed-sensitivity diagnostics
+3. Pareto figures, resampling and seed-sensitivity diagnostics (membership-strength plots → appendix)
 4. Topic dictionary, LLM labels and retained-factors summary (Table 4.5)
 5. Narrative inspection and 2-D UMAP maps
 6. Continue with `recurrent_scenarios_bn_analysis_{dataset_id}.ipynb`
@@ -98,8 +98,11 @@ DATASET_ID = {dataset_id!r}
 DISCOVERY_RUN_NAME = "theme_discovery_audit"
 RUN_DIRECTORY = f"runs/{{DISCOVERY_RUN_NAME}}/{{DATASET_ID}}"
 OPENAI_ENABLED = True
-OPENAI_MODEL = "gpt-4o-mini"
-LLM_OUTPUT_LANGUAGE = "Français"
+OPENAI_MODEL = "gpt-5.6-luna"
+OPENAI_REASONING_EFFORT = "low"
+OPENAI_MAX_OUTPUT_TOKENS = 4000
+LLM_OUTPUT_LANGUAGE = "English"
+LLM_FORCE_REFRESH = False  # True = ignore llm_theme_labels.csv and relabel every topic
 N_REPRESENTATIVE_SENTENCES = 50
 MAX_TOPICS_PER_ROLE_FOR_LLM = None
 FALLBACK_TOPICS_PER_ROLE = None
@@ -108,16 +111,19 @@ UMAP_2D_MIN_DIST = 0.1
 UMAP_2D_RANDOM_STATE = 42
 MAX_POINTS_PER_ROLE_PLOT = 12000
 UMAP_2D_FIGSIZE = (14, 12)
-UMAP_2D_LABEL_WRAP_WIDTH = 44
+UMAP_2D_FIGSIZE_COMPACT = (10, 10)
+DATAMAP_LABEL_WRAP_WIDTH = 22
+DATAMAP_LABEL_FONT_SIZE = 9
+DATAMAP_DYNAMIC_LABEL_SIZE = False
+DATAMAP_NOISE_LABEL = "Noise"
 UMAP_2D_DPI = 300
-UMAP_2D_SHOW_DENSITY = True
-print("OPENAI_API_KEY disponible :", bool(os.environ.get("OPENAI_API_KEY")))
+print("OPENAI_API_KEY available:", bool(os.environ.get("OPENAI_API_KEY")))
 
 ROLE_PROMPTS = {{
-    "A0": '''Vous nommez des facteurs sémantiques A0 (situation de travail avant l'accident). Chaque intitulé doit désigner un motif factuel précis et observable : activité concrète, type de poste, équipement, lieu ou configuration opérationnelle. Interdit : libellés méta ou vagues (« contexte de travail », « situation de travail », « environnement de travail », « activité professionnelle », « travail en général »). L'intitulé doit permettre de distinguer ce thème des autres du même rôle. 4 à 10 mots, ancré dans les exemples. Pas de conséquence ni d'événement accidentel.''',
-    "A1": '''Vous nommez des facteurs sémantiques A1 (condition défavorable ou danger avant l'événement). Chaque intitulé doit nommer le danger, la défaillance, l'absence de protection ou la condition dangereuse de façon spécifique. Interdit : libellés méta (« facteur défavorable », « condition dangereuse », « risque », « danger général »). 4 à 10 mots, ancré dans les exemples. Pas l'événement ni la blessure, sauf si indispensable pour distinguer la condition.''',
-    "B": '''Vous nommez des facteurs sémantiques B (événement ou mécanisme immédiat). Chaque intitulé doit décrire ce qui s'est produit ou le mécanisme de façon concrète (chute, heurt, coincement, démarrage intempestif, etc.). Interdit : libellés méta (« événement accidentel », « accident », « incident », « déviation générale »). 4 à 10 mots, ancré dans les exemples. Pas le contexte amont ni la blessure finale.''',
-    "C": '''Vous nommez des facteurs sémantiques C (conséquence ou lésion). Chaque intitulé doit préciser la nature du dommage ou la localisation (type de lésion, partie du corps, gravité si visible dans les exemples). Interdit : libellés méta (« conséquence », « blessure », « lésion », « dommage » seuls). 4 à 10 mots, ancré dans les exemples. Pas la cause ni le contexte de travail.''',
+    "A0": '''You name A0 semantic factors (work situation before the accident). Each label must denote a precise, observable motif: concrete activity, workstation type, equipment, location, or operational setup. Forbidden: meta or vague labels ("work context", "work environment", "professional activity", "work in general"). The label must distinguish this theme from others in the same role. 4 to 10 words, grounded in the examples. No consequence or accident event.''',
+    "A1": '''You name A1 semantic factors (adverse condition or hazard before the event). Each label must name the hazard, failure, missing protection, or dangerous condition specifically. Forbidden: meta labels ("adverse factor", "dangerous condition", "risk", "general hazard"). 4 to 10 words, grounded in the examples. Not the event or injury unless indispensable to distinguish the condition.''',
+    "B": '''You name B semantic factors (immediate event or mechanism). Each label must describe what happened or the mechanism concretely (fall, impact, entrapment, unintended start, etc.). Forbidden: meta labels ("accident event", "accident", "incident", "general deviation"). 4 to 10 words, grounded in the examples. Not upstream context or final injury.''',
+    "C": '''You name C semantic factors (consequence or injury). Each label must specify the nature of harm or body location (injury type, body part, severity if visible in examples). Forbidden: meta labels ("consequence", "injury", "lesion", "damage" alone). 4 to 10 words, grounded in the examples. Not the cause or work context.''',
 }}
 
 def resolve_run_directory(value):
@@ -206,7 +212,17 @@ if str(SCENARIO_DIR) not in sys.path:
 
 from scenario_pipeline import load_units
 from manuscript_reporting import (
+    KNEE_TABLE_COLUMNS,
     PARETO_TABLE_COLUMNS,
+    RETAINED_FACTOR_COLUMNS,
+    FIGURE_FACTOR_RESAMPLING_A0,
+    FIGURE_FACTOR_RESAMPLING_A1_B_C,
+    FIGURE_RETAINED_FACTORS_A0,
+    FIGURE_UMAP_SEED_SENSITIVITY,
+    ROLE_RETAINED_FACTOR_TITLES_SHORT,
+    appendix_figure_path,
+    retained_factors_figure_name,
+    membership_strength_figure_name,
     build_corpus_summary_from_audit,
     build_corpus_summary_table,
     build_knee_selection_table,
@@ -214,10 +230,15 @@ from manuscript_reporting import (
     build_retained_factors_summary_table,
     build_seed_sensitivity_summary,
     build_selected_configuration_table,
+    coalesce_text,
+    display_manuscript_table,
+    sanitize_label_text,
+    plot_factor_resampling_multi_panel,
     plot_factor_resampling_reproducibility,
     plot_membership_strength_by_factor,
-    plot_seed_sensitivity_factors,
+    plot_umap_seed_sensitivity_all_roles,
 )
+from umap_datamapplot import build_llm_label_lookup, build_topic_label_array, plot_role_topic_datamap
 
 config = load_run_config()
 config.setdefault("topics", {})["top_sentences"] = max(
@@ -236,7 +257,7 @@ else:
     units_preview, audit_summary = load_units(config)
     corpus_summary = build_corpus_summary_table(units_preview)
 corpus_summary.to_csv(RUN_DIR / "tables" / "corpus_summary_by_role.csv", index=False)
-display(corpus_summary)
+display_manuscript_table(corpus_summary)
         """
     ),
     markdown(
@@ -245,7 +266,8 @@ display(corpus_summary)
 
 Configurations on the role-specific Pareto front, sorted by increasing DBCV.
 Candidate IDs (`A0-P1`, …) are reporting aliases ordered on the front; hyperparameters
-and raw $S_R$/DBCV values come from the discovery run.
+and raw $S_R$/DBCV values come from the discovery run. Objectives are shown with
+four decimal places so that near-ties on the front remain distinguishable.
         """
     ),
     code(
@@ -266,13 +288,14 @@ for role in ROLES:
     knee_selection_tables.append(knee_table)
     if not selected_table.empty:
         selected_rows.append(selected_table)
-    print(f"### {role} — Pareto front")
-    display(pareto_table[PARETO_TABLE_COLUMNS])
 
 if pareto_front_tables:
-    pd.concat(pareto_front_tables, ignore_index=True).to_csv(
-        RUN_DIR / "tables" / "pareto_front_summary_all_roles.csv", index=False
-    )
+    pareto_all = pd.concat(pareto_front_tables, ignore_index=True)
+    pareto_all.to_csv(RUN_DIR / "tables" / "pareto_front_summary_all_roles.csv", index=False)
+    print("### Pareto front — all roles")
+    display_manuscript_table(pareto_all, columns=PARETO_TABLE_COLUMNS)
+else:
+    print("No Pareto tables available.")
         """
     ),
     markdown(
@@ -291,13 +314,13 @@ for role in ROLES:
     if not selection_path.is_file():
         continue
     knee_table = build_knee_selection_table(pd.read_csv(selection_path), role=role)
-    print(f"### {role}")
-    display(knee_table)
+    knee_selection_tables.append(knee_table)
 
 if knee_selection_tables:
-    pd.concat(knee_selection_tables, ignore_index=True).to_csv(
-        RUN_DIR / "tables" / "knee_selection_all_roles.csv", index=False
-    )
+    knee_all = pd.concat(knee_selection_tables, ignore_index=True)
+    knee_all.to_csv(RUN_DIR / "tables" / "knee_selection_all_roles.csv", index=False)
+    print("### Geometric knee selection — all roles")
+    display_manuscript_table(knee_all, columns=KNEE_TABLE_COLUMNS)
 
 selected_path = RUN_DIR / "selected_configurations.csv"
 if selected_path.is_file():
@@ -311,7 +334,7 @@ if selected_path.is_file():
         ]
         if c in selected.columns
     ]
-    display(selected[display_cols] if display_cols else selected)
+    display_manuscript_table(selected[display_cols] if display_cols else selected)
 else:
     raise FileNotFoundError("selected_configurations.csv manquant — lancer le job discovery (stage select/all).")
         """
@@ -320,20 +343,45 @@ else:
         """
 ## 4. Pareto figures
 
-**Figure 4.2 (raw)** — all candidate configurations in $(\\mathrm{DBCV}, S_R)$ with the
-Pareto front and geometric knee.
+**Figure 4.2 (raw, principal)** — les 36 configurations candidates dans $(\\mathrm{DBCV}, S_R)$,
+avec le front de Pareto, la configuration retenue (étoile, *Selected configuration*) et les candidats dominés (gris).
+Les limites des axes sont **spécifiques à chaque rôle** : ne pas comparer visuellement
+les distances entre panneaux. Pas de titre interne — la légende figure LaTeX suffit.
 
-**Figure 4.2 (normalized)** — Pareto points only, reference line, ideal point and knee.
+**Figure 4.2 (normalisé, complément)** — espace normalisé, droite de référence et configuration
+retenue (*Selected configuration*). Seuls les rôles dont le front de Pareto comporte **plus d'une** configuration
+sont affichés (typiquement A0 et A1). Les rôles B et C sont absents lorsque leur front
+se réduit à une seule configuration, retenue directement sans calcul de knee.
         """
     ),
     code(
         """
+from scenario_pipeline import write_pareto_normalized_knee_figure, write_stability_landscape_figure
+
+(RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
+selection_tables = {}
+for role in ROLES:
+    selection_path = RUN_DIR / "discovery" / role / "selection_table.csv"
+    if selection_path.is_file():
+        selection_tables[role] = pd.read_csv(selection_path)
+
 figure_path = RUN_DIR / "figures" / "stability_landscape_all_roles.png"
+normalized_path = RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png"
+
+if selection_tables:
+    write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
+    write_pareto_normalized_knee_figure(selection_tables, RUN_DIR / "figures")
+    print("Regenerated:", figure_path.name, "and", normalized_path.name)
+
 if figure_path.is_file():
     display(Image(filename=str(figure_path)))
-normalized_path = RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png"
+else:
+    print("Missing:", figure_path)
+
 if normalized_path.is_file():
     display(Image(filename=str(normalized_path)))
+else:
+    print("Missing:", normalized_path)
         """
     ),
     markdown("## 5. Run manifest and technical diagnostics"),
@@ -486,12 +534,12 @@ for role in ROLES:
     ),
     markdown(
         """
-## 7. Membership-strength distributions for retained factors
+## 7. Membership-strength distributions (appendix)
 
-**Figure 4.3** — For each retained factor, distribution of observation-level membership
-strengths $q_i$ among assigned factual units (horizontal boxplots). Factors are ordered
-by median membership strength; annotations give the number of factual units and distinct
-supporting accidents. Noise is summarized separately and is not treated as a factor.
+Saved under ``figs_ch4/appendix/`` as ``membership_strength_A0.png``, …,
+``membership_strength_C.png`` (no ``factor`` in the filename). The main text
+relies on the **Median membership strength** column in Table 4.5 instead of
+displaying these boxplots in the body.
         """
     ),
     code(
@@ -499,69 +547,94 @@ supporting accidents. Noise is summarized separately and is not treated as a fac
 for role in ROLES:
     configuration_id = str(PARTITION_SELECTION[role])
     frame = partition_frames[(role, configuration_id)]
-    output_path = RUN_DIR / "figures" / f"membership_strength_factors_{role}.png"
-    figure = plot_membership_strength_by_factor(
+    output_path = appendix_figure_path(RUN_DIR, membership_strength_figure_name(role))
+    plot_membership_strength_by_factor(
         frame,
         role=role,
         configuration_id=configuration_id,
         output_path=output_path,
+        show_unit_annotations=False,
     )
-    if figure is not None:
-        display(figure)
-        plt.close(figure)
+    legacy_path = RUN_DIR / "figures" / f"membership_strength_factors_{role}.png"
+    if legacy_path.is_file():
+        legacy_path.unlink()
+        print(f"Removed legacy figure: {{legacy_path.name}}")
     noise_count = int(frame["Topic"].astype(int).lt(0).sum())
+    print(f"Appendix saved: {output_path.name}", end="")
     if noise_count:
-        print(f"{role}: {noise_count} noise units (membership strength at zero, not shown as a factor)")
+        print(f"  ({noise_count} noise units excluded)")
+    else:
+        print()
         """
     ),
     markdown(
         """
 ## 8. Factor-level accident-resampling reproducibility
 
-**Figure 4.4** — For each retained factor, distribution of best-match Jaccard values
-$J^{(b)}_{ck}$ across accident-resampling replicates in which the factor is observable,
-together with mean $S_{ck}$ and $B_{ck}/B$. Factors are ordered by $S_{ck}$.
+**Figure 4.4** — Factor-level accident-resampling reproducibility for A0 (separate panel)
+and for A1, B and C (combined three-panel figure). Each row represents one retained
+factor and shows the distribution of its best-match Jaccard similarity across
+accident-level resamples. Factors are ordered by decreasing mean reproducibility
+$S_{cg}$ within each role (highest at the top). The red dot marks $S_{cg}$; exact
+values appear in the retained-factors table.
         """
     ),
     code(
         """
+from scenario_pipeline import write_factor_resampling_manuscript_figures
+
+(RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
+theme_by_role = {}
+for role in ROLES:
+    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
+    if theme_path.is_file():
+        theme_by_role[role] = pd.read_csv(theme_path)
+    else:
+        print(f"Missing stability_theme.csv for {role}")
+
+if theme_by_role:
+    write_factor_resampling_manuscript_figures(theme_by_role, PARTITION_SELECTION, RUN_DIR / "figures")
+    print("Wrote:", RUN_DIR / "figures" / FIGURE_FACTOR_RESAMPLING_A0)
+    print("Wrote:", RUN_DIR / "figures" / FIGURE_FACTOR_RESAMPLING_A1_B_C)
+
+a0_path = RUN_DIR / "figures" / FIGURE_FACTOR_RESAMPLING_A0
+combo_path = RUN_DIR / "figures" / FIGURE_FACTOR_RESAMPLING_A1_B_C
+if a0_path.is_file():
+    display(Image(filename=str(a0_path)))
+else:
+    print("Missing:", a0_path)
+
+if combo_path.is_file():
+    display(Image(filename=str(combo_path)))
+else:
+    print(
+        "Missing:", combo_path,
+        "\\nNeed stability_theme.csv for A1/B/C and selected configuration rows.",
+        {role: PARTITION_SELECTION.get(role) for role in ("A1", "B", "C")},
+    )
+
 resampling_summaries = []
 for role in ROLES:
-    configuration_id = str(PARTITION_SELECTION[role])
-    theme_path = RUN_DIR / "discovery" / role / "stability_theme.csv"
-    if not theme_path.is_file():
-        print(f"Missing stability_theme.csv for {role}")
+    if role not in theme_by_role:
         continue
-    theme_stability = pd.read_csv(theme_path)
-    selected_theme = theme_stability[
-        theme_stability["configuration_id"].astype(str).eq(configuration_id)
+    configuration_id = str(PARTITION_SELECTION[role])
+    selected_theme = theme_by_role[role][
+        theme_by_role[role]["configuration_id"].astype(str).eq(configuration_id)
     ].copy()
     if selected_theme.empty:
         print(f"No resampling rows for selected configuration {role}/{configuration_id}")
         continue
-    output_path = RUN_DIR / "figures" / f"factor_resampling_{role}.png"
-    figure = plot_factor_resampling_reproducibility(
-        theme_stability,
-        role=role,
-        configuration_id=configuration_id,
-        output_path=output_path,
-    )
-    if figure is not None:
-        display(figure)
-        plt.close(figure)
     factor_summary = (
         selected_theme.groupby("cluster_label", as_index=False)
         .agg(
-            S_ck=("theme_stability", "first"),
-            B_ck_over_B=("observability", "first"),
+            S_cg=("theme_stability", "first"),
+            B_cg_over_B=("observability", "first"),
             n_replicates=("repetition", "nunique"),
         )
-        .sort_values("S_ck", ascending=True)
+        .sort_values("S_cg", ascending=False)
     )
     factor_summary.insert(0, "role", role)
     resampling_summaries.append(factor_summary)
-    print(f"### {role}")
-    display(factor_summary)
 
 if resampling_summaries:
     pd.concat(resampling_summaries, ignore_index=True).to_csv(
@@ -573,47 +646,36 @@ if resampling_summaries:
         """
 ## 9. Sensitivity of the selected partitions to UMAP random seeds
 
-**Figure 4.5** — For each alternative UMAP seed, best-match Jaccard between each reference
-factor and its closest non-noise counterpart. Adjacent table: DBCV, number-of-factor and
-noise-fraction ranges across seeds (no seed is chosen as “best”).
+**Figure 4.5** — ``umap_seed_sensitivity_all_roles.png``: mean best-match Jaccard,
+$K$ and DBCV across alternative UMAP seeds for each role. Used for qualitative
+interpretation only; no seed is chosen as “best”.
         """
     ),
     code(
         """
 seed_summary_tables = []
 for role in ROLES:
-    configuration_id = str(PARTITION_SELECTION[role])
-    seed_dir = RUN_DIR / "discovery" / role / "seed_sensitivity"
-    factor_path = seed_dir / "seed_factor_jaccard.csv"
-    summary_path = seed_dir / "seed_summary.csv"
-    if not factor_path.is_file() or not summary_path.is_file():
+    summary_path = RUN_DIR / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
+    if not summary_path.is_file():
         print(f"Missing seed sensitivity artifacts for {role}")
         continue
-    seed_factors = pd.read_csv(factor_path)
     seed_summary = pd.read_csv(summary_path)
-    output_path = RUN_DIR / "figures" / f"seed_sensitivity_factors_{role}.png"
-    figure = plot_seed_sensitivity_factors(
-        seed_factors,
-        role=role,
-        configuration_id=configuration_id,
-        output_path=output_path,
-    )
-    if figure is not None:
-        display(figure)
-        plt.close(figure)
     role_seed_summary = build_seed_sensitivity_summary(seed_summary)
     if not role_seed_summary.empty:
         seed_summary_tables.append(role_seed_summary)
-        print(f"### {role} — seed ranges")
-        display(role_seed_summary)
-    pipeline_fig = seed_dir / f"seed_sensitivity_{role}.png"
-    if pipeline_fig.is_file():
-        display(Image(filename=str(pipeline_fig)))
+
+seed_figure_path = RUN_DIR / "figures" / FIGURE_UMAP_SEED_SENSITIVITY
+seed_figure = plot_umap_seed_sensitivity_all_roles(RUN_DIR, output_path=seed_figure_path)
+if seed_figure is not None:
+    display(Image(filename=str(seed_figure_path)))
+    plt.close(seed_figure)
+else:
+    print("Missing:", seed_figure_path.name)
 
 if seed_summary_tables:
-    pd.concat(seed_summary_tables, ignore_index=True).to_csv(
-        RUN_DIR / "tables" / "seed_sensitivity_summary_all_roles.csv", index=False
-    )
+    combined = pd.concat(seed_summary_tables, ignore_index=True)
+    combined.to_csv(RUN_DIR / "tables" / "seed_sensitivity_summary_all_roles.csv", index=False)
+    display(combined)
         """
     ),
     markdown(
@@ -629,6 +691,16 @@ notebook. In PowerShell, define it before launching Jupyter with
 `$env:OPENAI_API_KEY = "votre-cle"`.
 If the key, package or request is unavailable, the notebook keeps the
 top-word label and continues without stopping the analysis.
+
+Set `LLM_FORCE_REFRESH = True` in the first code cell to delete
+`topics_manual/llm_theme_labels.csv` and relabel every topic (ignore cache).
+
+Model defaults follow the annotation pipeline: `gpt-5.6-luna` with
+`reasoning_effort` and `max_completion_tokens` (no custom temperature).
+
+Labels are requested in **English** (`LLM_OUTPUT_LANGUAGE = "English"`) so that
+Table 4.5 and the UMAP figures use the same wording. Set `LLM_FORCE_REFRESH = True`
+to relabel existing topics after changing the language or prompts.
         """
     ),
     code(
@@ -662,57 +734,58 @@ def topic_records_for_role(role):
     return records
 
 
-def parse_llm_payload(raw_text):
-    payload = json.loads(raw_text)
-    if isinstance(payload, list):
-        items = payload
-    elif isinstance(payload, dict):
-        items = payload.get("themes", payload.get("labels", []))
-    else:
-        items = []
-    return items if isinstance(items, list) else []
+from llm_labeling import (
+    complete_theme_label_json,
+    extract_theme_item,
+    is_valid_llm_cache_row,
+    normalize_llm_fields,
+    parse_llm_payload,
+)
+from scgm_text.openai_theme_labels import _get_client, load_openai_dotenv
 
 
 def request_role_labels(client, role, records):
     prompt = ROLE_PROMPTS[role]
     instruction = f'''
-Retournez un seul objet JSON contenant un tableau `themes`, avec un élément
-pour chaque `topic_id`. Rédigez l'intitulé, la description et les éléments de
-preuve en {LLM_OUTPUT_LANGUAGE}.
+Return a single JSON object with a `themes` array containing one element per `topic_id`.
+Write the label, description and evidence in {LLM_OUTPUT_LANGUAGE}.
 
-Règles pour `label` :
-- 4 à 10 mots, nominal ou locution nominale, adapté à une légende de figure.
-- Doit nommer un motif factuel précis visible dans les exemples (objet, action,
-  équipement, lieu, mécanisme ou lésion selon le rôle).
-- Interdit : intitulés génériques qui ne discriminent pas les thèmes (ex. seulement
-  le nom du rôle, « contexte de travail », « facteur défavorable », « événement »,
-  « conséquence », « accident », « risque »).
-- Si les exemples sont hétérogènes, choisissez la formulation la plus spécifique
-  supportée par au moins deux exemples ; ne résumez pas tout le rôle A0/A1/B/C.
-- N'inventez aucune information absente des mots-clés et phrases fournis.
+Rules for `label`:
+- 4 to 10 words, nominal phrase suitable for a figure legend.
+- Must name a specific factual motif visible in the examples (object, action,
+  equipment, location, mechanism or injury depending on the role).
+- Forbidden: generic labels that do not discriminate themes (e.g. only the role name,
+  "work context", "adverse factor", "event", "consequence", "accident", "risk").
+- If examples are heterogeneous, choose the most specific wording supported by at
+  least two examples; do not summarize the whole A0/A1/B/C role.
+- Do not invent information absent from the keywords and sentences provided.
 
-`description` : une phrase expliquant le motif. `evidence` : 2 à 4 fragments
-textuels courts tirés des exemples (citations ou paraphrases minimales).
+`description`: one sentence explaining the motif. `evidence`: 2 to 4 short text
+fragments from the examples (quotes or minimal paraphrases).
 
-Consigne spécifique au rôle :
+Role-specific guidance:
 {prompt}
 
-Thèmes à analyser :
+Topics to analyse:
 {json.dumps(records, ensure_ascii=False, indent=2)}
 '''
-    response = client.chat.completions.create(
+    response = complete_theme_label_json(
+        client,
         model=OPENAI_MODEL,
         messages=[
-            {"role": "system", "content": "Vous êtes un analyste prudent spécialisé dans les accidents du travail. Retournez uniquement un JSON valide."},
+            {"role": "system", "content": "You are a careful occupational-accident analyst. Return valid JSON only."},
             {"role": "user", "content": instruction},
         ],
-        response_format={"type": "json_object"},
+        reasoning_effort=OPENAI_REASONING_EFFORT,
+        max_output_tokens=OPENAI_MAX_OUTPUT_TOKENS,
     )
-    raw_text = response.choices[0].message.content or "{}"
-    return parse_llm_payload(raw_text)
+    return parse_llm_payload(response)
 
 
 llm_cache_path = RUN_DIR / "topics_manual" / "llm_theme_labels.csv"
+if LLM_FORCE_REFRESH and llm_cache_path.is_file():
+    llm_cache_path.unlink()
+    print("LLM cache cleared:", llm_cache_path)
 llm_cache = pd.read_csv(llm_cache_path) if llm_cache_path.is_file() else pd.DataFrame()
 if not llm_cache.empty and "configuration_id" not in llm_cache.columns:
     # Backward compatibility with the previous cache format, which contained
@@ -721,6 +794,8 @@ if not llm_cache.empty and "configuration_id" not in llm_cache.columns:
 for column in ("topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"):
     if column not in llm_cache.columns:
         llm_cache[column] = ""
+for column in ("llm_label", "llm_description", "llm_evidence"):
+    llm_cache[column] = llm_cache[column].map(sanitize_label_text)
 llm_cache["cache_key"] = (
     llm_cache["role"].astype(str) + "::" +
     llm_cache["configuration_id"].astype(str) + "::" +
@@ -733,9 +808,8 @@ new_llm_rows = []
 llm_status = {}
 if not topic_catalog.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY"):
     try:
-        from openai import OpenAI
-
-        client = OpenAI()
+        load_openai_dotenv()
+        client = _get_client()
         for role in ROLES:
             records = topic_records_for_role(role)
             if not records:
@@ -746,30 +820,51 @@ if not topic_catalog.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY
             for record in tqdm(records, desc=f"OpenAI labels {role}", unit="topic"):
                 cache_key = f"{role}::{record['configuration_id']}::{record['topic_id']}"
                 cached = cached_by_key.get(cache_key)
-                if cached and str(cached.get("llm_label", "")).strip():
+                if cached and is_valid_llm_cache_row(cached):
                     cached_count += 1
                     llm_rows.append({
                         "topic_id": record["topic_id"],
                         "role": role,
                         "configuration_id": record["configuration_id"],
-                        "llm_label": str(cached.get("llm_label", "")).strip(),
-                        "llm_description": str(cached.get("llm_description", "")).strip(),
-                        "llm_evidence": str(cached.get("llm_evidence", "")).strip(),
+                        **normalize_llm_fields(cached),
                     })
                     continue
                 try:
                     response_items = request_role_labels(client, role, [record])
-                    by_topic = {str(item.get("topic_id")): item for item in response_items if item.get("topic_id")}
-                    item = by_topic.get(record["topic_id"], {})
-                    if not item:
+                    item = extract_theme_item(response_items, record)
+                    fields = normalize_llm_fields(item)
+                    if not fields["llm_label"]:
+                        # Retry once with a minimal prompt when the model omits the label.
+                        retry_instruction = f'''
+Return JSON {{"themes": [{{"topic_id": "{record["topic_id"]}", "label": "...", "description": "...", "evidence": "..."}}]}}.
+The label field must contain 4 to 10 words in {LLM_OUTPUT_LANGUAGE}, factual and specific.
+topic_id={record["topic_id"]}
+top_words={json.dumps(record.get("top_words", ""), ensure_ascii=False)}
+examples={json.dumps(record.get("representative_sentences", []), ensure_ascii=False)}
+'''
+                        retry_text = complete_theme_label_json(
+                            client,
+                            model=OPENAI_MODEL,
+                            messages=[
+                                {"role": "system", "content": "Retournez uniquement un JSON valide."},
+                                {"role": "user", "content": retry_instruction},
+                            ],
+                            reasoning_effort=OPENAI_REASONING_EFFORT,
+                            max_output_tokens=OPENAI_MAX_OUTPUT_TOKENS,
+                        )
+                        retry_items = parse_llm_payload(retry_text)
+                        fields = normalize_llm_fields(extract_theme_item(retry_items, record))
+                    if not fields["llm_label"]:
                         missing_count += 1
+                        warnings.warn(
+                            f"OpenAI returned no usable label for {role}/{record['topic_id']} "
+                            f"(response items={len(response_items)})"
+                        )
                     llm_rows.append({
                         "topic_id": record["topic_id"],
                         "role": role,
                         "configuration_id": record["configuration_id"],
-                        "llm_label": str(item.get("label", "")).strip(),
-                        "llm_description": str(item.get("description", "")).strip(),
-                        "llm_evidence": str(item.get("evidence", "")).strip(),
+                        **fields,
                     })
                 except Exception as error:
                     failed_count += 1
@@ -801,12 +896,14 @@ else:
 if not llm_rows and not new_llm_rows and not llm_cache.empty:
     llm_rows = llm_cache.to_dict("records")
 llm_labels = pd.DataFrame(
-    list(llm_cache.drop(columns=["cache_key"], errors="ignore").to_dict("records"))
-    + llm_rows
-    + new_llm_rows,
+    llm_rows + new_llm_rows,
     columns=["topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"],
 )
 if not llm_labels.empty:
+    for column in ("llm_label", "llm_description", "llm_evidence"):
+        llm_labels[column] = llm_labels[column].map(sanitize_label_text)
+if not llm_labels.empty:
+    llm_labels = llm_labels[llm_labels["llm_label"].map(sanitize_label_text).astype(bool)].copy()
     llm_labels["cache_key"] = (
         llm_labels["role"].astype(str) + "::" +
         llm_labels["configuration_id"].astype(str) + "::" +
@@ -825,15 +922,15 @@ else:
     theme_labels["llm_description"] = ""
     theme_labels["llm_evidence"] = ""
 for column in ("llm_label", "llm_description", "llm_evidence"):
-    theme_labels[column] = theme_labels[column].fillna("").astype(str).str.strip()
+    theme_labels[column] = theme_labels[column].map(sanitize_label_text)
 for column in ("label", "top_terms"):
     if column not in theme_labels.columns:
         theme_labels[column] = ""
-theme_labels["plot_label"] = theme_labels["llm_label"].fillna("").astype(str).str.strip()
-empty_labels = theme_labels["plot_label"].eq("")
-theme_labels.loc[empty_labels, "plot_label"] = theme_labels.loc[empty_labels, "label"].fillna("").astype(str)
-empty_labels = theme_labels["plot_label"].eq("")
-theme_labels.loc[empty_labels, "plot_label"] = theme_labels.loc[empty_labels, "top_terms"].fillna("").astype(str)
+    theme_labels[column] = theme_labels[column].map(sanitize_label_text)
+theme_labels["plot_label"] = theme_labels.apply(
+    lambda row: coalesce_text(row.get("llm_label"), default=str(row.get("topic_id", ""))),
+    axis=1,
+)
 theme_labels.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary_with_llm_labels.csv", index=False)
 display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "llm_description", "top_terms", "representative_sentences"] if column in theme_labels.columns]])
         """
@@ -843,7 +940,7 @@ display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "l
 ## 11. Summary of retained factors (Table 4.5)
 
 Illustrative summary after LLM labelling: units, contributing accidents, resampling
-stability $S_{ck}$, median membership strength, and illustrative content.
+stability $S_{cg}$, median membership strength, and illustrative content.
         """
     ),
     code(
@@ -872,17 +969,16 @@ retained_factors_table = build_retained_factors_summary_table(
     partition_selection=PARTITION_SELECTION,
 )
 retained_factors_table.to_csv(RUN_DIR / "tables" / "retained_factors_summary.csv", index=False)
-display(retained_factors_table)
+display_manuscript_table(retained_factors_table, columns=RETAINED_FACTOR_COLUMNS)
         """
     ),
     markdown(
         """
 ## 12. Narrative text coloured by topic
 
-Each selected non-dominated partition can be inspected directly on the source
-accident narrative. The colours are local to the displayed partition and the
-legend uses the LLM label when available, otherwise a transparent topic ID or
-top-term label. Noise (`-1`) remains uncoloured.
+Each **selected** partition is inspected on the source accident narrative. Colours
+match the retained factors; legend and inline highlights use **LLM labels only**
+(fallback: neutral topic id if labelling was skipped). Noise (`-1`) remains uncoloured.
         """
     ),
     code(
@@ -995,12 +1091,12 @@ def show_colored_text_inline_v5(
 
 def show_partition_narratives(role, configuration_id, accident_ids=None):
     frame = partition_frames[(role, str(configuration_id))].copy()
-    partition_labels = theme_labels[
-        theme_labels["role"].astype(str).eq(role)
-        & theme_labels["configuration_id"].astype(str).eq(str(configuration_id))
-    ].copy()
-    label_lookup = partition_labels.set_index("topic_id")["plot_label"].astype(str).to_dict() if not partition_labels.empty else {}
-    frame["topic_label"] = frame["Topic"].map(lambda value: label_lookup.get(f"{role}_{int(value):03d}", f"Topic {int(value)}") if int(value) >= 0 else "Bruit / non assigné")
+    label_lookup = build_llm_label_lookup(theme_labels, role=role, configuration_id=str(configuration_id))
+    frame["topic_label"] = frame["Topic"].map(
+        lambda value: label_lookup.get(f"{role}_{int(value):03d}", f"Topic {int(value)}")
+        if int(value) >= 0
+        else "Bruit / non assigné"
+    )
     requested = accident_ids if accident_ids is not None else ACCIDENT_IDS_TO_DISPLAY.get(role)
     if requested is None or requested == "":
         requested = frame["accident_id"].drop_duplicates().head(1).tolist()
@@ -1012,153 +1108,41 @@ def show_partition_narratives(role, configuration_id, accident_ids=None):
         show_colored_text_inline_v5(frame, accident_id)
 
 
-for (role, configuration_id) in partition_frames:
-    print(f"{role} — partition {configuration_id}")
+for role in ROLES:
+    configuration_id = str(PARTITION_SELECTION[role])
+    print(f"{role} — partition sélectionnée {configuration_id}")
     show_partition_narratives(role, configuration_id, accident_ids=ACCIDENT_IDS_TO_DISPLAY.get(role))
         """
     ),
     markdown(
         """
-## 13. Two-dimensional UMAP topic map
+## 13. Two-dimensional UMAP topic map (DataMapPlot)
 
-Publication-style 2-D UMAP (visualization only; not used for clustering or
-selection). Topic labels use the full LLM / top-term text (wrapped, not
-truncated), are placed outside clusters with leader lines, and match cluster
-colors. Optional soft density shading per topic. For best label placement,
-install `adjustText` (`pip install adjustText`).
+Publication-style 2-D UMAP for **qualitative interpretation only** (not used for
+clustering, selection or validation). Rendered with **DataMapPlot**: soft cluster glow,
+exterior labels with leader lines, and **English LLM factor names** matching Table 4.5.
+One figure per role: ``retained_factors_A0.png``, ``retained_factors_A1.png``,
+``retained_factors_B.png``, ``retained_factors_C.png``. Grey points indicate HDBSCAN noise.
         """
     ),
     code(
         """
-if str(SCENARIO_DIR) not in sys.path:
-    sys.path.insert(0, str(SCENARIO_DIR))
-from scenario_pipeline import load_embeddings, load_units
-import matplotlib.colors as mcolors
+import umap
 
-
-def load_assignments():
-    frames = [manual_results[role].assignments[["fact_id", "role", "topic_id"]] for role in ROLES]
-    return pd.concat(frames, ignore_index=True).drop_duplicates("fact_id")
-
-
-assignments = load_assignments()
+assignments = pd.concat(
+    [manual_results[role].assignments[["fact_id", "role", "topic_id"]] for role in ROLES],
+    ignore_index=True,
+).drop_duplicates("fact_id")
 assignments["fact_id"] = assignments["fact_id"].astype(str)
 unit_index = pd.DataFrame({"fact_id": units["_fact_id"].astype(str), "embedding_index": np.arange(len(units))})
 plot_frame = assignments.merge(unit_index, on="fact_id", how="inner")
-if not selected_topics.empty and "topic_id" in selected_topics.columns:
-    retained_topic_ids = set(selected_topics["topic_id"].astype(str))
-else:
-    retained_topic_ids = set(theme_labels["topic_id"].astype(str))
 plot_frame["topic_id"] = plot_frame["topic_id"].fillna("").astype(str)
-plot_frame["plot_topic_id"] = plot_frame["topic_id"].where(plot_frame["topic_id"].isin(retained_topic_ids), "")
-primary_theme_labels = theme_labels[
-    theme_labels["configuration_id"].astype(str).eq(theme_labels["role"].map(PARTITION_SELECTION).astype(str))
-]
-label_lookup = primary_theme_labels.set_index("topic_id")["plot_label"].astype(str).to_dict()
 
-import umap
+(RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
 
 
-def wrap_topic_label(value, width=None):
-    text = str(value).strip()
-    if not text or text.lower() == "nan":
-        return "Topic"
-    wrap_width = int(width or UMAP_2D_LABEL_WRAP_WIDTH)
-    lines = textwrap.wrap(text, width=wrap_width, break_long_words=False, break_on_hyphens=False)
-    return "\\n".join(lines) if lines else text
-
-
-def _topic_density_contour(axis, subset, color, *, alpha=0.18):
-    if len(subset) < 12:
-        return
-    try:
-        from scipy.stats import gaussian_kde
-    except ImportError:
-        return
-    xs = subset["x"].astype(float).to_numpy()
-    ys = subset["y"].astype(float).to_numpy()
-    if len(xs) < 12:
-        return
-    try:
-        kde = gaussian_kde(np.vstack([xs, ys]))
-    except (np.linalg.LinAlgError, ValueError):
-        return
-    xmin, xmax = xs.min(), xs.max()
-    ymin, ymax = ys.min(), ys.max()
-    pad_x = max(0.08 * (xmax - xmin), 0.05)
-    pad_y = max(0.08 * (ymax - ymin), 0.05)
-    grid_x = np.linspace(xmin - pad_x, xmax + pad_x, 80)
-    grid_y = np.linspace(ymin - pad_y, ymax + pad_y, 80)
-    mesh_x, mesh_y = np.meshgrid(grid_x, grid_y)
-    density = kde(np.vstack([mesh_x.ravel(), mesh_y.ravel()])).reshape(mesh_x.shape)
-    axis.contourf(
-        mesh_x,
-        mesh_y,
-        density,
-        levels=6,
-        colors=[color],
-        alpha=alpha,
-        antialiased=True,
-        zorder=0,
-    )
-
-
-def _place_topic_labels(axis, label_specs):
-    # Place labels with leader lines; prefer adjustText when available.
-    texts = []
-    for spec in label_specs:
-        text = axis.text(
-            spec["x"],
-            spec["y"],
-            spec["label"],
-            fontsize=spec.get("fontsize", 8.5),
-            color=spec["color"],
-            ha="center",
-            va="center",
-            linespacing=1.15,
-            zorder=5,
-        )
-        texts.append(text)
-    try:
-        from adjustText import adjust_text
-
-        adjust_text(
-            texts,
-            arrowprops={
-                "arrowstyle": "-",
-                "color": "#8a8a8a",
-                "lw": 0.7,
-                "alpha": 0.85,
-                "shrinkA": 6,
-                "shrinkB": 4,
-            },
-            expand_points=(1.35, 1.45),
-            expand_text=(1.15, 1.25),
-            force_text=(0.35, 0.55),
-            force_points=(0.2, 0.35),
-            only_move={"text": "xy", "points": "y", "objects": "xy"},
-        )
-        return
-    except ImportError:
-        pass
-    center_x = float(np.mean([spec["x"] for spec in label_specs]))
-    center_y = float(np.mean([spec["y"] for spec in label_specs]))
-    x_span = axis.get_xlim()[1] - axis.get_xlim()[0]
-    y_span = axis.get_ylim()[1] - axis.get_ylim()[0]
-    offset_scale = 0.12 * max(x_span, y_span)
-    for spec, text in zip(label_specs, texts):
-        cx, cy = float(spec["x"]), float(spec["y"])
-        dx, dy = cx - center_x, cy - center_y
-        norm = float(np.hypot(dx, dy))
-        if norm < 1e-9:
-            dx, dy, norm = 1.0, 0.0, 1.0
-        lx = cx + offset_scale * dx / norm
-        ly = cy + offset_scale * dy / norm
-        text.set_position((lx, ly))
-        axis.plot([cx, lx], [cy, ly], color="#9a9a9a", linewidth=0.7, alpha=0.85, zorder=4)
-
-
-def plot_role_umap(role):
+def render_role_umap_panel(role, *, output_path, figsize, tight_crop=False):
+    configuration_id = str(PARTITION_SELECTION[role])
     role_units = units[units["_role"].eq(role)].reset_index(drop=True)
     role_embeddings = embeddings[units["_role"].to_numpy() == role]
     if len(role_embeddings) < 3:
@@ -1183,78 +1167,52 @@ def plot_role_umap(role):
     role_plot["x"] = role_plot["local_index"].map(lambda index: coordinate_lookup[int(index)][0])
     role_plot["y"] = role_plot["local_index"].map(lambda index: coordinate_lookup[int(index)][1])
     role_plot = role_plot.dropna(subset=["x", "y"])
+    retained_ids = set(
+        theme_labels.loc[
+            theme_labels["role"].astype(str).eq(role)
+            & theme_labels["configuration_id"].astype(str).eq(configuration_id),
+            "topic_id",
+        ].astype(str)
+    )
+    role_plot["plot_topic_id"] = role_plot["topic_id"].where(role_plot["topic_id"].isin(retained_ids), "")
+    label_lookup = build_llm_label_lookup(theme_labels, role=role, configuration_id=configuration_id)
+    datamap_labels = build_topic_label_array(
+        role_plot["plot_topic_id"],
+        label_lookup,
+        noise_label=DATAMAP_NOISE_LABEL,
+    )
+    coords = role_plot[["x", "y"]].to_numpy(dtype=float)
+    figure = plot_role_topic_datamap(
+        coords,
+        datamap_labels,
+        output_path=output_path,
+        figsize=figsize,
+        dpi=float(UMAP_2D_DPI),
+        label_wrap_width=int(DATAMAP_LABEL_WRAP_WIDTH),
+        label_font_size=float(DATAMAP_LABEL_FONT_SIZE),
+        dynamic_label_size=bool(DATAMAP_DYNAMIC_LABEL_SIZE),
+        noise_label=DATAMAP_NOISE_LABEL,
+        title_fontsize=11.0,
+        tight_crop=tight_crop,
+    )
+    plt.close(figure)
+    return output_path
 
-    figure, axis = plt.subplots(figsize=UMAP_2D_FIGSIZE, facecolor="white")
-    axis.set_facecolor("white")
-
-    noise = role_plot[role_plot["plot_topic_id"].eq("")]
-    if not noise.empty:
-        axis.scatter(
-            noise["x"],
-            noise["y"],
-            s=3.5,
-            c="#d9d9d9",
-            alpha=0.35,
-            linewidths=0,
-            rasterized=True,
-            zorder=1,
-        )
-
-    active_topics = [topic_id for topic_id in sorted(role_plot["plot_topic_id"].unique()) if topic_id]
-    cmap = plt.get_cmap("tab20", max(1, len(active_topics)))
-    label_specs = []
-    for index, topic_id in enumerate(active_topics):
-        subset = role_plot[role_plot["plot_topic_id"].eq(topic_id)]
-        color = cmap(index)
-        if bool(UMAP_2D_SHOW_DENSITY):
-            _topic_density_contour(axis, subset, color)
-        axis.scatter(
-            subset["x"],
-            subset["y"],
-            s=5.5,
-            color=color,
-            alpha=0.78,
-            linewidths=0,
-            rasterized=True,
-            zorder=2,
-        )
-        label_specs.append({
-            "x": float(subset["x"].mean()),
-            "y": float(subset["y"].mean()),
-            "label": wrap_topic_label(label_lookup.get(topic_id, topic_id)),
-            "color": mcolors.to_hex(color) if not isinstance(color, str) else color,
-        })
-
-    margin_x = 0.08 * (role_plot["x"].max() - role_plot["x"].min() + 1e-9)
-    margin_y = 0.08 * (role_plot["y"].max() - role_plot["y"].min() + 1e-9)
-    axis.set_xlim(role_plot["x"].min() - margin_x, role_plot["x"].max() + margin_x * 2.5)
-    axis.set_ylim(role_plot["y"].min() - margin_y, role_plot["y"].max() + margin_y * 2.5)
-    if label_specs:
-        _place_topic_labels(axis, label_specs)
-
-    axis.set_xlabel("UMAP-1", fontsize=11)
-    axis.set_ylabel("UMAP-2", fontsize=11)
-    axis.tick_params(labelsize=9, colors="#666666")
-    for spine in axis.spines.values():
-        spine.set_color("#cccccc")
-        spine.set_linewidth(0.8)
-    axis.grid(False)
-    figure.subplots_adjust(left=0.06, right=0.98, top=0.98, bottom=0.07)
-    return figure
-
-
-(RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
-role_figures = {}
 for role in ROLES:
-    figure = plot_role_umap(role)
-    if figure is not None:
-        png_path = RUN_DIR / "figures" / f"umap_topics_2d_{role}.png"
-        pdf_path = RUN_DIR / "figures" / f"umap_topics_2d_{role}.pdf"
-        figure.savefig(png_path, dpi=int(UMAP_2D_DPI), bbox_inches="tight", facecolor="white")
-        figure.savefig(pdf_path, bbox_inches="tight", facecolor="white")
-        role_figures[role] = png_path
-        display(figure)
-        plt.close(figure)
+    figure_path = RUN_DIR / "figures" / retained_factors_figure_name(role)
+    figsize = UMAP_2D_FIGSIZE if role == "A0" else UMAP_2D_FIGSIZE_COMPACT
+    tight_crop = role in {"B", "C"}
+    rendered = render_role_umap_panel(
+        role,
+        output_path=figure_path,
+        figsize=figsize,
+        tight_crop=tight_crop,
+    )
+    if rendered is not None and figure_path.is_file():
+        print("Wrote:", figure_path.name)
+        display(Image(filename=str(figure_path)))
+    else:
+        print(f"Skipped UMAP map for {role}")
         """
     ),
     markdown("## 14. Export locations"),
@@ -1269,12 +1227,15 @@ outputs = [
     "tables/retained_factors_summary.csv",
     "config_resolved.yaml", "parallel_runtime.json", "selected_configurations.csv",
     "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_knee_all_roles.png",
-    "figures/membership_strength_factors_A0.png",
-    "figures/factor_resampling_A0.png",
-    "figures/seed_sensitivity_factors_A0.png",
-    "figures/umap_topics_2d_A0.png",
-    "figures/umap_topics_2d_A1.png", "figures/umap_topics_2d_B.png",
-    "figures/umap_topics_2d_C.png", "topics_manual/topic_dictionary.csv",
+    "figures/factor_resampling_A0.png", "figures/factor_resampling_A1_B_C.png",
+    "figures/umap_seed_sensitivity_all_roles.png",
+    "figures/retained_factors_A0.png", "figures/retained_factors_A1.png",
+    "figures/retained_factors_B.png", "figures/retained_factors_C.png",
+    "figs_ch4/appendix/membership_strength_A0.png",
+    "figs_ch4/appendix/membership_strength_A1.png",
+    "figs_ch4/appendix/membership_strength_B.png",
+    "figs_ch4/appendix/membership_strength_C.png",
+    "topics_manual/topic_dictionary.csv",
     "topics_manual/topic_dictionary_all_selected.csv", "topics_manual/representatives_by_membership.csv",
     "topics_manual/llm_theme_labels.csv", "topics_manual/topic_dictionary_with_llm_labels.csv",
     "discovery/A0/candidate_partitions/<configuration_id>_labels.npy",

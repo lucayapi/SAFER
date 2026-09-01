@@ -73,9 +73,10 @@ from scenario_pipeline import (
     materialize_selected_partition,
     prepare_data,
     select_configuration_for_role,
-    write_factor_stability_figure,
+    write_factor_resampling_manuscript_figures,
     write_pareto_normalized_knee_figure,
     write_stability_landscape_figure,
+    write_umap_seed_sensitivity_all_roles_figure,
 )
 from pareto_knee_selection import identify_pareto_front, print_role_selection_summary
         """
@@ -228,7 +229,6 @@ selection_tables[role], selected_id, rule = select_configuration_for_role(merged
 candidate_tables[role] = selection_tables[role]
 selections[role] = selected_id
 materialize_selected_partition(role, prepared.units, selected_id, RUN_DIR, theme_stability[role])
-write_factor_stability_figure(role, theme_stability[role], selected_id, RUN_DIR / "figures")
 print_role_selection_summary(role, selection_tables[role], selected_id=selected_id)
 cols = [c for c in [
     "configuration_id", "stability", "dbcv_umap", "is_pareto", "is_selected_knee",
@@ -247,8 +247,10 @@ cells.extend([
         """
 write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
 write_pareto_normalized_knee_figure(selection_tables, RUN_DIR / "figures")
+write_factor_resampling_manuscript_figures(theme_stability, selections, RUN_DIR / "figures")
 display(Image(filename=str(RUN_DIR / "figures" / "stability_landscape_all_roles.png")))
 display(Image(filename=str(RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png")))
+display(Image(filename=str(RUN_DIR / "figures" / "factor_resampling_A0.png")))
 selected_rows = []
 for role in ROLES:
     row = selection_tables[role].loc[selection_tables[role]["is_selected_knee"]].iloc[0]
@@ -275,6 +277,8 @@ for role in ROLES:
         row.to_dict(),
         reestimate=REESTIMATE,
     )
+write_umap_seed_sensitivity_all_roles_figure(RUN_DIR / "figures", run_dir=RUN_DIR)
+display(Image(filename=str(RUN_DIR / "figures" / "umap_seed_sensitivity_all_roles.png")))
 pd.DataFrame(selected_rows).to_csv(RUN_DIR / "selected_configurations.csv", index=False)
 display(pd.DataFrame(selected_rows))
 print("Open topic_modeling_results_<corpus>.ipynb for LLM labels, then the BN notebook.")

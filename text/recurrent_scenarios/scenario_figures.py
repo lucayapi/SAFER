@@ -178,8 +178,10 @@ def render_scenario_figure(row: pd.Series, output_dir: Path, *, learned_edges=No
     stem = _scenario_filename(row["scenario_id"], row["latent_family"])
     png_path = output_dir / f"{stem}.png"
     pdf_path = output_dir / f"{stem}.pdf"
-    figure.savefig(png_path, dpi=dpi, bbox_inches="tight", facecolor="white")
-    figure.savefig(pdf_path, bbox_inches="tight", facecolor="white")
+    from manuscript_reporting import save_manuscript_figure
+
+    save_manuscript_figure(figure, png_path, dpi=dpi)
+    save_manuscript_figure(figure, pdf_path, dpi=dpi)
     plt.close(figure)
     return png_path, pdf_path
 
@@ -221,8 +223,10 @@ def render_compact_scenarios_figure(scenarios: pd.DataFrame, output_dir: str | P
     figure.subplots_adjust(top=0.91, bottom=0.055, left=0.02, right=0.99)
     png_path = destination / f"{stem}.png"
     pdf_path = destination / f"{stem}.pdf"
-    figure.savefig(png_path, dpi=dpi, bbox_inches="tight", facecolor="white")
-    figure.savefig(pdf_path, bbox_inches="tight", facecolor="white")
+    from manuscript_reporting import save_manuscript_figure
+
+    save_manuscript_figure(figure, png_path, dpi=dpi)
+    save_manuscript_figure(figure, pdf_path, dpi=dpi)
     plt.close(figure)
     return png_path, pdf_path
 
