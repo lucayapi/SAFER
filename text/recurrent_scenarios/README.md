@@ -12,7 +12,9 @@ Corpus enregistrés : `btp`, `caou`, `metallurgie`.
 |-------|--------|------|
 | 1. Discovery | `run_theme_discovery.py` (+ job Slurm) | Grille UMAP–HDBSCAN, DBCV, \(S_R\), front Pareto, sélection knee géométrique, sensibilité multi-seeds. |
 | 2. Résultats / thèmes | `notebooks/topic_modeling_results_{corpus}.ipynb` | Affiche les artefacts figés, dictionnaire c-TF-IDF, labels LLM (sans rechoisir la config). |
-| 3. BN + scénarios | `notebooks/recurrent_scenarios_bn_analysis_{corpus}.ipynb` | Matrice accident × thèmes, Structural EM avec \(Z\), MPE. |
+| 3. BN + scénarios | `notebooks/recurrent_scenarios_bn_analysis_{corpus}.ipynb` | BN global sans Z + mining empirique des scénarios récurrents. |
+
+Le pipeline latent (Structural EM, K, MPE) est conservé en mode legacy : voir `legacy_latent_family/README.md`.
 
 Un notebook résultats est généré **par corpus** (`caou`, `btp`, `metallurgie`), comme pour le BN.
 `topic_modeling_results.ipynb` est un alias du notebook `caou`.
@@ -22,7 +24,7 @@ Régénérer les notebooks :
 ```bash
 python recurrent_scenarios/build_theme_discovery_notebook.py
 python recurrent_scenarios/build_recurrent_scenarios_results_notebook.py
-python recurrent_scenarios/build_bn_analysis_notebook.py
+python recurrent_scenarios/build_scenario_mining_notebook.py
 ```
 
 ## Discovery (job / CLI)
@@ -84,17 +86,18 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 - `discovery/<role>/pareto_front.csv`, `pareto_candidates.csv`, `selection_table.csv`
 - `discovery/<role>/candidate_partitions/*.npy`
 - `discovery/<role>/selected/` — partition figée
-- `discovery/<role>/seed_sensitivity/` — tables + figure
-- `figures/stability_landscape_all_roles.png` — espace original (DBCV, \(S_R\)), 4 rôles
-- `figures/pareto_normalized_knee_all_roles.png` — espace normalisé + knee (rôles à front multi-points seulement, typ. A0/A1)
+- `discovery/<role>/seed_sensitivity/` — tables + figure (Jaccard vs $s_0$)
+- `tables/seed_sensitivity_summary_all_roles.csv` — Reference $K$ + plages ($K$, DBCV, unassigned, mean Jaccard)
+- `figures/stability_landscape_all_roles.png` — espace original (DBCV, \(S_R\)), 4 rôles, titres (a)–(d)
+- `figures/pareto_normalized_knee_all_roles.png` — espace normalisé + knee (rôles à front multi-points seulement, typ. A0/A1), titres de panneaux
 - `figures/factor_resampling_A0.png`, `figures/factor_resampling_A1_B_C.png`
-- `figures/umap_seed_sensitivity_all_roles.png`
+- `figures/umap_seed_sensitivity_all_roles.png` — Jaccard seul vs seeds alternatifs, panneaux (a)–(d)
 - `figures/retained_factors_<role>.png` (A0, A1, B, C — notebook résultats)
 - `figs_ch4/appendix/membership_strength_<role>.png` (A0, A1, B, C — annexe)
 
 Après notebook résultats : `topics_manual/…`
 
-Après notebook BN : `bayesian_networks/recurrent_scenarios.csv` (+ supports, prototypes, figures)
+Après notebook BN : `bayesian_networks/` — matrice multi-hot, `input_summary.csv`, `factor_prevalence.csv`, sélection K (`K_selection_summary.csv`), profils familles, `recurrent_scenarios.csv`, `recurrent_scenarios_article.csv`, `mpe_ranked_solutions.csv`, `scenario_prototypes.csv`, `bn_diagnostic_summary.json`, figures sous `bayesian_networks/figures/`. **0 = facteur non observé** dans le récit ; arcs BN = dépendances probabilistes, pas causalité démontrée.
 
 ## Hors scope
 

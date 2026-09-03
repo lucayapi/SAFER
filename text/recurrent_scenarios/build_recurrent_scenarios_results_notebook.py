@@ -228,7 +228,7 @@ from manuscript_reporting import (
     build_knee_selection_table,
     build_pareto_front_summary_table,
     build_retained_factors_summary_table,
-    build_seed_sensitivity_summary,
+    build_seed_sensitivity_summary_all_roles,
     build_selected_configuration_table,
     coalesce_text,
     display_manuscript_table,
@@ -250,12 +250,53 @@ parallel = read_json("parallel_runtime.json", {})
 
 (RUN_DIR / "tables").mkdir(parents=True, exist_ok=True)
 summary_path = RUN_DIR / "audit_input_summary.csv"
+units_preview, live_summary = load_units(config)
+live_corpus = build_corpus_summary_table(units_preview)
+expected_n = None
+try:
+    expected_n = int(
+        (config.get("expected_inventory") or {})
+        .get(str(config.get("data", {}).get("dataset_id", "")).lower(), {})
+        .get("n_accidents")
+    )
+except (TypeError, ValueError):
+    expected_n = None
+
 if summary_path.is_file():
     audit_summary = pd.read_csv(summary_path)
     corpus_summary = build_corpus_summary_from_audit(audit_summary)
+    cached_n = None
+    if "metric" in audit_summary.columns:
+        hit = audit_summary.loc[audit_summary["metric"].astype(str).eq("n_accidents"), "value"]
+        if not hit.empty:
+            cached_n = int(float(hit.iloc[0]))
+    live_n = int(units_preview["_accident_id"].nunique())
+    if cached_n is not None and cached_n != live_n:
+        print(
+            f"WARNING: audit_input_summary.csv has n_accidents={cached_n} but "
+            f"current units file has {live_n}. Using live units for corpus summary."
+        )
+        corpus_summary = live_corpus
+        audit_summary = live_summary
+        if expected_n is not None and live_n == expected_n:
+            # refresh stale audit so later cells stay consistent
+            emb_hit = pd.read_csv(summary_path)
+            emb_rows = emb_hit.loc[emb_hit["metric"].astype(str).eq("embedding_dimension")]
+            refresh = live_summary.copy()
+            if not emb_rows.empty:
+                refresh = pd.concat([refresh, emb_rows], ignore_index=True)
+            refresh.to_csv(summary_path, index=False)
+            print("Refreshed stale audit_input_summary.csv from current units.")
+elif expected_n is not None and int(units_preview["_accident_id"].nunique()) != expected_n:
+    print(
+        f"WARNING: units n_accidents={units_preview['_accident_id'].nunique()} "
+        f"!= expected_inventory ({expected_n})."
+    )
+    corpus_summary = live_corpus
+    audit_summary = live_summary
 else:
-    units_preview, audit_summary = load_units(config)
-    corpus_summary = build_corpus_summary_table(units_preview)
+    corpus_summary = live_corpus
+    audit_summary = live_summary
 corpus_summary.to_csv(RUN_DIR / "tables" / "corpus_summary_by_role.csv", index=False)
 display_manuscript_table(corpus_summary)
         """
@@ -345,13 +386,14 @@ else:
 
 **Figure 4.2 (raw, principal)** — les 36 configurations candidates dans $(\\mathrm{DBCV}, S_R)$,
 avec le front de Pareto, la configuration retenue (étoile, *Selected configuration*) et les candidats dominés (gris).
-Les limites des axes sont **spécifiques à chaque rôle** : ne pas comparer visuellement
-les distances entre panneaux. Pas de titre interne — la légende figure LaTeX suffit.
+Panneaux : **(a) A0 – Work context**, **(b) A1 – Adverse condition**, **(c) B – Event/deviation**,
+**(d) C – Consequence**. Les limites des axes sont **spécifiques à chaque rôle** : ne pas comparer
+visuellement les distances entre panneaux.
 
 **Figure 4.2 (normalisé, complément)** — espace normalisé, droite de référence et configuration
-retenue (*Selected configuration*). Seuls les rôles dont le front de Pareto comporte **plus d'une** configuration
-sont affichés (typiquement A0 et A1). Les rôles B et C sont absents lorsque leur front
-se réduit à une seule configuration, retenue directement sans calcul de knee.
+retenue (*Selected configuration*), avec les mêmes titres de panneaux. Seuls les rôles dont le front
+de Pareto comporte **plus d'une** configuration sont affichés (typiquement A0 et A1). Les rôles B et C
+sont absents lorsque leur front se réduit à une seule configuration, retenue directement sans calcul de knee.
         """
     ),
     code(
@@ -646,23 +688,20 @@ if resampling_summaries:
         """
 ## 9. Sensitivity of the selected partitions to UMAP random seeds
 
-**Figure 4.5** — ``umap_seed_sensitivity_all_roles.png``: mean best-match Jaccard,
-$K$ and DBCV across alternative UMAP seeds for each role. Used for qualitative
-interpretation only; no seed is chosen as “best”.
+**Figure 4.5** — ``umap_seed_sensitivity_all_roles.png``: for each role, mean best-match
+Jaccard between the alternative-seed partition and the reference partition obtained with
+the primary seed $s_0$ (configuration $c_r^{\\star}$ held fixed). Panel titles:
+**(a) A0 – Work context**, **(b) A1 – Adverse condition**, **(c) B – Event/deviation**,
+**(d) C – Consequence**.
+
+The primary seed $s_0$ remains the unique reference; alternative seeds 1–10 are **not**
+competing configurations and are never selected. $K$, DBCV and the unassigned fraction are
+reported in the complementary table (reference $K$ at $s_0$, ranges over alternative seeds).
         """
     ),
     code(
         """
-seed_summary_tables = []
-for role in ROLES:
-    summary_path = RUN_DIR / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
-    if not summary_path.is_file():
-        print(f"Missing seed sensitivity artifacts for {role}")
-        continue
-    seed_summary = pd.read_csv(summary_path)
-    role_seed_summary = build_seed_sensitivity_summary(seed_summary)
-    if not role_seed_summary.empty:
-        seed_summary_tables.append(role_seed_summary)
+from manuscript_reporting import build_seed_sensitivity_summary_all_roles
 
 seed_figure_path = RUN_DIR / "figures" / FIGURE_UMAP_SEED_SENSITIVITY
 seed_figure = plot_umap_seed_sensitivity_all_roles(RUN_DIR, output_path=seed_figure_path)
@@ -672,10 +711,28 @@ if seed_figure is not None:
 else:
     print("Missing:", seed_figure_path.name)
 
-if seed_summary_tables:
-    combined = pd.concat(seed_summary_tables, ignore_index=True)
-    combined.to_csv(RUN_DIR / "tables" / "seed_sensitivity_summary_all_roles.csv", index=False)
-    display(combined)
+combined = build_seed_sensitivity_summary_all_roles(RUN_DIR)
+if not combined.empty:
+    display_cols = [
+        "Role",
+        "Reference_K",
+        "K_range",
+        "DBCV_range",
+        "Unassigned_fraction_range",
+        "Mean_Jaccard_range",
+    ]
+    table = combined[[c for c in display_cols if c in combined.columns]].copy()
+    (RUN_DIR / "tables").mkdir(parents=True, exist_ok=True)
+    table.to_csv(RUN_DIR / "tables" / "seed_sensitivity_summary_all_roles.csv", index=False)
+    display(table)
+    for _, row in table.iterrows():
+        print(
+            f"{row['Role']}: mean best-match Jaccard ranged from "
+            f"{row['Mean_Jaccard_range']} across alternative seeds "
+            f"(reference K={row['Reference_K']})."
+        )
+else:
+    print("No seed sensitivity summary available.")
         """
     ),
     markdown(

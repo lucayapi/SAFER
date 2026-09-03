@@ -277,9 +277,13 @@ for role in ROLES:
         row.to_dict(),
         reestimate=REESTIMATE,
     )
+pd.DataFrame(selected_rows).to_csv(RUN_DIR / "selected_configurations.csv", index=False)
 write_umap_seed_sensitivity_all_roles_figure(RUN_DIR / "figures", run_dir=RUN_DIR)
 display(Image(filename=str(RUN_DIR / "figures" / "umap_seed_sensitivity_all_roles.png")))
-pd.DataFrame(selected_rows).to_csv(RUN_DIR / "selected_configurations.csv", index=False)
+from manuscript_reporting import build_seed_sensitivity_summary_all_roles
+_seed_table = build_seed_sensitivity_summary_all_roles(RUN_DIR)
+if not _seed_table.empty:
+    display(_seed_table[["Role", "Reference_K", "K_range", "DBCV_range", "Unassigned_fraction_range", "Mean_Jaccard_range"]])
 display(pd.DataFrame(selected_rows))
 print("Open topic_modeling_results_<corpus>.ipynb for LLM labels, then the BN notebook.")
         """

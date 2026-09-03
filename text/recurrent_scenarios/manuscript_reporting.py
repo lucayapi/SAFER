@@ -3,12 +3,67 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
 
 ROLES = ("A0", "A1", "B", "C")
+
+ROLE_COLORS = {
+    "A0": "#4C78A8",
+    "A1": "#DE2D26",
+    "B": "#31A354",
+    "C": "#E45756",
+    "Z": "#CAB2D6",
+}
+
+ROLE_NODE_FILL = {
+    "A0": "#C6DBEF",
+    "A1": "#FEE0D2",
+    "B": "#E5F5E0",
+    "C": "#FCAEA1",
+    "Z": "#E7E0EC",
+}
+
+ROLE_BOXPLOT_PROPS = {
+    "A0": {"facecolor": "#C6DBEF", "edgecolor": "#4C78A8", "mediancolor": "#D62728"},
+    "A1": {"facecolor": "#FEE0D2", "edgecolor": "#DE2D26", "mediancolor": "#A50F15"},
+    "B": {"facecolor": "#E5F5E0", "edgecolor": "#31A354", "mediancolor": "#006D2C"},
+    "C": {"facecolor": "#FCAEA1", "edgecolor": "#E45756", "mediancolor": "#A50F15"},
+}
+
+K_SELECTION_ADMISSIBLE_COLOR = ROLE_COLORS["A0"]
+K_SELECTION_BEST_LINE_COLOR = "#1F4E79"
+K_SELECTION_SELECTED_COLOR = "#D62728"
+
+
+def role_color(role: str) -> str:
+    """Return the manuscript node fill color for one accident-process role."""
+    return ROLE_NODE_FILL.get(role, "#DDDDDD")
+
+
+def role_boxplot_kwargs(role: str) -> dict[str, dict[str, str | float]]:
+    """Matplotlib boxplot styling kwargs for one role (topic-modeling palette)."""
+    props = ROLE_BOXPLOT_PROPS.get(
+        role,
+        {"facecolor": "#DDDDDD", "edgecolor": "#333333", "mediancolor": "#333333"},
+    )
+    return {
+        "boxprops": {"facecolor": props["facecolor"], "edgecolor": props["edgecolor"]},
+        "medianprops": {"color": props["mediancolor"], "linewidth": 1.4},
+    }
+
+
+def format_bootstrap_frequency(frequency: float) -> str:
+    """Compact bootstrap frequency label for arc annotations (e.g. 1.00, .83)."""
+    if frequency >= 0.995:
+        return "1.00"
+    text = f"{frequency:.2f}"
+    if text.startswith("0"):
+        return text[1:]
+    return text
+
 
 ROLE_RETAINED_FACTOR_TITLES = {
     "A0": "A0 — Work-context factors",
@@ -23,6 +78,28 @@ ROLE_RETAINED_FACTOR_TITLES_SHORT = {
     "B": "B — Events/deviations",
     "C": "C — Consequences",
 }
+
+# Panel titles for multi-role manuscript figures (lettered subplots).
+ROLE_PANEL_TITLES = {
+    "A0": "A0 – Work context",
+    "A1": "A1 – Adverse condition",
+    "B": "B – Event/deviation",
+    "C": "C – Consequence",
+}
+
+ROLE_PANEL_LETTERS = ("a", "b", "c", "d")
+
+
+def role_panel_title(role: str, *, index: int | None = None) -> str:
+    """Return ``(a) A0 – Work context``-style panel title."""
+    label = ROLE_PANEL_TITLES.get(role, str(role))
+    if index is None:
+        try:
+            index = list(ROLES).index(role)
+        except ValueError:
+            index = 0
+    letter = ROLE_PANEL_LETTERS[index] if 0 <= index < len(ROLE_PANEL_LETTERS) else chr(ord("a") + index)
+    return f"({letter}) {label}"
 
 FIGURE_STABILITY_LANDSCAPE = "stability_landscape_all_roles.png"
 FIGURE_PARETO_NORMALIZED = "pareto_normalized_knee_all_roles.png"
@@ -358,6 +435,7 @@ def _draw_factor_resampling_panel(
         axis.axis("off")
         return False
     data, order, positions, theme_summary = panel
+    boxplot_style = role_boxplot_kwargs(role)
     axis.boxplot(
         data,
         vert=False,
@@ -365,8 +443,7 @@ def _draw_factor_resampling_panel(
         widths=0.55,
         showfliers=True,
         patch_artist=True,
-        boxprops={"facecolor": "#FEE0D2", "edgecolor": "#DE2D26"},
-        medianprops={"color": "#A50F15", "linewidth": 1.4},
+        **boxplot_style,
     )
     for position, label in zip(positions, order):
         if label not in theme_summary.index:
@@ -430,8 +507,7 @@ def plot_membership_strength_by_factor(
         widths=0.55,
         showfliers=True,
         patch_artist=True,
-        boxprops={"facecolor": "#C6DBEF", "edgecolor": "#4C78A8"},
-        medianprops={"color": "#D62728", "linewidth": 1.4},
+        **role_boxplot_kwargs(role),
     )
     if show_unit_annotations:
         for item, position in zip(summaries, positions):
@@ -521,24 +597,86 @@ def plot_factor_resampling_multi_panel(
     return figure
 
 
-def build_seed_sensitivity_summary(seed_summary: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate DBCV, K and noise ranges across alternative UMAP seeds."""
+def build_seed_sensitivity_summary(
+    seed_summary: pd.DataFrame,
+    *,
+    reference_row: Mapping[str, Any] | pd.Series | None = None,
+) -> pd.DataFrame:
+    r"""Complementary seed table: reference \(K\) plus ranges over alternative seeds.
+
+    The primary seed \(s_0\) is the reference partition; alternative seeds are never
+    selected. Ranges summarise diagnostic variation only.
+    """
     if seed_summary.empty:
         return pd.DataFrame()
+    if isinstance(reference_row, pd.Series):
+        reference_row = reference_row.to_dict()
+    reference_row = dict(reference_row or {})
     rows = []
     for role, subset in seed_summary.groupby("role"):
+        jaccard = subset["seed_stability"].astype(float)
+        k_values = subset["n_clusters"].astype(float)
+        dbcv = subset["dbcv_umap"].astype(float)
+        unassigned = subset["noise_fraction"].astype(float)
+        ref_k = reference_row.get("n_clusters", reference_row.get("K"))
         rows.append({
             "Role": role,
             "configuration_id": str(subset["configuration_id"].iloc[0]),
-            "DBCV_min": float(subset["dbcv_umap"].min()),
-            "DBCV_max": float(subset["dbcv_umap"].max()),
-            "K_min": int(subset["n_clusters"].min()),
-            "K_max": int(subset["n_clusters"].max()),
-            "Noise_min": float(subset["noise_fraction"].min()),
-            "Noise_max": float(subset["noise_fraction"].max()),
-            "n_seeds": int(len(subset)),
+            "Reference_K": int(ref_k) if ref_k is not None and pd.notna(ref_k) else pd.NA,
+            "K_range": f"{int(k_values.min())}-{int(k_values.max())}",
+            "DBCV_range": f"{float(dbcv.min()):.3f}-{float(dbcv.max()):.3f}",
+            "Unassigned_fraction_range": f"{float(unassigned.min()):.3f}-{float(unassigned.max()):.3f}",
+            "Mean_Jaccard_range": f"{float(jaccard.min()):.3f}-{float(jaccard.max()):.3f}",
+            "Mean_Jaccard_min": float(jaccard.min()),
+            "Mean_Jaccard_max": float(jaccard.max()),
+            "n_alternative_seeds": int(len(subset)),
         })
     return pd.DataFrame(rows)
+
+
+def build_seed_sensitivity_summary_all_roles(
+    run_dir: Path,
+    *,
+    roles: Sequence[str] = ROLES,
+) -> pd.DataFrame:
+    """Build the manuscript seed-sensitivity table for all roles under ``run_dir``."""
+    run_dir = Path(run_dir)
+    selected_path = run_dir / "selected_configurations.csv"
+    selected = pd.read_csv(selected_path) if selected_path.is_file() else pd.DataFrame()
+    tables = []
+    for role in roles:
+        summary_path = run_dir / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
+        if not summary_path.is_file():
+            continue
+        seed_summary = pd.read_csv(summary_path)
+        if seed_summary.empty:
+            continue
+        reference = None
+        if not selected.empty and "role" in selected.columns:
+            match = selected.loc[selected["role"].astype(str).eq(role)]
+            if not match.empty:
+                reference = match.iloc[0]
+        if reference is None:
+            selection_path = run_dir / "discovery" / role / "selection_table.csv"
+            if selection_path.is_file():
+                selection = pd.read_csv(selection_path)
+                if not selection.empty:
+                    knee = selection.loc[
+                        selection.get("is_selected_knee", pd.Series(False, index=selection.index))
+                        .fillna(False)
+                        .astype(bool)
+                    ]
+                    if knee.empty and "configuration_id" in seed_summary.columns:
+                        cfg = str(seed_summary["configuration_id"].iloc[0])
+                        knee = selection.loc[selection["configuration_id"].astype(str).eq(cfg)]
+                    if not knee.empty:
+                        reference = knee.iloc[0]
+        role_table = build_seed_sensitivity_summary(seed_summary, reference_row=reference)
+        if not role_table.empty:
+            tables.append(role_table)
+    if not tables:
+        return pd.DataFrame()
+    return pd.concat(tables, ignore_index=True)
 
 
 def plot_seed_sensitivity_factors(
@@ -571,8 +709,7 @@ def plot_seed_sensitivity_factors(
         widths=0.55,
         showfliers=True,
         patch_artist=True,
-        boxprops={"facecolor": "#E5F5E0", "edgecolor": "#31A354"},
-        medianprops={"color": "#006D2C", "linewidth": 1.4},
+        **role_boxplot_kwargs(role),
     )
     axis.set_yticks(positions)
     axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
@@ -591,40 +728,64 @@ def plot_umap_seed_sensitivity_all_roles(
     roles: Sequence[str] = ROLES,
     output_path: Path | None = None,
 ) -> object:
-    """Four-panel summary of UMAP seed sensitivity (mean Jaccard, K, DBCV)."""
+    r"""Four-panel mean best-match Jaccard vs alternative UMAP seeds.
+
+    Primary message only: membership stability relative to the \(s_0\) reference
+    partition. \(K\), DBCV and unassigned fraction belong in the complementary table,
+    not on a dual axis.
+    """
     import matplotlib.pyplot as plt
 
     run_dir = Path(run_dir)
-    figure, axes = plt.subplots(2, 2, figsize=(12, 8), squeeze=False)
+    figure, axes = plt.subplots(2, 2, figsize=(11.5, 8.0), squeeze=False, sharey=True)
     drew_any = False
-    for axis, role in zip(axes.flat, roles):
+    jaccard_color = ROLE_COLORS["A0"]
+    for index, (axis, role) in enumerate(zip(axes.flat, roles)):
         summary_path = run_dir / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
+        axis.set_title(role_panel_title(role, index=index), fontsize=11, pad=6)
         if not summary_path.is_file():
-            axis.text(0.5, 0.5, "No seed data", ha="center", va="center")
-            axis.axis("off")
+            axis.text(0.5, 0.5, "No seed data", ha="center", va="center", transform=axis.transAxes)
+            axis.set_xlim(0.5, 10.5)
+            axis.set_ylim(0, 1.05)
             continue
         summary = pd.read_csv(summary_path)
         if summary.empty:
-            axis.axis("off")
+            axis.text(0.5, 0.5, "No seed data", ha="center", va="center", transform=axis.transAxes)
             continue
         drew_any = True
-        axis.plot(summary["seed"], summary["seed_stability"], marker="o", color="#1f77b4", label="Mean Jaccard")
-        axis2 = axis.twinx()
-        axis2.plot(summary["seed"], summary["n_clusters"], marker="s", color="#ff7f0e", alpha=0.8, label="K")
-        axis2.plot(summary["seed"], summary["dbcv_umap"], marker="^", color="#2ca02c", alpha=0.8, label="DBCV")
+        seeds = summary["seed"].astype(int)
+        jaccard = summary["seed_stability"].astype(float)
+        axis.plot(
+            seeds,
+            jaccard,
+            marker="o",
+            color=ROLE_COLORS.get(role, jaccard_color),
+            linewidth=1.4,
+            markersize=5.5,
+        )
+        axis.axhline(1.0, color="#AAAAAA", linewidth=0.8, linestyle="--", alpha=0.7)
         axis.set_ylim(0, 1.05)
-        axis.set_xlabel("UMAP seed")
-        axis.set_ylabel("Mean best-match Jaccard")
-        axis2.set_ylabel("K / DBCV")
-        axis.grid(alpha=0.2)
+        axis.set_xlim(float(seeds.min()) - 0.5, float(seeds.max()) + 0.5)
+        axis.set_xticks(sorted(seeds.unique().tolist()))
+        axis.set_xlabel("Alternative UMAP seed")
+        if index % 2 == 0:
+            axis.set_ylabel("Mean best-match Jaccard vs $s_0$")
+        axis.grid(alpha=0.25)
     for axis in list(axes.flat)[len(roles):]:
         axis.remove()
     if not drew_any:
         plt.close(figure)
         return None
+    figure.suptitle(
+        "UMAP seed sensitivity: membership stability relative to the reference seed $s_0$",
+        fontsize=12,
+        y=1.01,
+    )
     figure.tight_layout()
     if output_path is not None:
         save_manuscript_figure(figure, output_path)
+        pdf_path = Path(output_path).with_suffix(".pdf")
+        save_manuscript_figure(figure, pdf_path)
     return figure
 
 

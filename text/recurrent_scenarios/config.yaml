@@ -76,25 +76,71 @@ topics:
   additional_stopwords: []
   stopwords: [le, la, les, un, une, des, de, du, et, en, dans, sur, au, aux, que, qui, est, a, avec, pour, par, ce, cette, son, sa, ses, il, elle, ils, elles]
 
+# Primary downstream analysis (after frozen accident-factor matrix).
+analysis_mode: global_bn_scenario_mining
+
+scenario_mining:
+  scenario_min_accident_count: 5
+  max_upstream_factors_per_scenario: 2
+  n_article_scenarios: 6
+  threshold_sensitivity_counts: [3, 5, 8, 10]
+  rare_high_lift_max_count: 5
+  rare_high_lift_min_lift: 5.0
+
+expected_inventory:
+  caou:
+    n_accidents: 838
+    n_factors: 44
+    role_counts:
+      A0: 22
+      A1: 8
+      B: 8
+      C: 6
+
 bayesian_networks:
   parallel:
     enabled: true
     n_workers: auto
     max_workers: 20
     backend: loky
-  min_theme_support_count: 20
+  include_all_retained_factors: true
+  min_theme_support_count: 1
   d_max: 2
-  latent_states: [2,3,4,5,7,8,10,15]
-  n_initializations: 10
-  em_max_iter: 100
+  latent_states: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  extended_latent_states: [12, 15]
+  run_extended_k_if_boundary: true
+  n_initializations: 20
+  em_max_iter: 500
   em_tol: 0.000001
   graph_stability_patience: 5
   structure_max_iter: 100
   structure_epsilon: 0.000001
   min_latent_effective_n: 25
   alpha: 0.5
+  latent_scope: upstream_only
+  latent_scope_sensitivity:
+    enabled: false
+    alternatives: [upstream_only, all_roles]
+  mpe_required_roles: [B, C]
+  mpe_upstream_any_roles: [A0, A1]
+  mpe_optional_roles: []
+  mpe_compute_free_diagnostic: true
   top_m_mpe: 3
+  near_equivalent_mpe_log_gap: 0.10
+  median_max_posterior_warning: 0.70
+  min_parent_configuration_support_warning: 5
+  article_edge_stability_threshold: 0.60
+  bn_display_bootstrap_threshold: 0.60
+  article_bn_max_edges: 15
+  write_diagnostic_bn_figures: false
   probability_floor: 0.000000000001
+  bn_structure_bootstrap:
+    enabled: true
+    n_resamples: 30
+    sample_fraction: 0.80
+    fraction: 0.80
+    n_initializations_per_resample: 3
+    random_state: 2026
   show_progress: true
 
 runtime:

@@ -351,6 +351,7 @@ def plot_pareto_raw(
     """Four-panel scatter of DBCV versus S_R with Pareto front and knee star."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from manuscript_reporting import role_panel_title, save_manuscript_figure
 
     plot_roles = tuple(roles)
     output_dir = Path(output_dir)
@@ -359,7 +360,8 @@ def plot_pareto_raw(
     knee_color = "#d62728"
     pareto_color = "#1f77b4"
     other_color = "#757575"
-    for axis, role in zip(axes.flat, plot_roles):
+    for index, (axis, role) in enumerate(zip(axes.flat, plot_roles)):
+        axis.set_title(role_panel_title(role, index=index), fontsize=11, pad=6)
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
@@ -440,8 +442,6 @@ def plot_pareto_raw(
         fontsize=10,
     )
     figure.tight_layout(rect=(0, 0.06, 1, 0.97 if suptitle else 1.0))
-    from manuscript_reporting import save_manuscript_figure
-
     save_manuscript_figure(figure, output_dir / filename)
     plt.close(figure)
 
@@ -462,6 +462,7 @@ def plot_pareto_normalized_with_knee(
     """Normalized objective space with reference line, ideal point and knee projection."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from manuscript_reporting import role_panel_title
 
     candidate_roles = tuple(roles)
     plot_roles = (
@@ -493,6 +494,7 @@ def plot_pareto_normalized_with_knee(
         for extra_axis in list(axes.flat)[1:]:
             extra_axis.remove()
     for axis, role in zip(axes.flat, plot_roles):
+        axis.set_title(role_panel_title(role), fontsize=11, pad=6)
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         axis.plot(ref_x, 1.0 - ref_x, color=ref_color, linestyle="--", linewidth=1.0)
         axis.scatter([1.0], [1.0], marker="x", s=80, color="#333333", linewidths=1.5, zorder=1)
