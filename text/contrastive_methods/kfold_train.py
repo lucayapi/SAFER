@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import gc
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -116,6 +117,7 @@ def run_kfold_loop(
     save_tables: bool = True,
     metrics_dir: Optional[Path] = None,
     post_eval_grid: Optional[List[Mapping[str, Any]]] = None,
+    cleanup_fold_outputs: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Exécute K folds (validation uniquement) → agrégat μ±σ classification."""
     layout = layout_method_output(cfg.method_name, cfg.resolved_output_dir)
@@ -192,6 +194,11 @@ def run_kfold_loop(
             except Exception as exc:
                 print(f"[{log_prefix}] post_eval fold {fold_id} ignoré : {exc}", flush=True)
         fold_rows.append(row)
+        # Les checkpoints de folds ne servent plus après la post-évaluation
+        # intégrée ci-dessus. Option désactivée par défaut pour les jobs
+        # historiques, activée par les réplications peu gourmandes en disque.
+        if cleanup_fold_outputs:
+            shutil.rmtree(Path(fold_cfg.output_dir), ignore_errors=False)
         del result
         gc.collect()
         try:

@@ -11,6 +11,7 @@ from __future__ import annotations
 import copy
 import json
 import random
+import shutil
 import statistics
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
@@ -208,6 +209,7 @@ def _run_contrastive(
         log_prefix=f"replication/{model_id}/seed_{training_seed}",
         save_tables=False,
         post_eval_grid=[dict(classifier)],
+        cleanup_fold_outputs=True,
     )
     cv_dir = ensure_dir(run_dir / "cv")
     pd.DataFrame(fold_rows).to_csv(cv_dir / "cv_per_fold.csv", index=False)
@@ -325,4 +327,30 @@ def run_replication(
     _require_predictions(run_dir, corpora)
     manifest.update({"status": "complete", **details})
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    _cleanup_completed_run(run_dir, dict(config.get("storage") or {}), manifest)
     return run_dir
+
+
+def _cleanup_completed_run(run_dir: Path, storage: Mapping[str, Any], manifest: Dict[str, Any]) -> None:
+    """Supprime les artefacts lourds seulement après exports complets validés."""
+    if not bool(storage.get("cleanup_after_completion", False)):
+        return
+    removable = []
+    if not bool(storage.get("keep_final_checkpoint", False)):
+        removable.append("checkpoints")
+    if not bool(storage.get("keep_embeddings", False)):
+        removable.extend(["embeddings", "cache"])
+    removed = []
+    for name in removable:
+        target = run_dir / name
+        if target.is_dir():
+            shutil.rmtree(target)
+            removed.append(name)
+    manifest["cleanup"] = {
+        "enabled": True,
+        "removed_after_completion": removed,
+        "fold_outputs_removed_during_cv": True,
+    }
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )

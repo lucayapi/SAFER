@@ -9,8 +9,17 @@ mêmes folds BTP groupés par `accident_id`.
 Depuis `text/` sur le Mésocentre :
 
 ```bash
-bash jobs/submit_replications.sh
+# Une seule méthode à la fois : à lancer puis attendre sa fin avant la suivante.
+bash jobs/submit_replications_softtriple.sh
+bash jobs/submit_replications_supcon.sh
+bash jobs/submit_replications_cross_entropy.sh
 ```
+
+Chaque seed efface automatiquement ses checkpoints, caches, embeddings et
+artefacts de folds après avoir validé ses métriques et prédictions. Les CSV
+nécessaires au bootstrap restent présents. `storage.max_parallel_seeds: 1`
+limite aussi le job array à une seule seed à la fois; l'augmenter utilise plus
+de GPU et plus d'espace temporaire.
 
 Le script crée `output/replications/<modèle>/seed_<seed>/`. Rapatrier de chaque
 dossier les fichiers `run_manifest.json`, `configs/config_resolved.yaml`,

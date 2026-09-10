@@ -204,14 +204,17 @@ Logs SLURM : `jobs/slurm-<job_name>-<job_id>.out` (et `.err`) après `sbatch` de
 La recette versionnée [`output/replication_recipes/replication_config.yaml`](output/replication_recipes/replication_config.yaml) fige les trois modèles comparés (SoftTriple, SupCon et cross-entropy, encodeur complet + projecteur). Elle contient le seul paramètre à modifier pour le nombre de réplications, `training.n_seeds`, ainsi que les réglages bootstrap.
 
 ```bash
-# Sur le Mésocentre, depuis text/
-bash jobs/submit_replications.sh
+# Sur le Mésocentre, depuis text/ — une méthode à la fois pour limiter le disque
+bash jobs/submit_replications_softtriple.sh
+# Attendre que les cinq seeds soient terminées, puis :
+bash jobs/submit_replications_supcon.sh
+bash jobs/submit_replications_cross_entropy.sh
 
 # Après rapatriement de output/replications/, localement depuis text/
 python scripts/analyze_replications.py
 ```
 
-Les partitions GroupKFold BTP restent fixes avec `training.split_seed: 42`; seule la seed d'entraînement varie. Chaque tâche écrit `output/replications/<modèle>/seed_<seed>/`, avec la configuration résolue, les folds, métriques et prédictions OOD. L'analyse locale calcule la moyenne ± écart-type entre seeds et des IC bootstrap appariés par `accident_id` dans `output/replication_analysis/`.
+Les partitions GroupKFold BTP restent fixes avec `training.split_seed: 42`; seule la seed d'entraînement varie. Chaque tâche écrit `output/replications/<modèle>/seed_<seed>/`, avec la configuration résolue, les partitions, métriques et prédictions OOD. Pour réduire le disque, les checkpoints, embeddings et sorties de folds sont supprimés automatiquement après validation complète des prédictions. `storage.max_parallel_seeds: 1` exécute une seed à la fois. L'analyse locale calcule la moyenne ± écart-type entre seeds et des IC bootstrap appariés par `accident_id` dans `output/replication_analysis/`.
 
 ## SCGM-Text
 

@@ -6,6 +6,15 @@
 
 output_root: output/replications
 
+# Les prédictions et métriques sont conservées, les checkpoints/embeddings sont
+# effacés automatiquement seulement après une seed terminée avec succès.
+storage:
+  cleanup_after_completion: true
+  keep_final_checkpoint: false
+  keep_embeddings: false
+  # 1 = une seed à la fois : choix prudent pour un quota disque limité.
+  max_parallel_seeds: 1
+
 training:
   n_seeds: 5
   seed_generator: 2026
