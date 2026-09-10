@@ -102,6 +102,7 @@ def run_group_kfold_cv(
     train_cfg: Mapping[str, Any],
     n_folds: int,
     seed: int,
+    split_seed: Optional[int] = None,
     device: torch.device,
     fold_out_root: Optional[str] = None,
     backbone_hidden: Optional[np.ndarray] = None,
@@ -109,7 +110,10 @@ def run_group_kfold_cv(
 ) -> Tuple[List[Dict[str, Any]], pd.DataFrame, pd.DataFrame]:
     """Outer GroupKFold with an inner grouped validation for early stopping."""
     groups = dataset.get_groups()
-    splits = group_kfold_splits(groups, n_folds, seed)
+    # The outer and inner partitions must stay fixed between training replicas.
+    # Absent ``split_seed`` preserves the historic behaviour (same value as seed).
+    partition_seed = int(seed if split_seed is None else split_seed)
+    splits = group_kfold_splits(groups, n_folds, partition_seed)
     fold_rows: List[Dict[str, Any]] = []
     history_rows: List[Dict[str, Any]] = []
     batch_size = int(train_cfg.get("batch_size", 32))
@@ -126,7 +130,7 @@ def run_group_kfold_cv(
             train_idx,
             groups,
             val_ratio=inner_val_ratio,
-            seed=seed + int(fold_id),
+            seed=partition_seed + int(fold_id),
         )
         train_idx_fit = inner_train_idx
         if use_oversampling:

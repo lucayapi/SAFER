@@ -278,6 +278,7 @@ def run_supervised_macro_ft_training(
 
     n_folds = int(train_cfg.get("n_folds", 3))
     seed = int(train_cfg.get("seed", 42))
+    split_seed = int(train_cfg.get("split_seed", seed))
     selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
     metrics_dir = out_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
@@ -292,6 +293,7 @@ def run_supervised_macro_ft_training(
         train_cfg=train_cfg,
         n_folds=n_folds,
         seed=seed,
+        split_seed=split_seed,
         device=device,
         fold_out_root=str(out_dir),
         backbone_hidden=backbone_hidden,

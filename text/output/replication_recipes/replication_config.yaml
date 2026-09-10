@@ -1,0 +1,149 @@
+# Campagne de réplications pour répondre à l'incertitude entre entraînements.
+# Ce fichier est le seul endroit à modifier avant envoi au Mésocentre.
+# n_seeds choisit le nombre de réplications; les valeurs numériques sont
+# générées de façon déterministe à partir de seed_generator puis consignées
+# dans chaque run_manifest.json.
+
+output_root: output/replications
+
+training:
+  n_seeds: 5
+  seed_generator: 2026
+  split_seed: 42
+  n_folds: 3
+  selection_metric: balanced_accuracy
+  test_corpora: [metallurgie, caou, nicollin]
+
+bootstrap:
+  # Nombre de tirages bootstrap, pas un nombre d'accidents.
+  n_resamples: 2000
+  seed: 2027
+  confidence_level: 0.95
+  metrics: [balanced_accuracy, macro_f1]
+
+# Configurations gelées à partir de la sélection BTP existante. Les trois
+# recettes utilisent l'encodeur Qwen complet et le projecteur MLP 128D.
+models:
+  softtriple_full_yes:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: true
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 3
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-6
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: false
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+        export_effective_centers: true
+        effective_center_distance_threshold: 0.05
+        effective_center_similarity_threshold: 0.995
+      post_eval:
+        enabled: true
+        classifier: logistic_regression
+        oversampling: false
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+
+  supcon_full_yes:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: true
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 3
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-6
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: false
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        classifier: logistic_regression
+        oversampling: false
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+
+  cross_entropy_full_yes:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: mlp_sklearn
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 3
+        batch_size: 32
+        lr_backbone: 2.0e-6
+        lr_projector: 1.0e-3
+        lr_head: 1.0e-3
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: false
+      exports:
+        save_btp_embeddings: false
+        save_checkpoint: false

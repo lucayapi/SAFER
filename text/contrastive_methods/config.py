@@ -21,6 +21,9 @@ class ContrastiveConfig:
     pred_ok_col: str = "pred_ok"
     output_dir: str = ""
     seed: int = 42
+    # ``seed`` controls model/training randomness.  ``split_seed`` is optional
+    # so legacy configurations retain their former behaviour (split == seed).
+    split_seed: Optional[int] = None
     backbone_name: str = "Qwen/Qwen3-Embedding-0.6B"
     max_seq_length: int = 256
     batch_size: int = 16
@@ -179,6 +182,11 @@ def load_contrastive_config(
         pred_ok_col=str(pick("pred_ok_col", default="pred_ok", sources=(data, raw))),
         output_dir=str(pick("output_dir", default="", sources=(raw, training))),
         seed=int(pick("seed", default=42, sources=(training, raw))),
+        split_seed=(
+            int(value)
+            if (value := pick("split_seed", default=None, sources=(training, raw))) is not None
+            else None
+        ),
         backbone_name=str(
             pick("backbone_name", default="Qwen/Qwen3-Embedding-0.6B", sources=(model, raw))
         ),
@@ -395,6 +403,7 @@ def config_to_resolved_dict(cfg: ContrastiveConfig) -> Dict[str, Any]:
             "group_col": cfg.group_col,
             "output_dir": cfg.resolved_output_dir,
             "seed": cfg.seed,
+            "split_seed": cfg.split_seed,
             "backbone_name": cfg.backbone_name,
             "max_seq_length": cfg.max_seq_length,
             "batch_size": cfg.batch_size,

@@ -82,7 +82,7 @@ def _inner_early_stopping_split(
         splitter = GroupShuffleSplit(
             n_splits=1,
             test_size=ratio,
-            random_state=int(cfg.seed) + fold_id * 100 + attempt,
+            random_state=int(cfg.seed if cfg.split_seed is None else cfg.split_seed) + fold_id * 100 + attempt,
         )
         local_train, local_val = next(
             splitter.split(outer_train_idx, labels, groups=groups[outer_train_idx])

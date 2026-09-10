@@ -199,6 +199,20 @@ sbatch train_batch_triplet.sh
 
 Logs SLURM : `jobs/slurm-<job_name>-<job_id>.out` (et `.err`) après `sbatch` depuis `jobs/`. Cache HF : `$SCRATCH/hf_cache` si défini. Jobs GPU : `--constraint='a100|h100'`, `--mem=64G`. Les scripts `jobs/*.sh` utilisent des fins de ligne LF (voir `.gitattributes`).
 
+### Réplications multi-seeds et incertitude OOD
+
+La recette versionnée [`output/replication_recipes/replication_config.yaml`](output/replication_recipes/replication_config.yaml) fige les trois modèles comparés (SoftTriple, SupCon et cross-entropy, encodeur complet + projecteur). Elle contient le seul paramètre à modifier pour le nombre de réplications, `training.n_seeds`, ainsi que les réglages bootstrap.
+
+```bash
+# Sur le Mésocentre, depuis text/
+bash jobs/submit_replications.sh
+
+# Après rapatriement de output/replications/, localement depuis text/
+python scripts/analyze_replications.py
+```
+
+Les partitions GroupKFold BTP restent fixes avec `training.split_seed: 42`; seule la seed d'entraînement varie. Chaque tâche écrit `output/replications/<modèle>/seed_<seed>/`, avec la configuration résolue, les folds, métriques et prédictions OOD. L'analyse locale calcule la moyenne ± écart-type entre seeds et des IC bootstrap appariés par `accident_id` dans `output/replication_analysis/`.
+
 ## SCGM-Text
 
 Macros observées `A0`–`C` ; latents `z` = thèmes intra-macro. Données : `dataset/data_btp.csv` + `embeddings/Qwen3-Embedding-0.6B_btp.csv` (alignement `doc_id`).
@@ -401,6 +415,28 @@ Sorties tuning : `output/<method>/tuning/grid_summary.csv`, `best_combo.json`, `
 Après tuning : réentraînement sur tout le corpus → `output/<method>/embeddings/final_embeddings.csv`.
 
 Package : `contrastive_methods/` (`train.py`, `tuning.py`, `encoder_model.py`, `hf_training_common.py`, `post_eval.py`, `eval_corpus.py`, `training_*.py`, `training_log.py`). Module partagé : `safer_core/classification_eval.py`.
+
+## Baseline lexicale TF-IDF (notebook 07c)
+
+Le notebook `notebooks/07c_supervised_macro_tfidf_baseline.ipynb` compare Logistic
+Regression, Random Forest et XGBoost sur les textes (unigrammes + bigrammes), avec
+CV groupée par accident sur BTP et évaluation sur métallurgie, caou et Nicollin.
+Les paramètres TF-IDF, les hyperparamètres des modèles et le fichier
+`macro_transfer/stop_metier.txt` sont configurables dans les premières cellules.
+Les embeddings Qwen ne sont pas nécessaires.
+
+```bash
+python scripts/build_notebook_07c_supervised_macro_tfidf_baseline.py
+# Ouvrir le notebook généré et exécuter toutes les cellules.
+```
+
+Sorties : `output/tfidf_baseline/` (CV, modèles, vocabulaire/IDF, statistiques
+TF-IDF par corpus, prédictions, rapports par classe, matrices de confusion et
+synthèse cross-domain).
+`RESTIMATE=False` recharge les caches compatibles avec les paramètres et le
+contenu des données/stopwords ; `True` force le calcul. Après une modification,
+relancer toutes les cellules. Le générateur est versionné ; le notebook généré
+reste local, comme les autres notebooks de ce dossier.
 
 ## Tests
 

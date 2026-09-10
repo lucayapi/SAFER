@@ -51,6 +51,13 @@ text/annotation/data/*.xlsx
 text/**/*.pt
 text/**/*.pth
 
+# Recette légère et versionnée des réplications multi-seeds. Les résultats,
+# checkpoints et prédictions sous text/output/replications/ restent ignorés.
+!text/output/
+text/output/*
+!text/output/replication_recipes/
+!text/output/replication_recipes/**
+
 # Code image legacy (local uniquement, non poussé)
 images/
 

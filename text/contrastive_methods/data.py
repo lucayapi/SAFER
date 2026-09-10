@@ -59,7 +59,8 @@ def get_group_kfold_splits(dataset: TextRawDataset, cfg: ContrastiveConfig):
 
     groups = dataset.get_groups()
     n_folds = int(cfg.n_folds) if cfg.n_folds and cfg.n_folds > 1 else 5
-    return group_kfold_splits(groups, n_folds, cfg.seed)
+    split_seed = cfg.seed if cfg.split_seed is None else cfg.split_seed
+    return group_kfold_splits(groups, n_folds, split_seed)
 
 
 def train_val_metadata(
