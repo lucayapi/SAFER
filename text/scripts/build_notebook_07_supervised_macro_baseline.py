@@ -120,7 +120,8 @@ Chaque ligne = une **unité factuelle** (`sentence`) avec `pred_label` (macro) e
 - **accuracy** — exactitude globale
 - **balanced_accuracy** — moyenne des rappels par classe (métrique principale, déséquilibre macro)
 
-> `macro_f1` est calculée en interne mais **non affichée** dans ce notebook (focus article sur la BA).
+> `macro_f1` est calculée en interne ; elle apparaît dans les IC bootstrap OOD, sans être ajoutée
+> au graphique de comparaison CV (focus article sur la BA).
 
 ## Modes d'exécution
 
@@ -141,6 +142,7 @@ output_test/<corpus>/supervised_baseline/
 ├── transfer/
 │   ├── target_macro_predictions.csv
 │   ├── all_models_test_metrics.csv
+│   ├── bootstrap_ci.csv       # IC OOD par accident_id
 │   └── models/<model_key>/
 ├── figures/               # matrices de confusion
 └── cross_domain_generalization.csv
@@ -194,6 +196,7 @@ Entraîne **chaque** classifieur sur 100 % BTP, prédit sur le corpus test **{di
 
 Affichage :
 - tableau des métriques test (accuracy, balanced_accuracy) ;
+- IC bootstrap à 95 % pour balanced accuracy et macro-F1, par `accident_id` ;
 - matrice de confusion par modèle ;
 - copie de la confusion du **meilleur modèle CV** vers `figures/confusion_test.png`.
 """
@@ -235,6 +238,10 @@ import seaborn as sns
 
 from macro_transfer.constants import MACRO_NAMES
 from macro_transfer.notebook_viz import plot_fsp_confusion_heatmap
+from macro_transfer.target_bootstrap import (
+    bootstrap_target_predictions,
+    plot_target_bootstrap_intervals,
+)
 from macro_transfer.supervised_baseline import (
     aggregate_cv_metrics,
     evaluate_all_models_on_test,
@@ -270,6 +277,14 @@ RESTIMATE = False
 
 # Métriques affichées dans tableaux et graphiques (macro_f1 exclue volontairement)
 DISPLAY_METRICS = ("accuracy", "balanced_accuracy")
+
+# Incertitude OOD : bootstrap percentile par accident_id. Ces baselines sont
+# entraînées une fois avec SEED ; cet IC décrit l'incertitude d'échantillonnage
+# du corpus cible, et non une dispersion entre plusieurs entraînements.
+BOOTSTRAP_N_RESAMPLES = 2000
+BOOTSTRAP_SEED = 2027
+BOOTSTRAP_CONFIDENCE_LEVEL = 0.95
+BOOTSTRAP_METRICS = ("balanced_accuracy", "macro_f1")
 
 TEST_CORPORA = ["metallurgie", "caou", "nicollin"]
 CV_CORPUS = "metallurgie"
@@ -336,6 +351,11 @@ RUN_CV = bool(RESTIMATE) or not _cv_cache_ready()
 print("Méthode :", METHOD_NAME)
 print("CV folds :", N_FOLDS, "| sélection :", SELECTION_METRIC)
 print("Métriques affichées :", DISPLAY_METRICS)
+print(
+    "Bootstrap OOD :",
+    f"{BOOTSTRAP_N_RESAMPLES} rééchantillonnages par accident_id,",
+    f"IC {BOOTSTRAP_CONFIDENCE_LEVEL:.0%}",
+)
 print("Corpus CV / artefacts :", _cv_spec.display_name, f"({CV_CORPUS})")
 print("Corpus test OOD :", TEST_CORPORA)
 print("Sorties CV :", CV_OUT_DIR)
@@ -583,6 +603,34 @@ else:
 print("Meilleur modèle (CV,", SELECTION_METRIC, ") :", best_model)
 summary_cols = ["model"] + [c for c in all_models_summary.columns if c in DISPLAY_METRICS]
 display(all_models_summary[summary_cols])
+
+# Les mêmes tirages d'accidents sont réutilisés pour tous les modèles : les IC
+# sont donc directement comparables, sans entraîner ni ajuster quoi que ce soit
+# sur le corpus cible.
+bootstrap_intervals = bootstrap_target_predictions(
+    preds_by_model,
+    destination=TRANSFER_DIR / "bootstrap_ci.csv",
+    n_resamples=BOOTSTRAP_N_RESAMPLES,
+    seed=BOOTSTRAP_SEED,
+    confidence_level=BOOTSTRAP_CONFIDENCE_LEVEL,
+    metrics=BOOTSTRAP_METRICS,
+    force=RESTIMATE,
+)
+bootstrap_display = bootstrap_intervals[[
+    "model", "metric", "point_estimate", "ci_low", "ci_high",
+    "n_accidents", "n_units", "n_resamples",
+]].copy()
+bootstrap_display["IC à 95 %"] = [
+    f"[{{low:.3f}} ; {{high:.3f}}]"
+    for low, high in zip(bootstrap_display.pop("ci_low"), bootstrap_display.pop("ci_high"))
+]
+display(bootstrap_display.style.format({{"point_estimate": "{{:.3f}}"}}))
+plot_target_bootstrap_intervals(
+    bootstrap_intervals,
+    destination=FIG_DIR / "bootstrap_intervals.png",
+    title=f"{{_spec.display_name}} — IC bootstrap à 95 % par accident",
+)
+print("IC exportés :", TRANSFER_DIR / "bootstrap_ci.csv")
 
 for model_key in MODEL_KEYS:
     m = metrics_by_model.get(model_key, {{}})

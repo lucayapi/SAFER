@@ -46,6 +46,19 @@ def test_contrastive_split_seed_is_independent_from_training_seed():
     ]
 
 
+def test_replication_results_notebook_is_structurally_valid():
+    import nbformat
+
+    from scripts.build_notebook_10_replication_uncertainty_results import build_notebook
+
+    notebook = nbformat.from_dict(build_notebook())
+    nbformat.validate(notebook)
+    sources = "\n".join("".join(cell["source"]) for cell in notebook.cells)
+    assert "seed_scores.csv" in sources
+    assert "paired_bootstrap_differences.csv" in sources
+    assert "accident_id" in sources
+
+
 def test_bootstrap_is_paired_by_accident_and_averages_seeds(tmp_path: Path):
     config = {
         "output_root": str(tmp_path / "replications"),

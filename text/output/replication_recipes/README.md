@@ -32,6 +32,17 @@ Après rapatriement, depuis `text/` localement :
 python scripts/analyze_replications.py
 ```
 
+Sur le Mésocentre, l'analyse peut aussi être soumise comme un job CPU après les
+trois arrays (un identifiant d'array par méthode) :
+
+```bash
+DEPENDENCY=<id_softtriple>:<id_supcon>:<id_cross_entropy> \
+  bash jobs/submit_replication_analysis.sh
+```
+
+Le job démarre seulement si les trois arrays se terminent avec succès et écrit
+`output/replication_analysis/` sur le Mésocentre.
+
 Les résultats sont écrits dans `output/replication_analysis/`. Le bootstrap
 rééchantillonne des accidents complets, 2 000 fois par défaut; ce nombre se
 modifie par `bootstrap.n_resamples`.

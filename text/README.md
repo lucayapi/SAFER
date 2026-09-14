@@ -212,9 +212,20 @@ bash jobs/submit_replications_cross_entropy.sh
 
 # Après rapatriement de output/replications/, localement depuis text/
 python scripts/analyze_replications.py
+python scripts/build_notebook_10_replication_uncertainty_results.py
+```
+
+L'analyse peut aussi tourner directement sur le Mésocentre, une fois les trois
+arrays connus. Elle est placée en attente et démarre après leur succès :
+
+```bash
+DEPENDENCY=<id_softtriple>:<id_supcon>:<id_cross_entropy> \
+  bash jobs/submit_replication_analysis.sh
 ```
 
 Les partitions GroupKFold BTP restent fixes avec `training.split_seed: 42`; seule la seed d'entraînement varie. Chaque tâche écrit `output/replications/<modèle>/seed_<seed>/`, avec la configuration résolue, les partitions, métriques et prédictions OOD. Pour réduire le disque, les checkpoints, embeddings et sorties de folds sont supprimés automatiquement après validation complète des prédictions. `storage.max_parallel_seeds: 1` exécute une seed à la fois. L'analyse locale calcule la moyenne ± écart-type entre seeds et des IC bootstrap appariés par `accident_id` dans `output/replication_analysis/`.
+
+Le notebook `10_replication_uncertainty_results.ipynb`, généré par `scripts/build_notebook_10_replication_uncertainty_results.py`, lit exclusivement ces exports : scores individuels par seed, moyenne ± écart-type, IC bootstrap et différences appariées entre les trois méthodes.
 
 ## SCGM-Text
 

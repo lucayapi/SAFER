@@ -215,6 +215,8 @@ def test_notebook_structure_and_editable_defaults():
     assert set(code_cells) >= {"parameters", "tfidf_parameters", "cv_logistic_regression",
                                "cv_random_forest", "cv_xgboost", "tfidf_statistics",
                                "target_evaluation", "cross_domain"}
+    assert "BOOTSTRAP_N_RESAMPLES = 2000" in code_cells["parameters"]
+    assert "bootstrap_target_predictions" in code_cells["target_evaluation"]
 
 
 def test_notebook_executes_top_to_bottom(config, tmp_path):

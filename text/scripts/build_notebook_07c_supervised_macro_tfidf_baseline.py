@@ -42,6 +42,11 @@ Les tableaux affichent **accuracy, balanced accuracy et macro-F1**, complétés 
 précision/rappel/F1 par classe et matrices de confusion. Le ± de la CV est la
 dispersion entre folds, pas un intervalle de confiance ni une variabilité multi-seeds.
 
+Pour chaque corpus cible, le notebook ajoute un **IC bootstrap à 95 %** pour la
+balanced accuracy et le macro-F1. Il rééchantillonne des accidents complets
+(`accident_id`) ; les trois modèles utilisent les mêmes tirages. Cet IC mesure
+l'incertitude liée au corpus cible, pas la variabilité entre seeds.
+
 Exécuter les cellules dans l'ordre. Dépendances : environnement Python du projet,
 dont scikit-learn, XGBoost, pandas, matplotlib et seaborn. Aucun GPU ni accès API requis.
 """),
@@ -59,6 +64,10 @@ from macro_transfer.tfidf_baseline import (
     MACROS, METRICS, MODEL_NAMES, TfidfExperiment,
     plot_cv_summary, show_target_results,
 )
+from macro_transfer.target_bootstrap import (
+    bootstrap_target_predictions,
+    plot_target_bootstrap_intervals,
+)
 from safer_core.test_corpus import resolve_test_corpus
 
 N_FOLDS = 7
@@ -68,6 +77,14 @@ SELECTION_METRIC = "balanced_accuracy"
 RESTIMATE = False
 TEST_CORPORA = ["metallurgie", "caou", "nicollin"]
 OUTPUT_DIR = TEXT_ROOT / "output" / "tfidf_baseline"
+
+# IC OOD : rééchantillonnage d'accidents entiers sur chaque corpus cible.
+# Ce n'est pas une répétition multi-seeds : les trois modèles sont entraînés
+# une fois avec SEED et les IC décrivent l'incertitude d'échantillonnage cible.
+BOOTSTRAP_N_RESAMPLES = 2000
+BOOTSTRAP_SEED = 2027
+BOOTSTRAP_CONFIDENCE_LEVEL = 0.95
+BOOTSTRAP_METRICS = ("balanced_accuracy", "macro_f1")
 
 SOURCE_CFG = {
     "dataset_path": str(TEXT_ROOT / "dataset" / "data_btp.csv"),
@@ -233,6 +250,10 @@ display(pd.DataFrame([final_diagnostics]))''', "final_fit"),
 Chaque corpus reçoit son tableau de comparaison et, pour chaque modèle, son rapport
 par classe et deux matrices de confusion. Une ligne sans support dans une matrice
 normalisée est affichée à zéro. Le macro-F1 est toujours calculé sur les quatre classes.
+
+Le tableau suivant ajoute les IC bootstrap percentile à 95 % pour balanced accuracy
+et macro-F1. Les 2 000 échantillons par défaut sont composés d'`accident_id` tirés
+avec remise, en conservant toutes leurs unités factuelles ensemble.
 """),
         code('''
 for corpus in TEST_CORPORA:
@@ -242,6 +263,36 @@ for corpus in TEST_CORPORA:
         corpus, target_summary, target_results, experiment.best_model,
         OUTPUT_DIR / "targets" / corpus / "figures",
     )
+    target_predictions = {
+        model: pd.read_csv(record["directory"] / "predictions.csv")
+        for model, record in target_results.items()
+    }
+    target_root = OUTPUT_DIR / "targets" / corpus
+    bootstrap_intervals = bootstrap_target_predictions(
+        target_predictions,
+        destination=target_root / "bootstrap_ci.csv",
+        n_resamples=BOOTSTRAP_N_RESAMPLES,
+        seed=BOOTSTRAP_SEED,
+        confidence_level=BOOTSTRAP_CONFIDENCE_LEVEL,
+        metrics=BOOTSTRAP_METRICS,
+        force=RESTIMATE,
+    )
+    bootstrap_display = bootstrap_intervals[[
+        "model", "metric", "point_estimate", "ci_low", "ci_high",
+        "n_accidents", "n_units", "n_resamples",
+    ]].copy()
+    bootstrap_display["IC à 95 %"] = [
+        f"[{low:.3f} ; {high:.3f}]"
+        for low, high in zip(bootstrap_display.pop("ci_low"), bootstrap_display.pop("ci_high"))
+    ]
+    display(Markdown("#### IC bootstrap à 95 % — rééchantillonnage par accident_id"))
+    display(bootstrap_display.style.format({"point_estimate": "{:.3f}"}))
+    plot_target_bootstrap_intervals(
+        bootstrap_intervals,
+        destination=target_root / "figures" / "bootstrap_intervals.png",
+        title=f"{resolve_test_corpus(corpus, anchor=TEXT_ROOT).display_name} — IC bootstrap à 95 % par accident",
+    )
+    print("IC exportés :", target_root / "bootstrap_ci.csv")
 ''', "target_evaluation"),
         md("""## Étape 7 — Synthèse cross-domain
 La moyenne OOD donne le même poids à chaque corpus ; le pire score est le minimum
@@ -273,8 +324,9 @@ Le cache vérifie les paramètres, les fichiers de données, les stopwords et le
 du calcul. Un changement cible invalide son évaluation ; un changement TF-IDF invalide
 la CV et les modèles finaux. Les figures et synthèses sont régénérées.
 
-Cette expérience ne réalise pas de recherche automatique d'hyperparamètres, de
-multi-seeds ni de bootstrap. Aucun résultat n'est présupposé avant l'exécution.
+Cette expérience ne réalise pas de recherche automatique d'hyperparamètres ni de
+multi-seeds. Le bootstrap cible est une estimation d'incertitude conditionnelle à
+ce run unique. Aucun résultat n'est présupposé avant l'exécution.
 """),
         code('''
 artifacts = [path.relative_to(OUTPUT_DIR).as_posix() for path in OUTPUT_DIR.rglob("*") if path.is_file()]
