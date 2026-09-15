@@ -173,6 +173,105 @@ def bootstrap_target_predictions(
     return result
 
 
+def paired_bootstrap_target_difference(
+    predictions_by_model: Mapping[str, pd.DataFrame],
+    *,
+    model_a: str,
+    model_b: str,
+    destination: str | Path,
+    n_resamples: int = 2000,
+    seed: int = 2027,
+    confidence_level: float = 0.95,
+    metrics: Sequence[str] = SUPPORTED_METRICS,
+    force: bool = False,
+) -> pd.DataFrame:
+    """Calcule l'IC bootstrap apparié de ``model_a - model_b``.
+
+    Les deux prédictions sont toujours évaluées sur les mêmes accidents tirés
+    à chaque réplication. Ce calcul compare deux représentations déjà
+    entraînées : il ne réentraîne aucun modèle.
+    """
+    if model_a not in predictions_by_model or model_b not in predictions_by_model:
+        raise KeyError(f"Comparaison impossible : {model_a!r} ou {model_b!r} absent.")
+    if model_a == model_b:
+        raise ValueError("model_a et model_b doivent être différents.")
+    if n_resamples < 100:
+        raise ValueError("n_resamples doit être >= 100 pour un IC bootstrap exploitable.")
+    if not 0.0 < confidence_level < 1.0:
+        raise ValueError("confidence_level doit être strictement entre 0 et 1.")
+    metrics = tuple(map(str, metrics))
+    unsupported = set(metrics) - set(SUPPORTED_METRICS)
+    if unsupported:
+        raise ValueError(f"Métriques bootstrap non supportées : {sorted(unsupported)}")
+
+    reference, accidents, alignment_columns = _validate_predictions(predictions_by_model)
+    destination = Path(destination)
+    settings = {
+        "model_a": model_a,
+        "model_b": model_b,
+        "n_resamples": int(n_resamples),
+        "seed": int(seed),
+        "confidence_level": float(confidence_level),
+        "metrics": list(metrics),
+        "resampling_unit": "accident_id",
+        "paired_on": "same accident_id resamples",
+    }
+    signature = _prediction_signature(predictions_by_model, settings)
+    manifest_path = destination.with_name(f"{destination.stem}_manifest.json")
+    if not force and destination.is_file() and manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if manifest.get("signature") == signature:
+                return pd.read_csv(destination)
+        except (OSError, ValueError):
+            pass
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    truth = reference["true_macro"].to_numpy()
+    prediction_a = predictions_by_model[model_a]["pred_macro"].astype(str).to_numpy()
+    prediction_b = predictions_by_model[model_b]["pred_macro"].astype(str).to_numpy()
+    rows_by_accident = {
+        accident: np.flatnonzero(reference["accident_id"].to_numpy() == accident)
+        for accident in accidents
+    }
+    rng = np.random.default_rng(seed)
+    samples = [
+        np.concatenate([rows_by_accident[accident] for accident in rng.choice(accidents, size=len(accidents), replace=True)])
+        for _ in range(n_resamples)
+    ]
+    alpha = (1.0 - confidence_level) / 2.0
+    rows: list[dict] = []
+    for metric in metrics:
+        differences = np.asarray([
+            _metric(truth[index], prediction_a[index], metric)
+            - _metric(truth[index], prediction_b[index], metric)
+            for index in samples
+        ])
+        lo, hi = float(np.quantile(differences, alpha)), float(np.quantile(differences, 1.0 - alpha))
+        rows.append({
+            "model_a": model_a,
+            "model_b": model_b,
+            "metric": metric,
+            "difference_a_minus_b": _metric(truth, prediction_a, metric) - _metric(truth, prediction_b, metric),
+            "bootstrap_mean_difference": float(differences.mean()),
+            "ci_low": lo,
+            "ci_high": hi,
+            "confidence_level": float(confidence_level),
+            "n_resamples": int(n_resamples),
+            "bootstrap_seed": int(seed),
+            "n_units": int(len(reference)),
+            "n_accidents": int(len(accidents)),
+            "resampling_unit": "accident_id",
+            "alignment_key": "+".join(alignment_columns),
+            "paired_on": "same accident_id resamples",
+            "ci_excludes_zero": bool(lo > 0.0 or hi < 0.0),
+        })
+    result = pd.DataFrame(rows)
+    result.to_csv(destination, index=False)
+    manifest_path.write_text(json.dumps({"signature": signature, **settings}, indent=2), encoding="utf-8")
+    return result
+
+
 def plot_target_bootstrap_intervals(
     intervals: pd.DataFrame, *, destination: str | Path, title: str
 ) -> Path:

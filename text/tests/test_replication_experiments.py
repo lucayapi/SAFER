@@ -57,6 +57,11 @@ def test_replication_results_notebook_is_structurally_valid():
     assert "seed_scores.csv" in sources
     assert "paired_bootstrap_differences.csv" in sources
     assert "accident_id" in sources
+    assert "OOD average" in sources
+    assert "Difference in balanced accuracy (percentage points)" in sources
+    assert "baseline_paired_bootstrap" in sources
+    assert "(a) Representation comparison" in sources
+    assert "(b) Adapted-strategy comparison" in sources
 
 
 def test_bootstrap_is_paired_by_accident_and_averages_seeds(tmp_path: Path):
@@ -98,3 +103,31 @@ def test_bootstrap_is_paired_by_accident_and_averages_seeds(tmp_path: Path):
     assert set(intervals["n_seeds"]) == {2}
     assert (differences["difference_a_minus_b"] > 0).all()
     assert differences["paired_on"].str.contains("same accident_id").all()
+
+
+def test_baseline_paired_bootstrap_resamples_the_same_accidents(tmp_path: Path):
+    from macro_transfer.target_bootstrap import paired_bootstrap_target_difference
+
+    truth = ["A0", "A1", "B", "C", "A0", "A1", "B", "C"]
+    shared = {
+        "accident_id": ["a", "a", "b", "b", "c", "c", "d", "d"],
+        "fact_id": list(range(8)),
+        "true_macro": truth,
+    }
+    predictions = {
+        "representation_a": pd.DataFrame({**shared, "pred_macro": truth}),
+        "representation_b": pd.DataFrame({**shared, "pred_macro": ["C"] * len(truth)}),
+    }
+    result = paired_bootstrap_target_difference(
+        predictions,
+        model_a="representation_a",
+        model_b="representation_b",
+        destination=tmp_path / "paired.csv",
+        n_resamples=100,
+        seed=11,
+    )
+
+    assert (result["difference_a_minus_b"] > 0).all()
+    assert set(result["resampling_unit"]) == {"accident_id"}
+    assert result["paired_on"].str.contains("same accident_id").all()
+    assert set(result["alignment_key"]) == {"accident_id+fact_id"}

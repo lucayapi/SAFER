@@ -75,6 +75,8 @@ from IPython.display import display
 
 ROOT = TEXT_ROOT
 ANALYSIS_DIR = ROOT / "output" / "replication_analysis"
+BASELINE_ANALYSIS_DIR = ROOT / "output" / "baseline_paired_bootstrap"
+BASELINE_PAIRED_PATH = BASELINE_ANALYSIS_DIR / "paired_bootstrap_differences.csv"
 FIGURES_DIR = ANALYSIS_DIR / "figures_notebook"
 FIGURES_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -86,26 +88,44 @@ MODEL_LABELS = {
     "cross_entropy_full_yes": "Cross-entropy",
 }
 MODEL_ORDER = list(MODEL_LABELS)
+BASELINE_MODEL_LABELS = {
+    "frozen_embeddings_lr": "Frozen embeddings + LR",
+    "tfidf_lr": "TF-IDF + LR",
+}
 PALETTE = {
     "SoftTriple": "#0072B2",
     "Supervised contrastive": "#009E73",
     "Cross-entropy": "#D55E00",
 }
 
+# Labels and order used only for the two paper-ready outputs below.
+PAPER_CORPUS_LABELS = {
+    "metallurgie": "Metallurgy",
+    "caou": "Chemicals and plastics",
+    "nicollin": "Company corpus",
+}
+PAPER_COMPARISON_ORDER = [
+    ("softtriple_full_yes", "cross_entropy_full_yes"),
+    ("softtriple_full_yes", "supcon_full_yes"),
+    ("supcon_full_yes", "cross_entropy_full_yes"),
+]
+PAPER_FIGURE_DPI = 300
+
 sns.set_theme(style="whitegrid")
 print("Dossier analyse :", ANALYSIS_DIR)
+print("Comparaison des représentations :", BASELINE_PAIRED_PATH)
 print("Métrique affichée :", METRIC)
 """
 
 CHECK = """# --- Vérification des artefacts ---
-REQUIRED = {
+NEURAL_REQUIRED = {
     "scores par seed": ANALYSIS_DIR / "seed_scores.csv",
     "IC bootstrap": ANALYSIS_DIR / "bootstrap_ci.csv",
     "différences appariées": ANALYSIS_DIR / "paired_bootstrap_differences.csv",
     "manifest": ANALYSIS_DIR / "analysis_manifest.json",
 }
 missing = []
-for label, path in REQUIRED.items():
+for label, path in NEURAL_REQUIRED.items():
     exists = path.is_file()
     print(f"[{'OK' if exists else 'ABSENT'}] {label}: {path}")
     if not exists:
@@ -114,6 +134,14 @@ if missing:
     print("\\nExécuter d'abord : python scripts/analyze_replications.py")
 else:
     print("\\nTous les artefacts sont disponibles.")
+
+baseline_available = BASELINE_PAIRED_PATH.is_file()
+print(
+    f"[{'OK' if baseline_available else 'ABSENT'}] comparaison représentations : "
+    f"{BASELINE_PAIRED_PATH}"
+)
+if not baseline_available:
+    print("Exécuter pour le panneau (a) : python scripts/analyze_baseline_paired_bootstrap.py")
 """
 
 LOAD = """# --- Chargement ---
@@ -248,7 +276,197 @@ display(paired_table.sort_values(["corpus", "model_a", "model_b"]).style.format(
 }, na_rep="—"))
 """
 
-EXPORT = """## 6 — Exports pour la rédaction
+PAPER_SECTION = """## For the paper
+
+This section creates the results intended for the manuscript. The table uses
+only strategies with complete multi-seed replications. The figure combines a
+paired comparison of the two fixed representations with the paired comparisons
+of the three adapted strategies.
+
+### Table — stability across training seeds
+
+Each entry is **mean ± standard deviation across the five training seeds**,
+expressed in percentage points. `OOD average` is computed for each seed as the
+mean over the three target corpora, then summarized across seeds. `OOD worst`
+is the minimum target score for each seed, then summarized across seeds.
+"""
+
+PAPER_TABLE_CODE = """PAPER_METRIC = "balanced_accuracy"
+paper_scores = seed_scores.loc[seed_scores["metric"].eq(PAPER_METRIC)].copy()
+paper_models = [model for model in MODEL_ORDER if model in set(paper_scores["model"])]
+if not paper_models:
+    raise ValueError("No replicated model is available for the paper table.")
+
+paper_by_seed = (
+    paper_scores.loc[paper_scores["model"].isin(paper_models)]
+    .pivot(index=["model", "training_seed"], columns="corpus", values="score")
+    .reindex(columns=CORPORA_ORDER)
+)
+if paper_by_seed.isna().any().any():
+    raise ValueError("Incomplete seed × corpus coverage: cannot build the paper table.")
+paper_by_seed["ood_average"] = paper_by_seed.mean(axis=1)
+paper_by_seed["ood_worst"] = paper_by_seed.min(axis=1)
+
+paper_numeric = paper_by_seed.groupby(level="model").agg(["mean", "std"])
+paper_numeric = paper_numeric.reindex(paper_models)
+paper_columns = CORPORA_ORDER + ["ood_average", "ood_worst"]
+paper_output_labels = {
+    **PAPER_CORPUS_LABELS,
+    "ood_average": "OOD average",
+    "ood_worst": "OOD worst",
+}
+paper_table = pd.DataFrame(index=[MODEL_LABELS[model] for model in paper_models])
+paper_table.index.name = "Strategy"
+for column in paper_columns:
+    mean = paper_numeric[(column, "mean")].to_numpy() * 100
+    std = paper_numeric[(column, "std")].to_numpy() * 100
+    label = paper_output_labels[column]
+    paper_table[label] = [f"{value:.1f} ± {spread:.1f}" for value, spread in zip(mean, std)]
+
+display(paper_table)
+print("Metric: balanced accuracy. Values are percentage points; ± is the SD across training seeds.")
+"""
+
+PAPER_FOREST = """### Figure - paired bootstrap comparisons
+
+Panel (a) compares frozen embeddings + LR with TF-IDF + LR. Panel (b) compares
+SoftTriple, supervised contrastive and cross-entropy. Each point is the
+estimated difference in balanced accuracy, in percentage points, and each
+horizontal bar is its 95% paired bootstrap confidence interval.
+"""
+
+PAPER_FOREST_CODE = """if not BASELINE_PAIRED_PATH.is_file():
+    raise FileNotFoundError(
+        "Baseline paired bootstrap missing. Run: "
+        "python scripts/analyze_baseline_paired_bootstrap.py"
+    )
+
+baseline_paired = pd.read_csv(BASELINE_PAIRED_PATH)
+required_baseline_columns = {
+    "corpus", "model_a", "model_b", "metric", "difference_a_minus_b", "ci_low", "ci_high",
+}
+missing_baseline_columns = required_baseline_columns - set(baseline_paired.columns)
+if missing_baseline_columns:
+    raise ValueError(f"Baseline paired bootstrap is incomplete: {sorted(missing_baseline_columns)}")
+
+representation_pair = ("frozen_embeddings_lr", "tfidf_lr")
+representation_paired = baseline_paired.loc[
+    baseline_paired["metric"].eq("balanced_accuracy")
+].copy()
+representation_paired = representation_paired.loc[
+    representation_paired.apply(
+        lambda row: (row["model_a"], row["model_b"]) == representation_pair,
+        axis=1,
+    )
+].copy()
+representation_paired["comparison"] = [
+    f"{BASELINE_MODEL_LABELS[model_a]} - {BASELINE_MODEL_LABELS[model_b]}"
+    for model_a, model_b in zip(
+        representation_paired["model_a"], representation_paired["model_b"]
+    )
+]
+if len(representation_paired) != len(CORPORA_ORDER):
+    raise ValueError("Incomplete baseline paired bootstrap results: cannot build panel (a).")
+
+paper_paired = paired.loc[paired["metric"].eq("balanced_accuracy")].copy()
+paper_paired = paper_paired.loc[
+    paper_paired.apply(lambda row: (row["model_a"], row["model_b"]) in PAPER_COMPARISON_ORDER, axis=1)
+].copy()
+order_rank = {pair: rank for rank, pair in enumerate(PAPER_COMPARISON_ORDER)}
+paper_paired["comparison_rank"] = [
+    order_rank[(model_a, model_b)]
+    for model_a, model_b in zip(paper_paired["model_a"], paper_paired["model_b"])
+]
+paper_paired["comparison"] = [
+    f"{MODEL_LABELS[model_a]} - {MODEL_LABELS[model_b]}"
+    for model_a, model_b in zip(paper_paired["model_a"], paper_paired["model_b"])
+]
+expected_rows = len(CORPORA_ORDER) * len(PAPER_COMPARISON_ORDER)
+if len(paper_paired) != expected_rows:
+    raise ValueError("Incomplete neural paired bootstrap results: cannot build panel (b).")
+
+limit = 1.10 * max(
+    representation_paired["ci_low"].abs().max(),
+    representation_paired["ci_high"].abs().max(),
+    paper_paired["ci_low"].abs().max(),
+    paper_paired["ci_high"].abs().max(),
+) * 100
+from matplotlib.ticker import MaxNLocator
+
+fig, axes = plt.subplots(
+    2, len(CORPORA_ORDER), figsize=(17, 8.0), sharex=True, squeeze=False
+)
+
+def style_axis(axis):
+    axis.axvline(0, color="#202020", lw=1.8, zorder=2)
+    axis.set_xlim(-limit, limit)
+    axis.xaxis.set_major_locator(MaxNLocator(nbins=5))
+    axis.grid(axis="x", color="#bdbdbd", linewidth=0.8, alpha=0.8)
+    axis.grid(axis="y", color="#d9d9d9", linewidth=0.6, alpha=0.75)
+    axis.tick_params(axis="y", length=0)
+    for spine in ("top", "right", "left"):
+        axis.spines[spine].set_visible(False)
+    axis.spines["bottom"].set_linewidth(0.8)
+
+for column, corpus in enumerate(CORPORA_ORDER):
+    representation_axis = axes[0, column]
+    representation_subset = representation_paired.loc[
+        representation_paired["corpus"].eq(corpus)
+    ]
+    estimate = representation_subset["difference_a_minus_b"].to_numpy() * 100
+    low = representation_subset["ci_low"].to_numpy() * 100
+    high = representation_subset["ci_high"].to_numpy() * 100
+    representation_axis.errorbar(
+        estimate, [0], xerr=[estimate - low, high - estimate], fmt="o",
+        color="#6A3D9A", ecolor="#6A3D9A", elinewidth=2.2, capsize=5,
+        capthick=2.2, markersize=10, markeredgecolor="white", markeredgewidth=1.0,
+        zorder=3,
+    )
+    representation_axis.set_yticks([0], representation_subset["comparison"])
+    representation_axis.set_ylim(-0.7, 0.7)
+    representation_axis.set_title(PAPER_CORPUS_LABELS[corpus], fontweight="bold")
+    style_axis(representation_axis)
+
+    strategy_axis = axes[1, column]
+    strategy_subset = paper_paired.loc[
+        paper_paired["corpus"].eq(corpus)
+    ].sort_values("comparison_rank")
+    y = np.arange(len(strategy_subset))
+    estimate = strategy_subset["difference_a_minus_b"].to_numpy() * 100
+    low = strategy_subset["ci_low"].to_numpy() * 100
+    high = strategy_subset["ci_high"].to_numpy() * 100
+    strategy_axis.errorbar(
+        estimate, y, xerr=[estimate - low, high - estimate], fmt="o",
+        color="#0072B2", ecolor="#0072B2", elinewidth=2.2, capsize=5,
+        capthick=2.2, markersize=10, markeredgecolor="white", markeredgewidth=1.0,
+        zorder=3,
+    )
+    strategy_axis.set_yticks(y, strategy_subset["comparison"])
+    strategy_axis.invert_yaxis()
+    style_axis(strategy_axis)
+
+fig.text(0.015, 0.955, "(a) Representation comparison", fontweight="bold", fontsize=12)
+fig.text(0.015, 0.495, "(b) Adapted-strategy comparison", fontweight="bold", fontsize=12)
+fig.supxlabel("Difference in balanced accuracy (percentage points)", y=0.035)
+fig.subplots_adjust(left=0.30, right=0.985, bottom=0.14, top=0.91, hspace=0.48, wspace=0.24)
+paper_forest_png = FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.png"
+paper_forest_pdf = FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.pdf"
+fig.savefig(paper_forest_png, dpi=PAPER_FIGURE_DPI, bbox_inches="tight")
+fig.savefig(paper_forest_pdf, bbox_inches="tight")
+print("Paper figure (PNG):", paper_forest_png)
+print("Paper figure (PDF):", paper_forest_pdf)
+plt.show()
+"""
+
+PAPER_EXPORT = """paper_table.to_csv(FIGURES_DIR / "paper_seed_stability_balanced_accuracy.csv")
+paper_numeric.to_csv(FIGURES_DIR / "paper_seed_stability_balanced_accuracy_numeric.csv")
+paper_paired.to_csv(FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.csv", index=False)
+representation_paired.to_csv(
+    FIGURES_DIR / "paper_representation_paired_bootstrap_balanced_accuracy.csv", index=False
+)
+print("Paper-ready table and figure data exported to:", FIGURES_DIR)
+"""
+EXPORT = """## Exports for notebook tables
 """
 
 EXPORT_CODE = """seed_table.reset_index().to_csv(FIGURES_DIR / f"seed_table_{METRIC}.csv", index=False)
@@ -272,6 +490,8 @@ def build_notebook() -> dict:
             py(SEED_TABLE_CODE, "seed-table"), md(SEED_PLOT), py(SEED_PLOT_CODE, "seed-plot"),
             md(CI_TABLE), py(CI_TABLE_CODE, "bootstrap-table"), md(CI_PLOT),
             py(CI_PLOT_CODE, "bootstrap-plot"), md(PAIRED_TABLE), py(PAIRED_CODE, "paired-table"),
+            md(PAPER_SECTION), py(PAPER_TABLE_CODE, "paper-stability-table"), md(PAPER_FOREST),
+            py(PAPER_FOREST_CODE, "paper-forest-plot"), py(PAPER_EXPORT, "paper-exports"),
             md(EXPORT), py(EXPORT_CODE, "exports"),
         ],
     }
