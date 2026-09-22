@@ -35,31 +35,32 @@ parallel:
   max_workers: 2
   backend: loky
 
-# Shared UMAP--HDBSCAN candidate grid used for full-data fits and resampling.
+# Shared UMAP--HDBSCAN candidate grid used for full-data fits and resampling:
+# 4 x 3 x 3 x 2 = 72 configurations per role.
 screening:
   show_progress: true
   umap:
-    n_neighbors: [10, 20, 40]
+    n_neighbors: [10, 20, 40, 80]
     n_components: [5, 10, 15]
     min_dist: [0.0]
     metric: cosine
     low_memory: true
     n_jobs: 1
   hdbscan:
-    min_cluster_size: [25, 50]
+    min_cluster_size: [15, 25, 50]
     min_samples: [5, 10]
     cluster_selection_method: [leaf]
     metric: euclidean
     prediction_data: true
 
-# Accident-level reproducibility + DBCV; final pick via Pareto geometric knee point.
+# Accident-level reproducibility + DBCV; Pareto screening then normalized Tchebycheff selection.
 validation:
   random_state: 42
   resampling_fraction: 0.8
   n_resampling: 30
   # Full DBCV is quadratic; null = exact role calculation.
   dbcv_sample_size: null
-  selection_metric: pareto_geometric_knee
+  selection_metric: pareto_normalized_tchebycheff
   show_progress: true
   seed_sensitivity:
     enabled: true

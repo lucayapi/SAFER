@@ -31,7 +31,7 @@ This notebook starts after theme discovery (`run_theme_discovery.py`) for corpus
 Reporting structure (manuscript-oriented):
 
 1. Corpus summary by role
-2. Pareto-front and knee-selection tables
+2. Pareto-front and normalized Tchebycheff selection tables
 3. Pareto figures, resampling and seed-sensitivity diagnostics (membership-strength plots → appendix)
 4. Topic dictionary, LLM labels and retained-factors summary (Table 4.5)
 5. Narrative inspection and 2-D UMAP maps
@@ -212,7 +212,7 @@ if str(SCENARIO_DIR) not in sys.path:
 
 from scenario_pipeline import load_units
 from manuscript_reporting import (
-    KNEE_TABLE_COLUMNS,
+    REFERENCE_SELECTION_TABLE_COLUMNS,
     PARETO_TABLE_COLUMNS,
     RETAINED_FACTOR_COLUMNS,
     FIGURE_FACTOR_RESAMPLING_A0,
@@ -225,7 +225,7 @@ from manuscript_reporting import (
     membership_strength_figure_name,
     build_corpus_summary_from_audit,
     build_corpus_summary_table,
-    build_knee_selection_table,
+    build_reference_selection_table,
     build_pareto_front_summary_table,
     build_retained_factors_summary_table,
     build_seed_sensitivity_summary_all_roles,
@@ -314,7 +314,6 @@ four decimal places so that near-ties on the front remain distinguishable.
     code(
         """
 pareto_front_tables = []
-knee_selection_tables = []
 selected_rows = []
 for role in ROLES:
     selection_path = RUN_DIR / "discovery" / role / "selection_table.csv"
@@ -323,10 +322,8 @@ for role in ROLES:
         continue
     selection_table = pd.read_csv(selection_path)
     pareto_table = build_pareto_front_summary_table(selection_table, role=role)
-    knee_table = build_knee_selection_table(selection_table, role=role)
     selected_table = build_selected_configuration_table(selection_table, role=role)
     pareto_front_tables.append(pareto_table.drop(columns=["_configuration_id", "_candidate_rank"], errors="ignore"))
-    knee_selection_tables.append(knee_table)
     if not selected_table.empty:
         selected_rows.append(selected_table)
 
@@ -341,27 +338,29 @@ else:
     ),
     markdown(
         """
-## 3. Geometric knee selection (normalized Pareto objectives)
+## 3. Normalized Tchebycheff reference-point selection
 
-Normalized scores are computed on the Pareto set only. $d_K$ is the signed
-perpendicular distance toward the ideal point; **Selected = Yes** marks the
-geometric knee configuration retained for the role.
+Normalized scores are computed on the Pareto set only. $T_\\infty$ is the
+largest normalized shortfall from the ideal point `(1, 1)`. Ties are resolved
+by $T_1$, then by the predefined grid order. **Selected = Yes** marks the
+retained configuration.
         """
     ),
     code(
         """
+reference_selection_tables = []
 for role in ROLES:
     selection_path = RUN_DIR / "discovery" / role / "selection_table.csv"
     if not selection_path.is_file():
         continue
-    knee_table = build_knee_selection_table(pd.read_csv(selection_path), role=role)
-    knee_selection_tables.append(knee_table)
+    reference_table = build_reference_selection_table(pd.read_csv(selection_path), role=role)
+    reference_selection_tables.append(reference_table)
 
-if knee_selection_tables:
-    knee_all = pd.concat(knee_selection_tables, ignore_index=True)
-    knee_all.to_csv(RUN_DIR / "tables" / "knee_selection_all_roles.csv", index=False)
-    print("### Geometric knee selection — all roles")
-    display_manuscript_table(knee_all, columns=KNEE_TABLE_COLUMNS)
+if reference_selection_tables:
+    reference_all = pd.concat(reference_selection_tables, ignore_index=True)
+    reference_all.to_csv(RUN_DIR / "tables" / "tchebycheff_selection_all_roles.csv", index=False)
+    print("### Normalized Tchebycheff selection — all roles")
+    display_manuscript_table(reference_all, columns=REFERENCE_SELECTION_TABLE_COLUMNS)
 
 selected_path = RUN_DIR / "selected_configurations.csv"
 if selected_path.is_file():
@@ -370,7 +369,9 @@ if selected_path.is_file():
         c for c in [
             "role", "configuration_id", "selection_rule",
             "stability", "dbcv_umap",
-            "stability_normalized", "dbcv_normalized", "knee_distance",
+            "stability_normalized", "dbcv_normalized",
+            "tchebycheff_max_shortfall", "total_normalized_shortfall",
+            "selection_tie_break",
             "n_clusters", "noise_fraction",
         ]
         if c in selected.columns
@@ -384,21 +385,22 @@ else:
         """
 ## 4. Pareto figures
 
-**Figure 4.2 (raw, principal)** — les 36 configurations candidates dans $(\\mathrm{DBCV}, S_R)$,
+**Figure 4.2 (raw, principal)** — les configurations candidates dans $(\\mathrm{DBCV}, S_R)$
+(72 avec la grille actuelle),
 avec le front de Pareto, la configuration retenue (étoile, *Selected configuration*) et les candidats dominés (gris).
 Panneaux : **(a) A0 – Work context**, **(b) A1 – Adverse condition**, **(c) B – Event/deviation**,
 **(d) C – Consequence**. Les limites des axes sont **spécifiques à chaque rôle** : ne pas comparer
 visuellement les distances entre panneaux.
 
-**Figure 4.2 (normalisé, complément)** — espace normalisé, droite de référence et configuration
-retenue (*Selected configuration*), avec les mêmes titres de panneaux. Seuls les rôles dont le front
+**Figure 4.2 (normalisé, complément)** — front de Pareto normalisé, point idéal `(1, 1)` et
+configuration retenue (*Selected configuration*). Seuls les rôles dont le front
 de Pareto comporte **plus d'une** configuration sont affichés (typiquement A0 et A1). Les rôles B et C
-sont absents lorsque leur front se réduit à une seule configuration, retenue directement sans calcul de knee.
+sont absents lorsque leur front se réduit à une seule configuration, retenue directement.
         """
     ),
     code(
         """
-from scenario_pipeline import write_pareto_normalized_knee_figure, write_stability_landscape_figure
+from scenario_pipeline import write_pareto_normalized_tchebycheff_figure, write_stability_landscape_figure
 
 (RUN_DIR / "figures").mkdir(parents=True, exist_ok=True)
 selection_tables = {}
@@ -408,11 +410,45 @@ for role in ROLES:
         selection_tables[role] = pd.read_csv(selection_path)
 
 figure_path = RUN_DIR / "figures" / "stability_landscape_all_roles.png"
-normalized_path = RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png"
+normalized_path = RUN_DIR / "figures" / "pareto_normalized_tchebycheff_all_roles.png"
+
+# Edit these dictionaries to change paper labels or colors without rerunning the job.
+ROLE_LABELS = {
+    "A0": "A0 – Work context",
+    "A1": "A1 – Adverse condition",
+    "B": "B – Event/deviation",
+    "C": "C – Consequence",
+}
+AXIS_LABELS = {
+    "dbcv_raw": "DBCV",
+    "stability_raw": r"$S_R$",
+    "dbcv_normalized": r"Normalized DBCV ($\\widetilde{D}$)",
+    "stability_normalized": r"Normalized $S_R$ ($\\widetilde{S}$)",
+}
+LEGEND_LABELS = {
+    "candidates": "Candidate configurations",
+    "pareto": "Pareto-optimal configurations",
+    "selected": "Selected configuration",
+    "ideal": "Ideal point (1, 1)",
+}
+PLOT_COLORS = {
+    "candidates": "#757575",
+    "pareto": "#1f77b4",
+    "selected": "#d62728",
+    "ideal": "#333333",
+}
 
 if selection_tables:
-    write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
-    write_pareto_normalized_knee_figure(selection_tables, RUN_DIR / "figures")
+    figure_options = {
+        "role_labels": ROLE_LABELS,
+        "axis_labels": AXIS_LABELS,
+        "legend_labels": LEGEND_LABELS,
+        "colors": PLOT_COLORS,
+    }
+    write_stability_landscape_figure(selection_tables, RUN_DIR / "figures", **figure_options)
+    write_pareto_normalized_tchebycheff_figure(
+        selection_tables, RUN_DIR / "figures", **figure_options
+    )
     print("Regenerated:", figure_path.name, "and", normalized_path.name)
 
 if figure_path.is_file():
@@ -431,7 +467,7 @@ else:
         """
 display(pd.DataFrame([{
     "dataset": manifest.get("dataset_id", config.get("data", {}).get("dataset_id")),
-    "selection_metric": manifest.get("selection_metric", "pareto_geometric_knee"),
+    "selection_metric": manifest.get("selection_metric", "pareto_normalized_tchebycheff"),
     "n_workers": parallel.get("n_workers", manifest.get("n_workers")),
     "slurm_cpus_per_task": parallel.get("slurm_cpus_per_task"),
     "backend": parallel.get("backend"),
@@ -1278,12 +1314,12 @@ for role in ROLES:
 outputs = [
     "tables/corpus_summary_by_role.csv",
     "tables/pareto_front_summary_all_roles.csv",
-    "tables/knee_selection_all_roles.csv",
+    "tables/tchebycheff_selection_all_roles.csv",
     "tables/factor_resampling_summary_all_roles.csv",
     "tables/seed_sensitivity_summary_all_roles.csv",
     "tables/retained_factors_summary.csv",
     "config_resolved.yaml", "parallel_runtime.json", "selected_configurations.csv",
-    "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_knee_all_roles.png",
+    "figures/stability_landscape_all_roles.png", "figures/pareto_normalized_tchebycheff_all_roles.png",
     "figures/factor_resampling_A0.png", "figures/factor_resampling_A1_B_C.png",
     "figures/umap_seed_sensitivity_all_roles.png",
     "figures/retained_factors_A0.png", "figures/retained_factors_A1.png",

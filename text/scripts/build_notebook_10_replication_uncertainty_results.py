@@ -111,6 +111,12 @@ PAPER_COMPARISON_ORDER = [
 ]
 PAPER_FIGURE_DPI = 300
 
+def format_paired_ci(row):
+    difference = row["difference_a_minus_b"] * 100
+    lower = row["ci_low"] * 100
+    upper = row["ci_high"] * 100
+    return f"{difference:+.1f} [{lower:+.1f}, {upper:+.1f}]"
+
 sns.set_theme(style="whitegrid")
 print("Dossier analyse :", ANALYSIS_DIR)
 print("Comparaison des représentations :", BASELINE_PAIRED_PATH)
@@ -278,10 +284,9 @@ display(paired_table.sort_values(["corpus", "model_a", "model_b"]).style.format(
 
 PAPER_SECTION = """## For the paper
 
-This section creates the results intended for the manuscript. The table uses
-only strategies with complete multi-seed replications. The figure combines a
-paired comparison of the two fixed representations with the paired comparisons
-of the three adapted strategies.
+This section creates the manuscript tables. The first table uses only
+strategies with complete multi-seed replications. The next two tables report
+the paired bootstrap comparisons for representations and adapted strategies.
 
 ### Table — stability across training seeds
 
@@ -327,15 +332,14 @@ display(paper_table)
 print("Metric: balanced accuracy. Values are percentage points; ± is the SD across training seeds.")
 """
 
-PAPER_FOREST = """### Figure - paired bootstrap comparisons
+PAPER_REPRESENTATION_TABLE = """### Table - representation comparison
 
-Panel (a) compares frozen embeddings + LR with TF-IDF + LR. Panel (b) compares
-SoftTriple, supervised contrastive and cross-entropy. Each point is the
-estimated difference in balanced accuracy, in percentage points, and each
-horizontal bar is its 95% paired bootstrap confidence interval.
+Each cell gives the **balanced accuracy difference in percentage points** and
+its 95% paired bootstrap confidence interval. Positive values favour frozen
+embeddings + LR.
 """
 
-PAPER_FOREST_CODE = """if not BASELINE_PAIRED_PATH.is_file():
+PAPER_REPRESENTATION_TABLE_CODE = """if not BASELINE_PAIRED_PATH.is_file():
     raise FileNotFoundError(
         "Baseline paired bootstrap missing. Run: "
         "python scripts/analyze_baseline_paired_bootstrap.py"
@@ -359,112 +363,68 @@ representation_paired = representation_paired.loc[
         axis=1,
     )
 ].copy()
-representation_paired["comparison"] = [
-    f"{BASELINE_MODEL_LABELS[model_a]} - {BASELINE_MODEL_LABELS[model_b]}"
-    for model_a, model_b in zip(
-        representation_paired["model_a"], representation_paired["model_b"]
-    )
-]
 if len(representation_paired) != len(CORPORA_ORDER):
-    raise ValueError("Incomplete baseline paired bootstrap results: cannot build panel (a).")
+    raise ValueError("Incomplete baseline paired bootstrap results: cannot build the representation table.")
+representation_paired = representation_paired.set_index("corpus").loc[CORPORA_ORDER].reset_index()
 
-paper_paired = paired.loc[paired["metric"].eq("balanced_accuracy")].copy()
+representation_table = pd.DataFrame(
+    [[format_paired_ci(row) for _, row in representation_paired.iterrows()]],
+    index=["Frozen embeddings + LR - TF-IDF + LR"],
+    columns=[PAPER_CORPUS_LABELS[corpus] for corpus in CORPORA_ORDER],
+)
+representation_table.index.name = "Comparison"
+display(representation_table)
+"""
+
+PAPER_ADAPTED_TABLE = """### Table - adapted-strategy comparison
+
+Each cell gives the **balanced accuracy difference in percentage points** and
+its 95% paired bootstrap confidence interval. `ST`, `SupCon`, and `CE` should
+be defined in the manuscript caption.
+"""
+
+PAPER_ADAPTED_TABLE_CODE = """paper_paired = paired.loc[paired["metric"].eq("balanced_accuracy")].copy()
 paper_paired = paper_paired.loc[
     paper_paired.apply(lambda row: (row["model_a"], row["model_b"]) in PAPER_COMPARISON_ORDER, axis=1)
 ].copy()
-order_rank = {pair: rank for rank, pair in enumerate(PAPER_COMPARISON_ORDER)}
-paper_paired["comparison_rank"] = [
-    order_rank[(model_a, model_b)]
-    for model_a, model_b in zip(paper_paired["model_a"], paper_paired["model_b"])
-]
+comparison_labels = {
+    ("softtriple_full_yes", "cross_entropy_full_yes"): "ST - CE",
+    ("softtriple_full_yes", "supcon_full_yes"): "ST - SupCon",
+    ("supcon_full_yes", "cross_entropy_full_yes"): "SupCon - CE",
+}
 paper_paired["comparison"] = [
-    f"{MODEL_LABELS[model_a]} - {MODEL_LABELS[model_b]}"
+    comparison_labels[(model_a, model_b)]
     for model_a, model_b in zip(paper_paired["model_a"], paper_paired["model_b"])
 ]
 expected_rows = len(CORPORA_ORDER) * len(PAPER_COMPARISON_ORDER)
 if len(paper_paired) != expected_rows:
-    raise ValueError("Incomplete neural paired bootstrap results: cannot build panel (b).")
+    raise ValueError("Incomplete neural paired bootstrap results: cannot build the adapted-strategy table.")
 
-limit = 1.10 * max(
-    representation_paired["ci_low"].abs().max(),
-    representation_paired["ci_high"].abs().max(),
-    paper_paired["ci_low"].abs().max(),
-    paper_paired["ci_high"].abs().max(),
-) * 100
-from matplotlib.ticker import MaxNLocator
-
-fig, axes = plt.subplots(
-    2, len(CORPORA_ORDER), figsize=(17, 8.0), sharex=True, squeeze=False
+adapted_table = pd.DataFrame(
+    index=[comparison_labels[pair] for pair in PAPER_COMPARISON_ORDER],
+    columns=[PAPER_CORPUS_LABELS[corpus] for corpus in CORPORA_ORDER],
 )
-
-def style_axis(axis):
-    axis.axvline(0, color="#202020", lw=1.8, zorder=2)
-    axis.set_xlim(-limit, limit)
-    axis.xaxis.set_major_locator(MaxNLocator(nbins=5))
-    axis.grid(axis="x", color="#bdbdbd", linewidth=0.8, alpha=0.8)
-    axis.grid(axis="y", color="#d9d9d9", linewidth=0.6, alpha=0.75)
-    axis.tick_params(axis="y", length=0)
-    for spine in ("top", "right", "left"):
-        axis.spines[spine].set_visible(False)
-    axis.spines["bottom"].set_linewidth(0.8)
-
-for column, corpus in enumerate(CORPORA_ORDER):
-    representation_axis = axes[0, column]
-    representation_subset = representation_paired.loc[
-        representation_paired["corpus"].eq(corpus)
+adapted_table.index.name = "Comparison"
+for pair in PAPER_COMPARISON_ORDER:
+    comparison = comparison_labels[pair]
+    subset = paper_paired.loc[
+        paper_paired["comparison"].eq(comparison)
+    ].set_index("corpus").loc[CORPORA_ORDER]
+    adapted_table.loc[comparison] = [
+        format_paired_ci(subset.loc[corpus]) for corpus in CORPORA_ORDER
     ]
-    estimate = representation_subset["difference_a_minus_b"].to_numpy() * 100
-    low = representation_subset["ci_low"].to_numpy() * 100
-    high = representation_subset["ci_high"].to_numpy() * 100
-    representation_axis.errorbar(
-        estimate, [0], xerr=[estimate - low, high - estimate], fmt="o",
-        color="#6A3D9A", ecolor="#6A3D9A", elinewidth=2.2, capsize=5,
-        capthick=2.2, markersize=10, markeredgecolor="white", markeredgewidth=1.0,
-        zorder=3,
-    )
-    representation_axis.set_yticks([0], representation_subset["comparison"])
-    representation_axis.set_ylim(-0.7, 0.7)
-    representation_axis.set_title(PAPER_CORPUS_LABELS[corpus], fontweight="bold")
-    style_axis(representation_axis)
 
-    strategy_axis = axes[1, column]
-    strategy_subset = paper_paired.loc[
-        paper_paired["corpus"].eq(corpus)
-    ].sort_values("comparison_rank")
-    y = np.arange(len(strategy_subset))
-    estimate = strategy_subset["difference_a_minus_b"].to_numpy() * 100
-    low = strategy_subset["ci_low"].to_numpy() * 100
-    high = strategy_subset["ci_high"].to_numpy() * 100
-    strategy_axis.errorbar(
-        estimate, y, xerr=[estimate - low, high - estimate], fmt="o",
-        color="#0072B2", ecolor="#0072B2", elinewidth=2.2, capsize=5,
-        capthick=2.2, markersize=10, markeredgecolor="white", markeredgewidth=1.0,
-        zorder=3,
-    )
-    strategy_axis.set_yticks(y, strategy_subset["comparison"])
-    strategy_axis.invert_yaxis()
-    style_axis(strategy_axis)
-
-fig.text(0.015, 0.955, "(a) Representation comparison", fontweight="bold", fontsize=12)
-fig.text(0.015, 0.495, "(b) Adapted-strategy comparison", fontweight="bold", fontsize=12)
-fig.supxlabel("Difference in balanced accuracy (percentage points)", y=0.035)
-fig.subplots_adjust(left=0.30, right=0.985, bottom=0.14, top=0.91, hspace=0.48, wspace=0.24)
-paper_forest_png = FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.png"
-paper_forest_pdf = FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.pdf"
-fig.savefig(paper_forest_png, dpi=PAPER_FIGURE_DPI, bbox_inches="tight")
-fig.savefig(paper_forest_pdf, bbox_inches="tight")
-print("Paper figure (PNG):", paper_forest_png)
-print("Paper figure (PDF):", paper_forest_pdf)
-plt.show()
+display(adapted_table)
 """
-
 PAPER_EXPORT = """paper_table.to_csv(FIGURES_DIR / "paper_seed_stability_balanced_accuracy.csv")
 paper_numeric.to_csv(FIGURES_DIR / "paper_seed_stability_balanced_accuracy_numeric.csv")
 paper_paired.to_csv(FIGURES_DIR / "paper_paired_bootstrap_balanced_accuracy.csv", index=False)
 representation_paired.to_csv(
     FIGURES_DIR / "paper_representation_paired_bootstrap_balanced_accuracy.csv", index=False
 )
-print("Paper-ready table and figure data exported to:", FIGURES_DIR)
+representation_table.to_csv(FIGURES_DIR / "paper_representation_comparison_table.csv")
+adapted_table.to_csv(FIGURES_DIR / "paper_adapted_strategy_comparison_table.csv")
+print("Paper-ready tables and raw comparison data exported to:", FIGURES_DIR)
 """
 EXPORT = """## Exports for notebook tables
 """
@@ -490,8 +450,10 @@ def build_notebook() -> dict:
             py(SEED_TABLE_CODE, "seed-table"), md(SEED_PLOT), py(SEED_PLOT_CODE, "seed-plot"),
             md(CI_TABLE), py(CI_TABLE_CODE, "bootstrap-table"), md(CI_PLOT),
             py(CI_PLOT_CODE, "bootstrap-plot"), md(PAIRED_TABLE), py(PAIRED_CODE, "paired-table"),
-            md(PAPER_SECTION), py(PAPER_TABLE_CODE, "paper-stability-table"), md(PAPER_FOREST),
-            py(PAPER_FOREST_CODE, "paper-forest-plot"), py(PAPER_EXPORT, "paper-exports"),
+            md(PAPER_SECTION), py(PAPER_TABLE_CODE, "paper-stability-table"),
+            md(PAPER_REPRESENTATION_TABLE), py(PAPER_REPRESENTATION_TABLE_CODE, "paper-representation-table"),
+            md(PAPER_ADAPTED_TABLE), py(PAPER_ADAPTED_TABLE_CODE, "paper-adapted-strategy-table"),
+            py(PAPER_EXPORT, "paper-exports"),
             md(EXPORT), py(EXPORT_CODE, "exports"),
         ],
     }

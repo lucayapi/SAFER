@@ -1,16 +1,16 @@
-"""Deterministic Pareto-front screening and geometric knee-point selection.
+"""Deterministic Pareto screening and normalized reference-point selection.
 
 For each role, configurations are compared on two maximized objectives:
 accident-level reproducibility ``S_R`` (``stability``) and UMAP-space ``DBCV``
-(``dbcv_umap``). The Pareto-optimal set is normalized per role, then the
-geometric knee point is chosen as the configuration with largest perpendicular
-distance to the reference line joining the two extreme solutions.
+(``dbcv_umap``). Objectives are normalized on the role-specific Pareto set.
+The selected compromise minimizes the largest normalized shortfall from the
+empirical ideal point ``(1, 1)``. Exact numerical ties are resolved by the sum
+of normalized shortfalls, then by the predefined configuration-grid order.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 import warnings
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -20,7 +20,9 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-KNEE_TOLERANCE = 1e-12
+SELECTION_TOLERANCE = 1e-12
+# Historical public name retained for imports outside this repository.
+KNEE_TOLERANCE = SELECTION_TOLERANCE
 NORM_TOLERANCE = 1e-9
 STABILITY_COL = "stability"
 DBCV_COL = "dbcv_umap"
@@ -43,7 +45,7 @@ def identify_pareto_front(
     result["is_pareto"] = False
     result["on_pareto"] = False
     result["selected"] = False
-    result["is_selected_knee"] = False
+    result["is_selected_tchebycheff"] = False
     if result.empty or stability_col not in result.columns or dbcv_col not in result.columns:
         return result
     usable = result[stability_col].notna() & result[dbcv_col].notna()
@@ -97,82 +99,161 @@ def normalize_pareto_objectives(
     s_min, s_max = float(stabilities.min()), float(stabilities.max())
     d_min, d_max = float(dbcvs.min()), float(dbcvs.max())
     role_label = role or str(result.get("role", pd.Series(["?"])).iloc[0])
-    if math.isclose(d_max, d_min, rel_tol=0.0, abs_tol=KNEE_TOLERANCE):
+    if np.isclose(d_max, d_min, rtol=0.0, atol=SELECTION_TOLERANCE):
         warnings.warn(
             f"[{role_label}] DBCV is constant on the Pareto front; "
-            "dbcv_normalized left undefined (NaN).",
+            "all Pareto configurations receive normalized DBCV = 1.",
             stacklevel=2,
         )
-        result["dbcv_normalized"] = np.nan
+        result["dbcv_normalized"] = 1.0
     else:
         result["dbcv_normalized"] = (dbcvs - d_min) / (d_max - d_min)
-    if math.isclose(s_max, s_min, rel_tol=0.0, abs_tol=KNEE_TOLERANCE):
+    if np.isclose(s_max, s_min, rtol=0.0, atol=SELECTION_TOLERANCE):
         warnings.warn(
             f"[{role_label}] S_R is constant on the Pareto front; "
-            "stability_normalized left undefined (NaN).",
+            "all Pareto configurations receive normalized S_R = 1.",
             stacklevel=2,
         )
-        result["stability_normalized"] = np.nan
+        result["stability_normalized"] = 1.0
     else:
         result["stability_normalized"] = (stabilities - s_min) / (s_max - s_min)
     return result
 
 
-def compute_geometric_knee(
+def compute_tchebycheff_scores(
     df_pareto: pd.DataFrame,
     *,
     dbcv_norm_col: str = "dbcv_normalized",
     stability_norm_col: str = "stability_normalized",
 ) -> pd.DataFrame:
-    """Compute perpendicular distance to the reference line ``D_norm + S_norm = 1``.
-
-    ``d_knee(c) = (D_norm(c) + S_norm(c) - 1) / sqrt(2)`` measures deviation
-    toward the ideal point ``I = (1, 1)``.
-    """
+    """Compute primary and secondary shortfalls from the ideal point ``(1, 1)``."""
     result = df_pareto.copy()
     d_norm = result[dbcv_norm_col].astype(float)
     s_norm = result[stability_norm_col].astype(float)
-    result["knee_distance"] = (d_norm + s_norm - 1.0) / math.sqrt(2.0)
+    delta_d = 1.0 - d_norm
+    delta_s = 1.0 - s_norm
+    result["dbcv_normalized_shortfall"] = delta_d
+    result["stability_normalized_shortfall"] = delta_s
+    result["tchebycheff_max_shortfall"] = np.maximum(delta_d, delta_s)
+    result["total_normalized_shortfall"] = delta_d + delta_s
     return result
 
 
-def project_knee_to_reference_line(x_k: float, y_k: float) -> tuple[float, float]:
-    """Orthogonal projection of ``K = (x_k, y_k)`` onto ``x + y = 1``."""
-    delta = (x_k + y_k - 1.0) / 2.0
-    x_h = x_k - delta
-    y_h = y_k - delta
-    return float(x_h), float(y_h)
+def _configuration_grid_order(configuration_id: object) -> tuple[int, str]:
+    """Return the encoded grid position, with a lexical deterministic fallback."""
+    text = str(configuration_id)
+    suffix = text.rsplit("_cfg_", 1)
+    if len(suffix) == 2 and suffix[1].isdigit():
+        return int(suffix[1]), text
+    return np.iinfo(np.int64).max, text
 
 
-def _select_knee_from_pareto(
+def _select_tchebycheff_from_pareto(
     pareto: pd.DataFrame,
     *,
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
     configuration_col: str = "configuration_id",
-) -> str:
-    """Return the configuration_id of the geometric knee on a Pareto subset.
-
-    Tie-break when ``knee_distance`` ties (``tol=1e-12``):
-    higher raw ``S_R``, then higher raw DBCV, then lexicographic ``configuration_id``.
-    """
+) -> tuple[str, pd.DataFrame, str]:
+    """Select by ``min T_inf``, then ``min T_1``, then grid order."""
     normalized = normalize_pareto_objectives(
         pareto,
         stability_col=stability_col,
         dbcv_col=dbcv_col,
         role=str(pareto["role"].iloc[0]) if "role" in pareto.columns and not pareto.empty else None,
     )
-    with_knee = compute_geometric_knee(normalized)
-    max_distance = float(with_knee["knee_distance"].max())
-    tied = with_knee.loc[
-        np.isclose(with_knee["knee_distance"].astype(float), max_distance, rtol=0.0, atol=KNEE_TOLERANCE)
+    scored = compute_tchebycheff_scores(normalized)
+    min_t_inf = float(scored["tchebycheff_max_shortfall"].min())
+    primary = scored.loc[
+        np.isclose(
+            scored["tchebycheff_max_shortfall"].astype(float),
+            min_t_inf,
+            rtol=0.0,
+            atol=SELECTION_TOLERANCE,
+        )
     ]
-    tied = tied.sort_values(
-        [stability_col, dbcv_col, configuration_col],
-        ascending=[False, False, True],
-        na_position="last",
+    scored["is_tchebycheff_minimizer"] = scored.index.isin(primary.index)
+    if len(primary) == 1:
+        selected = primary.iloc[0]
+        tie_break = "not_required"
+        secondary = primary
+    else:
+        min_t_one = float(primary["total_normalized_shortfall"].min())
+        secondary = primary.loc[
+            np.isclose(
+                primary["total_normalized_shortfall"].astype(float),
+                min_t_one,
+                rtol=0.0,
+                atol=SELECTION_TOLERANCE,
+            )
+        ]
+        if len(secondary) == 1:
+            selected = secondary.iloc[0]
+            tie_break = "total_normalized_shortfall"
+        else:
+            selected = sorted(
+                (row for _, row in secondary.iterrows()),
+                key=lambda row: _configuration_grid_order(row[configuration_col]),
+            )[0]
+            tie_break = "grid_order"
+    scored["is_total_shortfall_minimizer"] = scored.index.isin(secondary.index)
+    return str(selected[configuration_col]), scored, tie_break
+
+
+def select_tchebycheff_configuration(
+    df_role: pd.DataFrame,
+    *,
+    stability_col: str = STABILITY_COL,
+    dbcv_col: str = DBCV_COL,
+) -> tuple[pd.DataFrame, str, str]:
+    """Apply Pareto screening and normalized Tchebycheff reference selection."""
+    marked = identify_pareto_front(df_role, stability_col=stability_col, dbcv_col=dbcv_col)
+    score_columns = (
+        "stability_normalized",
+        "dbcv_normalized",
+        "stability_normalized_shortfall",
+        "dbcv_normalized_shortfall",
+        "tchebycheff_max_shortfall",
+        "total_normalized_shortfall",
     )
-    return str(tied.iloc[0][configuration_col])
+    for column in score_columns:
+        marked[column] = np.nan
+    marked["is_tchebycheff_minimizer"] = False
+    marked["is_total_shortfall_minimizer"] = False
+    marked["selection_tie_break"] = ""
+    pareto = marked.loc[marked["is_pareto"]].copy()
+    if pareto.empty:
+        return marked, "", "none"
+    if len(pareto) == 1:
+        selected_id = str(pareto.iloc[0]["configuration_id"])
+        selected_mask = marked["configuration_id"].astype(str).eq(selected_id)
+        marked.loc[selected_mask, "is_selected_tchebycheff"] = True
+        marked.loc[selected_mask, "selected"] = True
+        marked.loc[selected_mask, "selection_tie_break"] = "not_required"
+        return marked, selected_id, "single_pareto"
+
+    selected_id, scored, tie_break = _select_tchebycheff_from_pareto(
+        pareto,
+        stability_col=stability_col,
+        dbcv_col=dbcv_col,
+    )
+    lookup_columns = [
+        *score_columns,
+        "is_tchebycheff_minimizer",
+        "is_total_shortfall_minimizer",
+    ]
+    score_lookup = scored.set_index("configuration_id")[lookup_columns].to_dict("index")
+    for column in lookup_columns:
+        marked[column] = marked["configuration_id"].astype(str).map(
+            lambda configuration_id, col=column: score_lookup.get(configuration_id, {}).get(
+                col, False if col.startswith("is_") else np.nan
+            )
+        )
+    selected_mask = marked["configuration_id"].astype(str).eq(selected_id)
+    marked.loc[selected_mask, "is_selected_tchebycheff"] = True
+    marked.loc[selected_mask, "selected"] = True
+    marked.loc[selected_mask, "selection_tie_break"] = tie_break
+    return marked, selected_id, "normalized_tchebycheff"
 
 
 def select_knee_configuration(
@@ -181,52 +262,21 @@ def select_knee_configuration(
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
 ) -> tuple[pd.DataFrame, str, str]:
-    """Identify Pareto front, compute knee point, flag ``is_selected_knee``.
-
-    Returns ``(annotated_table, selected_configuration_id, selection_rule)``.
-    ``selection_rule`` is ``single_pareto`` or ``geometric_knee``.
-    """
-    marked = identify_pareto_front(df_role, stability_col=stability_col, dbcv_col=dbcv_col)
-    pareto = marked.loc[marked["is_pareto"]].copy()
-    if pareto.empty:
-        return marked, "", "none"
-    if len(pareto) == 1:
-        selected_id = str(pareto.iloc[0]["configuration_id"])
-        marked["stability_normalized"] = np.nan
-        marked["dbcv_normalized"] = np.nan
-        marked["knee_distance"] = np.nan
-        marked["is_selected_knee"] = marked["configuration_id"].astype(str).eq(selected_id)
-        marked["selected"] = marked["is_selected_knee"]
-        return marked, selected_id, "single_pareto"
-
-    selected_id = _select_knee_from_pareto(pareto, stability_col=stability_col, dbcv_col=dbcv_col)
-    pareto_normalized = compute_geometric_knee(
-        normalize_pareto_objectives(
-            pareto,
-            stability_col=stability_col,
-            dbcv_col=dbcv_col,
-            role=str(pareto["role"].iloc[0]) if "role" in pareto.columns else None,
-        )
+    """Compatibility alias for the former public function name."""
+    return select_tchebycheff_configuration(
+        df_role,
+        stability_col=stability_col,
+        dbcv_col=dbcv_col,
     )
-    knee_lookup = pareto_normalized.set_index("configuration_id")[
-        ["stability_normalized", "dbcv_normalized", "knee_distance"]
-    ].to_dict("index")
-    for column in ("stability_normalized", "dbcv_normalized", "knee_distance"):
-        marked[column] = marked["configuration_id"].astype(str).map(
-            lambda configuration_id, col=column: knee_lookup.get(configuration_id, {}).get(col, np.nan)
-        )
-    marked["is_selected_knee"] = marked["configuration_id"].astype(str).eq(selected_id)
-    marked["selected"] = marked["is_selected_knee"]
-    return marked, selected_id, "geometric_knee"
 
 
 def select_configuration_for_role(
     merged: pd.DataFrame,
     semantic_scores: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str, str]:
-    """Select configuration via Pareto + geometric knee (``semantic_scores`` ignored)."""
+    """Select via Pareto + normalized Tchebycheff (``semantic_scores`` ignored)."""
     del semantic_scores
-    return select_knee_configuration(merged)
+    return select_tchebycheff_configuration(merged)
 
 
 def summarize_selected_configurations(
@@ -234,12 +284,12 @@ def summarize_selected_configurations(
     *,
     parameter_keys: Sequence[str] = (),
 ) -> pd.DataFrame:
-    """Build one summary row per role for the knee-selected configuration."""
+    """Build one summary row per role for the selected configuration."""
     rows: list[dict] = []
     for role, table in selection_tables.items():
         if table.empty:
             continue
-        selected = table.loc[table["is_selected_knee"].fillna(False).astype(bool)]
+        selected = table.loc[table["is_selected_tchebycheff"].fillna(False).astype(bool)]
         if selected.empty:
             selected = table.loc[table["selected"].fillna(False).astype(bool)]
         if selected.empty:
@@ -258,8 +308,10 @@ def summarize_selected_configurations(
             DBCV_COL: row.get(DBCV_COL),
             "stability_normalized": row.get("stability_normalized"),
             "dbcv_normalized": row.get("dbcv_normalized"),
-            "knee_distance": row.get("knee_distance"),
-            "selection_rule": "geometric_knee" if int(table["is_pareto"].sum()) > 1 else "single_pareto",
+            "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
+            "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+            "selection_tie_break": row.get("selection_tie_break"),
+            "selection_rule": "normalized_tchebycheff" if int(table["is_pareto"].sum()) > 1 else "single_pareto",
             "n_clusters": row.get("n_clusters"),
             "noise_fraction": row.get("noise_fraction"),
             "hyperparameters": hyperparameters,
@@ -276,7 +328,7 @@ def print_role_selection_summary(
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
 ) -> None:
-    """Print console summary for one role (Pareto extremes and geometric knee)."""
+    """Print the Pareto extremes and normalized reference-point compromise."""
     n_candidates = len(table)
     pareto = table.loc[table["is_pareto"].fillna(False).astype(bool)].copy()
     n_pareto = len(pareto)
@@ -298,16 +350,18 @@ def print_role_selection_summary(
     print(f"configuration = {max_dbcv['configuration_id']}")
     print(f"S_R = {max_dbcv[stability_col]}")
     print(f"DBCV = {max_dbcv[dbcv_col]}")
-    knee = table.loc[table["configuration_id"].astype(str).eq(str(selected_id))]
-    if not knee.empty:
-        knee_row = knee.iloc[0]
-        print("\nGeometric knee:")
+    selected = table.loc[table["configuration_id"].astype(str).eq(str(selected_id))]
+    if not selected.empty:
+        selected_row = selected.iloc[0]
+        print("\nNormalized Tchebycheff compromise:")
         print(f"configuration = {selected_id}")
-        print(f"S_R = {knee_row.get(stability_col)}")
-        print(f"DBCV = {knee_row.get(dbcv_col)}")
-        print(f"normalized S_R = {knee_row.get('stability_normalized')}")
-        print(f"normalized DBCV = {knee_row.get('dbcv_normalized')}")
-        print(f"knee distance = {knee_row.get('knee_distance')}")
+        print(f"S_R = {selected_row.get(stability_col)}")
+        print(f"DBCV = {selected_row.get(dbcv_col)}")
+        print(f"normalized S_R = {selected_row.get('stability_normalized')}")
+        print(f"normalized DBCV = {selected_row.get('dbcv_normalized')}")
+        print(f"T_inf = {selected_row.get('tchebycheff_max_shortfall')}")
+        print(f"T_1 = {selected_row.get('total_normalized_shortfall')}")
+        print(f"tie break = {selected_row.get('selection_tie_break')}")
     print("-" * 50)
 
 
@@ -338,6 +392,30 @@ def _pareto_subplot_layout(n_roles: int) -> tuple[int, int, tuple[float, float]]
     return 2, 2, (14.0, 10.0)
 
 
+def _selected_mask(frame: pd.DataFrame) -> pd.Series:
+    """Read the current selection flag, with support for legacy result tables."""
+    if "is_selected_tchebycheff" in frame.columns:
+        return frame["is_selected_tchebycheff"].fillna(False).astype(bool)
+    if "selected" in frame.columns:
+        return frame["selected"].fillna(False).astype(bool)
+    if "is_selected_knee" in frame.columns:
+        return frame["is_selected_knee"].fillna(False).astype(bool)
+    return pd.Series(False, index=frame.index)
+
+
+def _panel_title(
+    role: str,
+    index: int,
+    role_labels: Mapping[str, str] | None,
+) -> str:
+    from manuscript_reporting import ROLE_PANEL_LETTERS, role_panel_title
+
+    if not role_labels or role not in role_labels:
+        return role_panel_title(role, index=index)
+    letter = ROLE_PANEL_LETTERS[index] if index < len(ROLE_PANEL_LETTERS) else chr(ord("a") + index)
+    return f"({letter}) {role_labels[role]}"
+
+
 def plot_pareto_raw(
     selection_tables: Mapping[str, pd.DataFrame],
     output_dir: Path,
@@ -347,34 +425,43 @@ def plot_pareto_raw(
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
     suptitle: str | None = None,
+    role_labels: Mapping[str, str] | None = None,
+    axis_labels: Mapping[str, str] | None = None,
+    legend_labels: Mapping[str, str] | None = None,
+    colors: Mapping[str, str] | None = None,
 ) -> None:
-    """Four-panel scatter of DBCV versus S_R with Pareto front and knee star."""
+    """Raw DBCV/S_R landscape with dominated, Pareto and selected points."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from manuscript_reporting import role_panel_title, save_manuscript_figure
+    from manuscript_reporting import save_manuscript_figure
 
     plot_roles = tuple(roles)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     figure, axes = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
-    knee_color = "#d62728"
-    pareto_color = "#1f77b4"
-    other_color = "#757575"
+    axis_labels = dict(axis_labels or {})
+    legend_labels = dict(legend_labels or {})
+    colors = dict(colors or {})
+    selected_color = colors.get("selected", "#d62728")
+    pareto_color = colors.get("pareto", "#1f77b4")
+    other_color = colors.get("candidates", "#757575")
+    x_label = axis_labels.get("dbcv_raw", "DBCV")
+    y_label = axis_labels.get("stability_raw", r"$S_R$")
     for index, (axis, role) in enumerate(zip(axes.flat, plot_roles)):
-        axis.set_title(role_panel_title(role, index=index), fontsize=11, pad=6)
+        axis.set_title(_panel_title(role, index, role_labels), fontsize=11, pad=6)
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
-            axis.set_xlabel("DBCV")
-            axis.set_ylabel(r"$S_R$")
+            axis.set_xlabel(x_label)
+            axis.set_ylabel(y_label)
             continue
         valid = frame[dbcv_col].notna() & frame[stability_col].notna()
         base = frame.loc[valid].copy()
         is_pareto = base["is_pareto"].fillna(base.get("on_pareto", False)).astype(bool)
-        is_knee = base["is_selected_knee"].fillna(base.get("selected", False)).astype(bool)
+        is_selected = _selected_mask(base)
         others = base.loc[~is_pareto]
         pareto_all = base.loc[is_pareto].sort_values(dbcv_col)
-        knee = base.loc[is_knee]
+        selected = base.loc[is_selected]
         if not others.empty:
             axis.scatter(
                 others[dbcv_col],
@@ -394,15 +481,15 @@ def plot_pareto_raw(
                 alpha=0.75,
                 zorder=2,
             )
-            if not knee.empty:
-                knee_index = set(knee.index)
-                non_knee = pareto_all.loc[~pareto_all.index.isin(knee_index)]
+            if not selected.empty:
+                selected_index = set(selected.index)
+                non_selected = pareto_all.loc[~pareto_all.index.isin(selected_index)]
             else:
-                non_knee = pareto_all
-            if not non_knee.empty:
+                non_selected = pareto_all
+            if not non_selected.empty:
                 axis.scatter(
-                    non_knee[dbcv_col],
-                    non_knee[stability_col],
+                    non_selected[dbcv_col],
+                    non_selected[stability_col],
                     marker="o",
                     s=70,
                     facecolors=pareto_color,
@@ -410,26 +497,26 @@ def plot_pareto_raw(
                     linewidths=0.6,
                     zorder=3,
                 )
-        if not knee.empty:
+        if not selected.empty:
             axis.scatter(
-                knee[dbcv_col],
-                knee[stability_col],
+                selected[dbcv_col],
+                selected[stability_col],
                 marker="*",
                 s=320,
-                facecolors=knee_color,
+                facecolors=selected_color,
                 edgecolors="black",
                 linewidths=0.8,
                 zorder=4,
             )
-        axis.set_xlabel("DBCV")
-        axis.set_ylabel(r"$S_R$")
+        axis.set_xlabel(x_label)
+        axis.set_ylabel(y_label)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], marker="o", linestyle="None", color="black", label="Candidate configurations", markerfacecolor=other_color, markersize=6),
-        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label="Pareto-optimal configurations", markerfacecolor=pareto_color, markersize=7),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", label=SELECTED_CONFIGURATION_LEGEND, markerfacecolor=knee_color, markersize=12),
+        Line2D([0], [0], marker="o", linestyle="None", color="black", label=legend_labels.get("candidates", "Candidate configurations"), markerfacecolor=other_color, markersize=6),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label=legend_labels.get("pareto", "Pareto-optimal configurations"), markerfacecolor=pareto_color, markersize=7),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", label=legend_labels.get("selected", SELECTED_CONFIGURATION_LEGEND), markerfacecolor=selected_color, markersize=12),
     ]
     if suptitle:
         figure.suptitle(suptitle, y=0.98, fontsize=12)
@@ -446,23 +533,24 @@ def plot_pareto_raw(
     plt.close(figure)
 
 
-def plot_pareto_normalized_with_knee(
+def plot_pareto_normalized_tchebycheff(
     selection_tables: Mapping[str, pd.DataFrame],
     output_dir: Path,
     *,
     roles: Sequence[str] = ("A0", "A1", "B", "C"),
-    filename: str = "pareto_normalized_knee_all_roles.png",
+    filename: str = "pareto_normalized_tchebycheff_all_roles.png",
     stability_col: str = STABILITY_COL,
     dbcv_col: str = DBCV_COL,
     suptitle: str | None = None,
-    show_perpendicular_deviation: bool = True,
-    perpendicular_roles: Sequence[str] | None = None,
     multi_pareto_only: bool = True,
+    role_labels: Mapping[str, str] | None = None,
+    axis_labels: Mapping[str, str] | None = None,
+    legend_labels: Mapping[str, str] | None = None,
+    colors: Mapping[str, str] | None = None,
 ) -> None:
-    """Normalized objective space with reference line, ideal point and knee projection."""
+    """Normalized Pareto fronts, ideal point and Tchebycheff compromise."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from manuscript_reporting import role_panel_title
 
     candidate_roles = tuple(roles)
     plot_roles = (
@@ -470,16 +558,18 @@ def plot_pareto_normalized_with_knee(
         if multi_pareto_only
         else candidate_roles
     )
-    deviation_roles = set(perpendicular_roles if perpendicular_roles is not None else plot_roles)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     n_rows, n_cols, figsize = _pareto_subplot_layout(len(plot_roles))
     figure, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
-    knee_color = "#d62728"
-    pareto_color = "#1f77b4"
-    ref_color = "#888888"
-    ref_x = np.linspace(0.0, 1.0, 100)
-    drew_deviation = False
+    axis_labels = dict(axis_labels or {})
+    legend_labels = dict(legend_labels or {})
+    colors = dict(colors or {})
+    selected_color = colors.get("selected", "#d62728")
+    pareto_color = colors.get("pareto", "#1f77b4")
+    ideal_color = colors.get("ideal", "#333333")
+    x_label = axis_labels.get("dbcv_normalized", r"Normalized DBCV ($\widetilde{D}$)")
+    y_label = axis_labels.get("stability_normalized", r"Normalized $S_R$ ($\widetilde{S}$)")
     if not plot_roles:
         axis = axes.flat[0]
         axis.axis("off")
@@ -493,16 +583,15 @@ def plot_pareto_normalized_with_knee(
         )
         for extra_axis in list(axes.flat)[1:]:
             extra_axis.remove()
-    for axis, role in zip(axes.flat, plot_roles):
-        axis.set_title(role_panel_title(role), fontsize=11, pad=6)
+    for plot_index, (axis, role) in enumerate(zip(axes.flat, plot_roles)):
+        axis.set_title(_panel_title(role, plot_index, role_labels), fontsize=11, pad=6)
         frame = selection_tables.get(role, pd.DataFrame()).copy()
-        axis.plot(ref_x, 1.0 - ref_x, color=ref_color, linestyle="--", linewidth=1.0)
-        axis.scatter([1.0], [1.0], marker="x", s=80, color="#333333", linewidths=1.5, zorder=1)
+        axis.scatter([1.0], [1.0], marker="x", s=80, color=ideal_color, linewidths=1.5, zorder=1)
         if frame.empty:
             axis.set_xlim(-0.05, 1.05)
             axis.set_ylim(-0.05, 1.05)
-            axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
-            axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
+            axis.set_xlabel(x_label)
+            axis.set_ylabel(y_label)
             continue
         pareto = frame.loc[frame["is_pareto"].fillna(frame.get("on_pareto", False)).astype(bool)].copy()
         if pareto.empty or len(pareto) <= 1:
@@ -510,12 +599,9 @@ def plot_pareto_normalized_with_knee(
             axis.set_ylim(-0.05, 1.05)
             continue
         if "dbcv_normalized" not in pareto.columns or pareto["dbcv_normalized"].isna().all():
-            pareto = compute_geometric_knee(
+            pareto = compute_tchebycheff_scores(
                 normalize_pareto_objectives(
-                    pareto,
-                    stability_col=stability_col,
-                    dbcv_col=dbcv_col,
-                    role=role,
+                    pareto, stability_col=stability_col, dbcv_col=dbcv_col, role=role
                 )
             )
         pareto = pareto.sort_values("dbcv_normalized")
@@ -537,48 +623,37 @@ def plot_pareto_normalized_with_knee(
         )
         # Prefer recomputed Pareto coordinates: single-optimum roles may lack
         # normalized columns on the full selection table.
-        selected_mask = frame["is_selected_knee"].fillna(frame.get("selected", False)).astype(bool)
+        selected_mask = _selected_mask(frame)
         selected_ids = set(frame.loc[selected_mask, "configuration_id"].astype(str))
-        knee = pareto.loc[pareto["configuration_id"].astype(str).isin(selected_ids)]
-        if knee.empty and selected_mask.any():
-            knee = frame.loc[selected_mask]
-        if not knee.empty:
-            x_k = knee.iloc[0].get("dbcv_normalized")
-            y_k = knee.iloc[0].get("stability_normalized")
-            if pd.notna(x_k) and pd.notna(y_k):
-                x_k = float(x_k)
-                y_k = float(y_k)
-                if show_perpendicular_deviation and role in deviation_roles and len(pareto) > 1:
-                    x_h, y_h = project_knee_to_reference_line(x_k, y_k)
-                    axis.plot([x_h, x_k], [y_h, y_k], color=knee_color, linestyle=":", linewidth=1.2, zorder=3)
-                    drew_deviation = True
+        selected = pareto.loc[pareto["configuration_id"].astype(str).isin(selected_ids)]
+        if selected.empty and selected_mask.any():
+            selected = frame.loc[selected_mask]
+        if not selected.empty:
+            x_selected = selected.iloc[0].get("dbcv_normalized")
+            y_selected = selected.iloc[0].get("stability_normalized")
+            if pd.notna(x_selected) and pd.notna(y_selected):
                 axis.scatter(
-                    [x_k],
-                    [y_k],
+                    [float(x_selected)],
+                    [float(y_selected)],
                     marker="*",
                     s=320,
-                    facecolors=knee_color,
+                    facecolors=selected_color,
                     edgecolors="black",
                     linewidths=0.8,
                     zorder=4,
                 )
         axis.set_xlim(-0.05, 1.05)
         axis.set_ylim(-0.05, 1.05)
-        axis.set_xlabel(r"Normalized DBCV ($\widetilde{D}$)")
-        axis.set_ylabel(r"Normalized $S_R$ ($\widetilde{S}$)")
+        axis.set_xlabel(x_label)
+        axis.set_ylabel(y_label)
         axis.grid(alpha=0.2)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
-        Line2D([0], [0], color=ref_color, linestyle="--", linewidth=1.2, label="Extreme-point reference line"),
-        Line2D([0], [0], marker="x", linestyle="None", color="#333333", markersize=8, label="Ideal point (1, 1)"),
-        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label="Pareto-optimal configurations"),
-        Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=knee_color, markersize=12, label=SELECTED_CONFIGURATION_LEGEND),
+        Line2D([0], [0], marker="x", linestyle="None", color=ideal_color, markersize=8, label=legend_labels.get("ideal", "Ideal point (1, 1)")),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label=legend_labels.get("pareto", "Pareto-optimal configurations")),
+        Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=selected_color, markersize=12, label=legend_labels.get("selected", SELECTED_CONFIGURATION_LEGEND)),
     ]
-    if drew_deviation:
-        handles.append(
-            Line2D([0], [0], color=knee_color, linestyle=":", linewidth=1.2, label="Perpendicular deviation")
-        )
     if suptitle:
         figure.suptitle(suptitle, y=0.98, fontsize=12)
     figure.legend(
@@ -596,13 +671,19 @@ def plot_pareto_normalized_with_knee(
     plt.close(figure)
 
 
+def plot_pareto_normalized_with_knee(*args, **kwargs) -> None:
+    """Compatibility alias for the former plotting function name."""
+    plot_pareto_normalized_tchebycheff(*args, **kwargs)
+
+
 __all__ = [
+    "SELECTION_TOLERANCE",
     "KNEE_TOLERANCE",
     "identify_pareto_front",
     "mark_pareto_front",
     "normalize_pareto_objectives",
-    "compute_geometric_knee",
-    "project_knee_to_reference_line",
+    "compute_tchebycheff_scores",
+    "select_tchebycheff_configuration",
     "select_knee_configuration",
     "select_configuration_for_role",
     "summarize_selected_configurations",
@@ -610,5 +691,6 @@ __all__ = [
     "SELECTED_CONFIGURATION_LEGEND",
     "roles_with_multi_point_pareto_front",
     "plot_pareto_raw",
+    "plot_pareto_normalized_tchebycheff",
     "plot_pareto_normalized_with_knee",
 ]

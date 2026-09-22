@@ -60,8 +60,9 @@ def test_replication_results_notebook_is_structurally_valid():
     assert "OOD average" in sources
     assert "Difference in balanced accuracy (percentage points)" in sources
     assert "baseline_paired_bootstrap" in sources
-    assert "(a) Representation comparison" in sources
-    assert "(b) Adapted-strategy comparison" in sources
+    assert "Table - representation comparison" in sources
+    assert "Table - adapted-strategy comparison" in sources
+    assert "ST - SupCon" in sources
 
 
 def test_bootstrap_is_paired_by_accident_and_averages_seeds(tmp_path: Path):

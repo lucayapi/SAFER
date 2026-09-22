@@ -102,7 +102,7 @@ def role_panel_title(role: str, *, index: int | None = None) -> str:
     return f"({letter}) {label}"
 
 FIGURE_STABILITY_LANDSCAPE = "stability_landscape_all_roles.png"
-FIGURE_PARETO_NORMALIZED = "pareto_normalized_knee_all_roles.png"
+FIGURE_PARETO_NORMALIZED = "pareto_normalized_tchebycheff_all_roles.png"
 FIGURE_FACTOR_RESAMPLING_A0 = "factor_resampling_A0.png"
 FIGURE_FACTOR_RESAMPLING_A1_B_C = "factor_resampling_A1_B_C.png"
 FIGURE_UMAP_SEED_SENSITIVITY = "umap_seed_sensitivity_all_roles.png"
@@ -155,16 +155,20 @@ PARETO_TABLE_COLUMNS = [
     "Noise",
 ]
 
-KNEE_TABLE_COLUMNS = [
+REFERENCE_SELECTION_TABLE_COLUMNS = [
     "Role",
     "Candidate",
     "SR",
     "DBCV",
     "S_norm",
     "D_norm",
-    "dK",
+    "T_inf",
+    "T_1",
+    "Tie-break",
     "Selected",
 ]
+# Compatibility alias for older notebook imports.
+KNEE_TABLE_COLUMNS = REFERENCE_SELECTION_TABLE_COLUMNS
 
 RETAINED_FACTOR_COLUMNS = [
     "Role",
@@ -301,11 +305,11 @@ def build_pareto_front_summary_table(selection_table: pd.DataFrame, *, role: str
     return pd.DataFrame(rows)
 
 
-def build_knee_selection_table(selection_table: pd.DataFrame, *, role: str) -> pd.DataFrame:
-    """Normalized Pareto objectives and knee distance for every Pareto point."""
+def build_reference_selection_table(selection_table: pd.DataFrame, *, role: str) -> pd.DataFrame:
+    """Normalized Pareto objectives and Tchebycheff shortfalls."""
     pareto = build_pareto_front_summary_table(selection_table, role=role)
     if pareto.empty:
-        return pd.DataFrame(columns=KNEE_TABLE_COLUMNS)
+        return pd.DataFrame(columns=REFERENCE_SELECTION_TABLE_COLUMNS)
     frame = selection_table.loc[selection_table["role"].astype(str).eq(role)].copy()
     if "is_pareto" in frame.columns:
         frame = frame.loc[frame["is_pareto"].fillna(False).astype(bool)]
@@ -316,7 +320,12 @@ def build_knee_selection_table(selection_table: pd.DataFrame, *, role: str) -> p
         source = lookup.loc[configuration_id] if configuration_id in lookup.index else row
         if isinstance(source, pd.DataFrame):
             source = source.iloc[0]
-        selected = bool(source.get("is_selected_knee", source.get("selected", False)))
+        selected = bool(
+            source.get(
+                "is_selected_tchebycheff",
+                source.get("selected", source.get("is_selected_knee", False)),
+            )
+        )
         rows.append({
             "Role": role,
             "Candidate": row["Candidate ID"],
@@ -324,18 +333,27 @@ def build_knee_selection_table(selection_table: pd.DataFrame, *, role: str) -> p
             "DBCV": round(float(source.get("dbcv_umap", row["DBCV"])), PARETO_OBJECTIVE_DECIMALS) if pd.notna(source.get("dbcv_umap", row["DBCV"])) else np.nan,
             "S_norm": round(float(source.get("stability_normalized")), 2) if pd.notna(source.get("stability_normalized")) else np.nan,
             "D_norm": round(float(source.get("dbcv_normalized")), 2) if pd.notna(source.get("dbcv_normalized")) else np.nan,
-            "dK": round(float(source.get("knee_distance")), 3) if pd.notna(source.get("knee_distance")) else np.nan,
+            "T_inf": round(float(source.get("tchebycheff_max_shortfall")), 3) if pd.notna(source.get("tchebycheff_max_shortfall")) else np.nan,
+            "T_1": round(float(source.get("total_normalized_shortfall")), 3) if pd.notna(source.get("total_normalized_shortfall")) else np.nan,
+            "Tie-break": source.get("selection_tie_break", "") if selected else "",
             "Selected": "Yes" if selected else "No",
         })
     return pd.DataFrame(rows)
 
 
+def build_knee_selection_table(selection_table: pd.DataFrame, *, role: str) -> pd.DataFrame:
+    """Compatibility alias for the former table-builder name."""
+    return build_reference_selection_table(selection_table, role=role)
+
+
 def build_selected_configuration_table(selection_table: pd.DataFrame, *, role: str) -> pd.DataFrame:
-    """One-row summary for the knee-selected configuration."""
+    """One-row summary for the selected configuration."""
     frame = selection_table.loc[selection_table["role"].astype(str).eq(role)].copy()
     if frame.empty:
         return pd.DataFrame()
-    if "is_selected_knee" in frame.columns:
+    if "is_selected_tchebycheff" in frame.columns:
+        selected = frame.loc[frame["is_selected_tchebycheff"].fillna(False).astype(bool)]
+    elif "is_selected_knee" in frame.columns:
         selected = frame.loc[frame["is_selected_knee"].fillna(False).astype(bool)]
     else:
         selected = frame.loc[frame.get("selected", False).fillna(False).astype(bool)] if "selected" in frame.columns else pd.DataFrame()
@@ -661,16 +679,19 @@ def build_seed_sensitivity_summary_all_roles(
             if selection_path.is_file():
                 selection = pd.read_csv(selection_path)
                 if not selection.empty:
-                    knee = selection.loc[
-                        selection.get("is_selected_knee", pd.Series(False, index=selection.index))
+                    selected_rows = selection.loc[
+                        selection.get(
+                            "is_selected_tchebycheff",
+                            selection.get("selected", pd.Series(False, index=selection.index)),
+                        )
                         .fillna(False)
                         .astype(bool)
                     ]
-                    if knee.empty and "configuration_id" in seed_summary.columns:
+                    if selected_rows.empty and "configuration_id" in seed_summary.columns:
                         cfg = str(seed_summary["configuration_id"].iloc[0])
-                        knee = selection.loc[selection["configuration_id"].astype(str).eq(cfg)]
-                    if not knee.empty:
-                        reference = knee.iloc[0]
+                        selected_rows = selection.loc[selection["configuration_id"].astype(str).eq(cfg)]
+                    if not selected_rows.empty:
+                        reference = selected_rows.iloc[0]
         role_table = build_seed_sensitivity_summary(seed_summary, reference_row=reference)
         if not role_table.empty:
             tables.append(role_table)

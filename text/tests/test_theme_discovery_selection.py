@@ -64,10 +64,10 @@ def test_select_single_pareto_without_knee():
     table, selected, rule = pipeline.select_configuration_for_role(frame)
     assert selected == "A0_cfg_001"
     assert rule == "single_pareto"
-    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_knee"].iloc[0])
+    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_tchebycheff"].iloc[0])
 
 
-def test_geometric_knee_selects_compromise():
+def test_normalized_tchebycheff_selects_compromise():
     candidates = pd.DataFrame(
         [
             {"role": "A0", "configuration_id": "A0_cfg_001", "stability": 0.95, "dbcv_umap": 0.05},
@@ -77,29 +77,28 @@ def test_geometric_knee_selects_compromise():
         ]
     )
     table, selected, rule = pipeline.select_configuration_for_role(candidates)
-    assert rule == "geometric_knee"
+    assert rule == "normalized_tchebycheff"
     assert selected == "A0_cfg_002"
-    knee_row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
-    assert knee_row["knee_distance"] == pytest.approx(
-        table.loc[table["is_pareto"], "knee_distance"].max()
+    selected_row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
+    assert selected_row["tchebycheff_max_shortfall"] == pytest.approx(
+        table.loc[table["is_pareto"], "tchebycheff_max_shortfall"].min()
     )
 
 
-def test_knee_tie_break_by_stability():
+def test_tchebycheff_tie_break_uses_total_shortfall():
     frame = pd.DataFrame(
         [
-            {"role": "B", "configuration_id": "B_cfg_001", "stability": 0.80, "dbcv_umap": 0.40},
-            {"role": "B", "configuration_id": "B_cfg_002", "stability": 0.90, "dbcv_umap": 0.20},
-            {"role": "B", "configuration_id": "B_cfg_003", "stability": 0.70, "dbcv_umap": 0.60},
+            {"role": "B", "configuration_id": "B_cfg_000", "stability": 1.00, "dbcv_umap": 0.00},
+            {"role": "B", "configuration_id": "B_cfg_001", "stability": 0.90, "dbcv_umap": 0.50},
+            {"role": "B", "configuration_id": "B_cfg_002", "stability": 0.50, "dbcv_umap": 0.80},
+            {"role": "B", "configuration_id": "B_cfg_003", "stability": 0.00, "dbcv_umap": 1.00},
         ]
     )
-    marked = pareto_knee.identify_pareto_front(frame)
-    pareto = marked.loc[marked["is_pareto"]].copy()
-    normalized = pareto_knee.normalize_pareto_objectives(pareto, role="B")
-    with_knee = pareto_knee.compute_geometric_knee(normalized)
-    with_knee["knee_distance"] = 0.25
-    selected_id = pareto_knee._select_knee_from_pareto(with_knee)
-    assert selected_id in {"B_cfg_001", "B_cfg_002", "B_cfg_003"}
+    table, selected_id, rule = pareto_knee.select_tchebycheff_configuration(frame)
+    assert rule == "normalized_tchebycheff"
+    assert selected_id == "B_cfg_001"
+    row = table.loc[table["configuration_id"].eq(selected_id)].iloc[0]
+    assert row["selection_tie_break"] == "total_normalized_shortfall"
 
 
 def test_normalize_handles_constant_objective():
@@ -111,7 +110,7 @@ def test_normalize_handles_constant_objective():
     )
     with pytest.warns(UserWarning, match="DBCV is constant"):
         normalized = pareto_knee.normalize_pareto_objectives(frame, role="C")
-    assert normalized["dbcv_normalized"].isna().all()
+    assert normalized["dbcv_normalized"].eq(1.0).all()
 
 
 def test_roles_with_multi_point_pareto_front():
@@ -122,7 +121,41 @@ def test_roles_with_multi_point_pareto_front():
     assert pareto_knee.roles_with_multi_point_pareto_front(tables) == ("A0",)
 
 
-def test_single_pareto_leaves_normalized_columns_nan():
+def test_pareto_figures_render_with_editable_labels():
+    candidates = pd.DataFrame(
+        [
+            {"role": "A0", "configuration_id": "A0_cfg_000", "stability": 0.95, "dbcv_umap": 0.10},
+            {"role": "A0", "configuration_id": "A0_cfg_001", "stability": 0.72, "dbcv_umap": 0.65},
+            {"role": "A0", "configuration_id": "A0_cfg_002", "stability": 0.40, "dbcv_umap": 0.90},
+            {"role": "A0", "configuration_id": "A0_cfg_003", "stability": 0.30, "dbcv_umap": 0.20},
+        ]
+    )
+    table, selected, _ = pareto_knee.select_tchebycheff_configuration(candidates)
+    assert selected == "A0_cfg_001"
+    tables = {"A0": table}
+    labels = {"dbcv_raw": "Structural validity", "stability_raw": "Reproducibility"}
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        output_dir = Path(temporary_directory)
+        pareto_knee.plot_pareto_raw(
+            tables,
+            output_dir,
+            roles=("A0",),
+            filename="raw.png",
+            role_labels={"A0": "Antecedents"},
+            axis_labels=labels,
+        )
+        pareto_knee.plot_pareto_normalized_tchebycheff(
+            tables,
+            output_dir,
+            roles=("A0",),
+            filename="normalized.png",
+            role_labels={"A0": "Antecedents"},
+        )
+        assert (output_dir / "raw.png").is_file()
+        assert (output_dir / "normalized.png").is_file()
+
+
+def test_single_pareto_skips_normalization_and_scalarization():
     frame = pd.DataFrame(
         [
             {"role": "B", "configuration_id": "B_cfg_001", "stability": 0.9, "dbcv_umap": 0.4},
@@ -130,17 +163,20 @@ def test_single_pareto_leaves_normalized_columns_nan():
         ]
     )
     marked = pareto_knee.identify_pareto_front(frame)
-    table, selected, rule = pareto_knee.select_knee_configuration(marked)
+    table, selected, rule = pareto_knee.select_tchebycheff_configuration(marked)
     assert rule == "single_pareto"
     row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
     assert pd.isna(row["stability_normalized"])
     assert pd.isna(row["dbcv_normalized"])
-    assert pd.isna(row["knee_distance"])
+    assert pd.isna(row["tchebycheff_max_shortfall"])
+    assert pd.isna(row["total_normalized_shortfall"])
 
 
-def test_projection_onto_reference_line():
-    x_h, y_h = pareto_knee.project_knee_to_reference_line(0.7, 0.8)
-    assert x_h + y_h == pytest.approx(1.0, abs=1e-12)
+def test_tchebycheff_scores_are_shortfalls_from_ideal():
+    frame = pd.DataFrame({"dbcv_normalized": [0.7], "stability_normalized": [0.8]})
+    scored = pareto_knee.compute_tchebycheff_scores(frame)
+    assert scored.loc[0, "tchebycheff_max_shortfall"] == pytest.approx(0.3)
+    assert scored.loc[0, "total_normalized_shortfall"] == pytest.approx(0.5)
 
 
 def test_selection_reproducible_under_row_shuffle():
@@ -157,6 +193,22 @@ def test_selection_reproducible_under_row_shuffle():
     assert selected_a == selected_b
 
 
+def test_final_tie_break_uses_predefined_grid_order():
+    frame = pd.DataFrame(
+        [
+            {"role": "A1", "configuration_id": "A1_cfg_010", "stability": 0.8, "dbcv_umap": 0.4},
+            {"role": "A1", "configuration_id": "A1_cfg_002", "stability": 0.8, "dbcv_umap": 0.4},
+        ]
+    )
+    table, selected, rule = pareto_knee.select_tchebycheff_configuration(
+        frame.sample(frac=1.0, random_state=3).reset_index(drop=True)
+    )
+    assert rule == "normalized_tchebycheff"
+    assert selected == "A1_cfg_002"
+    row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
+    assert row["selection_tie_break"] == "grid_order"
+
+
 def test_select_configuration_by_stability_legacy_alias():
     merged = pd.DataFrame(
         [
@@ -167,7 +219,7 @@ def test_select_configuration_by_stability_legacy_alias():
     )
     table, selected = pipeline.select_configuration_by_stability(merged)
     assert selected
-    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_knee"].iloc[0])
+    assert bool(table.loc[table["configuration_id"].eq(selected), "is_selected_tchebycheff"].iloc[0])
 
 
 def test_materialize_and_load_selected_configurations():
@@ -215,22 +267,22 @@ def test_materialize_and_load_selected_configurations():
         assert loaded[role] == "A0_cfg_001"
 
 
-def test_parameter_plan_has_thirty_six_configurations():
+def test_parameter_plan_has_seventy_two_configurations():
     config = {
         "screening": {
             "umap": {
-                "n_neighbors": [10, 20, 40],
+                "n_neighbors": [10, 20, 40, 80],
                 "n_components": [5, 10, 15],
                 "min_dist": [0.0],
             },
             "hdbscan": {
-                "min_cluster_size": [25, 50],
+                "min_cluster_size": [15, 25, 50],
                 "min_samples": [5, 10],
                 "cluster_selection_method": ["leaf"],
             },
         }
     }
-    assert len(pipeline.parameter_plan(config)) == 36
+    assert len(pipeline.parameter_plan(config)) == 72
 
 
 def test_resampling_tasks_use_fixed_primary_umap_seed():
@@ -314,7 +366,12 @@ def test_frozen_inputs_read_discovery_selected_paths():
                 for role in pipeline.ROLES
             ]
         ).to_csv(dictionary_dir / "topic_dictionary_with_llm_labels.csv", index=False)
-        config = {"bayesian_networks": {"min_theme_support_count": 2}}
+        config = {
+            "bayesian_networks": {
+                "include_all_retained_factors": False,
+                "min_theme_support_count": 2,
+            }
+        }
         matrix, included, excluded, roles = pipeline.build_frozen_bn_inputs(
             units,
             run_dir,

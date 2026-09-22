@@ -12,7 +12,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
             "Run recurrent-accident theme discovery with Pareto screening "
-            "and geometric knee-point selection."
+            "and normalized Tchebycheff reference-point selection."
         )
     )
     parser.add_argument(
@@ -36,7 +36,7 @@ def main() -> int:
         default="all",
         help=(
             "all = metrics+select+seed; metrics = DBCV/S_R only; "
-            "select = Pareto + geometric knee + materialize; "
+            "select = Pareto + normalized Tchebycheff + materialize; "
             "seed = UMAP seed sensitivity. "
             "evaluate is deprecated (alias for select)."
         ),

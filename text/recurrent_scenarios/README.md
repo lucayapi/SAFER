@@ -2,7 +2,7 @@
 
 Protocole dédié (indépendant de SCGM / contrastifs / BERTopic) :
 
-**unités annotées + embeddings Qwen figés → UMAP–HDBSCAN par rôle → \(S_R\) / DBCV → front Pareto → geometric knee point → seed sensitivity → labels LLM (notebook) → BN latent (\(Z\)) → MPE → `recurrent_scenarios.csv`.**
+**unités annotées + embeddings Qwen figés → UMAP–HDBSCAN par rôle → \(S_R\) / DBCV → front Pareto → Tchebycheff normalisé + tie-break → seed sensitivity → labels LLM (notebook) → BN latent (\(Z\)) → MPE → `recurrent_scenarios.csv`.**
 
 Corpus enregistrés : `btp`, `caou`, `metallurgie`.
 
@@ -10,7 +10,7 @@ Corpus enregistrés : `btp`, `caou`, `metallurgie`.
 
 | Étape | Outil | Rôle |
 |-------|--------|------|
-| 1. Discovery | `run_theme_discovery.py` (+ job Slurm) | Grille UMAP–HDBSCAN, DBCV, \(S_R\), front Pareto, sélection knee géométrique, sensibilité multi-seeds. |
+| 1. Discovery | `run_theme_discovery.py` (+ job Slurm) | Grille UMAP–HDBSCAN, DBCV, \(S_R\), front Pareto, sélection Tchebycheff normalisée, sensibilité multi-seeds. |
 | 2. Résultats / thèmes | `notebooks/topic_modeling_results_{corpus}.ipynb` | Affiche les artefacts figés, dictionnaire c-TF-IDF, labels LLM (sans rechoisir la config). |
 | 3. BN + scénarios | `notebooks/recurrent_scenarios_bn_analysis_{corpus}.ipynb` | BN global sans Z + mining empirique des scénarios récurrents. |
 
@@ -29,7 +29,7 @@ python recurrent_scenarios/build_scenario_mining_notebook.py
 
 ## Discovery (job / CLI)
 
-`config.yaml` est la source de vérité. Section `validation:` : resampling, front Pareto + **geometric knee point**, `seed_sensitivity`.
+`config.yaml` est la source de vérité. Section `validation:` : resampling, front Pareto + **Tchebycheff normalisé**, `seed_sensitivity`.
 
 Depuis `text/` :
 
@@ -67,12 +67,12 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 
 - Clustering indépendant par rôle sur embeddings figés L2-normalisés.
 - Screening multi-objectif : maximiser \(S_R\) et DBCV → **front Pareto** (dominance explicite).
-- Grille : \(3\times3\times2\times2 = 36\) configurations par rôle (`n_neighbors` ∈ {10,20,40}, `n_components` ∈ {5,10,15}, `min_cluster_size` ∈ {25,50}, `min_samples` ∈ {5,10}).
+- Grille : \(4\times3\times3\times2 = 72\) configurations par rôle (`n_neighbors` ∈ {10,20,40,80}, `n_components` ∈ {5,10,15}, `min_cluster_size` ∈ {15,25,50}, `min_samples` ∈ {5,10}).
 - \(S_R\) : sous-échantillonnage **accident-level** avec graine UMAP primaire \(s_0\) **fixe** pendant le resampling ; seule la sélection d'accidents varie par répétition.
 - Normalisation min–max des deux objectifs **à l'intérieur du front Pareto du rôle**.
-- Sélection du **geometric knee point** : distance perpendiculaire à la droite de référence \(D_{norm} + S_{norm} = 1\), orientée vers l'idéal \((1,1)\).
+- Sélection par **point de référence Tchebycheff normalisé** : minimisation de la plus grande insuffisance par rapport à l'idéal \((1,1)\), puis de la somme des insuffisances en cas d'égalité, puis ordre prédéfini de la grille.
 - Si le front a un seul point : sélection directe (`single_pareto`).
-- Tie-break knee : \(S_R\) brut → DBCV brut → `configuration_id` (déterministe).
+- Tie-break : minimum de la somme des insuffisances normalisées, puis ordre prédéfini de la grille (déterministe).
 - **Aucun LLM** dans le choix de configuration ; le LLM sert uniquement aux labels de clusters (notebook résultats).
 - Sensibilité multi-seeds UMAP après sélection (ne change pas \(c_r^\star\)).
 - BN : mélange contraint A0→A1→B→C avec famille latente \(Z\) (pas de preuve causale).
@@ -80,7 +80,7 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 ## Sorties principales du job
 
 - `audit_input_summary.csv`, `config_resolved.yaml`, `parallel_runtime.json`
-- `selected_configurations.csv` — une config par rôle (+ `selection_rule`, `knee_distance`, normalisations)
+- `selected_configurations.csv` — une config par rôle (+ `selection_rule`, `tchebycheff_max_shortfall`, `total_normalized_shortfall`, tie-break et normalisations)
 - `selected_configurations_summary.csv` — synthèse par rôle
 - `discovery/<role>/candidate_metrics.csv`, `stability_summary.csv`, `stability_theme.csv`
 - `discovery/<role>/pareto_front.csv`, `pareto_candidates.csv`, `selection_table.csv`
@@ -89,7 +89,7 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 - `discovery/<role>/seed_sensitivity/` — tables + figure (Jaccard vs $s_0$)
 - `tables/seed_sensitivity_summary_all_roles.csv` — Reference $K$ + plages ($K$, DBCV, unassigned, mean Jaccard)
 - `figures/stability_landscape_all_roles.png` — espace original (DBCV, \(S_R\)), 4 rôles, titres (a)–(d)
-- `figures/pareto_normalized_knee_all_roles.png` — espace normalisé + knee (rôles à front multi-points seulement, typ. A0/A1), titres de panneaux
+- `figures/pareto_normalized_tchebycheff_all_roles.png` — front normalisé + idéal + compromis retenu (rôles à front multi-points seulement), titres de panneaux
 - `figures/factor_resampling_A0.png`, `figures/factor_resampling_A1_B_C.png`
 - `figures/umap_seed_sensitivity_all_roles.png` — Jaccard seul vs seeds alternatifs, panneaux (a)–(d)
 - `figures/retained_factors_<role>.png` (A0, A1, B, C — notebook résultats)

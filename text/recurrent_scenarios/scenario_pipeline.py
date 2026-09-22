@@ -2,7 +2,7 @@
 
 Workflow:
 1. theme discovery — UMAP--HDBSCAN candidates per role, DBCV / ``S_R``;
-2. Pareto screening on (``S_R``, DBCV), then geometric knee-point selection;
+2. Pareto screening on (``S_R``, DBCV), then normalized Tchebycheff selection;
 3. UMAP seed sensitivity on the selected partition;
 4. topic dictionary / labels (results notebook) on the frozen partition;
 5. corpus-specific latent BN (Structural EM with ``Z``) and constrained MPE scenarios.
@@ -638,7 +638,7 @@ def _validation_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("resampling_fraction", 0.8)
     values.setdefault("n_resampling", 30)
     values.setdefault("dbcv_sample_size", None)
-    values.setdefault("selection_metric", "pareto_geometric_knee")
+    values.setdefault("selection_metric", "pareto_normalized_tchebycheff")
     values.setdefault("show_progress", True)
     seed_cfg = dict(values.get("seed_sensitivity") or {})
     seed_cfg.setdefault("enabled", True)
@@ -694,7 +694,26 @@ def evaluate_candidates(
     candidate_dir = role_dir / "candidate_partitions"
     candidate_dir.mkdir(parents=True, exist_ok=True)
     metrics_path = role_dir / "candidate_metrics.csv"
+    metadata_path = role_dir / "candidate_metadata.json"
     expected_random_state = int(validation_cfg["random_state"])
+    plan = parameter_plan(config)
+    candidate_signature = hashlib.sha256(
+        json.dumps(
+            {
+                "version": "discovery_candidates_v2_grid_signature",
+                "role": role,
+                "random_state": expected_random_state,
+                "parameter_plan": plan,
+            },
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    cached_metadata: dict[str, Any] = {}
+    if metadata_path.is_file():
+        try:
+            cached_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cached_metadata = {}
     if metrics_path.is_file() and not reestimate:
         cached = pd.read_csv(metrics_path)
         membership_files_present = all(
@@ -705,10 +724,15 @@ def evaluate_candidates(
             "random_state" in cached.columns
             and cached["random_state"].astype(int).eq(expected_random_state).all()
         )
-        if {"configuration_id", "dbcv_umap"}.issubset(cached.columns) and membership_files_present and cache_has_expected_seed:
+        cache_matches_grid = cached_metadata.get("signature") == candidate_signature
+        if (
+            {"configuration_id", "dbcv_umap"}.issubset(cached.columns)
+            and membership_files_present
+            and cache_has_expected_seed
+            and cache_matches_grid
+        ):
             _log_progress(f"[{role}] candidats: cache réutilisé ({metrics_path})")
             return cached.loc[:, ~cached.columns.str.contains("semantic", case=False)]
-    plan = parameter_plan(config)
     dbcv_sample_size = validation_cfg.get("dbcv_sample_size")
     tasks = [
         {
@@ -755,12 +779,15 @@ def evaluate_candidates(
     result = pd.DataFrame(rows)
     result.to_csv(metrics_path, index=False)
     _log_progress(f"[{role}] candidats: terminé ({len(result)} configurations)")
-    (role_dir / "candidate_metadata.json").write_text(
+    metadata_path.write_text(
         json.dumps({
-            "version": "discovery_candidates_v1_membership_strength",
+            "version": "discovery_candidates_v2_grid_signature",
             "role": role,
             "n_candidates": len(result),
             "n_workers": resolve_n_workers(config),
+            "signature": candidate_signature,
+            "random_state": expected_random_state,
+            "parameter_plan": plan,
         }, indent=2),
         encoding="utf-8",
     )
@@ -879,12 +906,20 @@ def evaluate_resampling_stability(
     n_repetitions = int(validation_cfg["n_resampling"])
     fraction = float(validation_cfg["resampling_fraction"])
     random_state = int(validation_cfg["random_state"])
+    candidate_columns = ["configuration_id", *[key for key in PARAMETER_KEYS if key in candidates.columns]]
+    candidate_signature = hashlib.sha256(
+        pd.util.hash_pandas_object(
+            candidates.loc[:, candidate_columns].reset_index(drop=True), index=True
+        ).to_numpy(dtype=np.uint64).tobytes()
+    ).hexdigest()
     stability_metadata_path = role_dir / "stability_metadata.json"
     expected_stability_metadata = {
-        "version": "mean_sr_observability_v2_fixed_umap_seed",
+        "version": "mean_sr_observability_v3_candidate_signature",
         "random_state": random_state,
         "n_repetitions": n_repetitions,
         "resampling_fraction": fraction,
+        "candidate_signature": candidate_signature,
+        "n_candidates": int(len(candidates)),
         "aggregation": "mean_over_observable_replicates",
         "umap_random_state_policy": "fixed_primary_seed_during_resampling",
     }
@@ -953,7 +988,7 @@ def evaluate_resampling_stability(
 
 
 def select_configuration_by_stability(merged: pd.DataFrame) -> tuple[pd.DataFrame, str]:
-    """Legacy alias: Pareto + geometric knee selection (returns table and selected id)."""
+    """Legacy alias: Pareto + Tchebycheff selection (returns table and selected id)."""
     table, selected_id, _rule = select_configuration_for_role(merged)
     return table, selected_id
 
@@ -962,14 +997,14 @@ def select_configuration_for_role(
     merged: pd.DataFrame,
     semantic_scores: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, str, str]:
-    """Select via Pareto front and geometric knee point (deterministic, no LLM).
+    """Select via Pareto front and normalized Tchebycheff compromise.
 
     Returns ``(table, selected_id, selection_rule)`` where ``selection_rule`` is
-    ``single_pareto`` or ``geometric_knee``.
+    ``single_pareto`` or ``normalized_tchebycheff``.
     """
-    from pareto_knee_selection import select_knee_configuration
+    from pareto_knee_selection import select_tchebycheff_configuration
 
-    return select_knee_configuration(merged)
+    return select_tchebycheff_configuration(merged)
 
 
 def materialize_selected_partition(
@@ -1056,29 +1091,55 @@ def write_stability_landscape_figure(
     *,
     roles: Sequence[str] | None = None,
     filename: str = "stability_landscape_all_roles.png",
+    role_labels: Mapping[str, str] | None = None,
+    axis_labels: Mapping[str, str] | None = None,
+    legend_labels: Mapping[str, str] | None = None,
+    colors: Mapping[str, str] | None = None,
 ) -> None:
-    """Scatter DBCV versus S_R with Pareto front and geometric knee (raw space)."""
+    """Scatter DBCV versus S_R with Pareto front and selected compromise."""
     from pareto_knee_selection import plot_pareto_raw
 
-    plot_pareto_raw(selection_tables, output_dir, roles=tuple(roles or ROLES), filename=filename)
-
-
-def write_pareto_normalized_knee_figure(
-    selection_tables: Mapping[str, pd.DataFrame],
-    output_dir: Path,
-    *,
-    roles: Sequence[str] | None = None,
-    filename: str = "pareto_normalized_knee_all_roles.png",
-) -> None:
-    """Normalized objective space with reference line and knee projection."""
-    from pareto_knee_selection import plot_pareto_normalized_with_knee
-
-    plot_pareto_normalized_with_knee(
+    plot_pareto_raw(
         selection_tables,
         output_dir,
         roles=tuple(roles or ROLES),
         filename=filename,
+        role_labels=role_labels,
+        axis_labels=axis_labels,
+        legend_labels=legend_labels,
+        colors=colors,
     )
+
+
+def write_pareto_normalized_tchebycheff_figure(
+    selection_tables: Mapping[str, pd.DataFrame],
+    output_dir: Path,
+    *,
+    roles: Sequence[str] | None = None,
+    filename: str = "pareto_normalized_tchebycheff_all_roles.png",
+    role_labels: Mapping[str, str] | None = None,
+    axis_labels: Mapping[str, str] | None = None,
+    legend_labels: Mapping[str, str] | None = None,
+    colors: Mapping[str, str] | None = None,
+) -> None:
+    """Normalized Pareto fronts, ideal point and selected compromise."""
+    from pareto_knee_selection import plot_pareto_normalized_tchebycheff
+
+    plot_pareto_normalized_tchebycheff(
+        selection_tables,
+        output_dir,
+        roles=tuple(roles or ROLES),
+        filename=filename,
+        role_labels=role_labels,
+        axis_labels=axis_labels,
+        legend_labels=legend_labels,
+        colors=colors,
+    )
+
+
+def write_pareto_normalized_knee_figure(*args, **kwargs) -> None:
+    """Compatibility alias for the former public function name."""
+    write_pareto_normalized_tchebycheff_figure(*args, **kwargs)
 
 
 def write_factor_stability_figure(
@@ -3234,11 +3295,11 @@ def run_theme_discovery(
     run_dir: Path | None = None,
     chat_completion: Callable[..., str] | None = None,
 ) -> Path:
-    """Run theme discovery with Pareto screening and geometric knee selection.
+    """Run theme discovery with Pareto screening and Tchebycheff selection.
 
     Stages:
     - ``metrics``: candidate DBCV and accident-level ``S_R``;
-    - ``select``: Pareto + geometric knee, materialize partitions, figures;
+    - ``select``: Pareto + normalized Tchebycheff, materialize partitions, figures;
     - ``seed``: UMAP seed sensitivity for selected configurations;
     - ``all``: metrics then select then seed.
 
@@ -3357,7 +3418,7 @@ def run_theme_discovery(
     if stage in {"all", "select"}:
         if prepared is None:
             prepared = prepare_data(config, output_base)
-        _log_progress("Sélection: front Pareto + geometric knee point")
+        _log_progress("Sélection: front Pareto + Tchebycheff normalisé + tie-break T1")
         selected_rows = []
         for role in ROLES:
             table, selected_id, rule = select_configuration_for_role(candidate_tables[role])
@@ -3386,7 +3447,9 @@ def run_theme_discovery(
                 "dbcv_umap": row.get("dbcv_umap"),
                 "stability_normalized": row.get("stability_normalized"),
                 "dbcv_normalized": row.get("dbcv_normalized"),
-                "knee_distance": row.get("knee_distance"),
+                "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
+                "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+                "selection_tie_break": row.get("selection_tie_break"),
                 "n_clusters": row.get("n_clusters"),
                 "noise_fraction": row.get("noise_fraction"),
                 "coverage": row.get("coverage"),
@@ -3395,7 +3458,9 @@ def run_theme_discovery(
             _log_progress(
                 f"[{role}] sélectionné {selected_id} via {rule} "
                 f"(S_R={row.get('stability')}, DBCV={row.get('dbcv_umap')}, "
-                f"knee={row.get('knee_distance')})"
+                f"T_inf={row.get('tchebycheff_max_shortfall')}, "
+                f"T_1={row.get('total_normalized_shortfall')}, "
+                f"tie_break={row.get('selection_tie_break')})"
             )
         selected_frame = pd.DataFrame(selected_rows)
         selected_frame.to_csv(output_base / "selected_configurations.csv", index=False)
@@ -3404,13 +3469,13 @@ def run_theme_discovery(
             index=False,
         )
         write_stability_landscape_figure(selection_tables, output_base / "figures")
-        write_pareto_normalized_knee_figure(selection_tables, output_base / "figures")
+        write_pareto_normalized_tchebycheff_figure(selection_tables, output_base / "figures")
         write_factor_resampling_manuscript_figures(theme_tables, selections, output_base / "figures")
         (output_base / "theme_discovery_manifest.json").write_text(
             json.dumps({
-                "version": "pareto_geometric_knee_seed_sensitivity_v1",
+                "version": "pareto_normalized_tchebycheff_seed_sensitivity_v1",
                 "dataset_id": config["data"].get("dataset_id"),
-                "selection_metric": "pareto_geometric_knee",
+                "selection_metric": "pareto_normalized_tchebycheff",
                 "selection_rules": selection_rules,
                 "selected_configurations": selections,
                 "n_workers": resolve_n_workers(config),
@@ -3482,6 +3547,7 @@ __all__ = [
     "materialize_selected_partition",
     "evaluate_seed_sensitivity",
     "write_stability_landscape_figure",
+    "write_pareto_normalized_tchebycheff_figure",
     "write_pareto_normalized_knee_figure",
     "write_factor_stability_figure",
     "write_factor_resampling_manuscript_figures",

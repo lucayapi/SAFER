@@ -25,8 +25,8 @@ cells = [
 
 This notebook discovers stable themes independently for `A0`, `A1`, `B` and `C`.
 Candidates are screened on the Pareto front of accident-level reproducibility `S_R`
-and UMAP-space DBCV. The geometric knee point on the normalized Pareto front
-selects the final partition (deterministic, no LLM in configuration choice).
+and UMAP-space DBCV. A normalized Tchebycheff reference-point rule selects the
+final partition, with total shortfall and grid order as deterministic tie-breaks.
 Seed sensitivity is run after selection.
 
 After this notebook (or the Slurm discovery job), open
@@ -74,7 +74,7 @@ from scenario_pipeline import (
     prepare_data,
     select_configuration_for_role,
     write_factor_resampling_manuscript_figures,
-    write_pareto_normalized_knee_figure,
+    write_pareto_normalized_tchebycheff_figure,
     write_stability_landscape_figure,
     write_umap_seed_sensitivity_all_roles_figure,
 )
@@ -118,7 +118,7 @@ print("Reestimate:", REESTIMATE)
     code(
         """
 UMAP_PARAMETERS = {
-    "n_neighbors": [10, 20, 40],
+    "n_neighbors": [10, 20, 40, 80],
     "n_components": [5, 10, 15],
     "min_dist": [0.0],
     "metric": "cosine",
@@ -126,7 +126,7 @@ UMAP_PARAMETERS = {
     "n_jobs": 1,
 }
 HDBSCAN_PARAMETERS = {
-    "min_cluster_size": [25, 50],
+    "min_cluster_size": [15, 25, 50],
     "min_samples": [5, 10],
     "cluster_selection_method": ["leaf"],
     "metric": "euclidean",
@@ -172,7 +172,7 @@ config = {
         "n_resampling": N_RESAMPLING,
         "resampling_fraction": RESAMPLING_FRACTION,
         "dbcv_sample_size": DBCV_SAMPLE_SIZE,
-        "selection_metric": "pareto_geometric_knee",
+        "selection_metric": "pareto_normalized_tchebycheff",
         "show_progress": SHOW_PROGRESS,
         "seed_sensitivity": {"enabled": True, "seeds": SEED_SENSITIVITY_SEEDS},
     },
@@ -231,8 +231,9 @@ selections[role] = selected_id
 materialize_selected_partition(role, prepared.units, selected_id, RUN_DIR, theme_stability[role])
 print_role_selection_summary(role, selection_tables[role], selected_id=selected_id)
 cols = [c for c in [
-    "configuration_id", "stability", "dbcv_umap", "is_pareto", "is_selected_knee",
-    "stability_normalized", "dbcv_normalized", "knee_distance",
+    "configuration_id", "stability", "dbcv_umap", "is_pareto", "is_selected_tchebycheff",
+    "stability_normalized", "dbcv_normalized", "tchebycheff_max_shortfall",
+    "total_normalized_shortfall", "selection_tie_break",
     "n_clusters", "noise_fraction", "coverage",
 ] if c in selection_tables[role].columns]
 display(selection_tables[role].sort_values(["is_pareto", "dbcv_umap", "stability"], ascending=[False, True, False])[cols].head(12))
@@ -245,24 +246,65 @@ cells.extend([
     markdown("## 5. Pareto figures and seed sensitivity"),
     code(
         """
-write_stability_landscape_figure(selection_tables, RUN_DIR / "figures")
-write_pareto_normalized_knee_figure(selection_tables, RUN_DIR / "figures")
+ROLE_LABELS = {
+    "A0": "A0 – Work context",
+    "A1": "A1 – Adverse condition",
+    "B": "B – Event/deviation",
+    "C": "C – Consequence",
+}
+AXIS_LABELS = {
+    "dbcv_raw": "DBCV",
+    "stability_raw": r"$S_R$",
+    "dbcv_normalized": r"Normalized DBCV ($\\widetilde{D}$)",
+    "stability_normalized": r"Normalized $S_R$ ($\\widetilde{S}$)",
+}
+LEGEND_LABELS = {
+    "candidates": "Candidate configurations",
+    "pareto": "Pareto-optimal configurations",
+    "selected": "Selected configuration",
+    "ideal": "Ideal point (1, 1)",
+}
+PLOT_COLORS = {
+    "candidates": "#757575",
+    "pareto": "#1f77b4",
+    "selected": "#d62728",
+    "ideal": "#333333",
+}
+
+write_stability_landscape_figure(
+    selection_tables,
+    RUN_DIR / "figures",
+    role_labels=ROLE_LABELS,
+    axis_labels=AXIS_LABELS,
+    legend_labels=LEGEND_LABELS,
+    colors=PLOT_COLORS,
+)
+write_pareto_normalized_tchebycheff_figure(
+    selection_tables,
+    RUN_DIR / "figures",
+    role_labels=ROLE_LABELS,
+    axis_labels=AXIS_LABELS,
+    legend_labels=LEGEND_LABELS,
+    colors=PLOT_COLORS,
+)
 write_factor_resampling_manuscript_figures(theme_stability, selections, RUN_DIR / "figures")
 display(Image(filename=str(RUN_DIR / "figures" / "stability_landscape_all_roles.png")))
-display(Image(filename=str(RUN_DIR / "figures" / "pareto_normalized_knee_all_roles.png")))
+display(Image(filename=str(RUN_DIR / "figures" / "pareto_normalized_tchebycheff_all_roles.png")))
 display(Image(filename=str(RUN_DIR / "figures" / "factor_resampling_A0.png")))
 selected_rows = []
 for role in ROLES:
-    row = selection_tables[role].loc[selection_tables[role]["is_selected_knee"]].iloc[0]
+    row = selection_tables[role].loc[selection_tables[role]["is_selected_tchebycheff"]].iloc[0]
     selected_rows.append({
         "role": role,
         "configuration_id": selections[role],
-        "selection_rule": "geometric_knee" if int(selection_tables[role]["is_pareto"].sum()) > 1 else "single_pareto",
+        "selection_rule": "normalized_tchebycheff" if int(selection_tables[role]["is_pareto"].sum()) > 1 else "single_pareto",
         "stability": row["stability"],
         "dbcv_umap": row["dbcv_umap"],
         "stability_normalized": row.get("stability_normalized"),
         "dbcv_normalized": row.get("dbcv_normalized"),
-        "knee_distance": row.get("knee_distance"),
+        "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
+        "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+        "selection_tie_break": row.get("selection_tie_break"),
         "n_clusters": row["n_clusters"],
         "noise_fraction": row["noise_fraction"],
         "coverage": row["coverage"],
