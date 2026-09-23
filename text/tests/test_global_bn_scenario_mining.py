@@ -10,7 +10,12 @@ sys.path.insert(0, "text/recurrent_scenarios")
 
 import global_bn
 import scenario_mining
-from scenario_pipeline import StructuralEMResult, _edge_conditional_contrast_signed, _edge_conditional_strength
+from scenario_pipeline import (
+    StructuralEMResult,
+    _edge_conditional_contrast_signed,
+    _edge_conditional_contrast_strata,
+    _edge_conditional_strength,
+)
 
 
 def _toy_matrix() -> tuple[pd.DataFrame, dict[str, str], pd.DataFrame]:
@@ -38,6 +43,8 @@ def _toy_matrix() -> tuple[pd.DataFrame, dict[str, str], pd.DataFrame]:
 
 def _toy_result(roles: dict[str, str], n_rows: int = 8) -> StructuralEMResult:
     nodes = list(roles)
+    matrix, _, _ = _toy_matrix()
+    observed_data = matrix[nodes].to_numpy(dtype=np.int8)
     edges = [("A0__T01", "B__T01"), ("B__T01", "C__T01")]
     downstream = {
         ("B__T01", (1,)): 0.8,
@@ -48,6 +55,7 @@ def _toy_result(roles: dict[str, str], n_rows: int = 8) -> StructuralEMResult:
     return StructuralEMResult(
         nodes, roles, edges, 1, np.array([1.0]), np.ones((n_rows, 1)),
         {}, downstream, 0.0, 0.0, 1, True, 0, "empty", None, [], 0.0, 0.0, True, 0, 0,
+        observed_data=observed_data,
     )
 
 
@@ -58,6 +66,72 @@ def test_signed_conditional_contrast():
     strength = _edge_conditional_strength(result, "B__T01", "C__T01")
     assert signed > 0
     assert abs(strength - abs(signed)) < 1e-12
+
+
+def test_conditional_contrast_excludes_unobserved_parent_strata():
+    nodes = ["P", "Q", "Y"]
+    roles = {"P": "A0", "Q": "A1", "Y": "B"}
+    # Q=1, P=1 is never observed. Its conventional CPT value must not enter
+    # the mean contrast.
+    observed_data = np.array([
+        [0, 0, 0],
+        [1, 0, 1],
+        [0, 1, 1],
+    ], dtype=np.int8)
+    result = StructuralEMResult(
+        nodes,
+        roles,
+        [("P", "Y"), ("Q", "Y")],
+        1,
+        np.array([1.0]),
+        np.ones((len(observed_data), 1)),
+        {},
+        {
+            ("Y", (0, 0)): 0.2,
+            ("Y", (1, 0)): 0.8,
+            ("Y", (0, 1)): 0.9,
+            ("Y", (1, 1)): 0.5,
+        },
+        0.0,
+        0.0,
+        1,
+        True,
+        0,
+        "empty",
+        observed_data=observed_data,
+    )
+    strata = _edge_conditional_contrast_strata(result, "P", "Y")
+    assert list(strata["estimable"]) == [True, False]
+    assert np.isnan(strata.loc[1, "conditional_contrast"])
+    assert _edge_conditional_contrast_signed(result, "P", "Y") == pytest.approx(0.6)
+
+
+def test_global_bn_edge_export_includes_contrast_estimability_audit():
+    matrix, roles, _ = _toy_matrix()
+    result = _toy_result(roles)
+    with tempfile.TemporaryDirectory(dir="text") as temporary_directory:
+        output_dir = Path(temporary_directory)
+        edges = global_bn.write_global_bn_edges(
+            result,
+            matrix,
+            {},
+            roles,
+            None,
+            output_dir,
+        )
+        strata_path = output_dir / "global_bn_edge_contrast_strata.csv"
+        assert strata_path.is_file()
+        strata = pd.read_csv(strata_path)
+        assert {
+            "n_parent_0",
+            "n_parent_1",
+            "estimable",
+            "conditional_contrast",
+        }.issubset(strata.columns)
+        assert {
+            "conditional_contrast_n_estimable_strata",
+            "conditional_contrast_n_total_strata",
+        }.issubset(edges.columns)
 
 
 def test_global_bn_fit_no_latent():

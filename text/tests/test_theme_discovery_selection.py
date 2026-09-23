@@ -83,6 +83,7 @@ def test_normalized_tchebycheff_selects_compromise():
     assert selected_row["tchebycheff_max_shortfall"] == pytest.approx(
         table.loc[table["is_pareto"], "tchebycheff_max_shortfall"].min()
     )
+    assert selected_row["selection_tie_break"] == "not_required"
 
 
 def test_tchebycheff_tie_break_uses_total_shortfall():
@@ -99,6 +100,22 @@ def test_tchebycheff_tie_break_uses_total_shortfall():
     assert selected_id == "B_cfg_001"
     row = table.loc[table["configuration_id"].eq(selected_id)].iloc[0]
     assert row["selection_tie_break"] == "total_normalized_shortfall"
+    assert not table["is_stability_tie_break_candidate"].any()
+
+
+def test_tchebycheff_tie_break_uses_max_stability_before_configuration_order():
+    frame = pd.DataFrame(
+        [
+            {"role": "B", "configuration_id": "B_cfg_010", "stability": 0.8, "dbcv_umap": 0.2},
+            {"role": "B", "configuration_id": "B_cfg_002", "stability": 0.2, "dbcv_umap": 0.8},
+        ]
+    )
+    table, selected_id, rule = pareto_knee.select_tchebycheff_configuration(frame)
+    assert rule == "normalized_tchebycheff"
+    assert selected_id == "B_cfg_010"
+    assert table["is_stability_tie_break_candidate"].all()
+    row = table.loc[table["configuration_id"].eq(selected_id)].iloc[0]
+    assert row["selection_tie_break"] == "max_stability"
 
 
 def test_normalize_handles_constant_objective():
@@ -193,7 +210,7 @@ def test_selection_reproducible_under_row_shuffle():
     assert selected_a == selected_b
 
 
-def test_final_tie_break_uses_predefined_grid_order():
+def test_final_tie_break_uses_configuration_order_only_after_stability_tie():
     frame = pd.DataFrame(
         [
             {"role": "A1", "configuration_id": "A1_cfg_010", "stability": 0.8, "dbcv_umap": 0.4},
@@ -205,8 +222,23 @@ def test_final_tie_break_uses_predefined_grid_order():
     )
     assert rule == "normalized_tchebycheff"
     assert selected == "A1_cfg_002"
+    assert table["is_stability_tie_break_candidate"].all()
     row = table.loc[table["configuration_id"].eq(selected)].iloc[0]
-    assert row["selection_tie_break"] == "grid_order"
+    assert row["selection_tie_break"] == "configuration_order_after_stability"
+
+
+def test_stability_tie_break_is_stable_under_row_shuffle():
+    frame = pd.DataFrame(
+        [
+            {"role": "A1", "configuration_id": "A1_cfg_010", "stability": 0.8, "dbcv_umap": 0.2},
+            {"role": "A1", "configuration_id": "A1_cfg_002", "stability": 0.2, "dbcv_umap": 0.8},
+        ]
+    )
+    _, selected_a, _ = pareto_knee.select_tchebycheff_configuration(frame)
+    _, selected_b, _ = pareto_knee.select_tchebycheff_configuration(
+        frame.sample(frac=1.0, random_state=11).reset_index(drop=True)
+    )
+    assert selected_a == selected_b == "A1_cfg_010"
 
 
 def test_select_configuration_by_stability_legacy_alias():

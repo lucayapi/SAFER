@@ -70,9 +70,9 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 - Grille : \(4\times3\times3\times2 = 72\) configurations par rôle (`n_neighbors` ∈ {10,20,40,80}, `n_components` ∈ {5,10,15}, `min_cluster_size` ∈ {15,25,50}, `min_samples` ∈ {5,10}).
 - \(S_R\) : sous-échantillonnage **accident-level** avec graine UMAP primaire \(s_0\) **fixe** pendant le resampling ; seule la sélection d'accidents varie par répétition.
 - Normalisation min–max des deux objectifs **à l'intérieur du front Pareto du rôle**.
-- Sélection par **point de référence Tchebycheff normalisé** : minimisation de la plus grande insuffisance par rapport à l'idéal \((1,1)\), puis de la somme des insuffisances en cas d'égalité, puis ordre prédéfini de la grille.
+- Sélection par **point de référence Tchebycheff normalisé** : minimisation de la plus grande insuffisance par rapport à l'idéal \((1,1)\), puis de la somme des insuffisances en cas d'égalité, puis maximisation de la reproductibilité brute \(S_R\).
 - Si le front a un seul point : sélection directe (`single_pareto`).
-- Tie-break : minimum de la somme des insuffisances normalisées, puis ordre prédéfini de la grille (déterministe).
+- Tie-break : \(\min T_\infty \rightarrow \min T_1 \rightarrow \max S_R\). L'ordre prédéfini des configurations intervient uniquement si une égalité numérique subsiste sur les trois critères (`rtol=0`, `atol=1e-12`).
 - **Aucun LLM** dans le choix de configuration ; le LLM sert uniquement aux labels de clusters (notebook résultats).
 - Sensibilité multi-seeds UMAP après sélection (ne change pas \(c_r^\star\)).
 - BN : mélange contraint A0→A1→B→C avec famille latente \(Z\) (pas de preuve causale).
@@ -80,10 +80,10 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 ## Sorties principales du job
 
 - `audit_input_summary.csv`, `config_resolved.yaml`, `parallel_runtime.json`
-- `selected_configurations.csv` — une config par rôle (+ `selection_rule`, `tchebycheff_max_shortfall`, `total_normalized_shortfall`, tie-break et normalisations)
+- `selected_configurations.csv` — une config par rôle (+ `selection_rule`, `tchebycheff_max_shortfall`, `total_normalized_shortfall`, candidat au tie-break par \(S_R\), tie-break et normalisations)
 - `selected_configurations_summary.csv` — synthèse par rôle
 - `discovery/<role>/candidate_metrics.csv`, `stability_summary.csv`, `stability_theme.csv`
-- `discovery/<role>/pareto_front.csv`, `pareto_candidates.csv`, `selection_table.csv`
+- `discovery/<role>/pareto_front.csv`, `pareto_candidates.csv`, `selection_table.csv` — inclut `is_stability_tie_break_candidate` pour auditer les configurations arrivées au tie-break par \(S_R\)
 - `discovery/<role>/candidate_partitions/*.npy`
 - `discovery/<role>/selected/` — partition figée
 - `discovery/<role>/seed_sensitivity/` — tables + figure (Jaccard vs $s_0$)
@@ -98,6 +98,8 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 Après notebook résultats : `topics_manual/…`
 
 Après notebook BN : `bayesian_networks/` — matrice multi-hot, `input_summary.csv`, `factor_prevalence.csv`, sélection K (`K_selection_summary.csv`), profils familles, `recurrent_scenarios.csv`, `recurrent_scenarios_article.csv`, `mpe_ranked_solutions.csv`, `scenario_prototypes.csv`, `bn_diagnostic_summary.json`, figures sous `bayesian_networks/figures/`. **0 = facteur non observé** dans le récit ; arcs BN = dépendances probabilistes, pas causalité démontrée.
+
+Pour le BN global, `global_bn_edge_contrast_strata.csv` documente les effectifs de chaque strate parentale. Une strate ne contribue au contraste que si les deux états du parent comparé y sont observés ; les cellules conventionnelles à 0,5 sont exclues.
 
 ## Hors scope
 

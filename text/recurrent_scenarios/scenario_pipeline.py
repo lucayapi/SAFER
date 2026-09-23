@@ -1077,7 +1077,7 @@ def materialize_selected_partition(
     pd.DataFrame(topic_rows).to_csv(selected_dir / "topics.csv", index=False)
     (selected_dir / "selection_metadata.json").write_text(
         json.dumps({
-            "version": "pareto_knee_selected_partition_v1",
+            "version": "pareto_tchebycheff_stability_tiebreak_selected_partition_v2",
             "role": role,
             "configuration_id": configuration_id,
         }, indent=2),
@@ -1549,6 +1549,10 @@ class StructuralEMResult:
     same_graph: bool = False
     edges_added_last: int = 0
     edges_removed_last: int = 0
+    # Binary accident-factor matrix used to determine which conditional
+    # contrasts are empirically estimable. Kept out of the CPT keys so that an
+    # unobserved parent configuration can never be mistaken for an estimate.
+    observed_data: np.ndarray | None = None
 
     @property
     def parent_map(self) -> dict[str, list[str]]:
@@ -2099,6 +2103,7 @@ def _fit_bn_k1(
         converged, seed, initialization, None, iteration_history,
         last_loglik_delta, relative_loglik_delta, same_graph,
         edges_added_last, edges_removed_last,
+        observed_data=np.asarray(data, dtype=np.int8).copy(),
     )
 
 
@@ -2182,6 +2187,7 @@ def _fit_structural_em_initialization(
         converged, seed, initialization, None, iteration_history,
         last_loglik_delta, relative_loglik_delta, same_graph,
         edges_added_last, edges_removed_last,
+        observed_data=np.asarray(data, dtype=np.int8).copy(),
     )
 
 
@@ -2526,6 +2532,7 @@ def finalize_latent_bn(result: StructuralEMResult, matrix: pd.DataFrame, roles: 
         result.initialization, None, result.iteration_history,
         result.last_loglik_delta, result.relative_loglik_delta,
         result.same_graph, result.edges_added_last, result.edges_removed_last,
+        observed_data=np.asarray(data, dtype=np.int8).copy(),
     )
     final.model = _build_pgmpy_model(final, smooth=False, alpha=alpha, latent_scope=latent_scope)
     return final
@@ -3043,20 +3050,56 @@ def _short_semantic_label(label: str, max_length: int = 32) -> str:
     return text if len(text) <= max_length else text[: max_length - 1].rstrip() + "…"
 
 
-def _edge_conditional_contrast_signed(result: StructuralEMResult, parent: str, child: str) -> float:
-    """Mean signed contrast: P(child=1|parent=1,…) − P(child=1|parent=0,…) averaged over other parents."""
+def _edge_conditional_contrast_strata(
+    result: StructuralEMResult,
+    parent: str,
+    child: str,
+    *,
+    min_cell_count: int = 1,
+) -> pd.DataFrame:
+    """Return empirical-support diagnostics for one edge contrast.
+
+    A stratum is defined by a joint configuration of the child's other
+    parents. Its contrast is estimable only when at least ``min_cell_count``
+    accidents are observed for both ``parent=0`` and ``parent=1``. CPT
+    conventions attached to empty cells (currently 0.5) are never used in an
+    estimable contrast.
+    """
+    if min_cell_count < 1:
+        raise ValueError("min_cell_count must be >= 1")
+    if result.observed_data is None:
+        raise ValueError(
+            "Conditional contrasts require the observed accident-factor matrix; "
+            "the fitted result does not contain observed_data."
+        )
+    data = np.asarray(result.observed_data)
+    if data.ndim != 2 or data.shape[1] != len(result.nodes):
+        raise ValueError(
+            "observed_data must be a two-dimensional matrix aligned with result.nodes"
+        )
+    if parent not in result.nodes or child not in result.nodes:
+        raise KeyError(f"Unknown edge endpoints: {parent!r} -> {child!r}")
     parents = _bn_parent_map(result.nodes, result.edges)[child]
+    if parent not in parents:
+        raise ValueError(f"{parent!r} is not a parent of {child!r} in the fitted graph")
+    node_index = {node: index for index, node in enumerate(result.nodes)}
     parent_position = parents.index(parent)
-    contrasts = []
     other_positions = [index for index in range(len(parents)) if index != parent_position]
+    other_parents = [parents[index] for index in other_positions]
+    rows: list[dict[str, Any]] = []
     for other_values in itertools.product((0, 1), repeat=len(other_positions)):
         parent_values = [0] * len(parents)
         for index, value in zip(other_positions, other_values):
             parent_values[index] = value
-        probabilities = []
+        counts: list[int] = []
+        probabilities: list[float] = []
         for parent_value in (0, 1):
             parent_values[parent_position] = parent_value
             key_values = tuple(parent_values)
+            mask = np.ones(len(data), dtype=bool)
+            for parent_node, value in zip(parents, key_values):
+                mask &= data[:, node_index[parent_node]].astype(int) == int(value)
+            counts.append(int(mask.sum()))
             if result.roles[child] in {"A0", "A1"}:
                 probability = sum(
                     float(result.weights[state])
@@ -3066,13 +3109,58 @@ def _edge_conditional_contrast_signed(result: StructuralEMResult, parent: str, c
             else:
                 probability = float(result.downstream_probabilities.get((child, key_values), 0.5))
             probabilities.append(probability)
-        contrasts.append(probabilities[1] - probabilities[0])
-    return float(np.mean(contrasts)) if contrasts else 0.0
+        estimable = counts[0] >= min_cell_count and counts[1] >= min_cell_count
+        rows.append({
+            "parent_factor": parent,
+            "child_factor": child,
+            "other_parent_configuration": " | ".join(
+                f"{node}={value}" for node, value in zip(other_parents, other_values)
+            ),
+            "n_parent_0": counts[0],
+            "n_parent_1": counts[1],
+            "min_cell_count_required": int(min_cell_count),
+            "estimable": bool(estimable),
+            "probability_child_1_parent_0": probabilities[0] if estimable else np.nan,
+            "probability_child_1_parent_1": probabilities[1] if estimable else np.nan,
+            "conditional_contrast": probabilities[1] - probabilities[0] if estimable else np.nan,
+        })
+    return pd.DataFrame(rows)
 
 
-def _edge_conditional_strength(result: StructuralEMResult, parent: str, child: str) -> float:
-    """Legacy alias: absolute mean conditional contrast (magnitude only)."""
-    return abs(_edge_conditional_contrast_signed(result, parent, child))
+def _edge_conditional_contrast_signed(
+    result: StructuralEMResult,
+    parent: str,
+    child: str,
+    *,
+    min_cell_count: int = 1,
+) -> float:
+    """Mean signed contrast over empirically estimable parent strata only."""
+    strata = _edge_conditional_contrast_strata(
+        result,
+        parent,
+        child,
+        min_cell_count=min_cell_count,
+    )
+    estimable = strata.loc[strata["estimable"], "conditional_contrast"].dropna()
+    return float(estimable.mean()) if not estimable.empty else float("nan")
+
+
+def _edge_conditional_strength(
+    result: StructuralEMResult,
+    parent: str,
+    child: str,
+    *,
+    min_cell_count: int = 1,
+) -> float:
+    """Absolute estimable conditional contrast (magnitude only)."""
+    return abs(
+        _edge_conditional_contrast_signed(
+            result,
+            parent,
+            child,
+            min_cell_count=min_cell_count,
+        )
+    )
 
 
 def _write_conceptual_bn_architecture(output_dir: Path) -> None:
@@ -3120,7 +3208,9 @@ def _write_simplified_learned_bn_graph(result: StructuralEMResult, label_map: Ma
     graph.add_nodes_from(result.nodes)
     graph.add_edges_from(result.edges)
     strengths = {(parent, child): _edge_conditional_strength(result, parent, child) for parent, child in result.edges}
-    max_strength = max(strengths.values(), default=1.0)
+    finite_strengths = [value for value in strengths.values() if np.isfinite(value)]
+    max_strength = max(finite_strengths, default=1.0)
+    max_strength = max(max_strength, np.finfo(float).eps)
     positions = {}
     for role_index, role in enumerate(ROLES):
         role_nodes = [node for node in result.nodes if result.roles[node] == role]
@@ -3146,7 +3236,12 @@ def _write_simplified_learned_bn_graph(result: StructuralEMResult, label_map: Ma
         arrows=True,
         arrowsize=16,
         edge_color="#555555",
-        width=[1.0 + 4.0 * strengths[edge] / max_strength for edge in graph.edges],
+        width=[
+            1.0 + 4.0 * strengths[edge] / max_strength
+            if np.isfinite(strengths[edge])
+            else 1.0
+            for edge in graph.edges
+        ],
         connectionstyle="arc3,rad=0.03",
     )
     axis.set_title("Réseau appris simplifié — arcs observés entre facteurs")
@@ -3418,7 +3513,10 @@ def run_theme_discovery(
     if stage in {"all", "select"}:
         if prepared is None:
             prepared = prepare_data(config, output_base)
-        _log_progress("Sélection: front Pareto + Tchebycheff normalisé + tie-break T1")
+        _log_progress(
+            "Sélection: front Pareto + Tchebycheff normalisé "
+            "+ tie-break T1, puis S_R, puis ordre des configurations"
+        )
         selected_rows = []
         for role in ROLES:
             table, selected_id, rule = select_configuration_for_role(candidate_tables[role])
@@ -3449,6 +3547,9 @@ def run_theme_discovery(
                 "dbcv_normalized": row.get("dbcv_normalized"),
                 "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
                 "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+                "is_stability_tie_break_candidate": row.get(
+                    "is_stability_tie_break_candidate", False
+                ),
                 "selection_tie_break": row.get("selection_tie_break"),
                 "n_clusters": row.get("n_clusters"),
                 "noise_fraction": row.get("noise_fraction"),
@@ -3473,9 +3574,15 @@ def run_theme_discovery(
         write_factor_resampling_manuscript_figures(theme_tables, selections, output_base / "figures")
         (output_base / "theme_discovery_manifest.json").write_text(
             json.dumps({
-                "version": "pareto_normalized_tchebycheff_seed_sensitivity_v1",
+                "version": "pareto_normalized_tchebycheff_stability_tiebreak_v2",
                 "dataset_id": config["data"].get("dataset_id"),
                 "selection_metric": "pareto_normalized_tchebycheff",
+                "selection_tie_break_order": [
+                    "tchebycheff_max_shortfall",
+                    "total_normalized_shortfall",
+                    "max_stability",
+                    "configuration_order_after_stability",
+                ],
                 "selection_rules": selection_rules,
                 "selected_configurations": selections,
                 "n_workers": resolve_n_workers(config),

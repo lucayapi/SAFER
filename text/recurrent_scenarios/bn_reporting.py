@@ -772,7 +772,11 @@ def run_structure_bootstrap(
             edge_strengths.setdefault(edge, []).append(strength)
     rows = []
     for (parent, child), count in sorted(edge_counts.items()):
-        strengths = edge_strengths.get((parent, child), [0.0])
+        strengths = [
+            value
+            for value in edge_strengths.get((parent, child), [])
+            if np.isfinite(value)
+        ]
         rows.append({
             "parent": parent,
             "child": child,
@@ -782,8 +786,8 @@ def run_structure_bootstrap(
             "child_label": label_map.get(child, child),
             "selection_count": count,
             "selection_frequency": count / n_resamples,
-            "mean_conditional_strength": float(np.mean(strengths)),
-            "median_conditional_strength": float(np.median(strengths)),
+            "mean_conditional_strength": float(np.mean(strengths)) if strengths else np.nan,
+            "median_conditional_strength": float(np.median(strengths)) if strengths else np.nan,
         })
     frame = pd.DataFrame(rows)
     output_dir.mkdir(parents=True, exist_ok=True)

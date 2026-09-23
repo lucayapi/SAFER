@@ -342,8 +342,9 @@ else:
 
 Normalized scores are computed on the Pareto set only. $T_\\infty$ is the
 largest normalized shortfall from the ideal point `(1, 1)`. Ties are resolved
-by $T_1$, then by the predefined grid order. **Selected = Yes** marks the
-retained configuration.
+by $T_1$, then by maximum raw $S_R$, and finally by the predefined
+configuration order only if the equality remains. **Selected = Yes** marks
+the retained configuration.
         """
     ),
     code(
@@ -371,6 +372,7 @@ if selected_path.is_file():
             "stability", "dbcv_umap",
             "stability_normalized", "dbcv_normalized",
             "tchebycheff_max_shortfall", "total_normalized_shortfall",
+            "is_stability_tie_break_candidate",
             "selection_tie_break",
             "n_clusters", "noise_fraction",
         ]

@@ -223,7 +223,11 @@ def render_global_bn_stable_dependencies(
     edges = [
         ((parent, child), frequency, signed_lookup[(parent, child)])
         for (parent, child), frequency in freq_lookup.items()
-        if frequency >= threshold and (parent, child) in reference_edges
+        if (
+            frequency >= threshold
+            and (parent, child) in reference_edges
+            and np.isfinite(signed_lookup.get((parent, child), np.nan))
+        )
     ]
     edges.sort(key=lambda item: item[1], reverse=True)
 
@@ -402,7 +406,7 @@ def render_global_bn_stable_dependencies(
         axis.text(
             0.5,
             0.5,
-            f"No stable edge ≥ {threshold:.2f}",
+            f"No stable edge with estimable contrast ≥ {threshold:.2f}",
             transform=axis.transAxes,
             ha="center",
             va="center",

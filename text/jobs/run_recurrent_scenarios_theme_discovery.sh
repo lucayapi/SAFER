@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Theme discovery with Pareto screening, normalized Tchebycheff selection, and UMAP seed sensitivity.
+# Theme discovery with Pareto screening, normalized Tchebycheff selection,
+# T_1 -> S_R -> configuration-order tie-breaks, and UMAP seed sensitivity.
 #
 # Usage from text/:
 #   DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh

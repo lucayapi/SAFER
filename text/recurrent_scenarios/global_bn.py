@@ -19,8 +19,7 @@ from scenario_pipeline import (
     _bn_mle_parameters,
     _bn_parameter_count,
     _bn_parent_map,
-    _edge_conditional_contrast_signed,
-    _edge_conditional_strength,
+    _edge_conditional_contrast_strata,
     _fit_bn_k1,
     _latent_scope,
     _theme_label_map,
@@ -105,11 +104,19 @@ def write_global_bn_edges(
         }
     prevalence = {node: float(data[:, index].mean()) for index, node in enumerate(nodes)}
     rows = []
+    contrast_strata = []
     for parent, child in result.edges:
         parent_index = nodes.index(parent)
         child_index = nodes.index(child)
         joint = int((data[:, parent_index] & data[:, child_index]).sum())
-        signed = _edge_conditional_contrast_signed(result, parent, child)
+        strata = _edge_conditional_contrast_strata(result, parent, child)
+        contrast_strata.append(strata)
+        estimable_strata = strata.loc[strata["estimable"]]
+        signed = (
+            float(estimable_strata["conditional_contrast"].mean())
+            if not estimable_strata.empty
+            else float("nan")
+        )
         rows.append({
             "parent_factor": parent,
             "parent_label": label_map.get(parent, parent),
@@ -120,6 +127,14 @@ def write_global_bn_edges(
             "bootstrap_frequency": freq_lookup.get((parent, child), np.nan),
             "conditional_contrast_signed": signed,
             "conditional_contrast_abs": abs(signed),
+            "conditional_contrast_n_estimable_strata": int(strata["estimable"].sum()),
+            "conditional_contrast_n_total_strata": int(len(strata)),
+            "conditional_contrast_estimable_fraction": float(strata["estimable"].mean()),
+            "conditional_contrast_min_observed_cell_n": (
+                int(estimable_strata[["n_parent_0", "n_parent_1"]].min().min())
+                if not estimable_strata.empty
+                else 0
+            ),
             "parent_child_observed_count": joint,
             "parent_prevalence": prevalence[parent],
             "child_prevalence": prevalence[child],
@@ -129,6 +144,17 @@ def write_global_bn_edges(
         frame = frame.sort_values("bootstrap_frequency", ascending=False, na_position="last")
     output_dir.mkdir(parents=True, exist_ok=True)
     frame.to_csv(output_dir / "global_bn_edges.csv", index=False)
+    strata_frame = (
+        pd.concat(contrast_strata, ignore_index=True)
+        if contrast_strata
+        else pd.DataFrame(columns=[
+            "parent_factor", "child_factor", "other_parent_configuration",
+            "n_parent_0", "n_parent_1", "min_cell_count_required",
+            "estimable", "probability_child_1_parent_0",
+            "probability_child_1_parent_1", "conditional_contrast",
+        ])
+    )
+    strata_frame.to_csv(output_dir / "global_bn_edge_contrast_strata.csv", index=False)
     if not frame.empty and "bootstrap_frequency" in frame.columns:
         stable_negative = frame[
             frame["bootstrap_frequency"].ge(stable_threshold)
@@ -232,6 +258,12 @@ def assert_global_bn_outputs(
 
     if not edges.empty:
         assert (edges["parent_child_observed_count"] >= 0).all()
-        assert (edges["conditional_contrast_abs"] >= 0).all()
-        signed = edges["conditional_contrast_signed"]
-        assert ((edges["conditional_contrast_abs"] - signed.abs()) < 1e-12).all()
+        estimable = edges["conditional_contrast_signed"].notna()
+        assert (edges.loc[estimable, "conditional_contrast_abs"] >= 0).all()
+        signed = edges.loc[estimable, "conditional_contrast_signed"]
+        absolute = edges.loc[estimable, "conditional_contrast_abs"]
+        assert ((absolute - signed.abs()) < 1e-12).all()
+        assert edges["conditional_contrast_n_estimable_strata"].le(
+            edges["conditional_contrast_n_total_strata"]
+        ).all()
+        assert edges.loc[~estimable, "conditional_contrast_n_estimable_strata"].eq(0).all()

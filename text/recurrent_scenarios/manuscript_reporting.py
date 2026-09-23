@@ -164,6 +164,7 @@ REFERENCE_SELECTION_TABLE_COLUMNS = [
     "D_norm",
     "T_inf",
     "T_1",
+    "S_R tie-break candidate",
     "Tie-break",
     "Selected",
 ]
@@ -335,6 +336,7 @@ def build_reference_selection_table(selection_table: pd.DataFrame, *, role: str)
             "D_norm": round(float(source.get("dbcv_normalized")), 2) if pd.notna(source.get("dbcv_normalized")) else np.nan,
             "T_inf": round(float(source.get("tchebycheff_max_shortfall")), 3) if pd.notna(source.get("tchebycheff_max_shortfall")) else np.nan,
             "T_1": round(float(source.get("total_normalized_shortfall")), 3) if pd.notna(source.get("total_normalized_shortfall")) else np.nan,
+            "S_R tie-break candidate": "Yes" if bool(source.get("is_stability_tie_break_candidate", False)) else "No",
             "Tie-break": source.get("selection_tie_break", "") if selected else "",
             "Selected": "Yes" if selected else "No",
         })

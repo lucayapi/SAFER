@@ -5,7 +5,8 @@ accident-level reproducibility ``S_R`` (``stability``) and UMAP-space ``DBCV``
 (``dbcv_umap``). Objectives are normalized on the role-specific Pareto set.
 The selected compromise minimizes the largest normalized shortfall from the
 empirical ideal point ``(1, 1)``. Exact numerical ties are resolved by the sum
-of normalized shortfalls, then by the predefined configuration-grid order.
+of normalized shortfalls, then by maximum raw reproducibility ``S_R``. The
+predefined configuration order is used only for a residual exact tie.
 """
 
 from __future__ import annotations
@@ -139,8 +140,8 @@ def compute_tchebycheff_scores(
     return result
 
 
-def _configuration_grid_order(configuration_id: object) -> tuple[int, str]:
-    """Return the encoded grid position, with a lexical deterministic fallback."""
+def _configuration_order_key(configuration_id: object) -> tuple[int, str]:
+    """Return the encoded configuration order, with a lexical fallback."""
     text = str(configuration_id)
     suffix = text.rsplit("_cfg_", 1)
     if len(suffix) == 2 and suffix[1].isdigit():
@@ -155,7 +156,7 @@ def _select_tchebycheff_from_pareto(
     dbcv_col: str = DBCV_COL,
     configuration_col: str = "configuration_id",
 ) -> tuple[str, pd.DataFrame, str]:
-    """Select by ``min T_inf``, then ``min T_1``, then grid order."""
+    """Select by ``min T_inf``, ``min T_1``, ``max S_R``, then config order."""
     normalized = normalize_pareto_objectives(
         pareto,
         stability_col=stability_col,
@@ -173,6 +174,7 @@ def _select_tchebycheff_from_pareto(
         )
     ]
     scored["is_tchebycheff_minimizer"] = scored.index.isin(primary.index)
+    scored["is_stability_tie_break_candidate"] = False
     if len(primary) == 1:
         selected = primary.iloc[0]
         tie_break = "not_required"
@@ -191,11 +193,27 @@ def _select_tchebycheff_from_pareto(
             selected = secondary.iloc[0]
             tie_break = "total_normalized_shortfall"
         else:
-            selected = sorted(
-                (row for _, row in secondary.iterrows()),
-                key=lambda row: _configuration_grid_order(row[configuration_col]),
-            )[0]
-            tie_break = "grid_order"
+            scored["is_stability_tie_break_candidate"] = scored.index.isin(
+                secondary.index
+            )
+            max_stability = float(secondary[stability_col].max())
+            stability_candidates = secondary.loc[
+                np.isclose(
+                    secondary[stability_col].astype(float),
+                    max_stability,
+                    rtol=0.0,
+                    atol=SELECTION_TOLERANCE,
+                )
+            ]
+            if len(stability_candidates) == 1:
+                selected = stability_candidates.iloc[0]
+                tie_break = "max_stability"
+            else:
+                selected = sorted(
+                    (row for _, row in stability_candidates.iterrows()),
+                    key=lambda row: _configuration_order_key(row[configuration_col]),
+                )[0]
+                tie_break = "configuration_order_after_stability"
     scored["is_total_shortfall_minimizer"] = scored.index.isin(secondary.index)
     return str(selected[configuration_col]), scored, tie_break
 
@@ -220,6 +238,7 @@ def select_tchebycheff_configuration(
         marked[column] = np.nan
     marked["is_tchebycheff_minimizer"] = False
     marked["is_total_shortfall_minimizer"] = False
+    marked["is_stability_tie_break_candidate"] = False
     marked["selection_tie_break"] = ""
     pareto = marked.loc[marked["is_pareto"]].copy()
     if pareto.empty:
@@ -241,6 +260,7 @@ def select_tchebycheff_configuration(
         *score_columns,
         "is_tchebycheff_minimizer",
         "is_total_shortfall_minimizer",
+        "is_stability_tie_break_candidate",
     ]
     score_lookup = scored.set_index("configuration_id")[lookup_columns].to_dict("index")
     for column in lookup_columns:
@@ -310,6 +330,9 @@ def summarize_selected_configurations(
             "dbcv_normalized": row.get("dbcv_normalized"),
             "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
             "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+            "is_stability_tie_break_candidate": row.get(
+                "is_stability_tie_break_candidate", False
+            ),
             "selection_tie_break": row.get("selection_tie_break"),
             "selection_rule": "normalized_tchebycheff" if int(table["is_pareto"].sum()) > 1 else "single_pareto",
             "n_clusters": row.get("n_clusters"),

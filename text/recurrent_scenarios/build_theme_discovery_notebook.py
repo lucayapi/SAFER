@@ -26,7 +26,8 @@ cells = [
 This notebook discovers stable themes independently for `A0`, `A1`, `B` and `C`.
 Candidates are screened on the Pareto front of accident-level reproducibility `S_R`
 and UMAP-space DBCV. A normalized Tchebycheff reference-point rule selects the
-final partition, with total shortfall and grid order as deterministic tie-breaks.
+final partition. Ties are resolved by total normalized shortfall, then maximum
+raw reproducibility `S_R`, and finally by configuration order if needed.
 Seed sensitivity is run after selection.
 
 After this notebook (or the Slurm discovery job), open
@@ -233,7 +234,8 @@ print_role_selection_summary(role, selection_tables[role], selected_id=selected_
 cols = [c for c in [
     "configuration_id", "stability", "dbcv_umap", "is_pareto", "is_selected_tchebycheff",
     "stability_normalized", "dbcv_normalized", "tchebycheff_max_shortfall",
-    "total_normalized_shortfall", "selection_tie_break",
+    "total_normalized_shortfall", "is_stability_tie_break_candidate",
+    "selection_tie_break",
     "n_clusters", "noise_fraction", "coverage",
 ] if c in selection_tables[role].columns]
 display(selection_tables[role].sort_values(["is_pareto", "dbcv_umap", "stability"], ascending=[False, True, False])[cols].head(12))
@@ -304,6 +306,9 @@ for role in ROLES:
         "dbcv_normalized": row.get("dbcv_normalized"),
         "tchebycheff_max_shortfall": row.get("tchebycheff_max_shortfall"),
         "total_normalized_shortfall": row.get("total_normalized_shortfall"),
+        "is_stability_tie_break_candidate": row.get(
+            "is_stability_tie_break_candidate", False
+        ),
         "selection_tie_break": row.get("selection_tie_break"),
         "n_clusters": row["n_clusters"],
         "noise_fraction": row["noise_fraction"],

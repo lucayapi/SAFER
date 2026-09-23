@@ -101,6 +101,17 @@ FIGURES_DIR = paths["figures"]
 display(pd.read_csv(NETWORK_DIR / "global_bn_summary.csv"))
 display(pd.read_csv(NETWORK_DIR / "global_bn_edges.csv").head(15))
         """),
+        markdown("### Empirically estimable conditional contrasts"),
+        code("""
+contrast_strata = pd.read_csv(NETWORK_DIR / "global_bn_edge_contrast_strata.csv")
+print(
+    "Estimable strata:",
+    int(contrast_strata["estimable"].sum()),
+    "/",
+    len(contrast_strata),
+)
+display(contrast_strata)
+        """),
         markdown("## 3. Bootstrap stability"),
         code("""
 bootstrap = analysis["bootstrap"]
