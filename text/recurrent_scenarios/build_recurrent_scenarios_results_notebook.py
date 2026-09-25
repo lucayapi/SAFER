@@ -78,6 +78,8 @@ SCENARIO_DIR = next(
     (path.resolve() for path in scenario_candidates if (path / "scenario_pipeline.py").is_file()),
     SCENARIO_DIR.resolve(),
 )
+if str(SCENARIO_DIR) not in sys.path:
+    sys.path.insert(0, str(SCENARIO_DIR))
 
 # Load secrets without printing or storing them in the notebook outputs.
 try:
@@ -102,6 +104,7 @@ OPENAI_MODEL = "gpt-5.6-luna"
 OPENAI_REASONING_EFFORT = "low"
 OPENAI_MAX_OUTPUT_TOKENS = 4000
 LLM_OUTPUT_LANGUAGE = "English"
+LLM_PROMPT_VERSION = "dominant-motif-role-fit-v1"
 LLM_FORCE_REFRESH = False  # True = ignore llm_theme_labels.csv and relabel every topic
 N_REPRESENTATIVE_SENTENCES = 50
 MAX_TOPICS_PER_ROLE_FOR_LLM = None
@@ -120,10 +123,10 @@ UMAP_2D_DPI = 300
 print("OPENAI_API_KEY available:", bool(os.environ.get("OPENAI_API_KEY")))
 
 ROLE_PROMPTS = {{
-    "A0": '''You name A0 semantic factors (work situation before the accident). Each label must denote a precise, observable motif: concrete activity, workstation type, equipment, location, or operational setup. Forbidden: meta or vague labels ("work context", "work environment", "professional activity", "work in general"). The label must distinguish this theme from others in the same role. 4 to 10 words, grounded in the examples. No consequence or accident event.''',
-    "A1": '''You name A1 semantic factors (adverse condition or hazard before the event). Each label must name the hazard, failure, missing protection, or dangerous condition specifically. Forbidden: meta labels ("adverse factor", "dangerous condition", "risk", "general hazard"). 4 to 10 words, grounded in the examples. Not the event or injury unless indispensable to distinguish the condition.''',
-    "B": '''You name B semantic factors (immediate event or mechanism). Each label must describe what happened or the mechanism concretely (fall, impact, entrapment, unintended start, etc.). Forbidden: meta labels ("accident event", "accident", "incident", "general deviation"). 4 to 10 words, grounded in the examples. Not upstream context or final injury.''',
-    "C": '''You name C semantic factors (consequence or injury). Each label must specify the nature of harm or body location (injury type, body part, severity if visible in examples). Forbidden: meta labels ("consequence", "injury", "lesion", "damage" alone). 4 to 10 words, grounded in the examples. Not the cause or work context.''',
+    "A0": '''You name A0 semantic factors (work situation before the accident). Each label must denote the dominant pre-accident work situation: a concrete activity, workstation type, equipment, location, or operational setup. Do not label victim age, seniority, occupation alone, uncertainty about the accident, witness availability, emergency response, or post-accident actions as A0 unless they genuinely describe the dominant pre-accident context. Forbidden: meta or vague labels ("work context", "work environment", "professional activity", "work in general"). No consequence or accident event.''',
+    "A1": '''You name A1 semantic factors (adverse condition or hazard before the event). Each label must name the dominant hazard, failure, missing protection, or dangerous condition present before the event. Do not describe an unsafe action occurring during the event as an A1 condition. Forbidden: meta labels ("adverse factor", "dangerous condition", "risk", "general hazard"). Not the event or injury unless indispensable to distinguish the condition.''',
+    "B": '''You name B semantic factors (immediate event or mechanism). Each label must describe an actual change, deviation, loss of control, contact, fall, ignition, entrapment, unintended movement, or other immediate mechanism. A routine activity such as welding, cutting, grinding, machining, or driving is not by itself an event/deviation. If the examples mainly describe an activity rather than an event, retain the best factual label but set role_fit to "partial" or "poor". Forbidden: meta labels ("accident event", "accident", "incident", "general deviation"). Not upstream context or final injury.''',
+    "C": '''You name C semantic factors (consequence or injury). Each label must specify the dominant harm, affected body region, or severity when consistently supported. Do not create artificial distinctions based only on wording, hospitalization, resuscitation, reporting, or timing of death when the underlying consequence is the same; different clusters may legitimately receive similar or identical labels. Forbidden: meta labels ("consequence", "injury", "lesion", "damage" alone). Not the cause or work context.''',
 }}
 
 def resolve_run_directory(value):
@@ -495,6 +498,22 @@ if summary_path.is_file():
     code(
         """
 from scenario_pipeline import PartitionResult, PreparedData, build_topic_dictionary, load_embeddings, load_selected_configurations, load_units
+from manuscript_reporting import (
+    RETAINED_FACTOR_COLUMNS,
+    FIGURE_FACTOR_RESAMPLING_A0,
+    FIGURE_FACTOR_RESAMPLING_A1_B_C,
+    FIGURE_UMAP_SEED_SENSITIVITY,
+    appendix_figure_path,
+    membership_strength_figure_name,
+    retained_factors_figure_name,
+    build_retained_factors_summary_table,
+    build_seed_sensitivity_summary_all_roles,
+    plot_umap_seed_sensitivity_all_roles,
+    coalesce_text,
+    display_manuscript_table,
+    sanitize_label_text,
+)
+from umap_datamapplot import build_llm_label_lookup, build_topic_label_array, plot_role_topic_datamap
 
 PARTITION_SELECTION = load_selected_configurations(RUN_DIR)
 PARTITION_SELECTIONS = {role: [PARTITION_SELECTION[role]] for role in ROLES}
@@ -611,7 +630,9 @@ for (role, configuration_id), frame in partition_frames.items():
             "n_accidents": int(subset["accident_id"].nunique()),
             "top_terms": str(primary_row.get("top_terms", "")),
             "label": str(primary_row.get("label", "")),
+            "central_sentence": str(primary_row.get("central_sentence", "")),
             "representative_sentences": " || ".join(subset["sentence"].astype(str).head(N_REPRESENTATIVE_SENTENCES).tolist()),
+            "boundary_sentences": str(primary_row.get("boundary_sentences", "")),
         })
 topic_catalog = pd.DataFrame(topic_catalog_rows)
 topic_catalog.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary_all_selected.csv", index=False)
@@ -636,6 +657,12 @@ displaying these boxplots in the body.
     ),
     code(
         """
+from manuscript_reporting import (
+    appendix_figure_path,
+    membership_strength_figure_name,
+    plot_membership_strength_by_factor,
+)
+
 for role in ROLES:
     configuration_id = str(PARTITION_SELECTION[role])
     frame = partition_frames[(role, configuration_id)]
@@ -799,8 +826,16 @@ notebook. In PowerShell, define it before launching Jupyter with
 If the key, package or request is unavailable, the notebook keeps the
 top-word label and continues without stopping the analysis.
 
-Set `LLM_FORCE_REFRESH = True` in the first code cell to delete
-`topics_manual/llm_theme_labels.csv` and relabel every topic (ignore cache).
+The prompt asks for a label, supporting evidence, a diagnostic of fit with the
+predefined role (`good`, `partial`, or `poor`) and a heterogeneity level
+(`low`, `moderate`, or `high`). These diagnostics describe the factor; they do
+not change memberships, roles, or the selected partitions.
+
+Set `LLM_FORCE_REFRESH = True` in the first code cell to relabel every topic.
+Changing `LLM_PROMPT_VERSION` also invalidates the old label cache. Only
+`topics_manual/llm_theme_labels.csv` and the files produced by the cells below
+are updated; an invalidated cache is archived as
+`llm_theme_labels_before_refresh.csv`. Theme-discovery outputs are preserved.
 
 Model defaults follow the annotation pipeline: `gpt-5.6-luna` with
 `reasoning_effort` and `max_completion_tokens` (no custom temperature).
@@ -812,14 +847,30 @@ to relabel existing topics after changing the language or prompts.
     ),
     code(
         """
-def topic_representatives(row, n_sentences):
-    values = []
-    for column in ("central_sentence", "representative_sentences", "boundary_sentences"):
-        value = str(row.get(column, ""))
-        if value and value.lower() != "nan":
-            values.extend(part.strip() for part in value.split(" || ") if part.strip())
-    unique_values = list(dict.fromkeys(values))
-    return unique_values[:int(n_sentences)]
+def split_example_text(value):
+    text = str(value or "")
+    return [] if text.lower() == "nan" else [part.strip() for part in text.split(" || ") if part.strip()]
+
+
+def topic_examples(row, n_sentences):
+    # Keep central, representative and boundary evidence distinct.
+    limit = max(1, int(n_sentences))
+    central = split_example_text(row.get("central_sentence", ""))[:1]
+    representatives = [text for text in split_example_text(row.get("representative_sentences", "")) if text not in central]
+    boundary = [text for text in split_example_text(row.get("boundary_sentences", "")) if text not in central and text not in representatives]
+
+    # Reserve part of the configured budget for boundary evidence. The latter
+    # assesses scope/heterogeneity and must not crowd out the central motif.
+    boundary_budget = min(len(boundary), max(1, limit // 4))
+    representative_budget = max(0, limit - len(central) - boundary_budget)
+    selected_representatives = representatives[:representative_budget]
+    remaining = limit - len(central) - len(selected_representatives)
+    selected_boundary = boundary[: min(len(boundary), boundary_budget + remaining)]
+    return {
+        "central": central,
+        "representative": selected_representatives,
+        "boundary": selected_boundary,
+    }
 
 
 def topic_records_for_role(role):
@@ -836,7 +887,7 @@ def topic_records_for_role(role):
             "topic_id": str(row["topic_id"]),
             "configuration_id": str(row["configuration_id"]),
             "top_words": str(row.get("top_terms", row.get("label", ""))),
-            "representative_sentences": topic_representatives(row, N_REPRESENTATIVE_SENTENCES),
+            "examples": topic_examples(row, N_REPRESENTATIVE_SENTENCES),
         })
     return records
 
@@ -857,18 +908,39 @@ def request_role_labels(client, role, records):
 Return a single JSON object with a `themes` array containing one element per `topic_id`.
 Write the label, description and evidence in {LLM_OUTPUT_LANGUAGE}.
 
+The factual-unit cluster has already been constructed and must not be modified.
+Your task is only to describe its dominant semantic content.
+
+Use the sentences as the primary evidence. Keywords are auxiliary cues only and
+must not override the dominant meaning of the examples. Central and
+representative sentences define the main semantic motif. Boundary sentences are
+provided mainly to assess scope and heterogeneity; they must not determine the
+label unless they are consistent with the central examples.
+
 Rules for `label`:
 - 4 to 10 words, nominal phrase suitable for a figure legend.
-- Must name a specific factual motif visible in the examples (object, action,
+- Name the dominant factual motif visible across the examples (object, action,
   equipment, location, mechanism or injury depending on the role).
 - Forbidden: generic labels that do not discriminate themes (e.g. only the role name,
   "work context", "adverse factor", "event", "consequence", "accident", "risk").
-- If examples are heterogeneous, choose the most specific wording supported by at
-  least two examples; do not summarize the whole A0/A1/B/C role.
-- Do not invent information absent from the keywords and sentences provided.
+- Do not select a narrow sub-theme supported by only a few examples.
+- If no specific motif dominates, use a broader factual label rather than inventing
+  specificity. Labels do not need to be unique across topics.
+- Do not invent information absent from the provided material.
 
-`description`: one sentence explaining the motif. `evidence`: 2 to 4 short text
-fragments from the examples (quotes or minimal paraphrases).
+`description`: one sentence explaining what is recurrent across the cluster;
+do not imply causality.
+
+`evidence`: 2 to 4 short fragments that directly support the dominant motif.
+Use fragments from distinct accident narratives whenever possible.
+
+`role_fit`: `good` when the dominant motif clearly corresponds to the requested
+accident-process role; `partial` when it is coherent but only partly corresponds;
+`poor` when it mostly belongs to another role or describes narrative/reporting
+information rather than the requested process component.
+
+`heterogeneity`: `low`, `moderate`, or `high`, according to how consistently the
+examples support one dominant factual motif.
 
 Role-specific guidance:
 {prompt}
@@ -890,18 +962,33 @@ Topics to analyse:
 
 
 llm_cache_path = RUN_DIR / "topics_manual" / "llm_theme_labels.csv"
-if LLM_FORCE_REFRESH and llm_cache_path.is_file():
-    llm_cache_path.unlink()
-    print("LLM cache cleared:", llm_cache_path)
+cache_needs_refresh = bool(LLM_FORCE_REFRESH)
+if llm_cache_path.is_file() and not cache_needs_refresh:
+    cache_preview = pd.read_csv(llm_cache_path)
+    cached_versions = set(cache_preview.get("prompt_version", pd.Series(dtype=str)).dropna().astype(str))
+    cache_needs_refresh = cached_versions != {LLM_PROMPT_VERSION}
+if cache_needs_refresh and llm_cache_path.is_file():
+    cache_backup_path = llm_cache_path.with_name("llm_theme_labels_before_refresh.csv")
+    archive_index = 1
+    while cache_backup_path.exists():
+        cache_backup_path = llm_cache_path.with_name(
+            f"llm_theme_labels_before_refresh_{archive_index}.csv"
+        )
+        archive_index += 1
+    llm_cache_path.replace(cache_backup_path)
+    print("LLM cache archived before refresh or prompt-version change:", cache_backup_path)
 llm_cache = pd.read_csv(llm_cache_path) if llm_cache_path.is_file() else pd.DataFrame()
 if not llm_cache.empty and "configuration_id" not in llm_cache.columns:
     # Backward compatibility with the previous cache format, which contained
     # only labels for the primary partition of each role.
     llm_cache["configuration_id"] = llm_cache["role"].map(PARTITION_SELECTION)
-for column in ("topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"):
+for column in (
+    "topic_id", "role", "configuration_id", "llm_label", "llm_description",
+    "llm_evidence", "llm_role_fit", "llm_heterogeneity", "prompt_version",
+):
     if column not in llm_cache.columns:
         llm_cache[column] = ""
-for column in ("llm_label", "llm_description", "llm_evidence"):
+for column in ("llm_label", "llm_description", "llm_evidence", "llm_role_fit", "llm_heterogeneity"):
     llm_cache[column] = llm_cache[column].map(sanitize_label_text)
 llm_cache["cache_key"] = (
     llm_cache["role"].astype(str) + "::" +
@@ -927,12 +1014,19 @@ if not topic_catalog.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY
             for record in tqdm(records, desc=f"OpenAI labels {role}", unit="topic"):
                 cache_key = f"{role}::{record['configuration_id']}::{record['topic_id']}"
                 cached = cached_by_key.get(cache_key)
-                if cached and is_valid_llm_cache_row(cached):
+                if (
+                    cached
+                    and cached.get("prompt_version") == LLM_PROMPT_VERSION
+                    and is_valid_llm_cache_row(cached)
+                    and normalize_llm_fields(cached)["llm_role_fit"]
+                    and normalize_llm_fields(cached)["llm_heterogeneity"]
+                ):
                     cached_count += 1
                     llm_rows.append({
                         "topic_id": record["topic_id"],
                         "role": role,
                         "configuration_id": record["configuration_id"],
+                        "prompt_version": LLM_PROMPT_VERSION,
                         **normalize_llm_fields(cached),
                     })
                     continue
@@ -943,11 +1037,11 @@ if not topic_catalog.empty and OPENAI_ENABLED and os.environ.get("OPENAI_API_KEY
                     if not fields["llm_label"]:
                         # Retry once with a minimal prompt when the model omits the label.
                         retry_instruction = f'''
-Return JSON {{"themes": [{{"topic_id": "{record["topic_id"]}", "label": "...", "description": "...", "evidence": "..."}}]}}.
+Return JSON {{"themes": [{{"topic_id": "{record["topic_id"]}", "label": "...", "description": "...", "evidence": ["..."], "role_fit": "good|partial|poor", "heterogeneity": "low|moderate|high"}}]}}.
 The label field must contain 4 to 10 words in {LLM_OUTPUT_LANGUAGE}, factual and specific.
 topic_id={record["topic_id"]}
 top_words={json.dumps(record.get("top_words", ""), ensure_ascii=False)}
-examples={json.dumps(record.get("representative_sentences", []), ensure_ascii=False)}
+examples={json.dumps(record.get("examples", {{}}), ensure_ascii=False)}
 '''
                         retry_text = complete_theme_label_json(
                             client,
@@ -971,6 +1065,7 @@ examples={json.dumps(record.get("representative_sentences", []), ensure_ascii=Fa
                         "topic_id": record["topic_id"],
                         "role": role,
                         "configuration_id": record["configuration_id"],
+                        "prompt_version": LLM_PROMPT_VERSION,
                         **fields,
                     })
                 except Exception as error:
@@ -982,6 +1077,9 @@ examples={json.dumps(record.get("representative_sentences", []), ensure_ascii=Fa
                         "llm_label": "",
                         "llm_description": "",
                         "llm_evidence": "",
+                        "llm_role_fit": "",
+                        "llm_heterogeneity": "",
+                        "prompt_version": LLM_PROMPT_VERSION,
                     })
                     warnings.warn(f"OpenAI labelling failed for {role}/{record['topic_id']}: {error}")
             if failed_count:
@@ -1004,10 +1102,13 @@ if not llm_rows and not new_llm_rows and not llm_cache.empty:
     llm_rows = llm_cache.to_dict("records")
 llm_labels = pd.DataFrame(
     llm_rows + new_llm_rows,
-    columns=["topic_id", "role", "configuration_id", "llm_label", "llm_description", "llm_evidence"],
+    columns=[
+        "topic_id", "role", "configuration_id", "llm_label", "llm_description",
+        "llm_evidence", "llm_role_fit", "llm_heterogeneity", "prompt_version",
+    ],
 )
 if not llm_labels.empty:
-    for column in ("llm_label", "llm_description", "llm_evidence"):
+    for column in ("llm_label", "llm_description", "llm_evidence", "llm_role_fit", "llm_heterogeneity"):
         llm_labels[column] = llm_labels[column].map(sanitize_label_text)
 if not llm_labels.empty:
     llm_labels = llm_labels[llm_labels["llm_label"].map(sanitize_label_text).astype(bool)].copy()
@@ -1028,7 +1129,9 @@ else:
     theme_labels["llm_label"] = ""
     theme_labels["llm_description"] = ""
     theme_labels["llm_evidence"] = ""
-for column in ("llm_label", "llm_description", "llm_evidence"):
+    theme_labels["llm_role_fit"] = ""
+    theme_labels["llm_heterogeneity"] = ""
+for column in ("llm_label", "llm_description", "llm_evidence", "llm_role_fit", "llm_heterogeneity"):
     theme_labels[column] = theme_labels[column].map(sanitize_label_text)
 for column in ("label", "top_terms"):
     if column not in theme_labels.columns:
@@ -1039,7 +1142,7 @@ theme_labels["plot_label"] = theme_labels.apply(
     axis=1,
 )
 theme_labels.to_csv(RUN_DIR / "topics_manual" / "topic_dictionary_with_llm_labels.csv", index=False)
-display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "llm_description", "top_terms", "representative_sentences"] if column in theme_labels.columns]])
+display(theme_labels[[column for column in ["topic_id", "role", "plot_label", "llm_role_fit", "llm_heterogeneity", "llm_description", "top_terms", "representative_sentences"] if column in theme_labels.columns]])
         """
     ),
     markdown(

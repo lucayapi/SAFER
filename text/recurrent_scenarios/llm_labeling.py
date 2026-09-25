@@ -136,12 +136,16 @@ def extract_theme_item(items: list[dict[str, Any]], record: Mapping[str, Any]) -
 
 
 def normalize_llm_fields(item: Mapping[str, Any]) -> dict[str, str]:
-    """Normalize label/description/evidence fields from one LLM or cache item."""
+    """Normalize descriptive and diagnostic fields from one LLM or cache item."""
     evidence = item.get("evidence", item.get("llm_evidence", ""))
     if isinstance(evidence, list):
         evidence_text = ", ".join(sanitize_label_text(part) for part in evidence if sanitize_label_text(part))
     else:
         evidence_text = sanitize_label_text(evidence)
+    role_fit = sanitize_label_text(item.get("role_fit", item.get("llm_role_fit", ""))).lower()
+    heterogeneity = sanitize_label_text(
+        item.get("heterogeneity", item.get("llm_heterogeneity", ""))
+    ).lower()
     return {
         "llm_label": coalesce_text(
             item.get("label"),
@@ -159,6 +163,8 @@ def normalize_llm_fields(item: Mapping[str, Any]) -> dict[str, str]:
             item.get("summary"),
         ),
         "llm_evidence": evidence_text,
+        "llm_role_fit": role_fit if role_fit in {"good", "partial", "poor"} else "",
+        "llm_heterogeneity": heterogeneity if heterogeneity in {"low", "moderate", "high"} else "",
     }
 
 

@@ -8,7 +8,7 @@ from llm_labeling import extract_theme_item, normalize_llm_fields, parse_llm_pay
 
 def test_extract_theme_without_topic_id():
     items = parse_llm_payload(
-        '{"themes": [{"label": "Chute en hauteur", "description": "desc", "evidence": "preuve"}]}'
+        '{"themes": [{"label": "Chute en hauteur", "description": "desc", "evidence": "preuve", "role_fit": "partial", "heterogeneity": "moderate"}]}'
     )
     record = {"topic_id": "A0_006"}
     item = extract_theme_item(items, record)
@@ -16,6 +16,8 @@ def test_extract_theme_without_topic_id():
     assert fields["llm_label"] == "Chute en hauteur"
     assert fields["llm_description"] == "desc"
     assert fields["llm_evidence"] == "preuve"
+    assert fields["llm_role_fit"] == "partial"
+    assert fields["llm_heterogeneity"] == "moderate"
 
 
 def test_build_theme_label_chat_kwargs_gpt56_luna():

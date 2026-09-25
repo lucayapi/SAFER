@@ -21,6 +21,9 @@ data:
     metallurgie:
       units_path: ../dataset/data_metallurgie.csv
       embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
+    company:
+      units_path: ../dataset/data_nicollin.csv
+      embeddings_path: ../embeddings/Qwen3-Embedding-0.6B_nicollin.csv
 
 random_state: 42
 
