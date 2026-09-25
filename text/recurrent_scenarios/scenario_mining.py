@@ -362,18 +362,14 @@ def build_scenario_article_table(article: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for index, row in article.iterrows():
         rows.append({
-            "Scenario": f"S{index + 1}",
-            "Upstream": row["upstream_labels"],
-            "B": row["B_label"],
-            "C": row["C_label"],
-            "Accidents_n": int(row["scenario_accident_count"]),
+            "Scenario": f"S{index + 1}: {row['upstream_labels']} → {row['B_label']} → {row['C_label']}",
+            "n_s": int(row["scenario_accident_count"]),
             "Support": f"{100.0 * float(row['scenario_support']):.2f}%",
             "Confidence": f"{100.0 * float(row['confidence']):.1f}%",
             "Lift": f"{float(row['lift']):.1f}x",
-            "BN_support": f"{100.0 * float(row.get('BN_implied_support', np.nan)):.2f}%",
-            "BN_expected_n": float(row.get("BN_expected_accident_count", np.nan)),
-            "BN_discrepancy_pp": float(row.get("BN_support_discrepancy_pp", np.nan)),
-            "Internal_BN_edges": str(row.get("internal_BN_edges", "")),
+            "p_BN": f"{100.0 * float(row.get('BN_implied_support', np.nan)):.2f}%",
+            "mu_BN": float(row.get("BN_expected_accident_count", np.nan)),
+            "D_BN_pp": float(row.get("BN_support_discrepancy_pp", np.nan)),
         })
     return pd.DataFrame(rows)
 
@@ -386,10 +382,9 @@ def write_scenarios_latex_csv(
     *,
     stable_threshold: float = 0.60,
 ) -> pd.DataFrame:
-    signed_lookup = {
-        (parent, child): _edge_conditional_contrast_signed(result, parent, child)
-        for parent, child in result.edges
-    }
+    # A thick/solid scenario arrow is reserved for an edge that is stable and
+    # monotonic positive across its empirically supported parent contexts.
+    from global_bn import _contrast_pattern, _edge_contrast_strata
     bootstrap_freq: dict[tuple[str, str], float] = {}
     if bootstrap is not None and not bootstrap.empty:
         bootstrap_freq = {
@@ -397,8 +392,12 @@ def write_scenarios_latex_csv(
             for _, row in bootstrap.iterrows()
         }
     stable_positive = {
-        edge for edge, signed in signed_lookup.items()
-        if signed > 0 and bootstrap_freq.get(edge, 0.0) >= stable_threshold
+        (parent, child)
+        for parent, child in result.edges
+        if bootstrap_freq.get((parent, child), 0.0) >= stable_threshold
+        and _contrast_pattern(
+            _edge_contrast_strata(result, parent, child).query("estimable")["conditional_contrast"]
+        ) == "monotonically_positive"
     }
     rows = []
     for _, row in article.iterrows():

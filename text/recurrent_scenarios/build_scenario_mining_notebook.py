@@ -76,7 +76,13 @@ local_scores = pd.read_csv(paths["network"] / "bn_local_scores.csv")
 selected_parent_sets = pd.read_csv(paths["network"] / "bn_selected_parent_sets.csv")
 display(summary)
 display(selected_parent_sets)
-print("Local parent sets evaluated:", len(local_scores))
+summary_row = summary.iloc[0]
+print("Variables:", int(summary_row["n_variables"]))
+print("Local parent sets evaluated:", int(summary_row["n_local_parent_sets_evaluated"]))
+print("Selected edges:", int(summary_row["n_edges"]))
+print("Parameters:", int(summary_row["n_parameters"]))
+print("Log-likelihood:", float(summary_row["log_likelihood"]))
+print("BIC:", float(summary_row["BIC"]))
         """),
         markdown("## 2. Assess support of selected conditional-probability tables"),
         code("""
@@ -84,10 +90,11 @@ display(local_scores.sort_values(["child_factor", "rank"]).head(30))
 support_diagnostics = pd.read_csv(paths["network"] / "bn_cpt_support_diagnostics.csv")
 diagnostic = support_diagnostics.iloc[0]
 print("Selected BN:")
-print("Number of CPT rows:", diagnostic["n_cpt_rows"])
-print("Rows with N = 0:", diagnostic["n_rows_N_eq_0"])
-print("Rows with N <= 2:", diagnostic["n_rows_N_le_2"])
+print("CPT rows:", diagnostic["n_cpt_rows"])
+print("Empty rows (N = 0):", diagnostic["n_rows_N_eq_0"])
 print("Rows with N <= 5:", diagnostic["n_rows_N_le_5"])
+print("Rows with N <= 10:", diagnostic.get("n_rows_N_le_10", "available after the next exact-BN run"))
+print("Rows with N <= 20:", diagnostic.get("n_rows_N_le_20", "available after the next exact-BN run"))
 print("MLE estimates equal to 0:", diagnostic["n_MLE_equal_0"])
 print("MLE estimates equal to 1:", diagnostic["n_MLE_equal_1"])
 print("Minimum observed cell count:", diagnostic["minimum_observed_cell_count"])
@@ -105,8 +112,17 @@ if diagnostic["final_CPT_estimation"] == "Jeffreys":
 bootstrap = pd.read_csv(paths["network"] / "bn_bootstrap_edges.csv")
 edges = pd.read_csv(paths["network"] / "bn_edges_full.csv")
 contrasts = pd.read_csv(paths["network"] / "bn_conditional_contrasts.csv")
-display(bootstrap.sort_values("selection_frequency", ascending=False).head(20))
-display(edges.sort_values("bootstrap_frequency", ascending=False).head(20))
+stable_threshold = config["bayesian_networks"]["bn_display_bootstrap_threshold"]
+stable = edges.loc[edges["bootstrap_frequency"] >= stable_threshold].copy()
+print(f"{len(edges)} full-sample edges; {len(stable)} with f >= {stable_threshold:.2f}")
+print("Stable edges by transition:")
+display(stable["transition"].value_counts().rename_axis("transition").reset_index(name="n_edges"))
+main_columns = [
+    "parent_label", "child_label", "transition", "bootstrap_frequency",
+    "conditional_contrast_weighted", "conditional_contrast_min",
+    "conditional_contrast_max", "conditional_contrast_pattern",
+]
+display(stable[[column for column in main_columns if column in stable.columns]].sort_values("bootstrap_frequency", ascending=False))
 display(contrasts.head(30))
 for name in ("global_bn_stable_dependencies.png", "bn_stability_vs_conditional_contrast.png"):
     path = paths["figures"] / name
@@ -128,6 +144,11 @@ display(recurrent[["scenario_id", "upstream_labels", "B_label", "C_label", "scen
 discrepancy = pd.read_csv(paths["scenarios"] / "scenario_bn_discrepancy.csv")
 sensitivity = pd.read_csv(paths["scenarios"] / "scenario_bn_cpt_sensitivity.csv")
 article = pd.read_csv(paths["scenarios"] / "scenarios_article_table.csv")
+signed = discrepancy["BN_support_discrepancy"].dropna()
+print("Scenarios with D_BN > 0:", int((signed > 0).sum()))
+print("Scenarios with D_BN < 0:", int((signed < 0).sum()))
+print("Median |D_BN| (pp):", 100.0 * float(signed.abs().median()))
+print("Maximum |D_BN| (pp):", 100.0 * float(signed.abs().max()))
 display(discrepancy.sort_values("BN_support_interestingness", ascending=False).head(20))
 display(sensitivity[["scenario_id", "BN_CPT_estimation", "BN_MLE_support", "BN_Jeffreys_support", "BN_MLE_minus_Jeffreys_pp"]].head(20))
 display(article)

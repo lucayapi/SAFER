@@ -211,6 +211,8 @@ def _cpt_support_diagnostics(cpts: pd.DataFrame, min_observed_count: int) -> pd.
         "n_rows_N_eq_0": int(counts.eq(0).sum()),
         "n_rows_N_le_2": int(counts.le(2).sum()),
         "n_rows_N_le_5": int(counts.le(5).sum()),
+        "n_rows_N_le_10": int(counts.le(10).sum()),
+        "n_rows_N_le_20": int(counts.le(20).sum()),
         "n_MLE_equal_0": int(observed["MLE_P_child_1"].eq(0.0).sum()),
         "n_MLE_equal_1": int(observed["MLE_P_child_1"].eq(1.0).sum()),
         "minimum_observed_cell_count": int(observed["n_parent_configuration"].min()) if not observed.empty else np.nan,
@@ -441,11 +443,12 @@ def write_global_bn_edges(
         all_strata.append(strata)
         estimable = strata.loc[strata["estimable"]].copy()
         if estimable.empty:
-            delta = delta_min = delta_max = float("nan")
+            delta = delta_min = delta_max = min_stratum_n = float("nan")
         else:
             weights = estimable["n_context"] / estimable["n_context"].sum()
             delta = float((weights * estimable["conditional_contrast"]).sum())
             delta_min, delta_max = float(estimable["conditional_contrast"].min()), float(estimable["conditional_contrast"].max())
+            min_stratum_n = int(estimable[["n_parent_0", "n_parent_1"]].min(axis=1).min())
         frequency = freq_lookup.get((parent, child), np.nan)
         n_resamples = (
             int(bootstrap["n_resamples"].iloc[0])
@@ -461,6 +464,7 @@ def write_global_bn_edges(
             "conditional_contrast_weighted": delta, "conditional_contrast_min": delta_min, "conditional_contrast_max": delta_max,
             "conditional_contrast_pattern": _contrast_pattern(estimable["conditional_contrast"]),
             "conditional_contrast_n_estimable_strata": int(len(estimable)), "conditional_contrast_n_total_strata": int(len(strata)),
+            "conditional_contrast_min_stratum_n": min_stratum_n,
             "conditional_contrast_signed": delta, "conditional_contrast_abs": abs(delta) if np.isfinite(delta) else np.nan,
             "parent_child_observed_count": int((data[:, result.nodes.index(parent)] & data[:, result.nodes.index(child)]).sum()),
             "parent_prevalence": prevalence[parent], "child_prevalence": prevalence[child],
@@ -476,6 +480,22 @@ def write_global_bn_edges(
     strata_frame.to_csv(output_dir / "global_bn_edge_contrast_strata.csv", index=False)
     if not frame.empty:
         frame.loc[frame["bootstrap_frequency"].ge(stable_threshold) & frame["conditional_contrast_pattern"].eq("monotonically_negative")].to_csv(output_dir / "stable_negative_edges.csv", index=False)
+        primary_columns = [
+            "parent_label", "child_label", "transition", "bootstrap_frequency",
+            "conditional_contrast_weighted", "conditional_contrast_min",
+            "conditional_contrast_max", "conditional_contrast_pattern",
+        ]
+        primary = frame.loc[frame["bootstrap_frequency"].ge(stable_threshold), primary_columns].copy()
+        primary.columns = [
+            "Parent", "Child", "Transition", "f_hat", "Delta_hat",
+            "min_delta", "max_delta", "conditional_pattern",
+        ]
+        primary["conditional_pattern"] = primary["conditional_pattern"].replace({
+            "monotonically_positive": "positive",
+            "monotonically_negative": "negative",
+            "non_monotone": "non-monotone",
+        })
+        primary.to_csv(output_dir / "bn_stable_edges_main.csv", index=False)
     return frame
 
 

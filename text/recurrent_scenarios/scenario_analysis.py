@@ -74,22 +74,13 @@ def print_primary_summary(
     recurrent_all = mining.get("recurrent_all", pd.DataFrame())
 
     n_stable = 0
-    n_positive_stable = 0
-    n_negative_stable = 0
+    stable_by_transition = pd.Series(dtype=int)
+    stable_by_pattern = pd.Series(dtype=int)
     if not bootstrap.empty and not edges.empty:
-        stable_mask = bootstrap["selection_frequency"].ge(stable_threshold)
-        stable_edges = bootstrap.loc[stable_mask, ["parent", "child"]]
+        stable_edges = edges.loc[edges["bootstrap_frequency"].ge(stable_threshold)].copy()
         n_stable = len(stable_edges)
-        edge_lookup = edges.set_index(["parent_factor", "child_factor"])
-        for _, row in stable_edges.iterrows():
-            key = (str(row["parent"]), str(row["child"]))
-            if key not in edge_lookup.index:
-                continue
-            signed = float(edge_lookup.loc[key, "conditional_contrast_signed"])
-            if signed > 0:
-                n_positive_stable += 1
-            elif signed < 0:
-                n_negative_stable += 1
+        stable_by_transition = stable_edges["transition"].value_counts().sort_index()
+        stable_by_pattern = stable_edges["conditional_contrast_pattern"].value_counts().sort_index()
 
     n_admissible = int(mining.get("n_admissible", len(candidates)))
     n_observed = int(mining.get("n_observed", (candidates["scenario_accident_count"] > 0).sum() if not candidates.empty else 0))
@@ -101,8 +92,9 @@ def print_primary_summary(
     if not bn_summary.empty:
         print(f"Learned BN edges: {int(bn_summary['n_edges'].iloc[0])}")
     print(f"Stable edges >= {stable_threshold}: {n_stable}")
-    print(f"Positive stable edges: {n_positive_stable}")
-    print(f"Negative stable edges: {n_negative_stable}")
+    if not stable_by_transition.empty:
+        print("Stable edges by transition:", stable_by_transition.to_dict())
+        print("Stable edges by conditional pattern:", stable_by_pattern.to_dict())
 
     print("\nSCENARIO MINING")
     print("---------------")
@@ -113,6 +105,11 @@ def print_primary_summary(
         print(f"n >= {threshold}: {count}")
     print(f"Closed recurrent patterns at n>={min_count}: {len(recurrent_all)}")
     print(f"Main-text scenarios displayed: {len(mining['article'])}")
+    if not recurrent_all.empty and "BN_support_discrepancy" in recurrent_all:
+        discrepancy = recurrent_all["BN_support_discrepancy"].dropna()
+        print(f"D_BN > 0: {int(discrepancy.gt(0).sum())}; D_BN < 0: {int(discrepancy.lt(0).sum())}")
+        print(f"Median |D_BN|: {100.0 * float(discrepancy.abs().median()):.3f} pp")
+        print(f"Maximum |D_BN|: {100.0 * float(discrepancy.abs().max()):.3f} pp")
 
     print("\nFILES")
     print("-----")
@@ -217,6 +214,7 @@ def run_global_bn_scenario_mining(
         recurrent_all=mining["recurrent_all"],
         n_admissible=mining["n_admissible"],
         n_observed=mining["n_observed"],
+        edges_frame=edges,
     )
     render_global_bn_stable_dependencies(
         result,

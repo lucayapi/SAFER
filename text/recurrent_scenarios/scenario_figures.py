@@ -28,6 +28,17 @@ ROLE_TITLES = {
 ROLE_LABEL_COLUMNS = {role: f"{role}_label" for role in ROLE_ORDER}
 
 
+def _display_factor_id(node: str) -> str:
+    """Translate an internal variable name into the concise topic identifier."""
+    if "__T" not in node:
+        return node
+    role, _, topic = node.partition("__T")
+    try:
+        return f"{role}_{int(topic) - 1:03d}"
+    except ValueError:
+        return node
+
+
 def _split_values(value: Any) -> list[str]:
     if value is None or (isinstance(value, float) and pd.isna(value)):
         return []
@@ -278,7 +289,7 @@ def generate_empirical_scenario_figures(
     """Compact upstream -> B -> C panels for article scenarios ranked by recurrence."""
 
     from manuscript_reporting import save_manuscript_figure
-    from scenario_pipeline import _edge_conditional_contrast_signed
+    from global_bn import _contrast_pattern, _edge_contrast_strata
 
     if article.empty:
         return
@@ -296,8 +307,10 @@ def generate_empirical_scenario_figures(
     stable_positive = {
         (parent, child)
         for parent, child in result.edges
-        if _edge_conditional_contrast_signed(result, parent, child) > 0
-        and bootstrap_freq.get((parent, child), 0.0) >= stable_threshold
+        if bootstrap_freq.get((parent, child), 0.0) >= stable_threshold
+        and _contrast_pattern(
+            _edge_contrast_strata(result, parent, child).query("estimable")["conditional_contrast"]
+        ) == "monotonically_positive"
     }
 
     n_rows = len(article)
@@ -310,13 +323,11 @@ def generate_empirical_scenario_figures(
         b_factor = str(row["B_factor_id"])
         c_factor = str(row["C_factor_id"])
         ordered = upstream + [b_factor, c_factor]
-        labels = {
-            node: (
-                str(row["upstream_labels"]) if node in upstream else
-                str(row["B_label"]) if node == b_factor else str(row["C_label"])
-            )
-            for node in ordered
-        }
+        upstream_labels = [part.strip() for part in str(row["upstream_labels"]).split(" | ") if part.strip()]
+        labels = {node: label for node, label in zip(upstream, upstream_labels)}
+        labels[b_factor] = str(row["B_label"])
+        labels[c_factor] = str(row["C_label"])
+        labels = {node: labels.get(node, node) for node in ordered}
         if len(upstream) == 2:
             x_positions = [0.12, 0.32, 0.62, 0.88]
         elif len(upstream) == 1:
@@ -327,26 +338,37 @@ def generate_empirical_scenario_figures(
         for x_pos, node in zip(x_positions, ordered):
             role = result.roles[node]
             box = FancyBboxPatch(
-                (x_pos - 0.08, y - 0.12), 0.16, 0.24,
+                (x_pos - 0.08, y - 0.14), 0.16, 0.28,
                 boxstyle="round,pad=0.01,rounding_size=0.02",
                 transform=axis.transAxes,
                 facecolor=ROLE_NODE_FILL[role], edgecolor=ROLE_COLORS[role], linewidth=0.9,
             )
             axis.add_patch(box)
             wrapped = "\n".join(textwrap.wrap(labels[node], width=16)[:2])
-            axis.text(x_pos, y, wrapped, ha="center", va="center", fontsize=7, color="#222222", transform=axis.transAxes)
-        for left, right in zip(ordered, ordered[1:]):
+            axis.text(x_pos, y + 0.072, _display_factor_id(node), ha="center", va="center", fontsize=5.8, color="#555555", transform=axis.transAxes)
+            axis.text(x_pos, y - 0.035, wrapped, ha="center", va="center", fontsize=7, color="#222222", transform=axis.transAxes)
+        membership_links = [(upstream_node, b_factor) for upstream_node in upstream] + [(b_factor, c_factor)]
+        for left, right in membership_links:
             left_x = x_positions[ordered.index(left)]
             right_x = x_positions[ordered.index(right)]
-            linestyle = "-" if (left, right) in stable_positive else "--"
+            # Thin grey lines only show that the factors co-define the empirical scenario.
             axis.annotate(
                 "",
                 xy=(right_x - 0.08, y),
                 xytext=(left_x + 0.08, y),
                 xycoords=axis.transAxes,
                 textcoords=axis.transAxes,
-                arrowprops=dict(arrowstyle="-|>", linestyle=linestyle, color="#333333", linewidth=1.2),
+                arrowprops=dict(arrowstyle="-", color="#A6A6A6", linewidth=0.8),
             )
+            if (left, right) in stable_positive:
+                axis.annotate(
+                    "",
+                    xy=(right_x - 0.08, y),
+                    xytext=(left_x + 0.08, y),
+                    xycoords=axis.transAxes,
+                    textcoords=axis.transAxes,
+                    arrowprops=dict(arrowstyle="-|>", color="#333333", linewidth=2.5),
+                )
         axis.text(
             0.5, 0.12,
             f"n={int(row['scenario_accident_count'])}  support={100 * float(row['scenario_support']):.1f}%  "
@@ -354,6 +376,11 @@ def generate_empirical_scenario_figures(
             ha="center", va="center", fontsize=7.5, transform=axis.transAxes,
         )
     figure.tight_layout()
+    figure.text(
+        0.5, 0.008,
+        "Thin grey lines: empirical scenario membership. Thick arrows: stable monotonically positive BN dependencies.",
+        ha="center", fontsize=7.5, color="#555555",
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_manuscript_figure(figure, output_path, dpi=220)
     save_manuscript_figure(figure, output_path.with_suffix(".pdf"), dpi=220)

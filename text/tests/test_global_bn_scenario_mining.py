@@ -131,7 +131,13 @@ def test_global_bn_edge_export_includes_contrast_estimability_audit():
         assert {
             "conditional_contrast_n_estimable_strata",
             "conditional_contrast_n_total_strata",
+            "conditional_contrast_min_stratum_n",
         }.issubset(edges.columns)
+        primary = pd.read_csv(output_dir / "bn_stable_edges_main.csv")
+        assert list(primary.columns) == [
+            "Parent", "Child", "Transition", "f_hat", "Delta_hat",
+            "min_delta", "max_delta", "conditional_pattern",
+        ]
 
 
 def test_global_bn_fit_no_latent():
@@ -195,6 +201,8 @@ def test_cpt_support_diagnostic_retains_mle_when_all_selected_rows_are_observed(
     mle = global_bn._cpt_probabilities(cpts, "MLE_P_child_1")
     assert diagnostic["n_rows_N_eq_0"] == 0
     assert diagnostic["n_rows_N_le_2"] == 2
+    assert diagnostic["n_rows_N_le_10"] == 3
+    assert diagnostic["n_rows_N_le_20"] == 3
     assert diagnostic["final_CPT_estimation"] == "MLE"
     assert mle[("A1__Y", (0,))] == pytest.approx(0.5)
     assert mle[("A1__Y", (1,))] == pytest.approx(0.5)

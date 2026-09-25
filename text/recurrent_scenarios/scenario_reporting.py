@@ -310,9 +310,13 @@ def render_global_bn_stable_dependencies(
 
     for node, (x_pos, y_pos) in positions.items():
         role = roles[node]
-        wrapped = _wrapped_factor_label(label_lookup.get(node, node), width=28, max_lines=3)
-        line_count = wrapped.count("\n") + 1
-        box_height = 0.46 + 0.19 * line_count
+        factor_id = _display_factor_id(node, topic_id_lookup=id_lookup)
+        label = " ".join(str(label_lookup.get(node, node)).split())
+        # A topic dictionary can carry its identifier as a temporary label.
+        # Do not show this placeholder twice in the node.
+        wrapped = "" if label in {node, factor_id} else _wrapped_factor_label(label, width=28, max_lines=3)
+        line_count = wrapped.count("\n") + 1 if wrapped else 0
+        box_height = 0.30 + 0.19 * line_count
         box = FancyBboxPatch(
             (x_pos - box_half_width, y_pos - box_height / 2),
             2 * box_half_width,
@@ -327,8 +331,8 @@ def render_global_bn_stable_dependencies(
         axis.add_patch(box)
         axis.text(
             x_pos,
-            y_pos + box_height * 0.30,
-            _display_factor_id(node, topic_id_lookup=id_lookup),
+            y_pos + (box_height * 0.22 if wrapped else 0.0),
+            factor_id,
             ha="center",
             va="center",
             fontsize=7.0,
@@ -337,7 +341,7 @@ def render_global_bn_stable_dependencies(
         )
         axis.text(
             x_pos,
-            y_pos - box_height * 0.05,
+            y_pos - box_height * 0.15,
             wrapped,
             ha="center",
             va="center",
@@ -393,9 +397,9 @@ def render_global_bn_stable_dependencies(
         )
 
     legend_handles = [
-        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="solid", label="Positive conditional association"),
-        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle=(0, (3.2, 2.0)), label="Negative conditional association"),
-        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="dashdot", label="Non-monotone conditional association"),
+        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="solid", label="Monotonically positive"),
+        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle=(0, (3.2, 2.0)), label="Monotonically negative"),
+        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="dashdot", label="Non-monotone"),
         Line2D([0], [0], color="#333333", linewidth=2.8, linestyle="solid", label="Edge width = bootstrap frequency"),
     ]
     axis.legend(
@@ -405,6 +409,8 @@ def render_global_bn_stable_dependencies(
         ncol=2,
         frameon=False,
         fontsize=7.5,
+        title="Conditional pattern",
+        title_fontsize=7.5,
         handlelength=2.4,
         columnspacing=1.4,
         borderaxespad=0.0,
@@ -456,6 +462,14 @@ def render_global_bn_stable_dependencies_from_edges(
             label_map[parent] = str(row["parent_label"])
         if "child_label" in edges_frame.columns and pd.notna(row.get("child_label")):
             label_map[child] = str(row["child_label"])
+
+    # Prefer the current semantic dictionary when regenerating a figure from
+    # previously exported edge files. Older CSVs may only contain topic IDs.
+    if theme_dictionary is not None and {"variable_name", "topic_label"}.issubset(theme_dictionary.columns):
+        for _, row in theme_dictionary.iterrows():
+            label = row["topic_label"]
+            if pd.notna(label) and str(label).strip():
+                label_map[str(row["variable_name"])] = str(label)
 
     class _EdgeOnlyResult:
         pass
@@ -511,6 +525,12 @@ def render_bn_stability_contrast(
             edgecolor="#333333", linewidth=0.45, label=transition,
         )
     axis.axvline(stable_threshold, color="#4D4D4D", linewidth=1.05, linestyle="--")
+    axis.annotate(
+        "Descriptive stability\nthreshold",
+        xy=(stable_threshold, 0.98), xycoords=("data", "axes fraction"),
+        xytext=(4, -2), textcoords="offset points", ha="left", va="top",
+        fontsize=7.5, color="#4D4D4D",
+    )
     axis.axhline(0.0, color="#4D4D4D", linewidth=1.05)
     axis.set_xlim(-0.02, 1.02)
     axis.set_xlabel("Bootstrap selection frequency")
@@ -524,7 +544,14 @@ def render_bn_stability_contrast(
     plt.close(figure)
 
 
-def render_observed_vs_bn_recurrence(scenarios: pd.DataFrame, output_path: Path, *, n_labels: int = 6) -> None:
+def _short_scenario_reference(row: pd.Series, *, width: int = 42) -> str:
+    """Return a concise semantic reference for a scenario annotation."""
+    parts = [str(row.get(column, "")).strip() for column in ("upstream_labels", "B_label", "C_label")]
+    parts = [part for part in parts if part and part.lower() != "nan"]
+    return textwrap.shorten(" → ".join(parts), width=width, placeholder="…") if parts else str(row.get("scenario_id", "scenario"))
+
+
+def render_observed_vs_bn_recurrence(scenarios: pd.DataFrame, output_path: Path, *, n_labels: int = 4) -> None:
     """Compare observed recurrent counts with BN-implied expected counts."""
     required = {"scenario_accident_count", "BN_expected_accident_count", "BN_support_discrepancy"}
     if scenarios.empty or not required.issubset(scenarios.columns):
@@ -535,23 +562,28 @@ def render_observed_vs_bn_recurrence(scenarios: pd.DataFrame, output_path: Path,
     frame = scenarios.dropna(subset=["scenario_accident_count", "BN_expected_accident_count"]).copy()
     if frame.empty:
         return
-    limit = float(max(frame["scenario_accident_count"].max(), frame["BN_expected_accident_count"].max()))
+    limit = max(float(max(frame["scenario_accident_count"].max(), frame["BN_expected_accident_count"].max())), 1.0)
     figure, axis = plt.subplots(figsize=(6.8, 5.2))
     axis.scatter(
         frame["BN_expected_accident_count"], frame["scenario_accident_count"],
         s=38, color=K_SELECTION_SELECTED_COLOR, edgecolor="#333333", linewidth=0.4, alpha=0.82,
     )
     axis.plot([0.0, limit], [0.0, limit], color="#4D4D4D", linewidth=1.05, linestyle="--")
-    for _, row in frame.reindex(frame["BN_support_discrepancy"].abs().sort_values(ascending=False).index).head(n_labels).iterrows():
+    positive = frame.loc[frame["BN_support_discrepancy"] > 0].nlargest(max(n_labels - 1, 1), "BN_support_discrepancy")
+    remaining = frame.drop(index=positive.index, errors="ignore")
+    comparator = remaining.loc[remaining["BN_support_discrepancy"].abs().sort_values().index].head(1)
+    labels = pd.concat([positive, comparator]).head(n_labels)
+    for _, row in labels.iterrows():
         axis.annotate(
-            str(row["scenario_id"]),
+            _short_scenario_reference(row),
             (float(row["BN_expected_accident_count"]), float(row["scenario_accident_count"])),
             xytext=(4, 4), textcoords="offset points", fontsize=7,
         )
-    axis.set_xlim(left=0.0)
-    axis.set_ylim(bottom=0.0)
-    axis.set_xlabel("BN-implied number of accident narratives")
-    axis.set_ylabel("Observed number of accident narratives")
+    axis.set_xlim(0.0, limit)
+    axis.set_ylim(0.0, limit)
+    axis.set_aspect("equal", adjustable="box")
+    axis.set_xlabel("BN-implied recurrence count")
+    axis.set_ylabel("Observed recurrence count")
     axis.grid(axis="both", color="#D9D9D9", linewidth=0.55, alpha=0.75)
     figure.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -626,21 +658,23 @@ def render_scenario_reduction_figure(
     n_observed: int,
     n_recurrent: int,
     n_closed: int,
-    n_displayed: int,
     min_accident_count: int,
     output_path: Path,
 ) -> None:
-    """Funnel: admissible -> observed -> recurrent -> closed -> main-text display."""
+    """Funnel of empirical recurrence; closure and display remain annotations."""
     from manuscript_reporting import ROLE_COLORS, ROLE_NODE_FILL, save_manuscript_figure
 
     stages = [
         (f"{n_admissible:,}", "Admissible\nrole-complete\nconfigurations"),
         (f"{n_observed:,}", "Observed\nat least once"),
         (f"{n_recurrent:,}", f"Recurrent\nn >= {min_accident_count}"),
-        (f"{n_closed:,}", "Closed recurrent\npatterns"),
-        (f"{n_displayed}", f"{n_displayed} scenarios\ndisplayed in\nmain text"),
     ]
-    figure, axis = plt.subplots(figsize=(11.5, 2.8))
+    closure_note = (
+        f"All {n_closed:,} recurrent configurations were closed; selected examples are displayed in the main text."
+        if n_closed == n_recurrent
+        else f"{n_closed:,} of {n_recurrent:,} recurrent configurations were closed; selected examples are displayed in the main text."
+    )
+    figure, axis = plt.subplots(figsize=(8.2, 3.1))
     axis.set_xlim(0, len(stages) - 0.2)
     axis.set_ylim(0, 1)
     axis.axis("off")
@@ -665,6 +699,7 @@ def render_scenario_reduction_figure(
                 xytext=(x + 0.40, 0.50),
                 arrowprops=dict(arrowstyle="-|>", color="#555555", lw=1.2),
             )
+    axis.text(1.0, 0.02, closure_note, ha="center", va="bottom", fontsize=7.8, color="#444444", wrap=True)
     figure.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_manuscript_figure(figure, output_path, dpi=220)
@@ -746,6 +781,7 @@ def render_scenario_reporting(
     recurrent_all: pd.DataFrame | None = None,
     n_admissible: int | None = None,
     n_observed: int | None = None,
+    edges_frame: pd.DataFrame | None = None,
 ) -> None:
     label_map = _theme_label_map(theme_dictionary)
     roles = result.roles
@@ -757,6 +793,7 @@ def render_scenario_reporting(
         roles,
         config,
         figs_dir / "global_bn_stable_dependencies.png",
+        edges_frame=edges_frame,
         topic_id_lookup=_topic_id_lookup_from_frame(theme_dictionary),
     )
     if network_dir is not None:
@@ -784,7 +821,6 @@ def render_scenario_reporting(
         n_observed=int(n_observed if n_observed is not None else (candidates["scenario_accident_count"] > 0).sum()),
         n_recurrent=n_recurrent,
         n_closed=n_closed,
-        n_displayed=len(article),
         min_accident_count=min_count,
         output_path=figs_dir / "recurrent_scenario_reduction.png",
     )
