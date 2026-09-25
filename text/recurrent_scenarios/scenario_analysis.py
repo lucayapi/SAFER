@@ -9,6 +9,8 @@ from typing import Any, Mapping
 import pandas as pd
 
 from global_bn import (
+    add_scenario_bn_discrepancy,
+    assert_expected_inventory,
     assert_global_bn_outputs,
     fit_global_bn,
     run_global_bn_bootstrap,
@@ -27,12 +29,17 @@ from scenario_pipeline import (
     load_units,
     write_bn_accident_inclusion_audit,
 )
-from scenario_reporting import render_scenario_reporting
+from scenario_reporting import (
+    render_bn_stability_contrast,
+    render_global_bn_stable_dependencies,
+    render_observed_vs_bn_recurrence,
+    render_scenario_reporting,
+)
 
 
 def _output_paths(run_dir: Path) -> dict[str, Path]:
-    """All BN/scenario outputs under a single ``bn_results/`` tree."""
-    root = run_dir / "bn_results"
+    """All exact-BN/scenario outputs under a versioned result tree."""
+    root = run_dir / "bn_results_exact"
     return {
         "root": root,
         "matrix": root / "matrix",
@@ -161,6 +168,9 @@ def run_global_bn_scenario_mining(
         )
     )
 
+    # Fail before the expensive BN fit/bootstrap if the selected partitions no
+    # longer match the explicitly audited inventory in the configuration.
+    assert_expected_inventory(matrix, roles, config)
     result = fit_global_bn(matrix, roles, config)
     bn_summary = write_global_bn_summary(result, matrix, network_dir)
     bootstrap = run_global_bn_bootstrap(matrix, roles, config, result, network_dir)
@@ -173,6 +183,25 @@ def run_global_bn_scenario_mining(
     mining = mine_recurrent_scenarios(
         matrix, roles, result, bootstrap, theme_dictionary, config, scenario_dir,
     )
+    recurrent_with_bn = add_scenario_bn_discrepancy(
+        mining["recurrent_all"], result, len(matrix), scenario_dir,
+    )
+    mining["recurrent_all"] = recurrent_with_bn
+    discrepancy_columns = [
+        "scenario_id", "BN_implied_support", "BN_expected_accident_count",
+        "BN_support_discrepancy", "BN_support_discrepancy_pp",
+        "BN_support_interestingness", "internal_BN_edges", "n_internal_BN_edges",
+    ]
+    for key in ("article_full", "article", "prevention"):
+        frame = mining.get(key, pd.DataFrame())
+        if not frame.empty:
+            mining[key] = frame.merge(
+                recurrent_with_bn[discrepancy_columns], on="scenario_id", how="left", validate="one_to_one",
+            )
+    mining["recurrent_all"].to_csv(scenario_dir / "recurrent_scenarios_all.csv", index=False)
+    mining["article"].to_csv(scenario_dir / "scenarios_article.csv", index=False)
+    mining["article_full"].to_csv(scenario_dir / "scenarios_article_extended.csv", index=False)
+    mining["prevention"].to_csv(scenario_dir / "scenario_prevention_summary.csv", index=False)
     assert_scenario_mining_outputs(
         matrix, roles, result, mining["candidates_all"], config,
         recurrent_all=mining["recurrent_all"], article=mining["article"],
@@ -180,7 +209,7 @@ def run_global_bn_scenario_mining(
     write_scenarios_latex_csv(
         mining["article_full"], result, bootstrap, scenario_dir, stable_threshold=stable_threshold,
     )
-    build_scenario_article_table(mining["article"]).to_csv(scenario_dir / "scenarios_article_table.csv", index=False)
+    build_scenario_article_table(mining["article_full"]).to_csv(scenario_dir / "scenarios_article_table.csv", index=False)
     render_scenario_reporting(
         result, bootstrap, mining["candidates_all"], mining["article"],
         theme_dictionary, config, figures_dir, network_dir,
@@ -188,6 +217,19 @@ def run_global_bn_scenario_mining(
         recurrent_all=mining["recurrent_all"],
         n_admissible=mining["n_admissible"],
         n_observed=mining["n_observed"],
+    )
+    render_global_bn_stable_dependencies(
+        result,
+        bootstrap,
+        _theme_label_map(theme_dictionary),
+        roles,
+        config,
+        figures_dir / "global_bn_stable_dependencies.png",
+        edges_frame=edges,
+    )
+    render_bn_stability_contrast(edges, stable_threshold, figures_dir / "bn_stability_vs_conditional_contrast.png")
+    render_observed_vs_bn_recurrence(
+        mining["recurrent_all"], figures_dir / "observed_vs_bn_implied_recurrence.png",
     )
 
     payload = {

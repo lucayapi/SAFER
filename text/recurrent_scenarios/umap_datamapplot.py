@@ -108,8 +108,7 @@ def plot_role_topic_datamap(
         point_size=1.0,
         arrowprops={"arrowstyle": "wedge, tail_width=0.35, shrink_factor=0.25"},
     )
-    if title:
-        axis.set_title(title, fontsize=title_fontsize, loc="left", pad=6)
+    del title, title_fontsize
     if tight_crop:
         _apply_tight_crop(axis, coordinates)
     axis.set_xticks([])

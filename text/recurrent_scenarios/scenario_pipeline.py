@@ -1095,6 +1095,8 @@ def write_stability_landscape_figure(
     axis_labels: Mapping[str, str] | None = None,
     legend_labels: Mapping[str, str] | None = None,
     colors: Mapping[str, str] | None = None,
+    shared_axes: bool = True,
+    axis_limits: Mapping[str, tuple[float, float]] | None = None,
 ) -> None:
     """Scatter DBCV versus S_R with Pareto front and selected compromise."""
     from pareto_knee_selection import plot_pareto_raw
@@ -1108,6 +1110,8 @@ def write_stability_landscape_figure(
         axis_labels=axis_labels,
         legend_labels=legend_labels,
         colors=colors,
+        shared_axes=shared_axes,
+        axis_limits=axis_limits,
     )
 
 
@@ -1121,6 +1125,7 @@ def write_pareto_normalized_tchebycheff_figure(
     axis_labels: Mapping[str, str] | None = None,
     legend_labels: Mapping[str, str] | None = None,
     colors: Mapping[str, str] | None = None,
+    show_selected_guides: bool = True,
 ) -> None:
     """Normalized Pareto fronts, ideal point and selected compromise."""
     from pareto_knee_selection import plot_pareto_normalized_tchebycheff
@@ -1134,6 +1139,7 @@ def write_pareto_normalized_tchebycheff_figure(
         axis_labels=axis_labels,
         legend_labels=legend_labels,
         colors=colors,
+        show_selected_guides=show_selected_guides,
     )
 
 
@@ -1374,17 +1380,32 @@ def evaluate_seed_sensitivity(
 
     if not summary.empty:
         import matplotlib.pyplot as plt
+        from manuscript_reporting import (
+            MANUSCRIPT_FONT_SIZES,
+            ROLE_COLORS,
+            save_manuscript_figure,
+        )
 
         figure, axis = plt.subplots(figsize=(7.5, 4.2))
-        axis.plot(summary["seed"], summary["seed_stability"], marker="o", color="#4C78A8")
-        axis.axhline(1.0, color="#AAAAAA", linewidth=0.8, linestyle="--", alpha=0.7)
-        axis.set_ylim(0, 1.05)
-        axis.set_ylabel("Mean best-match Jaccard vs $s_0$")
-        axis.set_xlabel("Alternative UMAP seed")
-        axis.set_title(f"{role}: membership stability under alternative UMAP seeds")
-        axis.grid(alpha=0.25)
+        axis.plot(
+            summary["seed"],
+            summary["seed_stability"],
+            marker="o",
+            color=ROLE_COLORS.get(role, ROLE_COLORS["A0"]),
+        )
+        axis.axhline(1.0, color="#BDBDBD", linewidth=0.7, linestyle="--", alpha=0.65)
+        axis.set_ylim(0, 1)
+        axis.set_ylabel(
+            "Mean best-match Jaccard similarity",
+            fontsize=MANUSCRIPT_FONT_SIZES["label"],
+        )
+        axis.set_xlabel(
+            "Alternative UMAP seed",
+            fontsize=MANUSCRIPT_FONT_SIZES["label"],
+        )
+        axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+        axis.grid(color="#D9D9D9", linewidth=0.6, alpha=0.55)
         figure.tight_layout()
-        from manuscript_reporting import save_manuscript_figure
 
         save_manuscript_figure(figure, seed_dir / f"seed_sensitivity_{role}.png", dpi=220)
         plt.close(figure)
@@ -1599,8 +1620,7 @@ def _bn_config(config: Mapping[str, Any]) -> dict[str, Any]:
     values.setdefault("mpe_optional_roles", [])
     values.setdefault("mpe_compute_free_diagnostic", True)
     values.setdefault("bn_structure_bootstrap", {
-        "enabled": True, "n_resamples": 30, "sample_fraction": 0.80, "fraction": 0.80,
-        "n_initializations_per_resample": 3, "random_state": 2026,
+        "enabled": True, "n_resamples": 500, "random_state": 2026,
     })
     values.setdefault("show_progress", False)
     return values
@@ -3100,7 +3120,11 @@ def _edge_conditional_contrast_strata(
             for parent_node, value in zip(parents, key_values):
                 mask &= data[:, node_index[parent_node]].astype(int) == int(value)
             counts.append(int(mask.sum()))
-            if result.roles[child] in {"A0", "A1"}:
+            if (child, key_values) in result.downstream_probabilities:
+                # The exact global BN stores every selected CPT in the
+                # observed-factor table, including A1 nodes.
+                probability = float(result.downstream_probabilities[(child, key_values)])
+            elif result.roles[child] in {"A0", "A1"}:
                 probability = sum(
                     float(result.weights[state])
                     * float(result.upstream_probabilities.get((child, state, key_values), 0.5))
@@ -3190,7 +3214,6 @@ def _write_conceptual_bn_architecture(output_dir: Path) -> None:
         edge_color="#555555",
         width=2.0,
     )
-    axis.set_title("Architecture conceptuelle du modèle bayésien latent")
     axis.axis("off")
     figure.tight_layout()
     figure.savefig(output_dir / "conceptual_bn_architecture.png", dpi=220, bbox_inches="tight", pad_inches=0.02)
@@ -3244,7 +3267,6 @@ def _write_simplified_learned_bn_graph(result: StructuralEMResult, label_map: Ma
         ],
         connectionstyle="arc3,rad=0.03",
     )
-    axis.set_title("Réseau appris simplifié — arcs observés entre facteurs")
     axis.text(0.5, -0.04, "Épaisseur : contraste conditionnel moyen | aucune arête Z affichée", transform=axis.transAxes, ha="center", fontsize=9)
     axis.axis("off")
     figure.tight_layout()

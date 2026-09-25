@@ -256,22 +256,23 @@ ROLE_LABELS = {
 }
 AXIS_LABELS = {
     "dbcv_raw": "DBCV",
-    "stability_raw": r"$S_R$",
-    "dbcv_normalized": r"Normalized DBCV ($\\widetilde{D}$)",
-    "stability_normalized": r"Normalized $S_R$ ($\\widetilde{S}$)",
+    "stability_raw": r"Resampling reproducibility $S_R$",
+    "dbcv_normalized": r"Normalized DBCV, $\\widetilde{D}$",
+    "stability_normalized": r"Normalized reproducibility, $\\widetilde{S}$",
 }
 LEGEND_LABELS = {
     "candidates": "Candidate configurations",
-    "pareto": "Pareto-optimal configurations",
+    "pareto": "Pareto front",
     "selected": "Selected configuration",
     "ideal": "Ideal point (1, 1)",
 }
 PLOT_COLORS = {
-    "candidates": "#757575",
+    "candidates": "#B0B0B0",
     "pareto": "#1f77b4",
     "selected": "#d62728",
     "ideal": "#333333",
 }
+RAW_AXIS_LIMITS = None  # Or explicit common limits for both raw axes.
 
 write_stability_landscape_figure(
     selection_tables,
@@ -280,6 +281,8 @@ write_stability_landscape_figure(
     axis_labels=AXIS_LABELS,
     legend_labels=LEGEND_LABELS,
     colors=PLOT_COLORS,
+    shared_axes=True,
+    axis_limits=RAW_AXIS_LIMITS,
 )
 write_pareto_normalized_tchebycheff_figure(
     selection_tables,
@@ -288,6 +291,7 @@ write_pareto_normalized_tchebycheff_figure(
     axis_labels=AXIS_LABELS,
     legend_labels=LEGEND_LABELS,
     colors=PLOT_COLORS,
+    show_selected_guides=True,
 )
 write_factor_resampling_manuscript_figures(theme_stability, selections, RUN_DIR / "figures")
 display(Image(filename=str(RUN_DIR / "figures" / "stability_landscape_all_roles.png")))

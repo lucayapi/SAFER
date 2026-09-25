@@ -37,11 +37,10 @@ ARTICLE_COLUMNS = [
     "scenario_support",
     "confidence",
     "lift",
-    "upstream_to_B_confidence",
-    "upstream_to_B_lift",
-    "positive_bn_path_support",
-    "stable_positive_bn_path_support",
-    "path_bootstrap_frequencies",
+    "BN_implied_support",
+    "BN_expected_accident_count",
+    "BN_support_discrepancy_pp",
+    "internal_BN_edges",
 ]
 
 
@@ -362,11 +361,6 @@ def build_scenario_article_table(article: pd.DataFrame) -> pd.DataFrame:
         return article
     rows = []
     for index, row in article.iterrows():
-        stable = str(row.get("stable_positive_bn_path_support", ""))
-        positive = str(row.get("positive_bn_path_support", ""))
-        bn_bits = [f"Stable positive: {stable}", f"Positive: {positive}"]
-        if "path_bootstrap_frequencies" in row:
-            bn_bits.append(str(row["path_bootstrap_frequencies"]))
         rows.append({
             "Scenario": f"S{index + 1}",
             "Upstream": row["upstream_labels"],
@@ -376,7 +370,10 @@ def build_scenario_article_table(article: pd.DataFrame) -> pd.DataFrame:
             "Support": f"{100.0 * float(row['scenario_support']):.2f}%",
             "Confidence": f"{100.0 * float(row['confidence']):.1f}%",
             "Lift": f"{float(row['lift']):.1f}x",
-            "BN_support": " | ".join(bn_bits),
+            "BN_support": f"{100.0 * float(row.get('BN_implied_support', np.nan)):.2f}%",
+            "BN_expected_n": float(row.get("BN_expected_accident_count", np.nan)),
+            "BN_discrepancy_pp": float(row.get("BN_support_discrepancy_pp", np.nan)),
+            "Internal_BN_edges": str(row.get("internal_BN_edges", "")),
         })
     return pd.DataFrame(rows)
 
@@ -433,6 +430,10 @@ def write_scenarios_latex_csv(
             "scenario_support": float(row["scenario_support"]),
             "confidence": float(row["confidence"]),
             "lift": float(row["lift"]),
+            "BN_implied_support": float(row.get("BN_implied_support", np.nan)),
+            "BN_expected_accident_count": float(row.get("BN_expected_accident_count", np.nan)),
+            "BN_support_discrepancy": float(row.get("BN_support_discrepancy", np.nan)),
+            "BN_support_discrepancy_pp": float(row.get("BN_support_discrepancy_pp", np.nan)),
             "display_sequence": display_sequence,
             "display_links": " | ".join(link_parts),
         })

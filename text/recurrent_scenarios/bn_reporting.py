@@ -219,7 +219,7 @@ def render_latent_k_selection_figure(
     *,
     stem: str = "latent_K_selection",
 ) -> tuple[Path, Path]:
-    from manuscript_reporting import save_manuscript_figure
+    from manuscript_reporting import ROLE_COLORS, save_manuscript_figure
 
     plot_data, candidate_k, k_positions = _prepare_k_selection_plot_data(selection)
     best_per_k = plot_data[plot_data["selected_for_K"]].sort_values("K")
@@ -387,7 +387,7 @@ def render_structural_em_convergence_figure(
     converged = bool(row.get("converged"))
     rel_delta = float(row.get("relative_loglik_delta", np.nan))
     figure, axis = plt.subplots(figsize=(8, 4))
-    axis.plot(iterations, lls, marker="o", color="#4C78A8")
+    axis.plot(iterations, lls, marker="o", color=ROLE_COLORS["A0"])
     axis.set_xlabel("EM iteration")
     axis.set_ylabel("Observed log-likelihood")
     axis.grid(alpha=0.25)
@@ -741,7 +741,7 @@ def run_structure_bootstrap(
     from scenario_pipeline import _fit_structural_em_initialization
 
     label_map = _theme_label_map(theme_dictionary)
-    n_resamples = int(bootstrap_cfg.get("n_resamples", 30))
+    n_resamples = int(bootstrap_cfg.get("n_resamples", 300))
     fraction = float(bootstrap_cfg.get("sample_fraction", bootstrap_cfg.get("fraction", 0.8)))
     n_inits = int(bootstrap_cfg.get("n_initializations_per_resample", 3))
     seed = int(bootstrap_cfg.get("random_state", config.get("random_state", 42)))
@@ -1004,14 +1004,14 @@ def render_learned_bn_stable_dependencies(
 
 
 def render_edge_bootstrap_figure(stability: pd.DataFrame, output_dir: Path) -> None:
-    from manuscript_reporting import save_manuscript_figure
+    from manuscript_reporting import ROLE_COLORS, save_manuscript_figure
 
     frame = stability.sort_values("selection_frequency", ascending=True)
     labels = frame.apply(
         lambda row: f"{row.get('parent_label', row['parent'])} → {row.get('child_label', row['child'])}", axis=1,
     )
     figure, axis = plt.subplots(figsize=(10, max(4, len(frame) * 0.28)))
-    axis.barh(labels, frame["selection_frequency"], color="#4C78A8")
+    axis.barh(labels, frame["selection_frequency"], color=ROLE_COLORS["A0"])
     axis.set_xlim(0, 1)
     axis.set_xlabel("Bootstrap selection frequency")
     figure.tight_layout()

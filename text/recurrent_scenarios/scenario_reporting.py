@@ -189,6 +189,7 @@ def render_global_bn_stable_dependencies(
 
     threshold = float(config.get("bayesian_networks", {}).get("bn_display_bootstrap_threshold", 0.60))
     signed_lookup: dict[tuple[str, str], float] = {}
+    pattern_lookup: dict[tuple[str, str], str] = {}
     freq_lookup: dict[tuple[str, str], float] = {}
     label_lookup = dict(label_map)
     id_lookup = dict(topic_id_lookup or {})
@@ -205,6 +206,8 @@ def render_global_bn_stable_dependencies(
                 freq_lookup[(parent, child)] = float(row[freq_col])
             if "conditional_contrast_signed" in edges_frame.columns and pd.notna(row["conditional_contrast_signed"]):
                 signed_lookup[(parent, child)] = float(row["conditional_contrast_signed"])
+            if "conditional_contrast_pattern" in edges_frame.columns and pd.notna(row.get("conditional_contrast_pattern")):
+                pattern_lookup[(parent, child)] = str(row["conditional_contrast_pattern"])
             if "parent_label" in edges_frame.columns and pd.notna(row.get("parent_label")):
                 label_lookup.setdefault(parent, str(row["parent_label"]))
             if "child_label" in edges_frame.columns and pd.notna(row.get("child_label")):
@@ -221,7 +224,7 @@ def render_global_bn_stable_dependencies(
             signed_lookup[(parent, child)] = _edge_conditional_contrast_signed(result, parent, child)
 
     edges = [
-        ((parent, child), frequency, signed_lookup[(parent, child)])
+        ((parent, child), frequency, signed_lookup[(parent, child)], pattern_lookup.get((parent, child), ""))
         for (parent, child), frequency in freq_lookup.items()
         if (
             frequency >= threshold
@@ -232,7 +235,7 @@ def render_global_bn_stable_dependencies(
     edges.sort(key=lambda item: item[1], reverse=True)
 
     active_nodes: set[str] = set()
-    for (parent, child), _, _ in edges:
+    for (parent, child), _, _, _ in edges:
         active_nodes.add(parent)
         active_nodes.add(child)
 
@@ -240,7 +243,7 @@ def render_global_bn_stable_dependencies(
         role: sorted(node for node in active_nodes if roles.get(node) == role)
         for role in ROLES
     }
-    edge_pairs = [(parent, child) for (parent, child), _, _ in edges]
+    edge_pairs = [(parent, child) for (parent, child), _, _, _ in edges]
     nodes_by_role = _order_roles_minimize_crossings(nodes_by_role, edge_pairs)
 
     node_gap = 1.08
@@ -343,10 +346,10 @@ def render_global_bn_stable_dependencies(
             zorder=4,
         )
 
-    outgoing: dict[str, list[tuple[tuple[str, str], float, float]]] = {}
-    incoming: dict[str, list[tuple[tuple[str, str], float, float]]] = {}
+    outgoing: dict[str, list[tuple[tuple[str, str], float, float, str]]] = {}
+    incoming: dict[str, list[tuple[tuple[str, str], float, float, str]]] = {}
     for edge in edges:
-        (parent, child), _, _ = edge
+        (parent, child), _, _, _ = edge
         outgoing.setdefault(parent, []).append(edge)
         incoming.setdefault(child, []).append(edge)
     for node in outgoing:
@@ -355,7 +358,7 @@ def render_global_bn_stable_dependencies(
         incoming[node].sort(key=lambda item: positions[item[0][0]][1], reverse=True)
 
     # Draw weaker edges first so strong bootstrap arcs stay readable on top.
-    for (parent, child), frequency, signed in sorted(edges, key=lambda item: item[1]):
+    for (parent, child), frequency, signed, pattern in sorted(edges, key=lambda item: item[1]):
         start_x, start_y = positions[parent]
         end_x, end_y = positions[child]
         out_group = outgoing[parent]
@@ -366,7 +369,11 @@ def render_global_bn_stable_dependencies(
         end_y = end_y + (in_index - (len(in_group) - 1) / 2) * 0.06
         dy = end_y - start_y
         rad = float(np.clip(0.08 * np.tanh(dy / max(vertical_span, 1e-6)), -0.10, 0.10))
-        linestyle = "solid" if signed > 0 else (0, (3.2, 2.0))
+        linestyle = (
+            "solid" if pattern == "monotonically_positive" or (not pattern and signed > 0)
+            else (0, (3.2, 2.0)) if pattern == "monotonically_negative" or (not pattern and signed < 0)
+            else "dashdot"
+        )
         axis.annotate(
             "",
             xy=(end_x - box_half_width, end_y),
@@ -388,13 +395,14 @@ def render_global_bn_stable_dependencies(
     legend_handles = [
         Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="solid", label="Positive conditional association"),
         Line2D([0], [0], color="#333333", linewidth=1.6, linestyle=(0, (3.2, 2.0)), label="Negative conditional association"),
+        Line2D([0], [0], color="#333333", linewidth=1.6, linestyle="dashdot", label="Non-monotone conditional association"),
         Line2D([0], [0], color="#333333", linewidth=2.8, linestyle="solid", label="Edge width = bootstrap frequency"),
     ]
     axis.legend(
         handles=legend_handles,
         loc="lower center",
         bbox_to_anchor=(0.5, -0.01),
-        ncol=3,
+        ncol=2,
         frameon=False,
         fontsize=7.5,
         handlelength=2.4,
@@ -479,6 +487,79 @@ def render_global_bn_stable_dependencies_from_edges(
     )
 
 
+def render_bn_stability_contrast(
+    edges: pd.DataFrame,
+    stable_threshold: float,
+    output_path: Path,
+) -> None:
+    """Plot bootstrap reproducibility against the weighted CPT contrast."""
+    if edges.empty:
+        return
+    import matplotlib.pyplot as plt
+    from manuscript_reporting import save_manuscript_figure
+
+    frame = edges.dropna(subset=["bootstrap_frequency", "conditional_contrast_weighted"]).copy()
+    if frame.empty:
+        return
+    marker_map = {"A0->A1": "o", "A0->B": "s", "A1->B": "^", "B->C": "D"}
+    figure, axis = plt.subplots(figsize=(7.4, 5.0))
+    for transition, subset in frame.groupby("transition", sort=True):
+        axis.scatter(
+            subset["bootstrap_frequency"],
+            100.0 * subset["conditional_contrast_weighted"],
+            marker=marker_map.get(transition, "o"), s=46, alpha=0.82,
+            edgecolor="#333333", linewidth=0.45, label=transition,
+        )
+    axis.axvline(stable_threshold, color="#4D4D4D", linewidth=1.05, linestyle="--")
+    axis.axhline(0.0, color="#4D4D4D", linewidth=1.05)
+    axis.set_xlim(-0.02, 1.02)
+    axis.set_xlabel("Bootstrap selection frequency")
+    axis.set_ylabel("Weighted conditional contrast (percentage points)")
+    axis.grid(axis="both", color="#D9D9D9", linewidth=0.55, alpha=0.75)
+    axis.legend(title="Role transition", frameon=False, fontsize=8, title_fontsize=8, loc="best")
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_manuscript_figure(figure, output_path, dpi=220)
+    save_manuscript_figure(figure, output_path.with_suffix(".pdf"), dpi=220)
+    plt.close(figure)
+
+
+def render_observed_vs_bn_recurrence(scenarios: pd.DataFrame, output_path: Path, *, n_labels: int = 6) -> None:
+    """Compare observed recurrent counts with BN-implied expected counts."""
+    required = {"scenario_accident_count", "BN_expected_accident_count", "BN_support_discrepancy"}
+    if scenarios.empty or not required.issubset(scenarios.columns):
+        return
+    import matplotlib.pyplot as plt
+    from manuscript_reporting import K_SELECTION_SELECTED_COLOR, save_manuscript_figure
+
+    frame = scenarios.dropna(subset=["scenario_accident_count", "BN_expected_accident_count"]).copy()
+    if frame.empty:
+        return
+    limit = float(max(frame["scenario_accident_count"].max(), frame["BN_expected_accident_count"].max()))
+    figure, axis = plt.subplots(figsize=(6.8, 5.2))
+    axis.scatter(
+        frame["BN_expected_accident_count"], frame["scenario_accident_count"],
+        s=38, color=K_SELECTION_SELECTED_COLOR, edgecolor="#333333", linewidth=0.4, alpha=0.82,
+    )
+    axis.plot([0.0, limit], [0.0, limit], color="#4D4D4D", linewidth=1.05, linestyle="--")
+    for _, row in frame.reindex(frame["BN_support_discrepancy"].abs().sort_values(ascending=False).index).head(n_labels).iterrows():
+        axis.annotate(
+            str(row["scenario_id"]),
+            (float(row["BN_expected_accident_count"]), float(row["scenario_accident_count"])),
+            xytext=(4, 4), textcoords="offset points", fontsize=7,
+        )
+    axis.set_xlim(left=0.0)
+    axis.set_ylim(bottom=0.0)
+    axis.set_xlabel("BN-implied number of accident narratives")
+    axis.set_ylabel("Observed number of accident narratives")
+    axis.grid(axis="both", color="#D9D9D9", linewidth=0.55, alpha=0.75)
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_manuscript_figure(figure, output_path, dpi=220)
+    save_manuscript_figure(figure, output_path.with_suffix(".pdf"), dpi=220)
+    plt.close(figure)
+
+
 def render_support_lift_figure(
     candidates: pd.DataFrame,
     article: pd.DataFrame,
@@ -528,7 +609,6 @@ def render_support_lift_figure(
                 fontsize=7,
             )
     axis.axhline(1.0, color="#888888", linewidth=0.8, linestyle="--")
-    axis.set_title("Recurrence and consequence enrichment of retained scenarios", fontsize=11)
     axis.set_xlabel("Scenario support (%)")
     axis.set_ylabel("Lift of (upstream + B) -> C")
     axis.grid(alpha=0.25)
@@ -551,7 +631,7 @@ def render_scenario_reduction_figure(
     output_path: Path,
 ) -> None:
     """Funnel: admissible -> observed -> recurrent -> closed -> main-text display."""
-    from manuscript_reporting import save_manuscript_figure
+    from manuscript_reporting import ROLE_COLORS, ROLE_NODE_FILL, save_manuscript_figure
 
     stages = [
         (f"{n_admissible:,}", "Admissible\nrole-complete\nconfigurations"),
@@ -564,11 +644,17 @@ def render_scenario_reduction_figure(
     axis.set_xlim(0, len(stages) - 0.2)
     axis.set_ylim(0, 1)
     axis.axis("off")
-    axis.set_title("Reduction of the recurrent-scenario search space", fontsize=11, pad=10)
     for index, (value, label) in enumerate(stages):
         x = float(index)
         axis.add_patch(
-            plt.Rectangle((x - 0.35, 0.28), 0.7, 0.44, facecolor="#EEF3F8", edgecolor="#4C78A8", linewidth=1.0)
+            plt.Rectangle(
+                (x - 0.35, 0.28),
+                0.7,
+                0.44,
+                facecolor=ROLE_NODE_FILL["A0"],
+                edgecolor=ROLE_COLORS["A0"],
+                linewidth=1.0,
+            )
         )
         axis.text(x, 0.58, value, ha="center", va="center", fontsize=12, fontweight="bold", color="#1F4E79")
         axis.text(x, 0.12, label, ha="center", va="top", fontsize=7.5, color="#333333")
@@ -637,7 +723,6 @@ def render_learned_global_bn_graph(
         width=[0.8 + 3.5 * strengths[edge] / max_strength for edge in graph.edges],
         connectionstyle="arc3,rad=0.04",
     )
-    axis.set_title("Learned global Bayesian network — all fitted edges (appendix)")
     axis.text(0.5, -0.05, "All estimated edges shown | non-causal conditional dependencies", transform=axis.transAxes, ha="center", fontsize=8)
     axis.axis("off")
     figure.tight_layout()

@@ -75,6 +75,9 @@ Un zéro dans la matrice accident × thèmes signifie « thème non observé dan
 - Tie-break : \(\min T_\infty \rightarrow \min T_1 \rightarrow \max S_R\). L'ordre prédéfini des configurations intervient uniquement si une égalité numérique subsiste sur les trois critères (`rtol=0`, `atol=1e-12`).
 - **Aucun LLM** dans le choix de configuration ; le LLM sert uniquement aux labels de clusters (notebook résultats).
 - Sensibilité multi-seeds UMAP après sélection (ne change pas \(c_r^\star\)).
+- Bootstrap de structure BN : 300 rééchantillonnages d'accidents à 80 %, avec 3 initialisations par rééchantillonnage (`bn_structure_bootstrap`).
+- Convention graphique du chapitre : A0 bleu (`DCEAF7`/`3F6F9F`), A1 ambre (`FFF0C7`/`B98920`), B orange (`FAD7C5`/`C65D32`), C bordeaux (`EBCDD2`/`8F3446`) ; `stability` est présenté comme **reproducibility** ; les scores de Jaccard utilisent l'échelle naturelle \([0,1]\).
+- La figure DBCV–\(S_R\) utilise par défaut des axes communs calculés sur les quatre rôles. Les limites peuvent être remplacées dans le notebook via `RAW_AXIS_LIMITS`.
 - BN : mélange contraint A0→A1→B→C avec famille latente \(Z\) (pas de preuve causale).
 
 ## Sorties principales du job
@@ -100,6 +103,28 @@ Après notebook résultats : `topics_manual/…`
 Après notebook BN : `bayesian_networks/` — matrice multi-hot, `input_summary.csv`, `factor_prevalence.csv`, sélection K (`K_selection_summary.csv`), profils familles, `recurrent_scenarios.csv`, `recurrent_scenarios_article.csv`, `mpe_ranked_solutions.csv`, `scenario_prototypes.csv`, `bn_diagnostic_summary.json`, figures sous `bayesian_networks/figures/`. **0 = facteur non observé** dans le récit ; arcs BN = dépendances probabilistes, pas causalité démontrée.
 
 Pour le BN global, `global_bn_edge_contrast_strata.csv` documente les effectifs de chaque strate parentale. Une strate ne contribue au contraste que si les deux états du parent comparé y sont observés ; les cellules conventionnelles à 0,5 sont exclues.
+
+## Exact global BN
+
+The primary BN is the observed-factor exact network described in `bn_explain.tex`.
+It has no latent `Z`: all admissible parent sets of size at most two are scored
+with local MLE BIC. The selected CPT rows are then audited; MLE is retained
+when the configured support criterion is met, while Jeffreys regularization is
+used only when that diagnostic requires a fully specified regularized network.
+Scenario recurrence is selected empirically before the BN is used as a
+background model.
+
+Run it after the selected theme partitions are available:
+
+```bash
+DATASET=caou sbatch jobs/run_recurrent_scenarios_bn_exact.sh
+DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_bn_exact.sh
+```
+
+The new artifacts are stored under `bn_results_exact/`, leaving `bn_results/`
+unchanged. `exact_bn_manifest.json` reuses a complete result only when the
+matrix, selected partitions and relevant configuration are identical. The
+bootstrap uses 500 full accident-level resamples with replacement.
 
 ## Hors scope
 

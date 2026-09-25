@@ -1,0 +1,1094 @@
+% ============================================================
+\subsection{Empirical recurrent-scenario mining}
+\label{sec:chap4_scenario_mining}
+% ============================================================
+
+The accident-level analysis first aims to identify configurations of semantic
+factors that recur across accident narratives and that can therefore support
+the investigation of recurrent accident processes. Scenario discovery is
+performed directly from the accident--factor matrix and independently of the
+Bayesian-network model introduced subsequently. This separation is deliberate:
+recurrence is treated as an empirical property of the observed accident
+narratives, whereas the Bayesian network addresses the conditional organization
+of the factors and the extent to which its joint distribution reproduces the
+frequency of the recurrent configurations.
+
+The analysis is formulated as a constrained frequent-itemset mining problem.
+In classical frequent-pattern mining, each observation is represented as a
+transaction containing a set of items, and recurrent combinations are
+identified according to their support in the transaction database
+\citep{agrawal1993mining}. Here, the transactions are accident narratives and
+the items are the retained semantic factors. The candidate space is restricted
+a priori according to the predefined accident-process roles, following the
+general principle of constraint-based pattern mining
+\citep{ng1998exploratory}. These restrictions focus the search on parsimonious
+configurations that retain an interpretable accident-process structure for
+subsequent prevention-oriented analysis.
+
+
+% ------------------------------------------------------------
+\subsubsection{Admissible scenarios and empirical recurrence}
+\label{sec:chap4_scenario_candidates}
+% ------------------------------------------------------------
+
+For accident narrative \(i\), let
+\[
+\mathcal T_i
+=
+\left\{
+j\in\{1,\ldots,p\}:X_{ij}=1
+\right\}
+\]
+denote the transaction containing all retained semantic factors identified in
+that narrative. A candidate scenario contains one or two upstream factors from
+roles \roleAzero{} and/or \roleAone{}, exactly one event/deviation factor from
+role \roleB{}, and exactly one consequence factor from role \roleC{}. The
+admissible scenario family is therefore
+
+\[
+\mathfrak S
+=
+\left\{
+\mathcal F^{\mathrm{up}}\cup\{b,c\} :
+\mathcal F^{\mathrm{up}}
+\subseteq
+\mathcal J_{\mathrm{A0}}\cup\mathcal J_{\mathrm{A1}},
+\;
+1\leq|\mathcal F^{\mathrm{up}}|\leq2,
+\;
+b\in\mathcal J_{\mathrm B},
+\;
+c\in\mathcal J_{\mathrm C}
+\right\}.
+\]
+
+Restricting the upstream component to at most two factors yields configurations
+centered on a specific accident event and consequence while still allowing
+combined contextual or adverse-condition factors to be represented. When two
+upstream factors are included, they may belong either to the same role or to
+different roles.
+
+For scenario \(s\), let
+\(\mathcal S_s=\mathcal F_s^{\mathrm{up}}\cup\{b_s,c_s\}\).
+Narrative \(i\) contains the scenario whenever
+\(\mathcal S_s\subseteq\mathcal T_i\). Factors outside
+\(\mathcal S_s\) remain unrestricted, so scenario occurrence corresponds to
+itemset containment rather than equality with the complete accident profile.
+The recurrence count and empirical support are
+
+\[
+n_s
+=
+\sum_{i=1}^{N_A}
+\mathbb I
+\left\{
+\mathcal S_s\subseteq\mathcal T_i
+\right\},
+\qquad
+\widehat{\operatorname{supp}}(\mathcal S_s)
+=
+\frac{n_s}{N_A}.
+\]
+
+A configuration is considered empirically recurrent when
+\(n_s\geq n_{\min}\). The threshold \(n_{\min}\) is a recurrence criterion and
+not a statistical-significance threshold. Its sensitivity is examined in the
+empirical application to determine whether the principal recurrent
+configurations depend strongly on the selected minimum count.
+
+
+% ------------------------------------------------------------
+\subsubsection{Association with consequences and redundancy reduction}
+\label{sec:chap4_scenario_measures}
+% ------------------------------------------------------------
+
+Recurrence quantifies how often the complete configuration is observed, but it
+does not characterize whether its consequence is specifically enriched in the
+corresponding upstream accident configuration. For scenario \(s\), define the
+association-rule antecedent as
+\(\mathcal A_s=\mathcal F_s^{\mathrm{up}}\cup\{b_s\}\), so that the rule of
+interest is \(\mathcal A_s\Rightarrow c_s\). Let \(n_s^A\) denote the number
+of narratives containing \(\mathcal A_s\), and let
+
+\[
+\widehat p_{c_s}
+=
+\frac{1}{N_A}
+\sum_{i=1}^{N_A}X_{i,c_s}
+\]
+
+denote the marginal prevalence of consequence \(c_s\). Following standard
+association-rule terminology
+\citep{agrawal1993mining,brin1997dynamic}, confidence and lift are defined as
+
+\[
+\widehat{\operatorname{conf}}_s
+=
+\frac{n_s}{n_s^A},
+\qquad
+\widehat{\operatorname{lift}}_s
+=
+\frac{\widehat{\operatorname{conf}}_s}
+     {\widehat p_{c_s}},
+\]
+
+provided that \(n_s^A>0\). Confidence estimates the frequency of consequence
+\(c_s\) among narratives containing the antecedent, whereas lift compares this
+conditional frequency with the marginal prevalence of the same consequence.
+A lift greater than one therefore indicates enrichment of \(c_s\) within the
+considered accident configuration.
+
+Recurrence and association are kept conceptually separate. A scenario may be
+recurrent without exhibiting strong consequence enrichment, while a
+configuration with high lift may occur in only a small number of accidents.
+Confidence and lift are consequently used to characterize retained scenarios
+but do not determine whether a configuration satisfies the recurrence
+criterion.
+
+Redundancy among recurrent configurations is reduced by adapting the
+closed-itemset principle \citep{pasquier1999discovering} to the predefined
+admissible family \(\mathfrak S\). A recurrent scenario
+\(\mathcal S_s\) is retained as closed within this family when
+
+\[
+\nexists\,
+\mathcal S_{s'}\in\mathfrak S
+\quad\text{such that}\quad
+\mathcal S_s\subsetneq\mathcal S_{s'}
+\quad\text{and}\quad
+n_{s'}=n_s.
+\]
+
+Thus, a smaller configuration is removed when an admissible strict superset
+occurs in exactly the same accident narratives. Closure is used here to
+reduce redundancy in the description of recurrence. Since it is defined
+within the restricted scenario family, it is not interpreted as a
+lossless representation of all possible association measures outside
+\(\mathfrak S\).
+
+
+% ============================================================
+\subsection{Role-constrained Bayesian modeling of accident processes}
+\label{sec:chap4_global_bn}
+% ============================================================
+
+Recurrent-scenario mining identifies semantic factors that repeatedly occur
+together, but joint occurrence alone does not determine whether the
+relationships among these factors remain informative once other factors are
+taken into account. A Bayesian network is therefore learned over the same
+accident-level binary variables to characterize their conditional dependence
+structure.
+
+The network serves two complementary purposes. First, it identifies direct
+conditional dependencies that are retained after accounting for other selected
+parents under the predefined accident-process organization. This provides a
+more selective characterization of the relationships occurring within
+recurrent scenarios than co-occurrence alone. Second, because the fitted
+network defines a joint probability distribution over all retained factors, it
+provides a probabilistic background model against which the empirical support
+of the recurrent scenarios can subsequently be compared.
+
+The network is not interpreted as a causal model. Edge directions are
+restricted a priori according to the accident-process roles and therefore
+represent conditional dependencies within this predefined structural
+framework rather than causal effects inferred from the observational data.
+
+
+% ------------------------------------------------------------
+\subsubsection{Bayesian-network factorization and accident-process constraints}
+\label{sec:chap4_global_bn_factorization}
+% ------------------------------------------------------------
+
+Let
+\(\mathbf X=(X_1,\ldots,X_p)\)
+denote the \(p\) binary variables corresponding to the retained semantic
+factors. For each factor \(X_j\), let
+\(\rho(j)\in\mathcal R\)
+denote its accident-process role, and let
+
+\[
+\mathcal J_r
+=
+\{j:\rho(j)=r\}
+\]
+
+denote the set of factor indices associated with role \(r\).
+
+A Bayesian network consists of a directed acyclic graph
+\(G=(V,E)\), with \(V=\{X_1,\ldots,X_p\}\), together with a collection of
+local conditional probability distributions. If
+\(\operatorname{Pa}_G(j)\) denotes the set of indices of the direct parents
+of \(X_j\), the joint distribution factorizes according to the graph as
+
+\[
+P(\mathbf X=\mathbf x\mid G,\Theta_G)
+=
+\prod_{j=1}^{p}
+P\left(
+X_j=x_j
+\mid
+\mathbf X_{\operatorname{Pa}_G(j)}
+=
+\mathbf x_{\operatorname{Pa}_G(j)}
+\right).
+\]
+
+Since all variables are binary, the local distribution of \(X_j\) for a
+parent configuration \(\pi\) is characterized by the Bernoulli parameter
+
+\[
+\theta_{j,\pi}
+=
+P\left(
+X_j=1
+\mid
+\mathbf X_{\operatorname{Pa}_G(j)}=\pi
+\right).
+\]
+
+The Bayesian-network structure is not learned over the unrestricted space of
+all DAGs. Structural constraints can be incorporated into score-based
+Bayesian-network learning to restrict the set of candidate graphs according
+to prior or expert knowledge
+\citep{decampos2009structure,li2018constraints,
+ramaswamy2022expertconstraints}. In the present analysis, these restrictions
+are derived from the predefined organization of the accident process. The
+admissible ordered role pairs are
+
+\[
+\mathcal A_{\mathrm{role}}
+=
+\left\{
+(\mathrm{A0},\mathrm{A1}),
+(\mathrm{A0},\mathrm{B}),
+(\mathrm{A1},\mathrm{B}),
+(\mathrm{B},\mathrm{C})
+\right\}.
+\]
+
+Accordingly, A0 factors have no admissible parents; A1 factors may have
+parents only among A0 factors; B factors may have parents among A0 and A1
+factors; and C factors may have parents only among B factors. Intra-role
+edges, reverse-process edges, direct A0-to-C and A1-to-C edges, and edges
+originating from consequence factors are excluded.
+
+For each node \(X_j\), let \(\mathcal U_j\) denote its set of admissible
+potential parents:
+
+\[
+\mathcal U_j
+=
+\begin{cases}
+\varnothing,
+& \rho(j)=\mathrm{A0},
+\\[0.3em]
+\mathcal J_{\mathrm{A0}},
+& \rho(j)=\mathrm{A1},
+\\[0.3em]
+\mathcal J_{\mathrm{A0}}\cup\mathcal J_{\mathrm{A1}},
+& \rho(j)=\mathrm{B},
+\\[0.3em]
+\mathcal J_{\mathrm{B}},
+& \rho(j)=\mathrm{C}.
+\end{cases}
+\]
+
+The admissible parent sets for node \(X_j\) are
+
+\[
+\mathcal P_j
+=
+\left\{
+P\subseteq\mathcal U_j:
+|P|\leq d_{\max}
+\right\},
+\qquad
+d_{\max}=2.
+\]
+
+If \(m_j=|\mathcal U_j|\), the number of candidate parent sets considered for
+node \(X_j\) is therefore
+
+\[
+|\mathcal P_j|
+=
+\sum_{d=0}^{\min(d_{\max},m_j)}
+\binom{m_j}{d}.
+\]
+
+The indegree bound has both statistical and computational motivations. For a
+binary child variable with \(d\) binary parents, the conditional-probability
+table contains \(2^d\) parent configurations and therefore \(2^d\) free
+Bernoulli parameters. Restricting the number of parents reduces the risk of
+very sparsely populated conditional cells while still allowing a downstream
+factor to depend directly on more than one upstream factor.
+
+The role constraints also induce the strict ordering
+
+\[
+\mathrm{A0}
+\prec
+\mathrm{A1}
+\prec
+\mathrm{B}
+\prec
+\mathrm{C}.
+\]
+
+Every admissible edge progresses according to this ordering. A directed path
+can therefore only move from an earlier role towards a later role and cannot
+return to its starting node. Acyclicity is consequently guaranteed by the
+definition of the admissible graph space.
+
+\begin{figure}[!htbp]
+\centering
+
+\begin{tikzpicture}[
+    node distance=0.9cm,
+    >=Latex,
+    base/.style={
+        rectangle,
+        rounded corners=2mm,
+        minimum width=2.6cm,
+        minimum height=1.05cm,
+        align=center,
+        font=\sffamily\small,
+        line width=1pt,
+        text=black
+    },
+    nodeA0/.style={
+        base,
+        fill=A0fill,
+        draw=A0border
+    },
+    nodeA1/.style={
+        base,
+        fill=A1fill,
+        draw=A1border
+    },
+    nodeB/.style={
+        base,
+        fill=Bfill,
+        draw=Bborder
+    },
+    nodeC/.style={
+        base,
+        fill=Cfill,
+        draw=Cborder
+    },
+    arrow/.style={
+        ->,
+        line width=1.05pt,
+        draw=black!70,
+        shorten >=1.5pt,
+        shorten <=1.5pt
+    }
+]
+
+\node[nodeA0] (A0) {
+    \textbf{A0}\\[0.1em]
+    {\scriptsize Work context}
+};
+
+\node[nodeA1, right=of A0] (A1) {
+    \textbf{A1}\\[0.1em]
+    {\scriptsize Adverse condition}
+};
+
+\node[nodeB, right=of A1] (B) {
+    \textbf{B}\\[0.1em]
+    {\scriptsize Event / deviation}
+};
+
+\node[nodeC, right=of B] (C) {
+    \textbf{C}\\[0.1em]
+    {\scriptsize Consequence}
+};
+
+\draw[arrow] (A0) -- (A1);
+\draw[arrow] (A1) -- (B);
+\draw[arrow] (B) -- (C);
+\draw[arrow]
+    (A0.south)
+    to[bend right=22]
+    (B.south);
+
+\end{tikzpicture}
+
+\caption{
+Role-level architecture of the constrained Bayesian-network search space.
+Arrows indicate admissible directions of direct conditional dependence
+between accident-process roles and do not represent causal effects.
+}
+\label{fig:chap4_global_bn_architecture}
+\end{figure}
+
+The absence of an admissible edge does not imply marginal independence between
+the corresponding variables. Factors within the same role may, for example,
+co-occur frequently even though intra-role dependencies are not represented
+as edges. More generally, the role constraints determine which direct
+conditional dependencies the model is allowed to represent. They encode the
+predefined temporal and conceptual organization of the accident process but
+do not identify causal relationships from the observational data.
+
+
+% ------------------------------------------------------------
+\subsubsection{Local likelihood and decomposable BIC score}
+\label{sec:chap4_global_bn_score}
+% ------------------------------------------------------------
+
+Let
+\(\mathbf x_i=(x_{i1},\ldots,x_{ip})\),
+\(i=1,\ldots,N_A\),
+denote the binary factor profile associated with accident narrative \(i\).
+Accident narratives are treated as independent observational units at this
+stage of the analysis. For a candidate parent set
+\(P\in\mathcal P_j\), let
+
+\[
+N_{j,\pi,x}(P)
+=
+\sum_{i=1}^{N_A}
+\mathbb I
+\left\{
+\mathbf x_{i,P}=\pi,\;
+x_{ij}=x
+\right\},
+\qquad
+x\in\{0,1\},
+\]
+
+and define
+\(N_{j,\pi}(P)
+=
+N_{j,\pi,0}(P)+N_{j,\pi,1}(P)\).
+For every observed parent configuration satisfying
+\(N_{j,\pi}(P)>0\), the maximum-likelihood estimate of the Bernoulli
+parameter is
+
+\[
+\widehat\theta_{j,\pi}(P)
+=
+\frac{N_{j,\pi,1}(P)}
+     {N_{j,\pi}(P)}.
+\]
+
+Using the convention \(0\log 0=0\), the corresponding maximized local
+log-likelihood is
+
+\[
+\ell_j(P)
+=
+\sum_{\substack{
+\pi\in\{0,1\}^{|P|}\\
+N_{j,\pi}(P)>0}}
+\left[
+N_{j,\pi,1}(P)
+\log\widehat\theta_{j,\pi}(P)
++
+N_{j,\pi,0}(P)
+\log
+\left(
+1-\widehat\theta_{j,\pi}(P)
+\right)
+\right].
+\]
+
+Parent configurations that are absent from the sample do not contribute to
+the maximized likelihood. No arbitrary conditional probability is therefore
+required for BIC computation.
+
+Candidate structures are compared using the Bayesian information criterion
+\citep{schwarz1978estimating}. For a binary child with \(|P|\) binary
+parents, the nominal number of local free parameters is \(2^{|P|}\).
+The local BIC contribution is consequently
+
+\[
+\operatorname{BIC}_j(P)
+=
+-2\ell_j(P)
++
+2^{|P|}
+\log N_A.
+\]
+
+Both the maximized log-likelihood and the complexity penalty decompose over
+the nodes. Hence, for graph \(G\),
+
+\[
+\operatorname{BIC}(G)
+=
+\sum_{j=1}^{p}
+\operatorname{BIC}_j
+\left(
+\operatorname{Pa}_G(j)
+\right).
+\]
+
+The decomposability of score-based Bayesian-network criteria is a standard
+property exploited in exact structure-learning algorithms
+\citep{decampos2009structure}. It does not, by itself, imply that parent sets
+can generally be optimized independently. In an unrestricted search, the
+individually optimal parent sets may jointly create a directed cycle, so
+acyclicity couples the local optimization problems. Exact procedures must
+therefore ordinarily account for this global graph constraint. De Campos
+et al.~\citep{decampos2009structure} show, however, that this additional
+search disappears when a fixed ordering guarantees that every candidate
+edge is acyclic. The accident-process constraints above yield precisely this
+property.
+
+
+% ------------------------------------------------------------
+\subsubsection{Exact structure learning under the role constraints}
+\label{sec:chap4_global_bn_exact}
+% ------------------------------------------------------------
+
+Let \(\mathcal G_{\mathrm{role}}\) denote the class of directed graphs whose
+parent sets satisfy
+\(\operatorname{Pa}_G(j)\in\mathcal P_j\)
+for every \(j\). Because each admissible parent belongs to an earlier role,
+all graphs in this class satisfy the required accident-process ordering.
+
+\begin{proposition} Under the predefined role ordering and the decomposable BIC criterion, any graph obtained by independently selecting a BIC-minimizing admissible parent set for each node is globally BIC-optimal within \(\mathcal G_{\mathrm{role}}\).
+\end{proposition}
+
+\begin{proof} For each node \(X_j\), let \(\mathcal P_j\) denote its set of admissible parent sets. Consider an arbitrary tuple
+\[
+(P_1,\ldots,P_p)
+\in
+\mathcal P_1\times\cdots\times\mathcal P_p,
+\]
+and let \(G(P_1,\ldots,P_p)\) be the directed graph obtained by assigning
+\(P_j\) as the parent set of \(X_j\). If
+\(X_k\rightarrow X_j\) belongs to this graph, admissibility implies
+\(\rho(k)\prec\rho(j)\). Hence the role index strictly increases along every
+directed path. A directed cycle would require nodes
+\(X_{j_1},\ldots,X_{j_m}\) satisfying
+\[
+\rho(j_1)
+\prec
+\rho(j_2)
+\prec
+\cdots
+\prec
+\rho(j_m)
+\prec
+\rho(j_1),
+\]
+which is impossible under a strict ordering. Every tuple of admissible parent
+sets therefore defines a DAG. Conversely, each graph in
+\(\mathcal G_{\mathrm{role}}\) is uniquely determined by the tuple formed by
+its node-specific parent sets. The admissible graph space is consequently in
+one-to-one correspondence with
+\(\mathcal P_1\times\cdots\times\mathcal P_p\).
+
+Using the decomposability of BIC and the absence of any remaining graph-level
+constraint coupling the parent-set choices,
+\[
+\begin{aligned}
+\min_{G\in\mathcal G_{\mathrm{role}}}
+\operatorname{BIC}(G)
+&=
+\min_{\substack{
+(P_1,\ldots,P_p)\in
+\mathcal P_1\times\cdots\times\mathcal P_p}}
+\sum_{j=1}^{p}
+\operatorname{BIC}_j(P_j)
+\\
+&=
+\sum_{j=1}^{p}
+\min_{P\in\mathcal P_j}
+\operatorname{BIC}_j(P).
+\end{aligned}
+\]
+Therefore, for any choices
+\[
+\widehat P_j
+\in
+\arg\min_{P\in\mathcal P_j}
+\operatorname{BIC}_j(P),
+\qquad
+j=1,\ldots,p,
+\]
+the graph
+\(\widehat G=G(\widehat P_1,\ldots,\widehat P_p)\)
+minimizes the BIC over
+\(\mathcal G_{\mathrm{role}}\).
+\end{proof}
+
+The result establishes global optimality only within the predefined
+role-constrained graph class. It does not imply optimality over the
+unrestricted space of DAGs. The argument also relies on the absence of
+additional global restrictions coupling different nodes. For example, a
+constraint on the total number of edges in the complete network would prevent
+the local parent-set problems from being optimized independently.
+
+Structure learning can therefore be implemented by exhaustive local
+enumeration. For each node \(X_j\), every candidate
+\(P\in\mathcal P_j\) is evaluated once and a BIC-minimizing parent set is
+retained. The total number of local score evaluations is
+
+\[
+N_{\mathrm{scores}}
+=
+\sum_{j=1}^{p}
+\sum_{d=0}^{\min(d_{\max},|\mathcal U_j|)}
+\binom{|\mathcal U_j|}{d}.
+\]
+
+Thus, the substantive restrictions introduced from the accident-process roles
+also have a computational consequence: they transform the constrained DAG
+optimization problem into a collection of finite, independent parent-set
+optimizations. Unlike greedy hill climbing, the resulting structure does not
+depend on an initial graph, an edge-update sequence, or a local stopping rule.
+
+If several parent sets achieve exactly the same minimum local BIC, ties are
+resolved deterministically by retaining the parent set with the smallest
+cardinality and, if required, by a fixed ordering of factor indices. This
+rule affects only the choice among score-equivalent solutions and ensures
+reproducibility of the learned structure.
+
+
+% ------------------------------------------------------------
+\subsubsection{Conditional-probability estimation and support diagnostics}
+\label{sec:chap4_global_bn_parameters}
+% ------------------------------------------------------------
+
+Maximum-likelihood estimates are used in the BIC calculations above because
+the criterion is defined from the maximized likelihood. After the structure
+\(\widehat G\) has been selected, its conditional-probability tables are
+first assessed on the complete accident sample. For every observed parent
+configuration \(\pi\), the maximum-likelihood estimate is
+\[
+\widehat\theta_{j,\pi}
+=
+\frac{N_{j,\pi,1}}{N_{j,\pi}}.
+\]
+Parent configurations with \(N_{j,\pi}=0\) do not contribute to the local
+log-likelihood or BIC during structure learning.
+
+Before using the fitted network for joint-probability calculations, the
+empirical support of every selected CPT row is recorded. The diagnostic
+reports the numbers of rows with \(N_{j,\pi}=0\),
+\(N_{j,\pi}\leq2\), and \(N_{j,\pi}\leq5\), the number of boundary MLEs
+equal to zero or one, and the minimum and median observed cell counts. If all
+rows required by the selected network meet the prespecified support criterion,
+the final conditional-probability tables remain the MLEs. In that case the
+fitted joint distribution is denoted by \(P_{\widehat G,\widehat\Theta}\).
+
+The final estimator used for probabilistic inference is reported together
+with these support diagnostics. If the diagnostic requires post-selection
+regularization, its specification and an MLE-versus-regularized sensitivity
+analysis of model-implied scenario probabilities are reported with the
+results. This choice does not alter the BIC scores or the exact-optimization
+result.
+
+
+% ------------------------------------------------------------
+\subsubsection{Bootstrap assessment of structural stability}
+\label{sec:chap4_global_bn_bootstrap}
+% ------------------------------------------------------------
+
+Exact optimization removes uncertainty associated with the use of a local
+search algorithm, but it does not remove sampling variability. The selected
+structure may change when the set of observed accident narratives changes.
+Structural stability is therefore assessed by nonparametric bootstrap
+resampling at the accident level, following the use of bootstrap confidence
+measures for features of learned Bayesian networks
+\citep{friedman1999data}.
+
+The semantic factors and their factual-unit assignments are kept fixed
+throughout this analysis. The bootstrap therefore evaluates the stability of
+the accident-level Bayesian-network structure conditional on the semantic
+representation established in the preceding stage.
+
+For each bootstrap replicate
+\(r=1,\ldots,R_{\mathrm{boot}}\),
+\(N_A\) accident narratives are sampled with replacement from the original
+accident-level sample, and the exact structure-learning procedure is repeated
+using the same role restrictions, maximum indegree and BIC criterion. Let
+\(\widehat G^{[r]}\) denote the resulting graph. For an admissible dependency
+\(X_a\rightarrow X_b\), its bootstrap selection frequency is
+
+\[
+\widehat f_{a\rightarrow b}
+=
+\frac{1}{R_{\mathrm{boot}}}
+\sum_{r=1}^{R_{\mathrm{boot}}}
+\mathbb I
+\left\{
+X_a\rightarrow X_b
+\in
+\widehat G^{[r]}
+\right\}.
+\]
+
+The quantity
+\(\widehat f_{a\rightarrow b}\)
+measures how reproducibly the corresponding dependency is selected when the
+accident sample is perturbed. Since edge orientation is fixed by the
+accident-process roles, it concerns stability of edge selection under the
+imposed direction rather than uncertainty between alternative orientations.
+It is not interpreted as a posterior edge probability, an edge-wise
+significance level, or evidence of a causal relationship.
+
+The full-sample graph \(\widehat G\) remains the primary fitted structure.
+Bootstrap frequencies complement its interpretation and may be used to
+highlight dependencies exceeding a predefined descriptive stability threshold
+\(\tau_{\mathrm{stab}}\) in reduced graphical representations. This threshold
+does not modify the full-sample network.
+
+
+% ------------------------------------------------------------
+\subsubsection{Direction and magnitude of learned conditional dependencies}
+\label{sec:chap4_global_bn_contrast}
+% ------------------------------------------------------------
+
+Selection of an edge \(X_a\rightarrow X_b\) indicates that the corresponding
+parent is retained in a BIC-optimal local model of \(X_b\) within the
+constrained graph class. Edge presence alone, however, does not indicate
+whether \(X_a\) is associated with a higher or lower conditional probability
+of \(X_b\), nor does it quantify the magnitude of that association.
+
+For binary variables, the direction can be characterized through
+context-specific conditional probability differences. This construction is
+closely related to the notion of qualitative probabilistic influence
+introduced by \citet{wellman1990fundamental}, in which the sign of a
+probabilistic relationship is assessed while holding the remaining relevant
+variables fixed.
+
+For edge \(X_a\rightarrow X_b\), let
+
+\[
+\mathcal Q_{ab}
+=
+\operatorname{Pa}_{\widehat G}(b)
+\setminus\{a\}
+\]
+
+denote the remaining direct parents of \(X_b\). For configuration \(\pi\) of
+these variables, the fitted conditional probability contrast is
+
+\[
+\widetilde{\delta}_{a\rightarrow b}(\pi)
+=
+\widetilde P
+\left(
+X_b=1
+\mid
+X_a=1,
+\mathbf X_{\mathcal Q_{ab}}=\pi
+\right)
+-
+\widetilde P
+\left(
+X_b=1
+\mid
+X_a=0,
+\mathbf X_{\mathcal Q_{ab}}=\pi
+\right),
+\]
+
+where the probabilities are obtained from the post-selection conditional
+tables defined above. For a fixed configuration of the other parents, a
+positive contrast indicates a higher fitted probability of identifying
+\(X_b\) when \(X_a\) is identified, whereas a negative contrast indicates the
+opposite relationship.
+
+For interpretation of the configuration-specific contrasts, attention is
+restricted to contexts in which both states of \(X_a\) are represented in the
+observed accident sample. Let
+
+\[
+\mathcal S_{ab}
+=
+\left\{
+\pi:
+N_{ab,1}(\pi)>0
+\text{ and }
+N_{ab,0}(\pi)>0
+\right\}
+\]
+
+denote this empirically supported set of contexts. A dependency is described
+as monotonically positive over the observed support when
+\(\widetilde{\delta}_{a\rightarrow b}(\pi)\geq0\)
+for every \(\pi\in\mathcal S_{ab}\), with at least one strict inequality.
+It is described as monotonically negative under the reverse condition and as
+non-monotone when contrasts of both signs occur.
+
+To summarize the fitted association over the observed contexts, let
+
+\[
+\widehat w_{ab}(\pi)
+=
+\frac{
+N_{ab}(\pi)
+}{
+\sum_{\pi'\in\mathcal S_{ab}}
+N_{ab}(\pi')
+}
+\]
+
+denote the empirical frequency of each estimable configuration of the
+remaining parents. The observed-context weighted average contrast is
+
+\[
+\widetilde{\Delta}_{a\rightarrow b}
+=
+\sum_{\pi\in\mathcal S_{ab}}
+\widehat w_{ab}(\pi)
+\widetilde{\delta}_{a\rightarrow b}(\pi).
+\]
+
+The configuration-specific contrasts and their weighted average are retained
+together. A positive
+\(\widetilde{\Delta}_{a\rightarrow b}\)
+indicates a positive conditional association on average over the empirically
+supported contexts, but does not imply positivity in every context.
+
+Bootstrap selection frequency and conditional probability contrast therefore
+describe different properties. The former measures reproducibility of
+structure selection, whereas the latter characterizes the fitted direction
+and magnitude of a selected dependency. A dependency may be repeatedly
+selected while having a small probability contrast, or display a larger
+contrast while being less stable under resampling. Neither quantity is
+interpreted causally. In prevention terms, these quantities help distinguish
+factors that repeatedly belong to the same accident configuration from
+relationships that remain directly informative after conditioning on the
+other selected upstream factors.
+
+
+% ============================================================
+\subsection{Integration of recurrent scenarios and Bayesian dependencies}
+\label{sec:chap4_scenario_bn_integration}
+% ============================================================
+
+Scenario mining and Bayesian-network modeling are integrated only after both
+analyses have been estimated independently. This design preserves the
+distinction between recurrence, association and conditional dependence.
+Scenario support measures how frequently the complete accident configuration
+occurs; confidence and lift characterize association between its antecedent
+and consequence; and the Bayesian network characterizes the conditional
+organization of the factor variables under the predefined role constraints.
+
+The integration addresses two additional questions. First, which
+relationships among the factors composing a recurrent scenario remain
+represented as direct conditional dependencies in the full network? Second,
+to what extent does the joint probability distribution implied by the network
+reproduce the empirical frequency of the complete scenario?
+
+
+% ------------------------------------------------------------
+\subsubsection{Conditional structure within recurrent scenarios}
+\label{sec:chap4_scenario_internal_bn}
+% ------------------------------------------------------------
+
+For retained scenario \(s\), define
+
+\[
+\widehat E_s
+=
+\left\{
+X_a\rightarrow X_b\in\widehat E:
+a\in\mathcal S_s,\;
+b\in\mathcal S_s
+\right\},
+\]
+
+where
+\(\widehat G=(V,\widehat E)\)
+is the network learned from the full accident sample. These internal edges
+identify relationships among the factors of the scenario that remain directly
+represented after conditioning on the other selected parents in the complete
+network.
+
+Particular attention is given to the two accident-process stages linking the
+upstream A0/A1 factors to event \(b_s\) and event \(b_s\) to consequence
+\(c_s\). For each internal dependency, its bootstrap selection frequency
+\(\widehat f_{a\rightarrow b}\), its weighted conditional contrast
+\(\widetilde{\Delta}_{a\rightarrow b}\), and, where relevant, the
+configuration-specific contrasts are examined jointly. Dependencies exceeding
+the descriptive stability threshold and exhibiting a positive conditional
+contrast provide the strongest network representation of a positive
+relationship between the corresponding scenario components.
+
+The presence or absence of such edges does not validate or invalidate the
+scenario itself. A recurrent scenario is defined by repeated joint occurrence
+and may remain empirically meaningful even when some of its components are
+not directly connected in the Bayesian network. Conversely, a stable
+conditional dependency may occur without belonging to a complete scenario
+that satisfies the recurrence criterion.
+
+This distinction has a direct prevention-oriented interpretation. Scenario
+mining identifies combinations of work context, adverse conditions, events
+and consequences that repeatedly characterize accidents. The Bayesian network
+then indicates which relationships within those configurations remain
+informative once the other modeled parent factors are taken into account.
+It therefore helps distinguish the overall recurrent context from the more
+specific conditional organization represented by the fitted model.
+
+
+% ------------------------------------------------------------
+\subsubsection{Scenario recurrence relative to the Bayesian background model}
+\label{sec:chap4_scenario_bn_expected}
+% ------------------------------------------------------------
+
+Analysis of internal network edges remains local to the relationships between
+scenario components and does not determine whether the fitted network
+reproduces the frequency of the complete configuration. Bayesian networks
+have previously been used as background-knowledge models for frequent-pattern
+analysis by comparing the empirical support of an itemset with the support
+implied by the network
+\citep{jaroszewicz2004interestingness,
+jaroszewicz2009scalable}. We adopt this support-comparison principle after
+recurrent scenarios have been identified, without using the Bayesian network
+to determine which configurations satisfy the recurrence criterion.
+
+For scenario \(\mathcal S_s\), the observed probability is its empirical
+support,
+
+\[
+\widehat p_{\mathrm{obs},s}
+=
+\frac{n_s}{N_A}.
+\]
+
+The fitted Bayesian network defines a joint probability distribution over the
+complete factor vector. The support implied by this distribution for the same
+scenario is
+
+\[
+\widehat p_{\mathrm{BN},s}
+=
+P_{\widehat G,\widetilde\Theta}
+\left(
+X_g=1
+\text{ for every }
+g\in\mathcal S_s
+\right).
+\]
+
+Since empirical scenario occurrence is defined by containment rather than
+exact equality with the complete factor profile, all factors outside
+\(\mathcal S_s\) must be marginalized. Equivalently,
+
+\[
+\widehat p_{\mathrm{BN},s}
+=
+\sum_{\substack{
+\mathbf x\in\{0,1\}^{p}\\
+x_g=1,\;g\in\mathcal S_s}}
+\prod_{j=1}^{p}
+P_{\widehat G,\widetilde\Theta}
+\left(
+X_j=x_j
+\mid
+\mathbf X_{\operatorname{Pa}_{\widehat G}(j)}
+=
+\mathbf x_{\operatorname{Pa}_{\widehat G}(j)}
+\right).
+\]
+
+In implementation, this marginal probability is obtained using exact
+Bayesian-network inference rather than explicit enumeration of all states of
+the remaining variables.
+
+The corresponding expected number of scenario occurrences under the fitted
+network is
+
+\[
+\widehat\mu_s
+=
+N_A\widehat p_{\mathrm{BN},s}.
+\]
+
+Following \citet{jaroszewicz2004interestingness}, the model-relative
+interestingness of the scenario can be expressed through the absolute
+difference between empirical and BN-implied support,
+
+\[
+\widehat I_{\mathrm{BN},s}
+=
+\left|
+\widehat p_{\mathrm{obs},s}
+-
+\widehat p_{\mathrm{BN},s}
+\right|.
+\]
+
+Because the direction of this discrepancy is relevant for the present
+application, the corresponding signed difference is additionally retained,
+
+\[
+\widehat D_{\mathrm{BN},s}
+=
+\widehat p_{\mathrm{obs},s}
+-
+\widehat p_{\mathrm{BN},s}.
+\]
+
+The absolute quantity
+\(\widehat I_{\mathrm{BN},s}\)
+measures the magnitude of disagreement between empirical scenario support and
+the fitted Bayesian background model. The signed quantity distinguishes
+configurations that occur more frequently than implied by the network
+(\(\widehat D_{\mathrm{BN},s}>0\)) from those occurring less frequently than
+the network assigns them
+(\(\widehat D_{\mathrm{BN},s}<0\)).
+On the accident-count scale, the same discrepancy is
+\(n_s-\widehat\mu_s
+=
+N_A\widehat D_{\mathrm{BN},s}\).
+
+These quantities are descriptive model-discrepancy measures. They are not
+treated as p-values or as tests of excess recurrence, particularly because
+the same accident sample contributes both to network estimation and to
+empirical scenario support. Their purpose is instead to determine whether a
+recurrent configuration is well represented by the conditional structure of
+the fitted network.
+
+For prevention, a recurrent scenario with empirical support close to its
+BN-implied support is compatible with the probabilistic organization already
+represented by the model. A scenario with a substantial positive discrepancy
+is different: its complete configuration occurs more frequently than the
+fitted network represents. Such a discrepancy does not establish an omitted
+causal mechanism, but it identifies a configuration for which further expert
+investigation may be informative. Relevant explanations may include an
+unrepresented work practice, an organizational condition, an interaction not
+captured by the permitted graph structure, a relevant omitted factor, or a
+systematic feature of accident reporting.
+
+
+% ------------------------------------------------------------
+\subsubsection{Complementary interpretation for prevention}
+\label{sec:chap4_scenario_interpretation}
+% ------------------------------------------------------------
+
+The final analysis deliberately preserves the distinction between four
+properties of a recurrent accident scenario. Its support describes empirical
+recurrence. Confidence and lift describe association between its
+upstream/event antecedent and its consequence. Internal Bayesian-network
+edges and conditional probability contrasts characterize direct conditional
+dependencies under the imposed accident-process organization, while bootstrap
+frequencies assess the reproducibility of those selected dependencies.
+Finally, comparison between empirical and BN-implied support characterizes
+the extent to which the fitted joint model reproduces the recurrence of the
+complete configuration.
+
+These quantities are not combined into a single score because they answer
+different questions. A highly recurrent scenario need not be strongly
+enriched for a particular consequence; a large conditional association need
+not correspond to a recurrent complete configuration; and two scenarios with
+similar empirical recurrence may differ substantially in their discrepancy
+relative to the Bayesian-network background model.
+
+This distinction is useful for prevention because it separates three levels
+of interpretation: the configurations that repeatedly occur, the
+relationships within those configurations that remain informative after
+conditioning, and the recurrent configurations that are not well represented
+by the current probabilistic model. The last group provides targets for
+additional expert investigation rather than automatic prevention priorities.
+Throughout the analysis, recurrence, association, conditional dependence,
+structural stability and model discrepancy remain distinct descriptive
+properties and none is interpreted as evidence of a causal effect.

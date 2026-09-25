@@ -391,8 +391,8 @@ else:
 (72 avec la grille actuelle),
 avec le front de Pareto, la configuration retenue (étoile, *Selected configuration*) et les candidats dominés (gris).
 Panneaux : **(a) A0 – Work context**, **(b) A1 – Adverse condition**, **(c) B – Event/deviation**,
-**(d) C – Consequence**. Les limites des axes sont **spécifiques à chaque rôle** : ne pas comparer
-visuellement les distances entre panneaux.
+**(d) C – Consequence**. Les quatre panneaux utilisent les **mêmes limites d'axes**, calculées
+sur l'ensemble des configurations, afin de permettre une comparaison directe entre rôles.
 
 **Figure 4.2 (normalisé, complément)** — front de Pareto normalisé, point idéal `(1, 1)` et
 configuration retenue (*Selected configuration*). Seuls les rôles dont le front
@@ -423,33 +423,45 @@ ROLE_LABELS = {
 }
 AXIS_LABELS = {
     "dbcv_raw": "DBCV",
-    "stability_raw": r"$S_R$",
-    "dbcv_normalized": r"Normalized DBCV ($\\widetilde{D}$)",
-    "stability_normalized": r"Normalized $S_R$ ($\\widetilde{S}$)",
+    "stability_raw": r"Resampling reproducibility $S_R$",
+    "dbcv_normalized": r"Normalized DBCV, $\\widetilde{D}$",
+    "stability_normalized": r"Normalized reproducibility, $\\widetilde{S}$",
 }
 LEGEND_LABELS = {
     "candidates": "Candidate configurations",
-    "pareto": "Pareto-optimal configurations",
+    "pareto": "Pareto front",
     "selected": "Selected configuration",
     "ideal": "Ideal point (1, 1)",
 }
 PLOT_COLORS = {
-    "candidates": "#757575",
+    "candidates": "#B0B0B0",
     "pareto": "#1f77b4",
     "selected": "#d62728",
     "ideal": "#333333",
 }
+# Keep None for limits computed from all roles, or set explicit common limits,
+# for example {"dbcv_raw": (-0.05, 0.45), "stability_raw": (0.25, 0.75)}.
+RAW_AXIS_LIMITS = None
 
 if selection_tables:
-    figure_options = {
+    common_figure_options = {
         "role_labels": ROLE_LABELS,
         "axis_labels": AXIS_LABELS,
         "legend_labels": LEGEND_LABELS,
         "colors": PLOT_COLORS,
     }
-    write_stability_landscape_figure(selection_tables, RUN_DIR / "figures", **figure_options)
+    write_stability_landscape_figure(
+        selection_tables,
+        RUN_DIR / "figures",
+        shared_axes=True,
+        axis_limits=RAW_AXIS_LIMITS,
+        **common_figure_options,
+    )
     write_pareto_normalized_tchebycheff_figure(
-        selection_tables, RUN_DIR / "figures", **figure_options
+        selection_tables,
+        RUN_DIR / "figures",
+        show_selected_guides=True,
+        **common_figure_options,
     )
     print("Regenerated:", figure_path.name, "and", normalized_path.name)
 
@@ -655,7 +667,7 @@ for role in ROLES:
 and for A1, B and C (combined three-panel figure). Each row represents one retained
 factor and shows the distribution of its best-match Jaccard similarity across
 accident-level resamples. Factors are ordered by decreasing mean reproducibility
-$S_{cg}$ within each role (highest at the top). The red dot marks $S_{cg}$; exact
+$S_{cg}$ within each role (highest at the top). The black dot marks $S_{cg}$; exact
 values appear in the retained-factors table.
         """
     ),

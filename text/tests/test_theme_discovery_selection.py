@@ -10,7 +10,25 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "recurrent_scenarios"))
 
 import pareto_knee_selection as pareto_knee
+import manuscript_reporting as reporting
 import scenario_pipeline as pipeline
+
+
+def test_manuscript_role_palette_matches_latex_definitions():
+    assert reporting.ROLE_NODE_FILL == {
+        "A0": "#DCEAF7",
+        "A1": "#FFF0C7",
+        "B": "#FAD7C5",
+        "C": "#EBCDD2",
+        "Z": "#E7E0EC",
+    }
+    assert reporting.ROLE_COLORS == {
+        "A0": "#3F6F9F",
+        "A1": "#B98920",
+        "B": "#C65D32",
+        "C": "#8F3446",
+        "Z": "#CAB2D6",
+    }
 
 
 def test_aggregate_resampling_stability_mean_and_observability():
@@ -170,6 +188,81 @@ def test_pareto_figures_render_with_editable_labels():
         )
         assert (output_dir / "raw.png").is_file()
         assert (output_dir / "normalized.png").is_file()
+
+
+def test_raw_pareto_uses_common_axes_and_reproducibility_label(monkeypatch):
+    tables = {}
+    for role, offset in (("A0", 0.0), ("A1", 0.1)):
+        candidates = pd.DataFrame(
+            [
+                {"role": role, "configuration_id": f"{role}_cfg_000", "stability": 0.8 - offset, "dbcv_umap": 0.1},
+                {"role": role, "configuration_id": f"{role}_cfg_001", "stability": 0.5 - offset, "dbcv_umap": 0.6},
+            ]
+        )
+        tables[role], _, _ = pareto_knee.select_tchebycheff_configuration(candidates)
+
+    captured = []
+    monkeypatch.setattr(reporting, "save_manuscript_figure", lambda figure, *_args, **_kwargs: captured.append(figure))
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        pareto_knee.plot_pareto_raw(
+            tables,
+            Path(temporary_directory),
+            roles=("A0", "A1"),
+        )
+    axes = captured[0].axes[:2]
+    assert axes[0].get_xlim() == pytest.approx(axes[1].get_xlim())
+    assert axes[0].get_ylim() == pytest.approx(axes[1].get_ylim())
+    assert axes[0].get_ylabel() == r"Resampling reproducibility $S_R$"
+    assert "Pareto front" in [text.get_text() for text in captured[0].legends[0].get_texts()]
+
+
+def test_factor_resampling_and_seed_figures_use_manuscript_labels():
+    rows = []
+    for role in ("A1", "B", "C"):
+        for cluster_label, stability in ((0, 0.8), (1, 0.6)):
+            for repetition, jaccard in enumerate((0.5, 0.7, 0.9)):
+                rows.append({
+                    "role": role,
+                    "configuration_id": f"{role}_cfg_001",
+                    "cluster_label": cluster_label,
+                    "repetition": repetition,
+                    "n_reference_units": 10,
+                    "best_jaccard": jaccard - 0.05 * cluster_label,
+                    "theme_stability": stability,
+                })
+    frame = pd.DataFrame(rows)
+    figure = reporting.plot_factor_resampling_multi_panel(
+        {role: frame.loc[frame["role"].eq(role)] for role in ("A1", "B", "C")},
+        roles=("A1", "B", "C"),
+        configuration_ids={role: f"{role}_cfg_001" for role in ("A1", "B", "C")},
+    )
+    assert figure is not None
+    assert all(axis.get_xlim() == pytest.approx((0.0, 1.0)) for axis in figure.axes)
+    assert all(axis.get_xlabel() == "" for axis in figure.axes)
+    assert figure._supxlabel.get_text() == "Best-match Jaccard similarity"
+    assert len(figure.legends) == 1
+    single_figure = reporting.plot_factor_resampling_reproducibility(
+        frame.loc[frame["role"].eq("A1")],
+        role="A1",
+        configuration_id="A1_cfg_001",
+    )
+    assert single_figure is not None
+    assert single_figure.axes[0].get_title() == ""
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        run_dir = Path(temporary_directory)
+        for role in reporting.ROLES:
+            seed_dir = run_dir / "discovery" / role / "seed_sensitivity"
+            seed_dir.mkdir(parents=True)
+            pd.DataFrame({
+                "seed": [1, 2, 3],
+                "seed_stability": [0.72, 0.78, 0.75],
+            }).to_csv(seed_dir / "seed_summary.csv", index=False)
+        seed_figure = reporting.plot_umap_seed_sensitivity_all_roles(run_dir)
+    assert seed_figure is not None
+    assert seed_figure._suptitle is None
+    assert all(axis.get_ylim() == pytest.approx((0.0, 1.0)) for axis in seed_figure.axes)
+    assert seed_figure.axes[0].get_ylabel() == "Mean best-match Jaccard similarity"
 
 
 def test_single_pareto_skips_normalization_and_scalarization():

@@ -439,6 +439,65 @@ def _panel_title(
     return f"({letter}) {role_labels[role]}"
 
 
+def _padded_limits(
+    values: Sequence[float],
+    *,
+    lower_bound: float | None = None,
+    upper_bound: float | None = None,
+    padding_fraction: float = 0.05,
+) -> tuple[float, float] | None:
+    """Return finite shared limits with light padding and optional bounds."""
+    finite = np.asarray(values, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return None
+    low = float(finite.min())
+    high = float(finite.max())
+    span = high - low
+    padding = padding_fraction * span if span > SELECTION_TOLERANCE else 0.05
+    low -= padding
+    high += padding
+    if lower_bound is not None:
+        low = max(float(lower_bound), low)
+    if upper_bound is not None:
+        high = min(float(upper_bound), high)
+    if high <= low:
+        high = low + 0.1
+    return low, high
+
+
+def _raw_shared_limits(
+    selection_tables: Mapping[str, pd.DataFrame],
+    roles: Sequence[str],
+    *,
+    stability_col: str,
+    dbcv_col: str,
+) -> dict[str, tuple[float, float]]:
+    """Compute common DBCV and reproducibility limits across plotted roles."""
+    dbcv_values: list[float] = []
+    stability_values: list[float] = []
+    for role in roles:
+        frame = selection_tables.get(role, pd.DataFrame())
+        if dbcv_col in frame.columns:
+            dbcv_values.extend(pd.to_numeric(frame[dbcv_col], errors="coerce").dropna().tolist())
+        if stability_col in frame.columns:
+            stability_values.extend(
+                pd.to_numeric(frame[stability_col], errors="coerce").dropna().tolist()
+            )
+    limits: dict[str, tuple[float, float]] = {}
+    dbcv_limits = _padded_limits(dbcv_values)
+    stability_limits = _padded_limits(
+        stability_values,
+        lower_bound=0.0,
+        upper_bound=1.0,
+    )
+    if dbcv_limits is not None:
+        limits["dbcv_raw"] = dbcv_limits
+    if stability_limits is not None:
+        limits["stability_raw"] = stability_limits
+    return limits
+
+
 def plot_pareto_raw(
     selection_tables: Mapping[str, pd.DataFrame],
     output_dir: Path,
@@ -452,26 +511,50 @@ def plot_pareto_raw(
     axis_labels: Mapping[str, str] | None = None,
     legend_labels: Mapping[str, str] | None = None,
     colors: Mapping[str, str] | None = None,
+    shared_axes: bool = True,
+    axis_limits: Mapping[str, tuple[float, float]] | None = None,
 ) -> None:
     """Raw DBCV/S_R landscape with dominated, Pareto and selected points."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from manuscript_reporting import save_manuscript_figure
+    from manuscript_reporting import MANUSCRIPT_FONT_SIZES, save_manuscript_figure
 
     plot_roles = tuple(roles)
+    del suptitle
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    figure, axes = plt.subplots(2, 2, figsize=(14, 10), squeeze=False)
+    figure, axes = plt.subplots(
+        2,
+        2,
+        figsize=(14, 10),
+        squeeze=False,
+        sharex=shared_axes,
+        sharey=shared_axes,
+    )
     axis_labels = dict(axis_labels or {})
     legend_labels = dict(legend_labels or {})
     colors = dict(colors or {})
     selected_color = colors.get("selected", "#d62728")
     pareto_color = colors.get("pareto", "#1f77b4")
-    other_color = colors.get("candidates", "#757575")
+    other_color = colors.get("candidates", "#B0B0B0")
     x_label = axis_labels.get("dbcv_raw", "DBCV")
-    y_label = axis_labels.get("stability_raw", r"$S_R$")
+    y_label = axis_labels.get("stability_raw", r"Resampling reproducibility $S_R$")
+    resolved_limits = dict(axis_limits or {})
+    if shared_axes:
+        automatic_limits = _raw_shared_limits(
+            selection_tables,
+            plot_roles,
+            stability_col=stability_col,
+            dbcv_col=dbcv_col,
+        )
+        for key, value in automatic_limits.items():
+            resolved_limits.setdefault(key, value)
     for index, (axis, role) in enumerate(zip(axes.flat, plot_roles)):
-        axis.set_title(_panel_title(role, index, role_labels), fontsize=11, pad=6)
+        axis.set_title(
+            _panel_title(role, index, role_labels),
+            fontsize=MANUSCRIPT_FONT_SIZES["title"],
+            pad=6,
+        )
         frame = selection_tables.get(role, pd.DataFrame()).copy()
         if frame.empty:
             axis.text(0.5, 0.5, "No configuration", ha="center", va="center")
@@ -491,7 +574,7 @@ def plot_pareto_raw(
                 others[stability_col],
                 s=18,
                 c=other_color,
-                alpha=0.78,
+                alpha=0.72,
                 linewidths=0,
                 zorder=1,
             )
@@ -531,27 +614,30 @@ def plot_pareto_raw(
                 linewidths=0.8,
                 zorder=4,
             )
-        axis.set_xlabel(x_label)
-        axis.set_ylabel(y_label)
-        axis.grid(alpha=0.2)
+        axis.set_xlabel(x_label, fontsize=MANUSCRIPT_FONT_SIZES["label"])
+        axis.set_ylabel(y_label, fontsize=MANUSCRIPT_FONT_SIZES["label"])
+        if "dbcv_raw" in resolved_limits:
+            axis.set_xlim(*resolved_limits["dbcv_raw"])
+        if "stability_raw" in resolved_limits:
+            axis.set_ylim(*resolved_limits["stability_raw"])
+        axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+        axis.grid(color="#D9D9D9", linewidth=0.6, alpha=0.55)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
         Line2D([0], [0], marker="o", linestyle="None", color="black", label=legend_labels.get("candidates", "Candidate configurations"), markerfacecolor=other_color, markersize=6),
-        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label=legend_labels.get("pareto", "Pareto-optimal configurations"), markerfacecolor=pareto_color, markersize=7),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, label=legend_labels.get("pareto", "Pareto front"), markerfacecolor=pareto_color, markersize=7),
         Line2D([0], [0], marker="*", linestyle="None", color="black", label=legend_labels.get("selected", SELECTED_CONFIGURATION_LEGEND), markerfacecolor=selected_color, markersize=12),
     ]
-    if suptitle:
-        figure.suptitle(suptitle, y=0.98, fontsize=12)
     figure.legend(
         handles=handles,
         loc="lower center",
         bbox_to_anchor=(0.5, -0.02),
         ncol=3,
         frameon=False,
-        fontsize=10,
+        fontsize=MANUSCRIPT_FONT_SIZES["legend"],
     )
-    figure.tight_layout(rect=(0, 0.06, 1, 0.97 if suptitle else 1.0))
+    figure.tight_layout(rect=(0, 0.06, 1, 1.0))
     save_manuscript_figure(figure, output_dir / filename)
     plt.close(figure)
 
@@ -570,12 +656,15 @@ def plot_pareto_normalized_tchebycheff(
     axis_labels: Mapping[str, str] | None = None,
     legend_labels: Mapping[str, str] | None = None,
     colors: Mapping[str, str] | None = None,
+    show_selected_guides: bool = True,
 ) -> None:
     """Normalized Pareto fronts, ideal point and Tchebycheff compromise."""
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from manuscript_reporting import MANUSCRIPT_FONT_SIZES
 
     candidate_roles = tuple(roles)
+    del suptitle
     plot_roles = (
         roles_with_multi_point_pareto_front(selection_tables, candidate_roles)
         if multi_pareto_only
@@ -584,15 +673,25 @@ def plot_pareto_normalized_tchebycheff(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     n_rows, n_cols, figsize = _pareto_subplot_layout(len(plot_roles))
-    figure, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    figure, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=figsize,
+        squeeze=False,
+        sharex=True,
+        sharey=True,
+    )
     axis_labels = dict(axis_labels or {})
     legend_labels = dict(legend_labels or {})
     colors = dict(colors or {})
     selected_color = colors.get("selected", "#d62728")
     pareto_color = colors.get("pareto", "#1f77b4")
     ideal_color = colors.get("ideal", "#333333")
-    x_label = axis_labels.get("dbcv_normalized", r"Normalized DBCV ($\widetilde{D}$)")
-    y_label = axis_labels.get("stability_normalized", r"Normalized $S_R$ ($\widetilde{S}$)")
+    x_label = axis_labels.get("dbcv_normalized", r"Normalized DBCV, $\widetilde{D}$")
+    y_label = axis_labels.get(
+        "stability_normalized",
+        r"Normalized reproducibility, $\widetilde{S}$",
+    )
     if not plot_roles:
         axis = axes.flat[0]
         axis.axis("off")
@@ -607,19 +706,32 @@ def plot_pareto_normalized_tchebycheff(
         for extra_axis in list(axes.flat)[1:]:
             extra_axis.remove()
     for plot_index, (axis, role) in enumerate(zip(axes.flat, plot_roles)):
-        axis.set_title(_panel_title(role, plot_index, role_labels), fontsize=11, pad=6)
+        axis.set_title(
+            _panel_title(role, plot_index, role_labels),
+            fontsize=MANUSCRIPT_FONT_SIZES["title"],
+            pad=6,
+        )
         frame = selection_tables.get(role, pd.DataFrame()).copy()
-        axis.scatter([1.0], [1.0], marker="x", s=80, color=ideal_color, linewidths=1.5, zorder=1)
+        axis.scatter(
+            [1.0],
+            [1.0],
+            marker="x",
+            s=80,
+            color=ideal_color,
+            linewidths=1.5,
+            zorder=1,
+            clip_on=False,
+        )
         if frame.empty:
-            axis.set_xlim(-0.05, 1.05)
-            axis.set_ylim(-0.05, 1.05)
+            axis.set_xlim(0, 1)
+            axis.set_ylim(0, 1)
             axis.set_xlabel(x_label)
             axis.set_ylabel(y_label)
             continue
         pareto = frame.loc[frame["is_pareto"].fillna(frame.get("on_pareto", False)).astype(bool)].copy()
         if pareto.empty or len(pareto) <= 1:
-            axis.set_xlim(-0.05, 1.05)
-            axis.set_ylim(-0.05, 1.05)
+            axis.set_xlim(0, 1)
+            axis.set_ylim(0, 1)
             continue
         if "dbcv_normalized" not in pareto.columns or pareto["dbcv_normalized"].isna().all():
             pareto = compute_tchebycheff_scores(
@@ -655,9 +767,32 @@ def plot_pareto_normalized_tchebycheff(
             x_selected = selected.iloc[0].get("dbcv_normalized")
             y_selected = selected.iloc[0].get("stability_normalized")
             if pd.notna(x_selected) and pd.notna(y_selected):
+                x_selected = float(x_selected)
+                y_selected = float(y_selected)
+                if show_selected_guides:
+                    axis.vlines(
+                        x_selected,
+                        0,
+                        y_selected,
+                        colors="#8C8C8C",
+                        linestyles="--",
+                        linewidth=0.7,
+                        alpha=0.65,
+                        zorder=1,
+                    )
+                    axis.hlines(
+                        y_selected,
+                        0,
+                        x_selected,
+                        colors="#8C8C8C",
+                        linestyles="--",
+                        linewidth=0.7,
+                        alpha=0.65,
+                        zorder=1,
+                    )
                 axis.scatter(
-                    [float(x_selected)],
-                    [float(y_selected)],
+                    [x_selected],
+                    [y_selected],
                     marker="*",
                     s=320,
                     facecolors=selected_color,
@@ -665,29 +800,28 @@ def plot_pareto_normalized_tchebycheff(
                     linewidths=0.8,
                     zorder=4,
                 )
-        axis.set_xlim(-0.05, 1.05)
-        axis.set_ylim(-0.05, 1.05)
-        axis.set_xlabel(x_label)
-        axis.set_ylabel(y_label)
-        axis.grid(alpha=0.2)
+        axis.set_xlim(0, 1)
+        axis.set_ylim(0, 1)
+        axis.set_xlabel(x_label, fontsize=MANUSCRIPT_FONT_SIZES["label"])
+        axis.set_ylabel(y_label, fontsize=MANUSCRIPT_FONT_SIZES["label"])
+        axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+        axis.grid(color="#D9D9D9", linewidth=0.6, alpha=0.55)
     for axis in list(axes.flat)[len(plot_roles):]:
         axis.remove()
     handles = [
         Line2D([0], [0], marker="x", linestyle="None", color=ideal_color, markersize=8, label=legend_labels.get("ideal", "Ideal point (1, 1)")),
-        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label=legend_labels.get("pareto", "Pareto-optimal configurations")),
+        Line2D([0], [0], marker="o", linestyle="-", color=pareto_color, markerfacecolor=pareto_color, markersize=7, label=legend_labels.get("pareto", "Pareto front")),
         Line2D([0], [0], marker="*", linestyle="None", color="black", markerfacecolor=selected_color, markersize=12, label=legend_labels.get("selected", SELECTED_CONFIGURATION_LEGEND)),
     ]
-    if suptitle:
-        figure.suptitle(suptitle, y=0.98, fontsize=12)
     figure.legend(
         handles=handles,
         loc="lower center",
         bbox_to_anchor=(0.5, -0.02),
         ncol=min(5, len(handles)),
         frameon=False,
-        fontsize=10,
+        fontsize=MANUSCRIPT_FONT_SIZES["legend"],
     )
-    figure.tight_layout(rect=(0, 0.08, 1, 0.97 if suptitle else 1.0))
+    figure.tight_layout(rect=(0, 0.08, 1, 1.0))
     from manuscript_reporting import save_manuscript_figure
 
     save_manuscript_figure(figure, output_dir / filename)

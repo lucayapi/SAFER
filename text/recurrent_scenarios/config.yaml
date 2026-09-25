@@ -91,11 +91,11 @@ scenario_mining:
 expected_inventory:
   caou:
     n_accidents: 838
-    n_factors: 44
+    n_factors: 39
     role_counts:
-      A0: 22
-      A1: 8
-      B: 8
+      A0: 16
+      A1: 10
+      B: 7
       C: 6
 
 bayesian_networks:
@@ -130,6 +130,10 @@ bayesian_networks:
   near_equivalent_mpe_log_gap: 0.10
   median_max_posterior_warning: 0.70
   min_parent_configuration_support_warning: 5
+  # MLE remains the final CPT estimator when every selected parent
+  # configuration is observed. Set to 2 only if the support diagnostic shows
+  # that cells with N <= 2 should also be regularized with Jeffreys' prior.
+  cpt_regularization_min_observed_count: 0
   article_edge_stability_threshold: 0.60
   bn_display_bootstrap_threshold: 0.60
   article_bn_max_edges: 15
@@ -137,10 +141,7 @@ bayesian_networks:
   probability_floor: 0.000000000001
   bn_structure_bootstrap:
     enabled: true
-    n_resamples: 30
-    sample_fraction: 0.80
-    fraction: 0.80
-    n_initializations_per_resample: 3
+    n_resamples: 500
     random_state: 2026
   show_progress: true
 

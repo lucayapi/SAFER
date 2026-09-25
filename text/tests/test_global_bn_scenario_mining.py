@@ -154,6 +154,100 @@ def test_global_bn_fit_no_latent():
     result = global_bn.fit_global_bn(matrix, roles, config)
     assert result.n_states == 1
     assert "Z" not in result.nodes
+    assert result.cpt_estimation_method == "MLE"
+    assert result.mle_model is not None
+
+
+def test_exact_learner_enumerates_all_local_parent_sets_and_uses_lexical_tie_break():
+    matrix = pd.DataFrame({
+        "accident_id": [str(index) for index in range(8)],
+        "A0__P": [0, 0, 0, 0, 1, 1, 1, 1],
+        "A0__Q": [0, 0, 0, 0, 1, 1, 1, 1],
+        "A1__Y": [0, 0, 0, 0, 1, 1, 1, 1],
+        "B__Y": [0, 0, 0, 0, 1, 1, 1, 1],
+        "C__Y": [0, 0, 0, 0, 1, 1, 1, 1],
+    })
+    roles = {"A0__P": "A0", "A0__Q": "A0", "A1__Y": "A1", "B__Y": "B", "C__Y": "C"}
+    result = global_bn.fit_global_bn(matrix, roles, {"bayesian_networks": {"d_max": 2}})
+    # 2 A0 roots (1 each), A1 (1+2+1), B (1+3+3), C (1+1).
+    assert len(result.exact_local_scores) == 15
+    selected = result.exact_selected_parent_sets.set_index("child_factor")
+    assert selected.loc["A1__Y", "parent_factor_ids"] == "A0__P"
+    assert selected.loc["A1__Y", "tie_break"] == "fewest_parents_then_factor_id_order"
+
+
+def test_jeffreys_cpt_uses_half_for_an_unobserved_parent_configuration():
+    data = np.array([[0, 0], [0, 0], [0, 1]], dtype=np.int8)
+    probabilities, cpts = global_bn._jeffreys_cpts(
+        data, ["A0__P", "A1__Y"], {"A0__P": "A0", "A1__Y": "A1"}, [("A0__P", "A1__Y")],
+    )
+    assert probabilities[("A1__Y", (1,))] == pytest.approx(0.5)
+    assert probabilities[("A1__Y", (0,))] == pytest.approx(0.375)
+    assert not cpts.empty
+
+
+def test_cpt_support_diagnostic_retains_mle_when_all_selected_rows_are_observed():
+    data = np.array([[0, 0], [0, 1], [1, 0], [1, 1]], dtype=np.int8)
+    cpts = global_bn._postselection_cpt_counts(
+        data, ["A0__P", "A1__Y"], {"A0__P": "A0", "A1__Y": "A1"}, [("A0__P", "A1__Y")],
+    )
+    diagnostic = global_bn._cpt_support_diagnostics(cpts, min_observed_count=0).iloc[0]
+    mle = global_bn._cpt_probabilities(cpts, "MLE_P_child_1")
+    assert diagnostic["n_rows_N_eq_0"] == 0
+    assert diagnostic["n_rows_N_le_2"] == 2
+    assert diagnostic["final_CPT_estimation"] == "MLE"
+    assert mle[("A1__Y", (0,))] == pytest.approx(0.5)
+    assert mle[("A1__Y", (1,))] == pytest.approx(0.5)
+
+
+def test_cpt_support_diagnostic_requires_jeffreys_for_empty_selected_row():
+    data = np.array([[0, 0], [0, 0], [0, 1]], dtype=np.int8)
+    cpts = global_bn._postselection_cpt_counts(
+        data, ["A0__P", "A1__Y"], {"A0__P": "A0", "A1__Y": "A1"}, [("A0__P", "A1__Y")],
+    )
+    diagnostic = global_bn._cpt_support_diagnostics(cpts, min_observed_count=0).iloc[0]
+    assert diagnostic["n_rows_N_eq_0"] == 1
+    assert diagnostic["final_CPT_estimation"] == "Jeffreys"
+    with pytest.raises(ValueError, match="unobserved"):
+        global_bn._cpt_probabilities(cpts, "MLE_P_child_1")
+
+
+def test_exact_bootstrap_uses_full_accident_samples_and_is_deterministic():
+    matrix, roles, _ = _toy_matrix()
+    config = {"bayesian_networks": {"d_max": 2, "bn_structure_bootstrap": {"enabled": True, "n_resamples": 3, "random_state": 7}}}
+    result = global_bn.fit_global_bn(matrix, roles, config)
+    with tempfile.TemporaryDirectory(dir="text") as temporary_directory:
+        first = global_bn.run_global_bn_bootstrap(matrix, roles, config, result, Path(temporary_directory))
+        second = global_bn.run_global_bn_bootstrap(matrix, roles, config, result, Path(temporary_directory))
+    assert first["bootstrap_sample_size"].eq(len(matrix)).all()
+    assert first["n_resamples"].eq(3).all()
+    pd.testing.assert_frame_equal(first, second)
+
+
+def test_scenario_bn_support_marginalizes_unmentioned_variables():
+    matrix = pd.DataFrame({
+        "accident_id": [str(index) for index in range(8)],
+        "A0__T01": [0, 0, 0, 0, 1, 1, 1, 1],
+        "B__T01": [0, 0, 0, 0, 1, 1, 1, 1],
+        "C__T01": [0, 0, 0, 0, 1, 1, 1, 1],
+    })
+    roles = {"A0__T01": "A0", "B__T01": "B", "C__T01": "C"}
+    config = {"bayesian_networks": {"d_max": 2}}
+    result = global_bn.fit_global_bn(matrix, roles, config)
+    scenarios = pd.DataFrame([{
+        "scenario_id": "SC_1", "upstream_factor_ids": "A0__T01",
+        "B_factor_id": "B__T01", "C_factor_id": "C__T01", "scenario_support": 0.5,
+    }])
+    with tempfile.TemporaryDirectory(dir="text") as temporary_directory:
+        enriched = global_bn.add_scenario_bn_discrepancy(scenarios, result, len(matrix), Path(temporary_directory))
+    assert result.edges == [("A0__T01", "B__T01"), ("B__T01", "C__T01")]
+    expected = (
+        result.downstream_probabilities[("A0__T01", ())]
+        * result.downstream_probabilities[("B__T01", (1,))]
+        * result.downstream_probabilities[("C__T01", (1,))]
+    )
+    assert enriched.loc[0, "BN_implied_support"] == pytest.approx(expected)
+    assert enriched.loc[0, "BN_expected_accident_count"] == pytest.approx(len(matrix) * expected)
 
 
 def test_scenario_mining_recurrence_selection_no_pareto():

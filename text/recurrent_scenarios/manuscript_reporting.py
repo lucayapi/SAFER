@@ -11,26 +11,31 @@ import pandas as pd
 ROLES = ("A0", "A1", "B", "C")
 
 ROLE_COLORS = {
-    "A0": "#4C78A8",
-    "A1": "#DE2D26",
-    "B": "#31A354",
-    "C": "#E45756",
+    "A0": "#3F6F9F",
+    "A1": "#B98920",
+    "B": "#C65D32",
+    "C": "#8F3446",
     "Z": "#CAB2D6",
 }
 
 ROLE_NODE_FILL = {
-    "A0": "#C6DBEF",
-    "A1": "#FEE0D2",
-    "B": "#E5F5E0",
-    "C": "#FCAEA1",
+    "A0": "#DCEAF7",
+    "A1": "#FFF0C7",
+    "B": "#FAD7C5",
+    "C": "#EBCDD2",
     "Z": "#E7E0EC",
 }
 
 ROLE_BOXPLOT_PROPS = {
-    "A0": {"facecolor": "#C6DBEF", "edgecolor": "#4C78A8", "mediancolor": "#D62728"},
-    "A1": {"facecolor": "#FEE0D2", "edgecolor": "#DE2D26", "mediancolor": "#A50F15"},
-    "B": {"facecolor": "#E5F5E0", "edgecolor": "#31A354", "mediancolor": "#006D2C"},
-    "C": {"facecolor": "#FCAEA1", "edgecolor": "#E45756", "mediancolor": "#A50F15"},
+    role: {"facecolor": ROLE_NODE_FILL[role], "edgecolor": ROLE_COLORS[role]}
+    for role in ROLES
+}
+
+MANUSCRIPT_FONT_SIZES = {
+    "title": 10,
+    "label": 9.5,
+    "tick": 8.5,
+    "legend": 8.5,
 }
 
 K_SELECTION_ADMISSIBLE_COLOR = ROLE_COLORS["A0"]
@@ -47,11 +52,24 @@ def role_boxplot_kwargs(role: str) -> dict[str, dict[str, str | float]]:
     """Matplotlib boxplot styling kwargs for one role (topic-modeling palette)."""
     props = ROLE_BOXPLOT_PROPS.get(
         role,
-        {"facecolor": "#DDDDDD", "edgecolor": "#333333", "mediancolor": "#333333"},
+        {"facecolor": "#DDDDDD", "edgecolor": "#333333"},
     )
     return {
-        "boxprops": {"facecolor": props["facecolor"], "edgecolor": props["edgecolor"]},
-        "medianprops": {"color": props["mediancolor"], "linewidth": 1.4},
+        "boxprops": {
+            "facecolor": props["facecolor"],
+            "edgecolor": props["edgecolor"],
+            "linewidth": 1.1,
+        },
+        "medianprops": {"color": "#111111", "linewidth": 1.4},
+        "whiskerprops": {"color": props["edgecolor"], "linewidth": 1.0},
+        "capprops": {"color": props["edgecolor"], "linewidth": 1.0},
+        "flierprops": {
+            "marker": "o",
+            "markerfacecolor": "white",
+            "markeredgecolor": "#111111",
+            "markeredgewidth": 0.8,
+            "markersize": 3.5,
+        },
     }
 
 
@@ -447,6 +465,7 @@ def _draw_factor_resampling_panel(
     role: str,
     configuration_id: str,
     show_legend: bool = False,
+    show_xlabel: bool = True,
 ) -> bool:
     """Draw one resampling boxplot panel; return False when no data."""
     panel = _resampling_panel_data(theme_stability, role=role, configuration_id=configuration_id)
@@ -474,20 +493,32 @@ def _draw_factor_resampling_panel(
             axis.scatter(
                 [s_cg],
                 [position],
-                color="#D62728",
-                s=36,
+                color="#111111",
+                edgecolors="#111111",
+                s=34,
                 zorder=4,
                 label=r"Mean $S_{cg}$" if show_legend and position == positions[0] else "",
             )
     axis.set_yticks(positions)
     axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
-    axis.set_xlim(0, 1.05)
-    axis.set_xlabel("Best-match Jaccard across accident resamples")
-    axis.grid(axis="x", alpha=0.2)
+    axis.set_xlim(0, 1)
+    if show_xlabel:
+        axis.set_xlabel(
+            "Best-match Jaccard similarity",
+            fontsize=MANUSCRIPT_FONT_SIZES["label"],
+        )
+    axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+    axis.grid(axis="x", color="#D9D9D9", linewidth=0.6, alpha=0.65)
     if show_legend:
         handles, labels = axis.get_legend_handles_labels()
         if handles:
-            axis.legend(handles[:1], labels[:1], loc="lower right", frameon=False, fontsize=8)
+            axis.legend(
+                handles[:1],
+                labels[:1],
+                loc="lower right",
+                frameon=False,
+                fontsize=MANUSCRIPT_FONT_SIZES["legend"],
+            )
     return True
 
 
@@ -601,17 +632,52 @@ def plot_factor_resampling_multi_panel(
         if panel is not None:
             max_factors = max(max_factors, len(panel[1]))
     figure_height = max(4.5, 0.42 * max_factors)
-    figure, axes = plt.subplots(1, len(plot_roles), figsize=(4.8 * len(plot_roles), figure_height))
+    figure, axes = plt.subplots(
+        1,
+        len(plot_roles),
+        figsize=(4.8 * len(plot_roles), figure_height),
+        sharex=True,
+    )
     axes = np.atleast_1d(axes).ravel()
-    for axis, role in zip(axes, plot_roles):
+    for index, (axis, role) in enumerate(zip(axes, plot_roles)):
         _draw_factor_resampling_panel(
             axis,
             theme_stability_by_role[role],
             role=role,
             configuration_id=str(configuration_ids[role]),
-            show_legend=role == plot_roles[0],
+            show_legend=False,
+            show_xlabel=False,
         )
-    figure.tight_layout()
+        axis.set_title(
+            role_panel_title(role, index=index),
+            fontsize=MANUSCRIPT_FONT_SIZES["title"],
+            pad=6,
+        )
+    from matplotlib.lines import Line2D
+
+    mean_handle = Line2D(
+        [0],
+        [0],
+        marker="o",
+        linestyle="None",
+        color="#111111",
+        markerfacecolor="#111111",
+        markersize=5,
+        label=r"Mean $S_{cg}$",
+    )
+    figure.supxlabel(
+        "Best-match Jaccard similarity",
+        fontsize=MANUSCRIPT_FONT_SIZES["label"],
+        y=0.04,
+    )
+    figure.legend(
+        handles=[mean_handle],
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.005),
+        frameon=False,
+        fontsize=MANUSCRIPT_FONT_SIZES["legend"],
+    )
+    figure.tight_layout(rect=(0, 0.11, 1, 1))
     if output_path is not None:
         save_manuscript_figure(figure, output_path)
     return figure
@@ -736,9 +802,13 @@ def plot_seed_sensitivity_factors(
     )
     axis.set_yticks(positions)
     axis.set_yticklabels([f"{role}_{int(label):03d}" for label in order])
-    axis.set_xlim(0, 1.05)
-    axis.set_xlabel("Best-match Jaccard across UMAP seeds")
-    axis.grid(axis="x", alpha=0.2)
+    axis.set_xlim(0, 1)
+    axis.set_xlabel(
+        "Best-match Jaccard similarity",
+        fontsize=MANUSCRIPT_FONT_SIZES["label"],
+    )
+    axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+    axis.grid(axis="x", color="#D9D9D9", linewidth=0.6, alpha=0.65)
     figure.tight_layout()
     if output_path is not None:
         save_manuscript_figure(figure, output_path)
@@ -765,11 +835,15 @@ def plot_umap_seed_sensitivity_all_roles(
     jaccard_color = ROLE_COLORS["A0"]
     for index, (axis, role) in enumerate(zip(axes.flat, roles)):
         summary_path = run_dir / "discovery" / role / "seed_sensitivity" / "seed_summary.csv"
-        axis.set_title(role_panel_title(role, index=index), fontsize=11, pad=6)
+        axis.set_title(
+            role_panel_title(role, index=index),
+            fontsize=MANUSCRIPT_FONT_SIZES["title"],
+            pad=6,
+        )
         if not summary_path.is_file():
             axis.text(0.5, 0.5, "No seed data", ha="center", va="center", transform=axis.transAxes)
             axis.set_xlim(0.5, 10.5)
-            axis.set_ylim(0, 1.05)
+            axis.set_ylim(0, 1)
             continue
         summary = pd.read_csv(summary_path)
         if summary.empty:
@@ -786,24 +860,26 @@ def plot_umap_seed_sensitivity_all_roles(
             linewidth=1.4,
             markersize=5.5,
         )
-        axis.axhline(1.0, color="#AAAAAA", linewidth=0.8, linestyle="--", alpha=0.7)
-        axis.set_ylim(0, 1.05)
+        axis.axhline(1.0, color="#BDBDBD", linewidth=0.7, linestyle="--", alpha=0.65)
+        axis.set_ylim(0, 1)
         axis.set_xlim(float(seeds.min()) - 0.5, float(seeds.max()) + 0.5)
         axis.set_xticks(sorted(seeds.unique().tolist()))
-        axis.set_xlabel("Alternative UMAP seed")
+        axis.set_xlabel(
+            "Alternative UMAP seed",
+            fontsize=MANUSCRIPT_FONT_SIZES["label"],
+        )
         if index % 2 == 0:
-            axis.set_ylabel("Mean best-match Jaccard vs $s_0$")
-        axis.grid(alpha=0.25)
+            axis.set_ylabel(
+                "Mean best-match Jaccard similarity",
+                fontsize=MANUSCRIPT_FONT_SIZES["label"],
+            )
+        axis.tick_params(axis="both", labelsize=MANUSCRIPT_FONT_SIZES["tick"])
+        axis.grid(color="#D9D9D9", linewidth=0.6, alpha=0.55)
     for axis in list(axes.flat)[len(roles):]:
         axis.remove()
     if not drew_any:
         plt.close(figure)
         return None
-    figure.suptitle(
-        "UMAP seed sensitivity: membership stability relative to the reference seed $s_0$",
-        fontsize=12,
-        y=1.01,
-    )
     figure.tight_layout()
     if output_path is not None:
         save_manuscript_figure(figure, output_path)
