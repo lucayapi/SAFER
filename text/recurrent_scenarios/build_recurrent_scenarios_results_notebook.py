@@ -8,7 +8,31 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK_DIR = ROOT / "notebooks"
-DATASETS = ("caou", "btp", "metallurgie")
+# The family identifiers are resolved dynamically by scenario_pipeline.py.  Keep
+# them here so the corresponding report notebooks can be regenerated with the
+# same command as the corpus-level notebooks.
+BTP_FAMILY_DATASETS = (
+    "btp_building_construction_and_masonry",
+    "btp_building_finishing_and_insulation",
+    "btp_carpentry_and_joinery",
+    "btp_civil_engineering_and_networks",
+    "btp_construction_equipment_with_operator",
+    "btp_earthworks_foundations_and_demolition",
+    "btp_electrical_installation",
+    "btp_engineering_and_project_support",
+    "btp_metal_construction_and_assembly",
+    "btp_plumbing_heating_and_hvac",
+    "btp_roofing_and_waterproofing",
+)
+
+DATASETS = (
+    "caou",
+    "btp",
+    "metallurgie",
+    "caou_plastics_manufacturing",
+    "metallurgie_metal_forming_and_fabrication",
+    *BTP_FAMILY_DATASETS,
+)
 
 
 def markdown(text: str) -> dict:

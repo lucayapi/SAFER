@@ -8,6 +8,8 @@
 #     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou_plastics_manufacturing REESTIMATE=1 \
 #     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=btp_electrical_installation REESTIMATE=1 \
+#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=select RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
 #     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh

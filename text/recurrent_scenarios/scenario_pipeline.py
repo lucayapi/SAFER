@@ -170,7 +170,7 @@ def _family_dataset_config(dataset_id: str) -> dict[str, str] | None:
     emitted by the ``company_code_families`` notebooks.  Each identifier has a
     dedicated unit table and a filtered embedding table aligned by fact/doc ID.
     """
-    match = re.fullmatch(r"(metallurgie|caou)_[a-z0-9_]+", dataset_id)
+    match = re.fullmatch(r"(metallurgie|caou|btp)_[a-z0-9_]+", dataset_id)
     if match is None:
         return None
     source_corpus = match.group(1)
@@ -194,7 +194,7 @@ def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = No
         available = ", ".join(sorted(registry))
         raise ValueError(
             f"Dataset inconnu {chosen_id!r}. Disponibles : {available}; "
-            "or generated IDs such as 'metallurgie_metal_forming_and_fabrication'."
+            "or generated IDs such as 'btp_electrical_installation'."
         )
     data_cfg["dataset_id"] = chosen_id
     data_cfg["units_path"] = source["units_path"]

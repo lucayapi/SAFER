@@ -8,6 +8,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 NOTEBOOK_DIR = ROOT / "notebooks"
+BTP_FAMILY_DATASETS = (
+    "btp_building_construction_and_masonry",
+    "btp_building_finishing_and_insulation",
+    "btp_carpentry_and_joinery",
+    "btp_civil_engineering_and_networks",
+    "btp_construction_equipment_with_operator",
+    "btp_earthworks_foundations_and_demolition",
+    "btp_electrical_installation",
+    "btp_engineering_and_project_support",
+    "btp_metal_construction_and_assembly",
+    "btp_plumbing_heating_and_hvac",
+    "btp_roofing_and_waterproofing",
+)
+
+DATASETS = (
+    "caou",
+    "btp",
+    "metallurgie",
+    "caou_plastics_manufacturing",
+    "metallurgie_metal_forming_and_fabrication",
+    *BTP_FAMILY_DATASETS,
+)
 
 
 def markdown(text: str) -> dict:
@@ -175,7 +197,7 @@ for folder in (paths["network"], paths["scenarios"], paths["figures"]):
 
 def main() -> None:
     NOTEBOOK_DIR.mkdir(parents=True, exist_ok=True)
-    for dataset_id in ("caou", "btp", "metallurgie"):
+    for dataset_id in DATASETS:
         path = NOTEBOOK_DIR / f"recurrent_scenarios_bn_analysis_{dataset_id}.ipynb"
         path.write_text(json.dumps(build_notebook(dataset_id), indent=1, ensure_ascii=False), encoding="utf-8")
         print(f"Wrote {path}")
