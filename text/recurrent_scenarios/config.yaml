@@ -11,6 +11,9 @@ data:
   keep_valid_only: true
   encoder_name: Qwen/Qwen3-Embedding-0.6B
   normalize_embeddings: true
+  # Macro-family IDs emitted by annotation/company_code_families_*.ipynb are
+  # resolved dynamically, e.g. metallurgie_metal_forming_and_fabrication.
+  # Their paths follow dataset/families/<source>/ and embeddings/families/<source>/.
   dataset_registry:
     caou:
       units_path: ../dataset/data_caou.csv

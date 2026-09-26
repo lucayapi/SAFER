@@ -4,6 +4,10 @@
 #
 # Usage from text/:
 #   DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=metallurgie_metal_forming_and_fabrication REESTIMATE=1 \
+#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
+#   DATASET=caou_plastics_manufacturing REESTIMATE=1 \
+#     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=metrics REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
 #   DATASET=caou STAGE=select RUN_DIR=recurrent_scenarios/runs/theme_discovery_audit/caou \
 #     sbatch jobs/run_recurrent_scenarios_theme_discovery.sh
@@ -42,6 +46,15 @@ export NUMEXPR_NUM_THREADS=1
 # Leave the dataset unset unless the job explicitly receives DATASET=...
 # so that config.yaml's data.dataset_id remains the default source of truth.
 DATASET="${DATASET:-}"
+# FAMILY_DATASET is an alias for DATASET, convenient for a generated macro-family.
+FAMILY_DATASET="${FAMILY_DATASET:-}"
+if [[ -n "${FAMILY_DATASET}" ]]; then
+  if [[ -n "${DATASET}" && "${DATASET}" != "${FAMILY_DATASET}" ]]; then
+    echo "DATASET and FAMILY_DATASET disagree" >&2
+    exit 2
+  fi
+  DATASET="${FAMILY_DATASET}"
+fi
 CONFIG_PATH="${CONFIG_PATH:-recurrent_scenarios/config.yaml}"
 REESTIMATE="${REESTIMATE:-0}"
 STAGE="${STAGE:-all}"
@@ -59,6 +72,7 @@ if [[ -n "${RUN_DIR}" ]]; then
 fi
 
 echo "Dataset=${DATASET:-from-config}"
+echo "FamilyDataset=${FAMILY_DATASET:-none}"
 echo "Config=${CONFIG_PATH}"
 echo "Stage=${STAGE}"
 echo "RunDir=${RUN_DIR:-auto}"

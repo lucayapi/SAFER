@@ -163,18 +163,42 @@ def _parallel_map(
     return list(iterator)
 
 
+def _family_dataset_config(dataset_id: str) -> dict[str, str] | None:
+    """Resolve the standard files generated for a macro-activity family.
+
+    Family identifiers follow ``<source_corpus>_<macro_activity_slug>`` and are
+    emitted by the ``company_code_families`` notebooks.  Each identifier has a
+    dedicated unit table and a filtered embedding table aligned by fact/doc ID.
+    """
+    match = re.fullmatch(r"(metallurgie|caou)_[a-z0-9_]+", dataset_id)
+    if match is None:
+        return None
+    source_corpus = match.group(1)
+    return {
+        "units_path": f"../dataset/families/{source_corpus}/data_{dataset_id}.csv",
+        "embeddings_path": (
+            f"../embeddings/families/{source_corpus}/"
+            f"Qwen3-Embedding-0.6B_{dataset_id}.csv"
+        ),
+    }
+
+
 def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = None) -> dict[str, Any]:
-    """Select one registered corpus without changing the source YAML file."""
+    """Select a registered corpus or a generated macro-activity family."""
     selected = json.loads(json.dumps(config))
     data_cfg = selected.setdefault("data", {})
     chosen_id = str(dataset_id or data_cfg.get("dataset_id", "caou")).strip().lower()
     registry = data_cfg.get("dataset_registry", {})
-    if chosen_id not in registry:
+    source = registry.get(chosen_id) or _family_dataset_config(chosen_id)
+    if source is None:
         available = ", ".join(sorted(registry))
-        raise ValueError(f"Dataset inconnu {chosen_id!r}. Disponibles : {available}")
+        raise ValueError(
+            f"Dataset inconnu {chosen_id!r}. Disponibles : {available}; "
+            "or generated IDs such as 'metallurgie_metal_forming_and_fabrication'."
+        )
     data_cfg["dataset_id"] = chosen_id
-    data_cfg["units_path"] = registry[chosen_id]["units_path"]
-    data_cfg["embeddings_path"] = registry[chosen_id]["embeddings_path"]
+    data_cfg["units_path"] = source["units_path"]
+    data_cfg["embeddings_path"] = source["embeddings_path"]
     return selected
 
 
