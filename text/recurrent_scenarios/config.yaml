@@ -13,7 +13,10 @@ data:
   normalize_embeddings: true
   # Macro-family IDs emitted by annotation/company_code_families_*.ipynb are
   # resolved dynamically, e.g. metallurgie_metal_forming_and_fabrication or
-  # btp_electrical_installation.
+  # btp_electrical_installation. Prefix an eligible family with ``softtriple_``
+  # to use the best SoftTriple model's CSV export:
+  # embeddings/softtriple/full_yes/ (128-D MLP projection). Use
+  # ``softtriple_full_no_`` explicitly to select the 1024-D unprojected model.
   # Their paths follow dataset/families/<source>/ and embeddings/families/<source>/.
   dataset_registry:
     caou:

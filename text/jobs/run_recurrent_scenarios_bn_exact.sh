@@ -3,6 +3,8 @@
 # DATASET=caou sbatch jobs/run_recurrent_scenarios_bn_exact.sh
 # DATASET=caou REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_bn_exact.sh
 # DATASET=btp_electrical_installation REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_bn_exact.sh
+# DATASET=softtriple_btp_electrical_installation REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_bn_exact.sh
+# DATASET=softtriple_full_no_btp_electrical_installation REESTIMATE=1 sbatch jobs/run_recurrent_scenarios_bn_exact.sh
 
 #SBATCH --job-name=exact_bn
 #SBATCH --partition=normal

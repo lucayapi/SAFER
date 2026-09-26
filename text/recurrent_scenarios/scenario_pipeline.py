@@ -170,6 +170,24 @@ def _family_dataset_config(dataset_id: str) -> dict[str, str] | None:
     emitted by the ``company_code_families`` notebooks.  Each identifier has a
     dedicated unit table and a filtered embedding table aligned by fact/doc ID.
     """
+    softtriple_match = re.fullmatch(
+        r"softtriple_(?:(full_yes|full_no)_)?(metallurgie|caou|btp)_([a-z0-9_]+)",
+        dataset_id,
+    )
+    if softtriple_match is not None:
+        combo, source_corpus, family_slug = softtriple_match.groups()
+        # The compact ``softtriple_<corpus>_<family>`` form selects the best
+        # validated configuration: full encoder plus its 128-D projector.
+        combo = combo or "full_yes"
+        source_dataset_id = f"{source_corpus}_{family_slug}"
+        return {
+            "units_path": f"../dataset/families/{source_corpus}/data_{source_dataset_id}.csv",
+            "embeddings_path": (
+                f"../embeddings/softtriple/{combo}/{source_corpus}/families/"
+                f"{family_slug}/embeddings.csv"
+            ),
+        }
+
     match = re.fullmatch(r"(metallurgie|caou|btp)_[a-z0-9_]+", dataset_id)
     if match is None:
         return None
@@ -194,7 +212,9 @@ def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = No
         available = ", ".join(sorted(registry))
         raise ValueError(
             f"Dataset inconnu {chosen_id!r}. Disponibles : {available}; "
-            "or generated IDs such as 'btp_electrical_installation'."
+            "or generated IDs such as 'btp_electrical_installation' and "
+            "'softtriple_btp_electrical_installation' or "
+            "'softtriple_full_no_btp_electrical_installation'."
         )
     data_cfg["dataset_id"] = chosen_id
     data_cfg["units_path"] = source["units_path"]
