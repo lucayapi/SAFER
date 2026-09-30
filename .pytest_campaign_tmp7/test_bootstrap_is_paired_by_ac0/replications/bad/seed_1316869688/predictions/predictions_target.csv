@@ -1,0 +1,9 @@
+accident_id,fact_id,true_macro,pred_macro
+a,0,A0,C
+a,1,A1,C
+b,2,B,C
+b,3,C,C
+c,4,A0,C
+c,5,A1,C
+d,6,B,C
+d,7,C,C

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -406,6 +407,7 @@ def run_supervised_macro_ft_training(
         }
     )
 
+    final_fit_started = time.perf_counter()
     model, final_metrics, final_history = fit_model(
         model,
         train_loader,
@@ -415,6 +417,7 @@ def run_supervised_macro_ft_training(
         class_weight=class_weight,
         run_label="final_fit",
     )
+    final_fit_train_wall_time_sec = time.perf_counter() - final_fit_started
     logger.info(
         "[macro_ft] Fit final terminé — train_loss=%.4f (epoch %s)",
         float(final_metrics.get("train_loss", float("nan"))),
@@ -666,6 +669,7 @@ def run_supervised_macro_ft_training(
         "checkpoint_dir": str(ckpt_dir) if ckpt_dir is not None else None,
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
+        "final_fit_train_wall_time_sec": float(final_fit_train_wall_time_sec),
         "final_epochs_used": int(final_epochs),
         "data_sizes": data_sizes,
         "cv_fold_sizes": [

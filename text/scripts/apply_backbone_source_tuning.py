@@ -23,8 +23,16 @@ def _scope(row: pd.Series) -> int | None:
     raw = row.get("train_last_n_layers", row.get("model_train_last_n_layers"))
     if pd.notna(raw):
         return int(raw)
-    label = str(row.get("encoder_scope", ""))
-    return None if label == "full" else int(label.split("_")[-1])
+    label = str(row.get("encoder_scope", "")).strip().lower()
+    if label in {"full", "full encoder"}:
+        return None
+    if label in {"last 1 layer", "last_1", "last_1_layer"}:
+        return 1
+    if label in {"last 2 layers", "last_2", "last_2_layers"}:
+        return 2
+    if label in {"last 3 layers", "last_3", "last_3_layers"}:
+        return 3
+    raise ValueError(f"Unknown encoder scope in selection summary: {label!r}")
 
 
 def main() -> None:

@@ -13,6 +13,7 @@ import json
 import random
 import shutil
 import statistics
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
@@ -239,6 +240,7 @@ def _run_contrastive(
         "std_accuracy": float(pd.DataFrame(fold_rows)["lr_0_val_accuracy"].std(ddof=1)),
         "mean_macro_f1": float(pd.DataFrame(fold_rows)["lr_0_val_macro_f1"].mean()),
         "std_macro_f1": float(pd.DataFrame(fold_rows)["lr_0_val_macro_f1"].std(ddof=1)),
+        "mean_cv_train_wall_time_sec": float(pd.DataFrame(fold_rows)["train_wall_time_sec"].mean()),
         "dispersion": "écart-type entre folds BTP",
     }])
     cv_summary.to_csv(cv_dir / "cv_summary.csv", index=False)
@@ -267,7 +269,7 @@ def _run_contrastive(
         "final_epochs_used": int(final_epochs),
     })
     save_config_resolved(resolved, run_dir)
-    return {"final_epochs_used": int(final_epochs), "checkpoint_dir": str(checkpoint)}
+    return {"final_epochs_used": int(final_epochs), "final_fit_train_wall_time_sec": float(result.train_wall_time_sec), "checkpoint_dir": str(checkpoint)}
 
 
 def _run_supervised_macro_ft(
@@ -289,7 +291,7 @@ def _run_supervised_macro_ft(
     resolved = copy.deepcopy(raw)
     resolved.update({"replication_model_id": model_id, "training_seed": int(training_seed), "split_seed": int(split_seed)})
     save_config_resolved(resolved, run_dir)
-    return {"final_epochs_used": result.get("final_epochs_used"), "checkpoint_dir": result.get("checkpoint_dir")}
+    return {"final_epochs_used": result.get("final_epochs_used"), "final_fit_train_wall_time_sec": result.get("final_fit_train_wall_time_sec"), "checkpoint_dir": result.get("checkpoint_dir")}
 
 
 def run_replication(
@@ -318,6 +320,7 @@ def run_replication(
             return run_dir
 
     ensure_dir(run_dir)
+    task_started = time.perf_counter()
     raw = _base_with_recipe(spec) if str(spec["runner"]) != "frozen" else dict(spec)
     split_seed = int(training.get("split_seed", 42))
     n_folds = int(training["n_folds"])
@@ -354,7 +357,7 @@ def run_replication(
         save_config_resolved({**raw, "replication_model_id": model_id, "training_seed": int(training_seed),
                               "split_seed": split_seed, "source_corpus": source_corpus}, run_dir)
     _require_predictions(run_dir, corpora)
-    manifest.update({"status": "complete", **details})
+    manifest.update({"status": "complete", "task_wall_time_sec": time.perf_counter() - task_started, **details})
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     _cleanup_completed_run(run_dir, dict(config.get("storage") or {}), manifest)
     return run_dir

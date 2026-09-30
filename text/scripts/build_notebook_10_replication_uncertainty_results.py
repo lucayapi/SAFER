@@ -266,6 +266,9 @@ PAIRED_TABLE = """## 5 — Comparaisons appariées entre méthodes
 `difference_a_minus_b` est la différence de score moyenne entre les seeds. La
 comparaison est **non concluante** lorsque l'IC bootstrap de la différence
 contient zéro.
+
+Difference in balanced accuracy (percentage points) is reported with its
+paired accident-level bootstrap interval.
 """
 
 PAIRED_CODE = """paired_table = paired_view[[

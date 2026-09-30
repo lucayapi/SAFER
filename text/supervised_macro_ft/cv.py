@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import logging
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
@@ -187,6 +189,7 @@ def run_group_kfold_cv(
             class_weight_mode,
         )
 
+        fit_started = time.perf_counter()
         model, metrics, fold_history = fit_model(
             model,
             train_loader,
@@ -196,6 +199,7 @@ def run_group_kfold_cv(
             class_weight=class_weight,
             run_label=f"cv_fold_{fold_id}",
         )
+        fit_wall_time_sec = time.perf_counter() - fit_started
         outer_metrics = evaluate_loader(model, outer_val_loader, device)
         for hist_row in fold_history:
             history_rows.append(
@@ -216,6 +220,7 @@ def run_group_kfold_cv(
             "inner_val_balanced_accuracy": metrics.get("val_balanced_accuracy"),
             "best_epoch": metrics.get("epoch"),
             "max_epochs": int(train_cfg.get("epochs", 30)),
+            "train_wall_time_sec": float(fit_wall_time_sec),
             "early_stopped": bool(
                 metrics.get("epoch") is not None
                 and int(metrics["epoch"]) < int(train_cfg.get("epochs", 30))

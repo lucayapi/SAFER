@@ -1,0 +1,14 @@
+{
+  "signature": "cef21e27b2ada52a853b4e4488f40a0137035f1c0ef7c8be564e2f1937beff28",
+  "model_a": "representation_a",
+  "model_b": "representation_b",
+  "n_resamples": 100,
+  "seed": 11,
+  "confidence_level": 0.95,
+  "metrics": [
+    "balanced_accuracy",
+    "macro_f1"
+  ],
+  "resampling_unit": "accident_id",
+  "paired_on": "same accident_id resamples"
+}

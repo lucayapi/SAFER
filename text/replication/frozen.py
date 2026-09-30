@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -47,8 +48,9 @@ def run_frozen_replication(spec: Mapping[str, Any], *, model_id: str, run_dir: P
         for fold, (tr, va) in enumerate(group_kfold_splits(groups, int(n_folds), int(split_seed))):
             if set(groups[tr]) & set(groups[va]):
                 raise RuntimeError(f"accident_id leakage in frozen fold {fold}")
+            t_fit = time.perf_counter()
             pipe = fit_logistic_on_embeddings(source_X[tr], source_y_int[tr], class_weight=spec.get("class_weight"), oversampling=bool(spec.get("oversampling", False)), seed=training_seed + fold, classifier_overrides={"C": c})
-            rows.append({"C": c, "fold": fold, **evaluate_classifier_on_embeddings(pipe, source_X[va], source_y[va])})
+            rows.append({"C": c, "fold": fold, "fit_wall_time_sec": time.perf_counter() - t_fit, **evaluate_classifier_on_embeddings(pipe, source_X[va], source_y[va])})
     cv = pd.DataFrame(rows)
     aggregate = cv.groupby("C", as_index=False).agg(mean_balanced_accuracy=("balanced_accuracy", "mean"), std_balanced_accuracy=("balanced_accuracy", "std"), mean_accuracy=("accuracy", "mean"), mean_macro_f1=("macro_f1", "mean")).sort_values(["mean_balanced_accuracy", "C"], ascending=[False, True])
     selected_c = float(aggregate.iloc[0]["C"])
@@ -57,8 +59,11 @@ def run_frozen_replication(spec: Mapping[str, Any], *, model_id: str, run_dir: P
     summary = aggregate.iloc[[0]].copy()
     summary.insert(0, "model", model_id); summary.insert(1, "source_corpus", source_corpus)
     summary.insert(2, "training_seed", training_seed); summary.insert(3, "split_seed", split_seed); summary.insert(4, "n_folds", n_folds)
+    summary["mean_cv_fit_wall_time_sec"] = float(cv[cv["C"].eq(selected_c)]["fit_wall_time_sec"].mean())
     summary.to_csv(cv_dir / "cv_summary.csv", index=False)
+    t_final_fit = time.perf_counter()
     pipe = fit_logistic_on_embeddings(source_X, source_y_int, class_weight=spec.get("class_weight"), oversampling=bool(spec.get("oversampling", False)), seed=training_seed, classifier_overrides={"C": selected_c})
+    final_fit_wall_time_sec = time.perf_counter() - t_final_fit
     metrics_by_corpus: dict[str, dict[str, Any]] = {}; per_role: dict[str, pd.DataFrame] = {}
     for corpus in [source_corpus, *target_corpora]:
         meta, X = (source_meta, source_X) if corpus == source_corpus else _load_corpus(corpus, spec)
@@ -68,4 +73,4 @@ def run_frozen_replication(spec: Mapping[str, Any], *, model_id: str, run_dir: P
         metrics_by_corpus[corpus], per_role[corpus] = metrics, per_role_metrics_from_predictions(predictions)
     save_classification_outputs(run_dir, method_name="frozen", metrics_by_corpus=metrics_by_corpus, cv_summary=summary, classifier="logistic_regression", source_corpus=source_corpus, per_role_by_corpus=per_role)
     (run_dir / "best_logistic_params.json").write_text(json.dumps({"C": selected_c, "class_weight": spec.get("class_weight")}, indent=2), encoding="utf-8")
-    return {"selected_C": selected_c, "checkpoint_dir": None}
+    return {"selected_C": selected_c, "final_fit_train_wall_time_sec": final_fit_wall_time_sec, "checkpoint_dir": None}
