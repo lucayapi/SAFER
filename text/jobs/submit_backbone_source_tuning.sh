@@ -18,34 +18,45 @@ submit_group() {
   local dependency="${2:-}"
   shift 2
   local ids=()
-  local sbatch_args=()
-  if [[ -n "${dependency}" ]]; then
-    sbatch_args+=(--dependency="afterok:${dependency}")
-  fi
-  echo "=== Groupe ${label} ==="
+  # Do not expand an empty array with `set -u`: older Bash versions used on
+  # some Slurm clusters consider that expansion an unbound variable.
+  echo "=== Groupe ${label} ===" >&2
   for spec in "$@"; do
     read -r method stem <<< "${spec}"
     local grid="${ROOT}/${stem}_grid.yaml"
     local job_id
-    job_id="$(sbatch --parsable "${sbatch_args[@]}" --job-name="select_${stem}" --export=ALL,TUNING_METHOD="${method}",GRID_CONFIG="${grid}" "${TEXT_JOBS_DIR}/tune_backbone_source_selection.sh")"
+    if [[ -n "${dependency}" ]]; then
+      job_id="$(sbatch --parsable --dependency="afterok:${dependency}" --job-name="select_${stem}" --export=ALL,TUNING_METHOD="${method}",GRID_CONFIG="${grid}" "${TEXT_JOBS_DIR}/tune_backbone_source_selection.sh")" || return 1
+    else
+      job_id="$(sbatch --parsable --job-name="select_${stem}" --export=ALL,TUNING_METHOD="${method}",GRID_CONFIG="${grid}" "${TEXT_JOBS_DIR}/tune_backbone_source_selection.sh")" || return 1
+    fi
     job_id="${job_id%%;*}"
     ids+=("${job_id}")
-    echo "${stem} -> ${job_id}"
+    echo "${stem} -> ${job_id}" >&2
   done
   local IFS=:
-  echo "${ids[*]}"
+  printf '%s\n' "${ids[*]}"
 }
 
-group1="$(submit_group '1: E5 / BTP' '' \
+if ! group1="$(submit_group '1: E5 / BTP' '' \
   'cross_entropy multilingual_e5_large_btp_cross_entropy' \
   'supcon multilingual_e5_large_btp_supcon' \
-  'softtriple multilingual_e5_large_btp_softtriple' | tail -n 1)"
-group2="$(submit_group '2: Qwen3 / métallurgie' "${group1}" \
+  'softtriple multilingual_e5_large_btp_softtriple')"; then
+  echo "Échec de soumission du groupe 1 ; aucun groupe suivant n'a été soumis." >&2
+  exit 1
+fi
+if ! group2="$(submit_group '2: Qwen3 / métallurgie' "${group1}" \
   'cross_entropy qwen3_metallurgie_cross_entropy' \
   'supcon qwen3_metallurgie_supcon' \
-  'softtriple qwen3_metallurgie_softtriple' | tail -n 1)"
-group3="$(submit_group '3: E5 / métallurgie' "${group2}" \
+  'softtriple qwen3_metallurgie_softtriple')"; then
+  echo "Échec de soumission du groupe 2 ; le groupe 3 n'a pas été soumis." >&2
+  exit 1
+fi
+if ! group3="$(submit_group '3: E5 / métallurgie' "${group2}" \
   'cross_entropy multilingual_e5_large_metallurgie_cross_entropy' \
   'supcon multilingual_e5_large_metallurgie_supcon' \
-  'softtriple multilingual_e5_large_metallurgie_softtriple' | tail -n 1)"
+  'softtriple multilingual_e5_large_metallurgie_softtriple')"; then
+  echo "Échec de soumission du groupe 3." >&2
+  exit 1
+fi
 echo "Groupes soumis : ${group1} -> ${group2} -> ${group3}"
