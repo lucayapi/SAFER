@@ -26,6 +26,7 @@ from safer_core.classification_eval import (
     save_classification_outputs,
     summarize_ood_classification,
 )
+from safer_core.classification_metrics import per_role_classification_metrics
 from supervised_macro_ft.class_balance import balanced_oversample_indices
 from supervised_macro_ft.class_balance import resolve_train_balance
 from supervised_macro_ft.config_validation import validate_macro_ft_startup
@@ -78,7 +79,7 @@ def _resolve_cfg(
         train_section = dict(cfg.get("training") or {})
         train_section.update(training_overrides)
         cfg = {**cfg, "training": train_section}
-    if test_corpora_override:
+    if test_corpora_override is not None:
         cfg = {**cfg, "test_corpora": list(test_corpora_override)}
     return cfg
 
@@ -132,6 +133,7 @@ def prepare_shared_backbone_hidden(
     """Charge ou construit le cache backbone partagé (tuning)."""
     anchor = anchor or Path(__file__).resolve().parents[1]
     data_cfg = dict(cfg.get("data") or {})
+    source_corpus = str(cfg.get("source_corpus", data_cfg.get("source_corpus", "btp")))
     model_cfg = dict(cfg.get("model") or {})
     train_cfg = dict(cfg.get("training") or {})
     if not should_cache_backbone_embeddings(model_cfg):
@@ -213,6 +215,7 @@ def run_supervised_macro_ft_training(
         test_corpora_override=test_corpora_override,
     )
     data_cfg = dict(cfg.get("data") or {})
+    source_corpus = str(cfg.get("source_corpus", data_cfg.get("source_corpus", "btp")))
     model_cfg = dict(cfg.get("model") or {})
     train_cfg = dict(cfg.get("training") or {})
     method_name = str(cfg.get("method_name", "supervised_macro_ft"))
@@ -237,7 +240,7 @@ def run_supervised_macro_ft_training(
     )
     dataset_groups = np.asarray(dataset.get_groups()).astype(str)
     data_sizes: Dict[str, Any] = {
-        "btp": {
+        source_corpus: {
             "n_samples": int(len(dataset)),
             "n_groups": int(len(np.unique(dataset_groups))),
         },
@@ -246,7 +249,8 @@ def run_supervised_macro_ft_training(
 
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
-    collate_fn = make_text_collate_fn(tokenizer, max_length)
+    input_prefix = str(model_cfg.get("input_prefix", ""))
+    collate_fn = make_text_collate_fn(tokenizer, max_length, input_prefix)
 
     shared_dir = Path(shared_cache_dir) if shared_cache_dir is not None else None
     backbone_hidden, model_cfg = _prepare_backbone_hidden(
@@ -393,7 +397,7 @@ def run_supervised_macro_ft_training(
         else:
             train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
 
-    data_sizes["btp"].update(
+    data_sizes[source_corpus].update(
         {
             "n_train_final_raw": int(len(dataset)),
             "n_train_final_effective": int(len(final_idx)) if use_oversampling else int(len(dataset)),
@@ -466,6 +470,7 @@ def run_supervised_macro_ft_training(
                 max_length=max_length,
                 batch_size=batch_size,
                 device=device,
+                text_prefix=input_prefix,
                 show_progress=True,
                 progress_desc="export_btp_z",
             )
@@ -483,6 +488,7 @@ def run_supervised_macro_ft_training(
 
     test_corpora = resolve_test_corpora(cfg)
     test_metrics_by_corpus: Dict[str, Any] = {}
+    per_role_by_corpus: Dict[str, pd.DataFrame] = {}
     emb_dir = out_dir / "embeddings"
     cache_dir = out_dir / "cache"
     text_col = str(data_cfg.get("text_col", "sentence"))
@@ -556,6 +562,7 @@ def run_supervised_macro_ft_training(
                     max_length=max_length,
                     batch_size=batch_size,
                     device=device,
+                    text_prefix=input_prefix,
                     show_progress=True,
                     progress_desc=f"export_{corpus_id}_z",
                 )
@@ -581,7 +588,7 @@ def run_supervised_macro_ft_training(
                 progress_desc=f"eval_{corpus_id}",
             )
             test_metrics_by_corpus[str(corpus_id)] = corpus_metrics
-            build_and_save_predictions(
+            corpus_predictions, _ = build_and_save_predictions(
                 test_meta,
                 corpus_details,
                 out_dir,
@@ -591,6 +598,11 @@ def run_supervised_macro_ft_training(
                 group_col=str(data_cfg.get("group_col", "accident_id")),
                 label_col=label_col,
                 also_transfer_alias=(idx == len(test_corpora) - 1),
+            )
+            per_role_by_corpus[str(corpus_id)] = per_role_classification_metrics(
+                test_meta[label_col].astype(str).to_numpy(),
+                corpus_details["pred_macro"],
+                macros=corpus_details["macros"],
             )
             log_test_metrics(corpus_metrics, corpus=corpus_id)
         except Exception as exc:
@@ -613,17 +625,22 @@ def run_supervised_macro_ft_training(
         show_progress=True,
         progress_desc="eval_btp",
     )
-    test_metrics_by_corpus["btp"] = btp_metrics
+    test_metrics_by_corpus[source_corpus] = btp_metrics
     btp_meta_for_preds = dataset.get_metadata_df()
-    build_and_save_predictions(
+    source_predictions, _ = build_and_save_predictions(
         btp_meta_for_preds,
         btp_details,
         out_dir,
-        "btp",
+        source_corpus,
         method_name=method_name,
         text_col=text_col,
         group_col=str(data_cfg.get("group_col", "accident_id")),
         label_col=label_col,
+    )
+    per_role_by_corpus[source_corpus] = per_role_classification_metrics(
+        btp_meta_for_preds[label_col].astype(str).to_numpy(),
+        btp_details["pred_macro"],
+        macros=btp_details["macros"],
     )
 
     cross_domain_summary = pd.DataFrame()
@@ -633,9 +650,11 @@ def run_supervised_macro_ft_training(
             method_name=method_name,
             metrics_by_corpus=test_metrics_by_corpus,
             cv_summary=cv_summary,
+            source_corpus=source_corpus,
+            per_role_by_corpus=per_role_by_corpus,
         )
         cross_domain_summary = summarize_ood_classification(
-            {k: v for k, v in test_metrics_by_corpus.items() if k != "btp"},
+            {k: v for k, v in test_metrics_by_corpus.items() if k != source_corpus},
             cv_summary,
             model_name=method_name,
         )

@@ -8,7 +8,10 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from safer_core.classification_metrics import evaluate_macro_predictions
+from safer_core.classification_metrics import (
+    evaluate_macro_predictions,
+    per_role_classification_metrics,
+)
 from macro_transfer.supervised_baseline import (
     _fit_pipeline,
     _predict_with_probs,
@@ -44,13 +47,13 @@ __all__ = [
     "build_and_save_predictions",
     "evaluate_classifier_on_embeddings",
     "build_cv_summary_from_kfold",
+    "per_role_metrics_from_predictions",
 ]
 
 
 def resolve_test_corpora(cfg: Mapping[str, Any]) -> list[str]:
-    corpora = cfg.get("test_corpora")
-    if corpora:
-        return [str(c) for c in corpora]
+    if "test_corpora" in cfg and cfg.get("test_corpora") is not None:
+        return [str(c) for c in cfg.get("test_corpora")]
     legacy = cfg.get("test_corpus")
     if legacy:
         return [str(legacy)]
@@ -220,6 +223,19 @@ def build_and_save_predictions(
     return preds, path
 
 
+def per_role_metrics_from_predictions(predictions: pd.DataFrame) -> pd.DataFrame:
+    """Derive a tidy per-role table from a standard prediction export."""
+    required = {"true_macro", "pred_macro"}
+    missing = required - set(predictions.columns)
+    if missing:
+        raise ValueError(f"Predictions missing columns: {sorted(missing)}")
+    return per_role_classification_metrics(
+        predictions["true_macro"].astype(str).to_numpy(),
+        predictions["pred_macro"].astype(str).to_numpy(),
+        macros=macro_names(),
+    )
+
+
 def fit_logistic_and_evaluate(
     X_train: np.ndarray,
     y_train_int: np.ndarray,
@@ -339,6 +355,8 @@ def save_classification_outputs(
     metrics_by_corpus: Mapping[str, Mapping[str, Any]],
     cv_summary: pd.DataFrame,
     classifier: str = DEFAULT_CLASSIFIER,
+    source_corpus: str = "btp",
+    per_role_by_corpus: Optional[Mapping[str, pd.DataFrame]] = None,
 ) -> dict[str, Path]:
     """Écrit CSV classification + agrégats OOD sous ``metrics/``."""
     metrics_dir = Path(out_dir) / "metrics"
@@ -347,14 +365,14 @@ def save_classification_outputs(
 
     for corpus_id, metrics in metrics_by_corpus.items():
         cid = str(corpus_id)
-        if cid == "btp":
-            fname = "metrics_classification_btp.csv"
+        if cid == str(source_corpus):
+            fname = f"metrics_classification_{cid}.csv"
         else:
             fname = f"metrics_classification_test_{cid}.csv"
         row = {"corpus": cid, "classifier": classifier, **metrics}
         paths[cid] = save_classification_metrics_csv(row, metrics_dir / fname)
 
-    ood_only = {k: v for k, v in metrics_by_corpus.items() if str(k) != "btp"}
+    ood_only = {k: v for k, v in metrics_by_corpus.items() if str(k) != str(source_corpus)}
     all_test = build_all_test_corpora_metrics_table(ood_only)
     if not all_test.empty:
         p = metrics_dir / "all_test_corpora_metrics.csv"
@@ -366,6 +384,18 @@ def save_classification_outputs(
         p = metrics_dir / "cross_domain_generalization.csv"
         cross.to_csv(p, index=False)
         paths["cross_domain"] = p
+    if per_role_by_corpus:
+        tables: list[pd.DataFrame] = []
+        for corpus_id, table in per_role_by_corpus.items():
+            frame = table.copy()
+            frame.insert(0, "corpus", str(corpus_id))
+            frame.insert(1, "source_corpus", str(source_corpus))
+            frame.insert(2, "classifier", str(classifier))
+            tables.append(frame)
+        if tables:
+            p = metrics_dir / "per_role_metrics.csv"
+            pd.concat(tables, ignore_index=True).to_csv(p, index=False)
+            paths["per_role"] = p
     return paths
 
 

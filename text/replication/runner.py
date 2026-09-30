@@ -106,9 +106,21 @@ def _model_config(config: Mapping[str, Any], model_id: str) -> Dict[str, Any]:
     spec = models[model_id]
     if not isinstance(spec, Mapping):
         raise ValueError(f"La définition de {model_id} doit être un mapping YAML.")
+    templates = config.get("model_templates") or {}
+    seen_templates: set[str] = set()
+    while spec.get("template"):
+        template_id = str(spec["template"])
+        if template_id in seen_templates:
+            raise ValueError(f"Cycle de templates pour {model_id}: {template_id}")
+        if template_id not in templates or not isinstance(templates[template_id], Mapping):
+            raise ValueError(f"Template inconnu pour {model_id}: {template_id!r}")
+        seen_templates.add(template_id)
+        child = dict(spec)
+        child.pop("template", None)
+        spec = _deep_merge(templates[template_id], child)
     runner = str(spec.get("runner", "")).strip()
-    if runner not in {"contrastive", "supervised_macro_ft"}:
-        raise ValueError(f"{model_id}.runner doit valoir contrastive ou supervised_macro_ft.")
+    if runner not in {"contrastive", "supervised_macro_ft", "frozen"}:
+        raise ValueError(f"{model_id}.runner doit valoir contrastive, supervised_macro_ft ou frozen.")
     return dict(spec)
 
 
@@ -290,27 +302,35 @@ def run_replication(
     """Lance une tâche complète CV BTP + fit BTP + évaluation OOD."""
     config = load_replication_config(config_path)
     spec = _model_config(config, model_id)
+    training = dict(config["training"])
+    source_corpus = str(spec.get("source_corpus", training.get("source_corpus", "btp")))
+    requested_corpora = [str(item) for item in spec.get("test_corpora", training["test_corpora"])]
+    corpora = [corpus for corpus in requested_corpora if corpus != source_corpus]
+    if not corpora:
+        raise ValueError("At least one target corpus distinct from source_corpus is required.")
     run_dir = run_dir_for(config, model_id, training_seed)
     manifest_path = run_dir / "run_manifest.json"
     if manifest_path.is_file() and not refit:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if manifest.get("status") == "complete":
-            _require_predictions(run_dir, config["training"]["test_corpora"])
+            _require_predictions(run_dir, corpora)
             print(f"[replication] déjà complète : {run_dir}", flush=True)
             return run_dir
 
     ensure_dir(run_dir)
-    raw = _base_with_recipe(spec)
-    training = dict(config["training"])
+    raw = _base_with_recipe(spec) if str(spec["runner"]) != "frozen" else dict(spec)
     split_seed = int(training.get("split_seed", 42))
     n_folds = int(training["n_folds"])
-    corpora = [str(item) for item in training["test_corpora"]]
     raw["test_corpora"] = corpora
+    raw["source_corpus"] = source_corpus
+    if str(spec["runner"]) == "frozen":
+        from safer_core.test_corpus import resolve_test_corpus
+        raw["data"] = {"dataset_path": str(resolve_test_corpus(source_corpus, require_files=True).data_csv)}
     _write_fold_partitions(raw, n_folds=n_folds, split_seed=split_seed, destination=run_dir / "cv" / "fold_partitions.csv")
     manifest = {
         "status": "running", "model_id": model_id, "runner": spec["runner"],
         "training_seed": int(training_seed), "split_seed": split_seed,
-        "n_folds": n_folds, "test_corpora": corpora,
+        "n_folds": n_folds, "source_corpus": source_corpus, "test_corpora": corpora,
         "recipe_path": str(Path(config_path).resolve()),
     }
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
@@ -321,9 +341,18 @@ def run_replication(
             raise ValueError(f"{model_id} doit définir classifier pour l'évaluation contrastive.")
         details = _run_contrastive(raw, model_id=model_id, run_dir=run_dir, training_seed=training_seed,
                                    split_seed=split_seed, n_folds=n_folds, classifier=classifier)
-    else:
+    elif spec["runner"] == "supervised_macro_ft":
         details = _run_supervised_macro_ft(raw, model_id=model_id, run_dir=run_dir,
                                            training_seed=training_seed, split_seed=split_seed, n_folds=n_folds)
+    else:
+        from replication.frozen import run_frozen_replication
+        details = run_frozen_replication(
+            raw, model_id=model_id, run_dir=run_dir, training_seed=training_seed,
+            split_seed=split_seed, n_folds=n_folds, source_corpus=source_corpus,
+            target_corpora=corpora,
+        )
+        save_config_resolved({**raw, "replication_model_id": model_id, "training_seed": int(training_seed),
+                              "split_seed": split_seed, "source_corpus": source_corpus}, run_dir)
     _require_predictions(run_dir, corpora)
     manifest.update({"status": "complete", **details})
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")

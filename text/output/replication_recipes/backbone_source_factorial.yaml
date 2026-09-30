@@ -1,0 +1,97 @@
+# Campagne 2 backbones x 2 corpus source x 4 mÃ©thodes.
+# Toute sÃ©lection (plis groupÃ©s) est faite sur source_corpus ; aucun corpus
+# cible n'est fourni au fitting ni au choix de recette.
+output_root: output/backbone_source_factorial
+storage:
+  cleanup_after_completion: true
+  keep_final_checkpoint: false
+  keep_embeddings: false
+  max_parallel_seeds: 1
+training:
+  n_seeds: 5
+  seed_generator: 2026
+  split_seed: 42
+  n_folds: 3
+  selection_metric: balanced_accuracy
+  test_corpora: [btp, metallurgie, caou, nicollin]
+bootstrap:
+  n_resamples: 2000
+  seed: 2027
+  confidence_level: 0.95
+
+model_templates:
+  frozen_qwen3:
+    runner: frozen
+    method: frozen
+    backbone_name: Qwen/Qwen3-Embedding-0.6B
+    backbone_id: qwen3
+    embeddings_root: embeddings
+    input_prefix: ""
+    class_weight: balanced
+    oversampling: false
+    classifier_c_grid: [0.001, 0.01, 0.1, 1.0]
+  frozen_multilingual_e5_large:
+    runner: frozen
+    method: frozen
+    backbone_name: intfloat/multilingual-e5-large
+    backbone_id: multilingual_e5_large
+    embeddings_root: embeddings
+    input_prefix: "query: "
+    class_weight: balanced
+    oversampling: false
+    classifier_c_grid: [0.001, 0.01, 0.1, 1.0]
+  softtriple_qwen3:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier: {C: 0.01, class_weight: balanced, penalty: l2, solver: lbfgs}
+    overrides:
+      model: {backbone_name: Qwen/Qwen3-Embedding-0.6B, input_prefix: "", backbone_trainable: true, train_last_n_layers: null, cache_backbone_embeddings: false, use_projector: true, projection: mlp_sklearn, hiddim: 128, max_seq_length: 256}
+      training: {batch_size: 64, eval_batch_size: 64, encode_batch_size: 64, epochs: 30, early_stopping_patience: 3, early_stopping_inner_val_ratio: 0.1, final_epochs_from_cv: true, learning_rate: 2.0e-5, gradient_accumulation_steps: 1, distance_metric: cosine, use_amp: true}
+      softtriple: {centers_per_class: 20, gamma: 0.1, lambda: 10.0, delta: 0.01, tau: 0.2, normalize_embeddings: true, normalize_centers: true, center_max_similarity: 0.5, center_min_distance: 0.3, center_regularization_type: merge_l21}
+      post_eval: {enabled: true, oversampling: false}
+  softtriple_multilingual_e5_large:
+    template: softtriple_qwen3
+    overrides:
+      model: {backbone_name: intfloat/multilingual-e5-large, input_prefix: "query: "}
+  supcon_qwen3:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier: {C: 0.01, class_weight: balanced, penalty: l2, solver: lbfgs}
+    overrides:
+      model: {backbone_name: Qwen/Qwen3-Embedding-0.6B, input_prefix: "", backbone_trainable: true, train_last_n_layers: null, cache_backbone_embeddings: false, use_projector: true, projection: mlp_sklearn, hiddim: 128, max_seq_length: 256}
+      training: {batch_size: 64, eval_batch_size: 64, encode_batch_size: 64, epochs: 30, early_stopping_patience: 3, early_stopping_inner_val_ratio: 0.1, final_epochs_from_cv: true, learning_rate: 2.0e-5, gradient_accumulation_steps: 1, distance_metric: cosine, use_amp: true}
+      supcon: {temperature: 0.07, base_temperature: 0.07, contrast_mode: all, normalize_embeddings: true}
+      post_eval: {enabled: true, oversampling: false}
+  supcon_multilingual_e5_large:
+    template: supcon_qwen3
+    overrides:
+      model: {backbone_name: intfloat/multilingual-e5-large, input_prefix: "query: "}
+  cross_entropy_qwen3:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model: {backbone_name: Qwen/Qwen3-Embedding-0.6B, input_prefix: "", backbone_trainable: true, train_last_n_layers: null, max_seq_length: 256, pooling: mean, projection: mlp_sklearn, hiddim: 128, proj_hidden: 256, dropout: 0.1, n_classes: 4, oversampling: false, class_weight: balanced, gradient_checkpointing: true, cache_backbone_embeddings: false, standardize_backbone: false}
+      training: {epochs: 30, batch_size: 32, lr_backbone: 2.0e-5, lr_projector: 1.0e-3, lr_head: 1.0e-3, weight_decay: 0.01, early_stopping_patience: 3, early_stopping_inner_val_ratio: 0.1, final_epochs_from_cv: true, use_amp: true}
+      exports: {save_btp_embeddings: false, save_checkpoint: false}
+  cross_entropy_multilingual_e5_large:
+    template: cross_entropy_qwen3
+    overrides:
+      model: {backbone_name: intfloat/multilingual-e5-large, input_prefix: "query: "}
+
+models:
+  qwen3_btp_frozen: {template: frozen_qwen3, source_corpus: btp}
+  qwen3_btp_cross_entropy: {template: cross_entropy_qwen3, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv, data_csv: dataset/data_btp.csv}}}
+  qwen3_btp_supcon: {template: supcon_qwen3, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv}}}
+  qwen3_btp_softtriple: {template: softtriple_qwen3, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv}}}
+  qwen3_metallurgie_frozen: {template: frozen_qwen3, source_corpus: metallurgie}
+  qwen3_metallurgie_cross_entropy: {template: cross_entropy_qwen3, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv, data_csv: dataset/data_metallurgie.csv}}}
+  qwen3_metallurgie_supcon: {template: supcon_qwen3, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv}}}
+  qwen3_metallurgie_softtriple: {template: softtriple_qwen3, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv}}}
+  multilingual_e5_large_btp_frozen: {template: frozen_multilingual_e5_large, source_corpus: btp}
+  multilingual_e5_large_btp_cross_entropy: {template: cross_entropy_multilingual_e5_large, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv, data_csv: dataset/data_btp.csv}}}
+  multilingual_e5_large_btp_supcon: {template: supcon_multilingual_e5_large, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv}}}
+  multilingual_e5_large_btp_softtriple: {template: softtriple_multilingual_e5_large, source_corpus: btp, overrides: {data: {dataset_path: dataset/data_btp.csv}}}
+  multilingual_e5_large_metallurgie_frozen: {template: frozen_multilingual_e5_large, source_corpus: metallurgie}
+  multilingual_e5_large_metallurgie_cross_entropy: {template: cross_entropy_multilingual_e5_large, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv, data_csv: dataset/data_metallurgie.csv}}}
+  multilingual_e5_large_metallurgie_supcon: {template: supcon_multilingual_e5_large, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv}}}
+  multilingual_e5_large_metallurgie_softtriple: {template: softtriple_multilingual_e5_large, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv}}}

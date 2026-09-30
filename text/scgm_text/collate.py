@@ -8,9 +8,11 @@ from typing import Any, Callable, Dict, List
 import torch
 
 
-def make_text_collate_fn(tokenizer, max_length: int) -> Callable:
+def make_text_collate_fn(tokenizer, max_length: int, text_prefix: str = "") -> Callable:
+    prefix = str(text_prefix or "")
+
     def collate_text_batch(batch: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
-        texts = [item["text"] for item in batch]
+        texts = [f"{prefix}{item['text']}" for item in batch]
         label_ids = torch.tensor([int(item["label"]) for item in batch], dtype=torch.long)
         indices = torch.tensor([int(item["index"]) for item in batch], dtype=torch.long)
         encoded = tokenizer(

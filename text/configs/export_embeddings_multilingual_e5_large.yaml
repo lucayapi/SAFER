@@ -1,0 +1,14 @@
+# Export E5 isolÃ© des exports Qwen : aucun CSV existant ne peut Ãªtre remplacÃ©.
+backbone_name: intfloat/multilingual-e5-large
+backbone_id: multilingual_e5_large
+output_root: embeddings
+input_prefix: "query: "
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+pred_ok_col: pred_ok
+encode_batch_size: 16
+max_seq_length: 256
+use_prompt: false
+skip_existing: true
+corpora: all

@@ -19,4 +19,4 @@ if [[ "${TASK_COUNT}" -lt 1 ]]; then
   exit 2
 fi
 echo "Soumission de ${TASK_COUNT} tâches (modèles × seeds) avec ${CONFIG}"
-sbatch --array="0-$((TASK_COUNT - 1))" "${TEXT_JOBS_DIR}/replicate_experiment.sh"
+sbatch --export=ALL,CONFIG="${CONFIG}" --array="0-$((TASK_COUNT - 1))" "${TEXT_JOBS_DIR}/replicate_experiment.sh"

@@ -128,9 +128,11 @@ class SoftTripleLoss(nn.Module):
         }
 
 
-def make_collate_fn(tokenizer, max_length: int):
+def make_collate_fn(tokenizer, max_length: int, text_prefix: str = ""):
+    prefix = str(text_prefix or "")
+
     def collate(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        texts = [x["text"] for x in batch]
+        texts = [f"{prefix}{x['text']}" for x in batch]
         labels = torch.tensor([x["label"] for x in batch], dtype=torch.long)
         enc = tokenizer(
             texts,

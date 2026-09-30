@@ -20,13 +20,14 @@ def encode_texts(
     max_length: int,
     batch_size: int,
     device: torch.device,
+    text_prefix: str = "",
     show_progress: bool = True,
     progress_desc: str | None = None,
 ) -> np.ndarray:
     from supervised_macro_ft.run_logging import batched_progress, log_step_done, log_step_start
 
     model.eval()
-    collate_fn = make_text_collate_fn(tokenizer, max_length)
+    collate_fn = make_text_collate_fn(tokenizer, max_length, text_prefix)
     dummy_labels = [{"text": t, "label": 0, "index": i} for i, t in enumerate(texts)]
     loader = DataLoader(dummy_labels, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     desc = progress_desc or "encode_z"
@@ -54,9 +55,10 @@ def predict_corpus(
     max_length: int,
     batch_size: int,
     device: torch.device,
+    text_prefix: str = "",
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     model.eval()
-    collate_fn = make_text_collate_fn(tokenizer, max_length)
+    collate_fn = make_text_collate_fn(tokenizer, max_length, text_prefix)
     items = [{"text": t, "label": 0, "index": i} for i, t in enumerate(texts)]
     loader = DataLoader(items, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     prob_chunks: list[np.ndarray] = []

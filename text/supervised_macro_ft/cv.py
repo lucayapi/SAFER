@@ -119,7 +119,9 @@ def run_group_kfold_cv(
     batch_size = int(train_cfg.get("batch_size", 32))
     max_length = int(model_cfg.get("max_seq_length", 256))
     use_hidden_cache = backbone_hidden is not None and should_cache_backbone_embeddings(model_cfg)
-    collate_fn = make_text_collate_fn(tokenizer, max_length)
+    collate_fn = make_text_collate_fn(
+        tokenizer, max_length, str(model_cfg.get("input_prefix", ""))
+    )
     label_ids = dataset.label_ids
     use_oversampling, class_weight_mode = resolve_train_balance(model_cfg)
     selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))

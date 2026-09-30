@@ -144,9 +144,9 @@ bayesian_networks:
   # configuration is observed. Set to 2 only if the support diagnostic shows
   # that cells with N <= 2 should also be regularized with Jeffreys' prior.
   cpt_regularization_min_observed_count: 0
-  article_edge_stability_threshold: 0.60
-  bn_display_bootstrap_threshold: 0.60
-  article_bn_max_edges: 15
+  article_edge_stability_threshold: 0.5
+  bn_display_bootstrap_threshold: 0.5
+  article_bn_max_edges: 20
   write_diagnostic_bn_figures: false
   probability_floor: 0.000000000001
   bn_structure_bootstrap:

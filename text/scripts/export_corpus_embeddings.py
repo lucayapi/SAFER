@@ -21,6 +21,7 @@ from safer_core.test_corpus import (
     list_test_corpus_ids,
     resolve_test_corpus,
 )
+from safer_core.embedding_paths import embedding_export_path
 
 DEFAULT_CONFIG = ROOT_DIR / "configs" / "export_embeddings.yaml"
 
@@ -60,6 +61,7 @@ def build_contrastive_config(cfg: Dict[str, Any], data_csv: Path) -> Contrastive
         group_col=str(cfg.get("group_col", "accident_id")),
         pred_ok_col=str(cfg.get("pred_ok_col", "pred_ok")),
         backbone_name=str(cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B")),
+        input_prefix=str(cfg.get("input_prefix", "")),
         encode_batch_size=int(cfg.get("encode_batch_size", 16)),
         max_seq_length=int(cfg.get("max_seq_length", 256)),
         use_prompt=bool(cfg.get("use_prompt", False)),
@@ -81,7 +83,13 @@ def export_corpus(
         require_files=True,
         require_emb_csv=False,
     )
-    dest = spec.emb_csv
+    dest = embedding_export_path(
+        spec.id,
+        backbone_name=str(cfg.get("backbone_name", "Qwen/Qwen3-Embedding-0.6B")),
+        output_root=str(cfg.get("output_root", "embeddings")),
+        backbone_id=cfg.get("backbone_id"),
+        anchor=anchor or ROOT_DIR,
+    )
     skip_existing = bool(cfg.get("skip_existing", True))
     if dest.is_file() and skip_existing and not force:
         print(f"[skip] corpus={spec.id} déjà présent : {dest}", flush=True)
@@ -117,6 +125,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     p.add_argument("--all", action="store_true", help="Encoder tous les corpus du registre.")
     p.add_argument("--backbone_name", type=str, default=None, help="Override backbone HF.")
+    p.add_argument("--backbone-id", type=str, default=None, help="Dossier distinct sous output_root.")
+    p.add_argument("--output-root", type=str, default=None, help="Racine des exports (par dÃ©faut: embeddings).")
+    p.add_argument("--input-prefix", type=str, default=None, help="PrÃ©fixe ajoutÃ© Ã  chaque texte avant encodage.")
     p.add_argument("--force", action="store_true", help="Ré-encoder même si emb_csv existe.")
     return p.parse_args(argv)
 
@@ -127,9 +138,16 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not config_path.is_absolute():
         config_path = ROOT_DIR / config_path
     cfg = load_export_config(config_path)
-    if args.backbone_name:
+    if args.backbone_name or args.backbone_id or args.output_root or args.input_prefix is not None:
         cfg = dict(cfg)
-        cfg["backbone_name"] = args.backbone_name
+        if args.backbone_name:
+            cfg["backbone_name"] = args.backbone_name
+        if args.backbone_id:
+            cfg["backbone_id"] = args.backbone_id
+        if args.output_root:
+            cfg["output_root"] = args.output_root
+        if args.input_prefix is not None:
+            cfg["input_prefix"] = args.input_prefix
 
     corpus_ids = resolve_corpora_ids(cfg, corpus=args.corpus, all_corpora=args.all)
     if not corpus_ids:
@@ -137,7 +155,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     print(
         f"[export] backbone={cfg.get('backbone_name')} corpora={corpus_ids} "
-        f"text_col={cfg.get('text_col', 'sentence')}",
+        f"text_col={cfg.get('text_col', 'sentence')} prefix={cfg.get('input_prefix', '')!r} "
+        f"output_root={cfg.get('output_root', 'embeddings')}",
         flush=True,
     )
     for cid in corpus_ids:

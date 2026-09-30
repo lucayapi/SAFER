@@ -20,6 +20,7 @@ from safer_core.classification_eval import (
     save_classification_outputs,
     save_corpus_predictions,
     summarize_ood_classification,
+    per_role_metrics_from_predictions,
 )
 
 
@@ -83,6 +84,30 @@ def test_save_classification_outputs(tmp_path: Path):
     )
     assert paths["cross_domain"].is_file()
     assert (tmp_path / "metrics" / "metrics_classification_test_metallurgie.csv").is_file()
+
+
+def test_per_role_metrics_are_saved_for_a_non_btp_source(tmp_path: Path):
+    prediction = pd.DataFrame({
+        "true_macro": ["A0", "A1", "B", "C"],
+        "pred_macro": ["A0", "B", "B", "C"],
+    })
+    table = per_role_metrics_from_predictions(prediction)
+    assert list(table["role"]) == ["A0", "A1", "B", "C"]
+    assert table.loc[table["role"] == "A1", "recall"].item() == 0.0
+    paths = save_classification_outputs(
+        tmp_path,
+        method_name="softtriple",
+        metrics_by_corpus={
+            "metallurgie": {"balanced_accuracy": 0.75, "macro_f1": 0.70, "accuracy": 0.72},
+            "caou": {"balanced_accuracy": 0.50, "macro_f1": 0.45, "accuracy": 0.48},
+        },
+        cv_summary=pd.DataFrame(),
+        source_corpus="metallurgie",
+        per_role_by_corpus={"metallurgie": table, "caou": table},
+    )
+    assert (tmp_path / "metrics" / "metrics_classification_metallurgie.csv").is_file()
+    saved = pd.read_csv(paths["per_role"])
+    assert set(saved["source_corpus"]) == {"metallurgie"}
 
 
 def test_evaluate_classifier_return_details_and_save_predictions(tmp_path: Path):

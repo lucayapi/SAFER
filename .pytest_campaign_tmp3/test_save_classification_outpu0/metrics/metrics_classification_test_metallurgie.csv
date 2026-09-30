@@ -1,0 +1,2 @@
+corpus,classifier,balanced_accuracy,macro_f1,accuracy
+metallurgie,logistic_regression,0.5,0.45,0.48

@@ -166,6 +166,8 @@ display(recurrent[["scenario_id", "upstream_labels", "B_label", "C_label", "scen
 discrepancy = pd.read_csv(paths["scenarios"] / "scenario_bn_discrepancy.csv")
 sensitivity = pd.read_csv(paths["scenarios"] / "scenario_bn_cpt_sensitivity.csv")
 article = pd.read_csv(paths["scenarios"] / "scenarios_article_table.csv")
+display_table_path = paths["scenarios"] / "observed_vs_bn_recurrence_display_table.csv"
+display_table = pd.read_csv(display_table_path) if display_table_path.is_file() else pd.DataFrame()
 signed = discrepancy["BN_support_discrepancy"].dropna()
 print("Scenarios with D_BN > 0:", int((signed > 0).sum()))
 print("Scenarios with D_BN < 0:", int((signed < 0).sum()))
@@ -174,9 +176,12 @@ print("Maximum |D_BN| (pp):", 100.0 * float(signed.abs().max()))
 display(discrepancy.sort_values("BN_support_interestingness", ascending=False).head(20))
 display(sensitivity[["scenario_id", "BN_CPT_estimation", "BN_MLE_support", "BN_Jeffreys_support", "BN_MLE_minus_Jeffreys_pp"]].head(20))
 display(article)
-path = paths["figures"] / "observed_vs_bn_implied_recurrence.png"
-if path.is_file():
-    display(Image(filename=str(path)))
+if not display_table.empty:
+    display(display_table)
+for name in ("observed_vs_bn_implied_recurrence.png", "observed_minus_bn_implied_recurrence.png"):
+    path = paths["figures"] / name
+    if path.is_file():
+        display(Image(filename=str(path)))
         """),
         markdown("## 6. Files for the manuscript"),
         code("""

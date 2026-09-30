@@ -30,10 +30,12 @@ from scenario_pipeline import (
     write_bn_accident_inclusion_audit,
 )
 from scenario_reporting import (
+    render_bn_recurrence_discrepancy_dotplot,
     render_bn_stability_contrast,
     render_global_bn_stable_dependencies,
     render_observed_vs_bn_recurrence,
     render_scenario_reporting,
+    write_bn_recurrence_display_table,
 )
 
 
@@ -226,8 +228,19 @@ def run_global_bn_scenario_mining(
         edges_frame=edges,
     )
     render_bn_stability_contrast(edges, stable_threshold, figures_dir / "bn_stability_vs_conditional_contrast.png")
+    recurrence_display = write_bn_recurrence_display_table(
+        mining["recurrent_all"],
+        scenario_dir / "observed_vs_bn_recurrence_display_table.csv",
+    )
     render_observed_vs_bn_recurrence(
-        mining["recurrent_all"], figures_dir / "observed_vs_bn_implied_recurrence.png",
+        mining["recurrent_all"],
+        figures_dir / "observed_vs_bn_implied_recurrence.png",
+        selection=recurrence_display,
+    )
+    render_bn_recurrence_discrepancy_dotplot(
+        mining["recurrent_all"],
+        figures_dir / "observed_minus_bn_implied_recurrence.png",
+        selection=recurrence_display,
     )
 
     payload = {

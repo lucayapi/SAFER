@@ -15,6 +15,7 @@ from safer_core.text_columns import warn_if_prompt_enabled
 class ContrastiveConfig:
     method_name: str
     dataset_path: Path
+    source_corpus: str = "btp"
     text_col: str = "sentence"
     label_col: str = "pred_label"
     group_col: str = "accident_id"
@@ -25,6 +26,7 @@ class ContrastiveConfig:
     # so legacy configurations retain their former behaviour (split == seed).
     split_seed: Optional[int] = None
     backbone_name: str = "Qwen/Qwen3-Embedding-0.6B"
+    input_prefix: str = ""
     max_seq_length: int = 256
     batch_size: int = 16
     eval_batch_size: int = 16
@@ -103,7 +105,7 @@ class ContrastiveConfig:
         return f"output/{self.method_name}"
 
     def test_corpora_list(self) -> List[str]:
-        if self.test_corpora:
+        if self.test_corpora is not None:
             return [str(c) for c in self.test_corpora]
         if self.test_corpus:
             return [str(self.test_corpus)]
@@ -176,6 +178,7 @@ def load_contrastive_config(
     cfg = ContrastiveConfig(
         method_name=str(pick("method_name", default=method_name, sources=(raw,))),
         dataset_path=TEXT_ROOT / str(dataset_rel),
+        source_corpus=str(pick("source_corpus", default="btp", sources=(data, raw))),
         text_col=str(pick("text_col", default="sentence", sources=(data, raw))),
         label_col=str(pick("label_col", default="pred_label", sources=(data, raw))),
         group_col=str(pick("group_col", default="accident_id", sources=(data, raw))),
@@ -190,6 +193,7 @@ def load_contrastive_config(
         backbone_name=str(
             pick("backbone_name", default="Qwen/Qwen3-Embedding-0.6B", sources=(model, raw))
         ),
+        input_prefix=str(pick("input_prefix", default="", sources=(model, raw))),
         max_seq_length=int(pick("max_seq_length", default=256, sources=(model, training, raw))),
         batch_size=int(pick("batch_size", default=16, sources=(training, raw))),
         eval_batch_size=int(
@@ -317,8 +321,8 @@ def load_contrastive_config(
             else None
         ),
         test_corpora=(
-            [str(c) for c in corpora]
-            if (corpora := pick("test_corpora", default=None, sources=(data, raw, training)))
+            [str(c) for c in corpora_value]
+            if (corpora_value := pick("test_corpora", default=None, sources=(data, raw, training))) is not None
             else None
         ),
         test_dataset_path=(
@@ -405,6 +409,7 @@ def config_to_resolved_dict(cfg: ContrastiveConfig) -> Dict[str, Any]:
             "seed": cfg.seed,
             "split_seed": cfg.split_seed,
             "backbone_name": cfg.backbone_name,
+            "input_prefix": cfg.input_prefix,
             "max_seq_length": cfg.max_seq_length,
             "batch_size": cfg.batch_size,
             "epochs": cfg.epochs,

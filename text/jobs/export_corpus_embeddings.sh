@@ -31,12 +31,18 @@ mkdir -p embeddings
 CORPUS="${CORPUS:-}"
 ALL_CORPORA="${ALL_CORPORA:-0}"
 BACKBONE_NAME="${BACKBONE_NAME:-}"
+BACKBONE_ID="${BACKBONE_ID:-}"
+OUTPUT_ROOT="${OUTPUT_ROOT:-}"
+INPUT_PREFIX="${INPUT_PREFIX:-}"
 FORCE="${FORCE:-0}"
 
 ARGS=(--config configs/export_embeddings.yaml)
 if [[ -n "${BACKBONE_NAME}" ]]; then
   ARGS+=(--backbone_name "${BACKBONE_NAME}")
 fi
+if [[ -n "${BACKBONE_ID}" ]]; then ARGS+=(--backbone-id "${BACKBONE_ID}"); fi
+if [[ -n "${OUTPUT_ROOT}" ]]; then ARGS+=(--output-root "${OUTPUT_ROOT}"); fi
+if [[ -n "${INPUT_PREFIX}" ]]; then ARGS+=(--input-prefix "${INPUT_PREFIX}"); fi
 if [[ "${FORCE}" == "1" ]]; then
   ARGS+=(--force)
 fi

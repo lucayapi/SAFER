@@ -465,11 +465,12 @@ def run_supervised_macro_ft_tuning(argv: Optional[List[str]] = None) -> int:
         spec.get("base_config", "configs/methods/supervised_macro_ft.yaml")
     )
     base_cfg = load_yaml(base_config_path)
-    test_corpora = list(
-        spec.get("test_corpora")
-        or base_cfg.get("test_corpora")
-        or ["metallurgie", "caou", "nicollin"]
-    )
+    if "test_corpora" in spec:
+        test_corpora = list(spec["test_corpora"] or [])
+    elif "test_corpora" in base_cfg:
+        test_corpora = list(base_cfg["test_corpora"] or [])
+    else:
+        test_corpora = ["metallurgie", "caou", "nicollin"]
     base_cfg = {**base_cfg, "test_corpora": test_corpora}
 
     grid = spec.get("grid") or {}

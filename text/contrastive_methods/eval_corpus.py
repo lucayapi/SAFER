@@ -14,6 +14,7 @@ from contrastive_methods.post_eval import (
     evaluate_classifier_on_embeddings,
     fit_classifier_on_embeddings,
 )
+from safer_core.classification_metrics import per_role_classification_metrics
 from safer_core.classification_eval import (
     build_and_save_predictions,
     build_cv_summary_from_kfold,
@@ -68,26 +69,27 @@ def run_final_classification_eval(
     device = get_device()
     anchor = Path(__file__).resolve().parents[1]
 
-    btp_dataset = prepare_text_dataset(cfg)
-    btp_df = btp_dataset.metadata_df
+    source_dataset = prepare_text_dataset(cfg)
+    source_df = source_dataset.metadata_df
+    source_corpus = str(cfg.source_corpus)
     text_col = cfg.text_col
     label_col = cfg.label_col
     group_col = cfg.group_col
 
-    X_btp = _encode_corpus_df(cfg, btp_df, text_col, checkpoint_dir, device)
-    btp_meta = _metadata_for_export(btp_df, cfg)
+    X_btp = _encode_corpus_df(cfg, source_df, text_col, checkpoint_dir, device)
+    btp_meta = _metadata_for_export(source_df, cfg)
     export_projected_embeddings(
         X_btp,
         btp_meta,
         emb_dir,
-        "btp",
+        source_corpus,
         label_col=label_col,
         group_col=group_col,
         text_col=text_col,
     )
 
     macros = None
-    y_train_int = btp_df["label_id"].astype(int).to_numpy()
+    y_train_int = source_df["label_id"].astype(int).to_numpy()
     pipe = fit_classifier_on_embeddings(
         X_btp,
         y_train_int,
@@ -97,20 +99,24 @@ def run_final_classification_eval(
     )
 
     metrics_by_corpus: Dict[str, Mapping[str, Any]] = {}
-    y_btp_macro = btp_df[label_col].astype(str).to_numpy()
+    y_btp_macro = source_df[label_col].astype(str).to_numpy()
     metrics_btp, details_btp = evaluate_classifier_on_embeddings(
         pipe, X_btp, y_btp_macro, macros=macros, return_details=True
     )
-    metrics_by_corpus["btp"] = metrics_btp
-    build_and_save_predictions(
+    metrics_by_corpus[source_corpus] = metrics_btp
+    per_role_by_corpus: Dict[str, pd.DataFrame] = {}
+    source_predictions, _ = build_and_save_predictions(
         btp_meta,
         details_btp,
         out_root,
-        "btp",
+        source_corpus,
         method_name=cfg.method_name,
         text_col=text_col,
         group_col=group_col,
         label_col=label_col,
+    )
+    per_role_by_corpus[source_corpus] = per_role_classification_metrics(
+        y_btp_macro, details_btp["pred_macro"], macros=details_btp["macros"]
     )
 
     ood_corpora = list(cfg.test_corpora_list())
@@ -125,6 +131,7 @@ def run_final_classification_eval(
                 group_col=cfg.group_col,
                 pred_ok_col=cfg.pred_ok_col,
                 backbone_name=cfg.backbone_name,
+                input_prefix=cfg.input_prefix,
                 max_seq_length=cfg.max_seq_length,
                 encode_batch_size=cfg.encode_batch_size,
                 eval_batch_size=cfg.eval_batch_size,
@@ -158,7 +165,7 @@ def run_final_classification_eval(
             )
             metrics_by_corpus[str(corpus_id)] = metrics_c
             is_last_ood = idx == len(ood_corpora) - 1
-            build_and_save_predictions(
+            test_predictions, _ = build_and_save_predictions(
                 test_meta,
                 details_c,
                 out_root,
@@ -168,6 +175,9 @@ def run_final_classification_eval(
                 group_col=group_col,
                 label_col=label_col,
                 also_transfer_alias=is_last_ood,
+            )
+            per_role_by_corpus[str(corpus_id)] = per_role_classification_metrics(
+                y_test, details_c["pred_macro"], macros=details_c["macros"]
             )
         except Exception as exc:
             print(f"[{cfg.method_name}] eval corpus {corpus_id} ignorée : {exc}", flush=True)
@@ -188,6 +198,8 @@ def run_final_classification_eval(
         metrics_by_corpus=metrics_by_corpus,
         cv_summary=cv_summary,
         classifier=cfg.post_eval_classifier,
+        source_corpus=source_corpus,
+        per_role_by_corpus=per_role_by_corpus,
     )
 
 

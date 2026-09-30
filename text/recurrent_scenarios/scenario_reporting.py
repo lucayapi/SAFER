@@ -544,53 +544,233 @@ def render_bn_stability_contrast(
     plt.close(figure)
 
 
-def _short_scenario_reference(row: pd.Series, *, width: int = 42) -> str:
-    """Return a concise semantic reference for a scenario annotation."""
-    parts = [str(row.get(column, "")).strip() for column in ("upstream_labels", "B_label", "C_label")]
-    parts = [part for part in parts if part and part.lower() != "nan"]
-    return textwrap.shorten(" → ".join(parts), width=width, placeholder="…") if parts else str(row.get("scenario_id", "scenario"))
+BN_RECURRENCE_POSITIVE_COLOR = "#D55E00"
+BN_RECURRENCE_NEGATIVE_COLOR = "#0072B2"
+BN_RECURRENCE_IDENTITY_COLOR = "#4D4D4D"
 
 
-def render_observed_vs_bn_recurrence(scenarios: pd.DataFrame, output_path: Path, *, n_labels: int = 4) -> None:
-    """Compare observed recurrent counts with BN-implied expected counts."""
-    required = {"scenario_accident_count", "BN_expected_accident_count", "BN_support_discrepancy"}
+def _scenario_display_text(row: pd.Series) -> str:
+    """Render the factor sequence used in the recurrence-display table."""
+    arrow = " \N{RIGHTWARDS ARROW} "
+    upstream = str(row.get("upstream_labels", "")).strip()
+    upstream = " + ".join(part.strip() for part in upstream.split(" | ") if part.strip())
+    event = str(row.get("B_label", "")).strip()
+    consequence = str(row.get("C_label", "")).strip()
+    parts = [part for part in (upstream, event, consequence) if part and part.lower() != "nan"]
+    if not parts:
+        return str(row.get("scenario_id", "scenario"))
+    return "\n".join((parts[0], *[arrow.strip() + " " + part for part in parts[1:]]))
+
+
+def select_bn_recurrence_display_scenarios(
+    scenarios: pd.DataFrame,
+    *,
+    n_positive: int = 3,
+    n_negative: int = 3,
+    n_well_reproduced: int = 2,
+    n_dotplot: int = 10,
+) -> dict[str, pd.DataFrame]:
+    """Select and label scenarios consistently across BN-recurrence outputs.
+
+    The scatter labels the largest discrepancies in both directions and two
+    well-reproduced, non-rare scenarios. The dot plot retains the three
+    largest discrepancies in each direction, then fills its remaining rows by
+    absolute count discrepancy. The returned table is their union, so every
+    visible ``S`` label has one unambiguous scenario entry.
+    """
+    required = {
+        "scenario_id",
+        "scenario_accident_count",
+        "BN_expected_accident_count",
+    }
+    if scenarios.empty or not required.issubset(scenarios.columns):
+        return {key: pd.DataFrame() for key in ("scatter", "dotplot", "table")}
+
+    frame = scenarios.dropna(
+        subset=["scenario_id", "scenario_accident_count", "BN_expected_accident_count"]
+    ).copy()
+    if frame.empty:
+        return {key: pd.DataFrame() for key in ("scatter", "dotplot", "table")}
+    frame["scenario_id"] = frame["scenario_id"].astype(str)
+    frame["observed_minus_bn_count"] = (
+        frame["scenario_accident_count"].astype(float)
+        - frame["BN_expected_accident_count"].astype(float)
+    )
+    frame["absolute_observed_minus_bn_count"] = frame["observed_minus_bn_count"].abs()
+
+    positive = frame.loc[frame["observed_minus_bn_count"] > 0].sort_values(
+        ["observed_minus_bn_count", "scenario_id"], ascending=[False, True], kind="stable"
+    ).head(n_positive)
+    negative = frame.loc[frame["observed_minus_bn_count"] < 0].sort_values(
+        ["observed_minus_bn_count", "scenario_id"], ascending=[True, True], kind="stable"
+    ).head(n_negative)
+    selected_extremes = pd.concat([positive, negative], ignore_index=False)
+
+    # A near-diagonal scenario should be substantively recurrent, rather than
+    # merely close because its observed count lies at the recurrence threshold.
+    observed_median = float(frame["scenario_accident_count"].median())
+    remaining = frame.loc[~frame["scenario_id"].isin(selected_extremes["scenario_id"])]
+    well_reproduced = remaining.loc[
+        remaining["scenario_accident_count"].astype(float) >= observed_median
+    ].sort_values(
+        ["absolute_observed_minus_bn_count", "scenario_id"], ascending=[True, True], kind="stable"
+    ).head(n_well_reproduced)
+
+    scatter = pd.concat([positive, negative, well_reproduced], ignore_index=True)
+    scatter["display_group"] = (
+        ["Observed > BN-implied"] * len(positive)
+        + ["Observed < BN-implied"] * len(negative)
+        + ["Well reproduced by BN"] * len(well_reproduced)
+    )
+
+    dotplot_remainder = frame.loc[
+        ~frame["scenario_id"].isin(selected_extremes["scenario_id"])
+    ].sort_values(
+        ["absolute_observed_minus_bn_count", "scenario_id"], ascending=[False, True], kind="stable"
+    ).head(max(n_dotplot - len(selected_extremes), 0))
+    dotplot = pd.concat([positive, negative, dotplot_remainder], ignore_index=True)
+    dotplot = dotplot.drop_duplicates(subset=["scenario_id"], keep="first").head(n_dotplot).copy()
+    dotplot["display_group"] = "Largest absolute discrepancy"
+
+    table = pd.concat([scatter, dotplot], ignore_index=True)
+    table = table.drop_duplicates(subset=["scenario_id"], keep="first").reset_index(drop=True)
+    table["display_id"] = [f"S{index}" for index in range(1, len(table) + 1)]
+    id_lookup = table.set_index("scenario_id")["display_id"]
+    scatter["display_id"] = scatter["scenario_id"].map(id_lookup)
+    dotplot["display_id"] = dotplot["scenario_id"].map(id_lookup)
+    return {"scatter": scatter, "dotplot": dotplot, "table": table}
+
+
+def build_bn_recurrence_display_table(selection: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+    """Build the companion table for labels used in BN-recurrence figures."""
+    table = selection.get("table", pd.DataFrame()).copy()
+    if table.empty:
+        return table
+    scatter_ids = set(selection.get("scatter", pd.DataFrame()).get("scenario_id", pd.Series(dtype=str)))
+    dotplot_ids = set(selection.get("dotplot", pd.DataFrame()).get("scenario_id", pd.Series(dtype=str)))
+
+    def figure_membership(scenario_id: str) -> str:
+        locations = []
+        if scenario_id in scatter_ids:
+            locations.append("Scatter")
+        if scenario_id in dotplot_ids:
+            locations.append("Dot plot")
+        return " + ".join(locations)
+
+    return pd.DataFrame({
+        "ID": table["display_id"],
+        "Scenario": table.apply(_scenario_display_text, axis=1),
+        "Observed n_s": table["scenario_accident_count"].astype(int),
+        "BN-implied mu_s": table["BN_expected_accident_count"].astype(float).round(2),
+        "Difference n_s - mu_s": table["observed_minus_bn_count"].astype(float).round(2),
+        "Figure": [figure_membership(str(value)) for value in table["scenario_id"]],
+    })
+
+
+def write_bn_recurrence_display_table(
+    scenarios: pd.DataFrame,
+    output_path: Path,
+) -> dict[str, pd.DataFrame]:
+    """Write the single lookup table shared by the scatter and dot plot."""
+    selection = select_bn_recurrence_display_scenarios(scenarios)
+    table = build_bn_recurrence_display_table(selection)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    table.to_csv(output_path, index=False)
+    return selection
+
+
+def render_observed_vs_bn_recurrence(
+    scenarios: pd.DataFrame,
+    output_path: Path,
+    *,
+    selection: Mapping[str, pd.DataFrame] | None = None,
+) -> None:
+    """Compare observed and BN-implied recurrence for all recurrent scenarios."""
+    required = {"scenario_accident_count", "BN_expected_accident_count"}
     if scenarios.empty or not required.issubset(scenarios.columns):
         return
-    import matplotlib.pyplot as plt
-    from manuscript_reporting import K_SELECTION_SELECTED_COLOR, save_manuscript_figure
+    from manuscript_reporting import save_manuscript_figure
 
     frame = scenarios.dropna(subset=["scenario_accident_count", "BN_expected_accident_count"]).copy()
     if frame.empty:
         return
-    limit = max(float(max(frame["scenario_accident_count"].max(), frame["BN_expected_accident_count"].max())), 1.0)
-    figure, axis = plt.subplots(figsize=(6.8, 5.2))
-    axis.scatter(
-        frame["BN_expected_accident_count"], frame["scenario_accident_count"],
-        s=38, color=K_SELECTION_SELECTED_COLOR, edgecolor="#333333", linewidth=0.4, alpha=0.82,
-    )
-    axis.plot([0.0, limit], [0.0, limit], color="#4D4D4D", linewidth=1.05, linestyle="--")
-    positive = frame.loc[frame["BN_support_discrepancy"] > 0].nlargest(max(n_labels - 1, 1), "BN_support_discrepancy")
-    remaining = frame.drop(index=positive.index, errors="ignore")
-    comparator = remaining.loc[remaining["BN_support_discrepancy"].abs().sort_values().index].head(1)
-    labels = pd.concat([positive, comparator]).head(n_labels)
+    if selection is None:
+        selection = select_bn_recurrence_display_scenarios(frame)
+    labels = selection.get("scatter", pd.DataFrame())
+    discrepancy = frame["scenario_accident_count"].astype(float) - frame["BN_expected_accident_count"].astype(float)
+    positive = frame.loc[discrepancy > 0]
+    negative = frame.loc[discrepancy < 0]
+    exact = frame.loc[discrepancy == 0]
+    maximum = float(max(frame["scenario_accident_count"].max(), frame["BN_expected_accident_count"].max(), 1.0))
+    limit = maximum * 1.04
+
+    figure, axis = plt.subplots(figsize=(6.8, 5.4))
+    for subset, color, label in (
+        (positive, BN_RECURRENCE_POSITIVE_COLOR, "Observed > BN-implied"),
+        (negative, BN_RECURRENCE_NEGATIVE_COLOR, "Observed < BN-implied"),
+        (exact, "#808080", "Exact agreement"),
+    ):
+        if not subset.empty:
+            axis.scatter(
+                subset["BN_expected_accident_count"], subset["scenario_accident_count"],
+                s=40, color=color, edgecolor="#333333", linewidth=0.4, alpha=0.84, label=label,
+            )
+    axis.plot([0.0, limit], [0.0, limit], color=BN_RECURRENCE_IDENTITY_COLOR, linewidth=1.05, linestyle="--", zorder=0)
     for _, row in labels.iterrows():
         axis.annotate(
-            _short_scenario_reference(row),
+            str(row["display_id"]),
             (float(row["BN_expected_accident_count"]), float(row["scenario_accident_count"])),
-            xytext=(4, 4), textcoords="offset points", fontsize=7,
+            xytext=(4, 4), textcoords="offset points", fontsize=7.5, fontweight="bold",
         )
     axis.set_xlim(0.0, limit)
     axis.set_ylim(0.0, limit)
     axis.set_aspect("equal", adjustable="box")
-    axis.set_xlabel("BN-implied recurrence count")
-    axis.set_ylabel("Observed recurrence count")
+    axis.set_xlabel("BN-implied expected recurrence, $\\hat{\\mu}_s$ (accidents)")
+    axis.set_ylabel("Observed recurrence, $n_s$ (accidents)")
     axis.grid(axis="both", color="#D9D9D9", linewidth=0.55, alpha=0.75)
+    axis.legend(frameon=False, fontsize=8, loc="best")
     figure.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_manuscript_figure(figure, output_path, dpi=220)
     save_manuscript_figure(figure, output_path.with_suffix(".pdf"), dpi=220)
     plt.close(figure)
 
+
+def render_bn_recurrence_discrepancy_dotplot(
+    scenarios: pd.DataFrame,
+    output_path: Path,
+    *,
+    selection: Mapping[str, pd.DataFrame] | None = None,
+) -> None:
+    """Rank recurrent scenarios by signed observed-minus-BN count discrepancy."""
+    if selection is None:
+        selection = select_bn_recurrence_display_scenarios(scenarios)
+    frame = selection.get("dotplot", pd.DataFrame()).copy()
+    if frame.empty:
+        return
+    from manuscript_reporting import save_manuscript_figure
+
+    frame = frame.sort_values(["observed_minus_bn_count", "scenario_id"], kind="stable").reset_index(drop=True)
+    colors = np.where(
+        frame["observed_minus_bn_count"] > 0,
+        BN_RECURRENCE_POSITIVE_COLOR,
+        BN_RECURRENCE_NEGATIVE_COLOR,
+    )
+    y = np.arange(len(frame))
+    figure_height = max(3.4, 0.38 * len(frame) + 1.35)
+    figure, axis = plt.subplots(figsize=(7.2, figure_height))
+    axis.hlines(y, 0.0, frame["observed_minus_bn_count"], color=colors, linewidth=1.4, alpha=0.8)
+    axis.scatter(frame["observed_minus_bn_count"], y, color=colors, edgecolor="#333333", linewidth=0.4, s=48, zorder=3)
+    axis.axvline(0.0, color=BN_RECURRENCE_IDENTITY_COLOR, linewidth=1.05)
+    axis.set_yticks(y, frame["display_id"])
+    axis.set_xlabel("Observed $-$ BN-implied recurrence, $n_s - \\hat{\\mu}_s$ (accidents)")
+    axis.set_ylabel("Scenario ID")
+    axis.grid(axis="x", color="#D9D9D9", linewidth=0.55, alpha=0.75)
+    figure.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    save_manuscript_figure(figure, output_path, dpi=220)
+    save_manuscript_figure(figure, output_path.with_suffix(".pdf"), dpi=220)
+    plt.close(figure)
 
 def render_support_lift_figure(
     candidates: pd.DataFrame,

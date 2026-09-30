@@ -108,7 +108,7 @@ def run_batch_triplet(cfg: ContrastiveConfig) -> TrainingResult:
             cfg, train_df, dataset.text_col, encoder, dev, cache_dir, batch_sampler=pk_sampler
         )
     else:
-        collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
+        collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length, cfg.input_prefix)
         train_loader = DataLoader(
             train_ds,
             batch_sampler=pk_sampler,

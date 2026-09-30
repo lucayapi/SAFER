@@ -11,6 +11,7 @@ from sklearn.metrics import (
     classification_report,
     confusion_matrix,
     f1_score,
+    precision_recall_fscore_support,
 )
 
 from scgm_text.dataset_text_embeddings import LABEL2ID
@@ -62,6 +63,33 @@ def evaluate_macro_predictions(
         ),
         "confusion_matrix": confusion_matrix(yt, yp, labels=list(range(len(macros)))),
     }
+
+
+def per_role_classification_metrics(
+    y_true: Sequence[str],
+    y_pred: Sequence[str],
+    *,
+    macros: Sequence[str],
+) -> pd.DataFrame:
+    """Return precision, recall, F1 and support in a tidy role-level table."""
+    labels = [str(role) for role in macros]
+    true = np.asarray(y_true, dtype=object).astype(str)
+    pred = np.asarray(y_pred, dtype=object).astype(str)
+    precision, recall, f1, support = precision_recall_fscore_support(
+        true,
+        pred,
+        labels=labels,
+        zero_division=0,
+    )
+    return pd.DataFrame(
+        {
+            "role": labels,
+            "precision": precision.astype(float),
+            "recall": recall.astype(float),
+            "f1": f1.astype(float),
+            "support": support.astype(int),
+        }
+    )
 
 
 def build_gating_from_predictions(preds: pd.DataFrame, macros: Sequence[str]) -> pd.DataFrame:

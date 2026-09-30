@@ -1,0 +1,15 @@
+{
+  "status": "complete",
+  "model_id": "metal",
+  "runner": "contrastive",
+  "training_seed": 9,
+  "split_seed": 42,
+  "n_folds": 3,
+  "source_corpus": "metallurgie",
+  "test_corpora": [
+    "btp",
+    "caou"
+  ],
+  "recipe_path": "C:\\Users\\aho\\Documents\\analysis factor project\\SAFER\\unused.yaml",
+  "checkpoint_dir": "none"
+}

@@ -44,8 +44,9 @@ def resolve_autocast_dtype(device: str, enabled: bool = True) -> Optional[torch.
 
 
 class TextLabelDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, text_col: str) -> None:
-        self.texts = df[text_col].astype(str).tolist()
+    def __init__(self, df: pd.DataFrame, text_col: str, text_prefix: str = "") -> None:
+        prefix = str(text_prefix or "")
+        self.texts = [f"{prefix}{text}" for text in df[text_col].astype(str).tolist()]
         self.labels = df["label_id"].astype(int).tolist()
 
     def __len__(self) -> int:
@@ -113,11 +114,12 @@ def encode_backbone_matrix(
     max_length: int,
     batch_size: int,
     device: torch.device,
+    text_prefix: str = "",
 ) -> np.ndarray:
     if encoder.tokenizer is None:
         raise ValueError("Tokenizer requis pour encoder le backbone.")
     encoder.eval()
-    collate_fn = make_collate_fn(encoder.tokenizer, max_length)
+    collate_fn = make_collate_fn(encoder.tokenizer, max_length, text_prefix)
     items = [{"text": t, "label": 0} for t in texts]
     loader = DataLoader(items, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
     chunks: List[np.ndarray] = []
@@ -155,6 +157,7 @@ def load_or_build_backbone_hidden(
         max_length=cfg.max_seq_length,
         batch_size=cfg.encode_batch_size,
         device=device,
+        text_prefix=cfg.input_prefix,
     )
     if hidden.shape[0] != n:
         raise ValueError(f"Encodage backbone : attendu {n} lignes, obtenu {hidden.shape[0]}")
@@ -182,8 +185,8 @@ def build_train_loader(
         ds = BackboneHiddenDataset(hidden, labels)
         collate = collate_hidden_batch
     else:
-        ds = TextLabelDataset(train_df, text_col)
-        collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
+        ds = TextLabelDataset(train_df, text_col, cfg.input_prefix)
+        collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length, cfg.input_prefix)
 
     if batch_sampler is not None:
         return (
@@ -206,8 +209,8 @@ def build_eval_loader(
     batch_sampler=None,
 ) -> DataLoader:
     dl_kwargs = dataloader_kwargs(str(device))
-    ds = TextLabelDataset(df, text_col)
-    collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
+    ds = TextLabelDataset(df, text_col, cfg.input_prefix)
+    collate = make_collate_fn(encoder.tokenizer, cfg.max_seq_length, cfg.input_prefix)
     if batch_sampler is not None:
         return DataLoader(ds, batch_sampler=batch_sampler, collate_fn=collate, **dl_kwargs)
     return DataLoader(ds, batch_size=cfg.eval_batch_size, shuffle=False, collate_fn=collate, **dl_kwargs)
@@ -293,7 +296,7 @@ def encode_texts(
         raise ValueError("Tokenizer requis pour encoder des textes.")
     encoder.eval()
     bs = batch_size or cfg.encode_batch_size
-    collate_fn = make_collate_fn(encoder.tokenizer, cfg.max_seq_length)
+    collate_fn = make_collate_fn(encoder.tokenizer, cfg.max_seq_length, cfg.input_prefix)
     items = [{"text": t, "label": 0} for t in texts]
     loader = DataLoader(items, batch_size=bs, shuffle=False, collate_fn=collate_fn)
     dev = torch.device(device)

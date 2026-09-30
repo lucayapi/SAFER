@@ -46,6 +46,27 @@ def test_contrastive_split_seed_is_independent_from_training_seed():
     ]
 
 
+def test_replication_source_corpus_is_recorded_and_removed_from_targets(tmp_path: Path, monkeypatch):
+    import json
+    import replication.runner as runner
+
+    config = {
+        "output_root": str(tmp_path / "outputs"),
+        "training": {"n_seeds": 1, "n_folds": 3, "test_corpora": ["btp", "metallurgie", "caou"]},
+        "models": {"metal": {"runner": "contrastive", "source_corpus": "metallurgie", "classifier": {"C": 0.01}}},
+    }
+    monkeypatch.setattr(runner, "load_replication_config", lambda _: config)
+    monkeypatch.setattr(runner, "_base_with_recipe", lambda _: {"data": {"dataset_path": "dataset/data_metallurgie.csv"}})
+    monkeypatch.setattr(runner, "_write_fold_partitions", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_run_contrastive", lambda raw, **kwargs: {"checkpoint_dir": "none"})
+    monkeypatch.setattr(runner, "_require_predictions", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_cleanup_completed_run", lambda *args, **kwargs: None)
+    run_dir = runner.run_replication("unused.yaml", model_id="metal", training_seed=9)
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["source_corpus"] == "metallurgie"
+    assert manifest["test_corpora"] == ["btp", "caou"]
+
+
 def test_replication_results_notebook_is_structurally_valid():
     import nbformat
 

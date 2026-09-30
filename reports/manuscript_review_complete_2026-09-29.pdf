@@ -1,0 +1,274 @@
+%PDF-1.4
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [5 0 R 7 0 R 9 0 R 11 0 R] /Count 4 >>
+endobj
+3 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 6 0 R >>
+endobj
+6 0 obj
+<< /Length 6960 >>
+stream
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 812.0 Tm (Complete manuscript review - priority findings) Tj ET
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 27.0 Tm (29 September 2026   |   Page 1 of 4) Tj ET
+BT /F2 18 Tf 0.100 0.200 0.340 rg 1 0 0 1 48.0 784.0 Tm (Audit du manuscrit complet : priorités avant soumission) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 761.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 754.0 Tm (Date : 29 septembre 2026) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 740.6 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 727.6 Tm (Périmètre et méthode) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 709.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 702.6 Tm (L'audit couvre le projet complet `C:\\\\Users\\\\aho\\\\Documents\\\\manuscript de) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 689.2 Tm (thèse\\\\Manuscript_de_thèse_AHO` : `main.tex`, les chapitres 1 à 4, les annexes, la) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 675.8 Tm (bibliographie, les tables incluses et les graphiques. Il remplace le rapport antérieur, limité) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 662.4 Tm (au dossier de travail SAFER.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 649.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 642.0 Tm (Les contrôles mécaniques portent sur les inclusions TeX, labels, renvois, citations, ressources) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 628.6 Tm (graphiques et contenus inachevés. Ils trouvent 164 labels sans doublon, 91 renvois dont 3 sans) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 615.2 Tm (cible, 201 clés de citation dont 3 invalides, et 24 graphiques inclus tous présents. Les annexes) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 601.8 Tm (et la bibliographie ont donc été examinées.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 588.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 581.4 Tm (Ce contrôle est statique : l'environnement ne contient ni moteur LaTeX ni log de compilation) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 568.0 Tm (récent. Il faut donc achever par une compilation propre de `main.tex` et une vérification) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 554.6 Tm (visuelle du PDF. Les P0 sont toutefois directement vérifiables dans les sources.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 541.2 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 528.2 Tm (Appréciation générale) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 510.2 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 503.2 Tm (Le manuscrit est scientifiquement cohérent. Sa progression -- prévision temporelle,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 489.8 Tm (structuration des récits, puis facteurs et scénarios récurrents -- est nette. Les chapitres 3 et) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 476.4 Tm (4 distinguent avec soin performance prédictive, généralisation, récurrence, association,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 463.0 Tm (dépendance conditionnelle et causalité. Cette prudence interprétative est une force à conserver.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 449.6 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 436.6 Tm (P0 -- corriger avant diffusion du PDF) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 418.6 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 405.6 Tm (P0.1 Front matter inachevé dans le document compilé) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 390.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 383.6 Tm (**Preuve.** `main.tex:610-614` inclut `ak.tex` et `resume_substantiel_fr.tex`. Ces fichiers) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 370.2 Tm (contiennent respectivement « à rédiger » \(`ak.tex:6`\) et « à rédiger .. ») Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 356.8 Tm (\(`resume_substantiel_fr.tex:13`\).) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 343.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 336.4 Tm (**Risque.** Les placeholders sont réellement intégrés au manuscrit, avant les résumés. Ils) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 323.0 Tm (signalent une version non finalisée et peuvent contrevenir aux exigences de l'établissement.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 309.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 302.6 Tm (**Correction.** Rédiger les remerciements et le résumé substantiel français, ou retirer) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 289.2 Tm (provisoirement leurs `input` de `main.tex`. Vérifier ensuite table des matières, signets et) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 275.8 Tm (pagination.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 262.4 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 249.4 Tm (P0.2 Annexe du chapitre 2 non constituée et renvois sans cible) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 234.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 227.4 Tm (**Preuve.** `appendix.tex:2-9` ne contient pour le chapitre 2 qu'une liste textuelle de) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 214.0 Tm (rubriques, sans sections, figures, tableaux ni labels. Les références `Plot_series`) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 200.6 Tm (\(`chapter2.tex:535`\), `forecast_series` \(`chapter2.tex:747`\) et `app:hp_grids`) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 187.2 Tm (\(`chapter2.tex:553`\) n'ont aucune cible dans le projet.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 173.8 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 166.8 Tm (**Risque.** Le PDF produira des « ?? » ou des renvois invalides. Le lecteur ne peut pas vérifier) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 153.4 Tm (les séries complémentaires, prévisions détaillées et grilles d'hyperparamètres annoncées.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 140.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 133.0 Tm (**Correction.** Remplacer la liste par les vraies sections annexes de l'article, y insérer les) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 119.6 Tm (figures/tableaux annoncés et poser les trois labels. Si ces éléments sont retirés, supprimer les) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 106.2 Tm (trois renvois et reformuler les phrases associées.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 92.8 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 79.8 Tm (P0.3 Trois citations ne correspondent pas aux clés bibliographiques) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 64.8 Tm () Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 7268 >>
+stream
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 812.0 Tm (Complete manuscript review - priority findings) Tj ET
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 27.0 Tm (29 September 2026   |   Page 2 of 4) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 784.0 Tm (**Preuve.** `chapter2.tex:67` cite `Cheng2012`, alors que la clé est `cheng2012`) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 770.6 Tm (\(`bibliography.bib:411`\). `chapter2.tex:161` cite `koc2023`, alors que la clé est `Koc2023`) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 757.2 Tm (\(`bibliography.bib:866`\). `chapter2.tex:321` cite `bai2018tcn`, alors que les clés présentes) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 743.8 Tm (sont `Bai2018_TCN` et `Bai2018TCN` \(`bibliography.bib:1150,1227`\).) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 730.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 723.4 Tm (**Risque.** Les clés BibTeX sont distinctes selon la casse : citations absentes ou warnings de) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 710.0 Tm (bibliographie.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 696.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 689.6 Tm (**Correction.** Employer les clés existantes avec leur casse exacte, puis recompiler après) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 676.2 Tm (BibTeX jusqu'à stabilisation de tous les renvois.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 662.8 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 649.8 Tm (P0.4 Marqueur Markdown laissé dans le chapitre 4) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 634.8 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 627.8 Tm (**Preuve.** `chapter4.tex:529` contient littéralement trois accents graves suivis de `latex`, au) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 614.4 Tm (début de « Reproducibility under accident-level subsampling ».) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 601.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 594.0 Tm (**Risque.** Ce marqueur n'a pas de signification LaTeX et peut s'imprimer ou dégrader la page.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 580.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 573.6 Tm (**Correction.** Supprimer uniquement cette ligne : le contenu qui suit est déjà une sous-section) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 560.2 Tm (LaTeX valide.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 546.8 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 533.8 Tm (P1 -- risque scientifique ou de reproductibilité élevé) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 515.8 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 502.8 Tm (P1.1 Découpage entraînement-test du chapitre 2 ambigu) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 487.8 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 480.8 Tm (**Preuve.** La base couvre janvier 2019 à octobre 2022 \(`chapter2.tex:442`\), tandis que le texte) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 467.4 Tm (indique : « training period spans from 2019 to 2022, while data from 2022 onward were used for) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 454.0 Tm (testing » \(`chapter2.tex:552`\). Les deux périodes se chevauchent dans cette formulation.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 440.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 433.6 Tm (**Enjeu.** Le chapitre défend une évaluation réellement hors échantillon. Un rapporteur) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 420.2 Tm (demandera la date de coupure, les effectifs par split et la garantie que calibration du seuil et) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 406.8 Tm (choix de modèle n'utilisent pas le test.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 393.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 386.4 Tm (**Correction.** Indiquer les dates exactes train/test, les nombres de jours ou semaines, et) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 373.0 Tm (rappeler que tous les paramètres sont figés avant le test.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 359.6 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 346.6 Tm (P1.2 Paramètres numériques des analyses de stabilité du chapitre 4 incomplets) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 331.6 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 324.6 Tm (**Preuve.** La méthode définit `M`, `rho`, des seeds UMAP et `B_boot` \(`chapter4.tex:551-555`,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 311.2 Tm (`1038-1065`, `2009-2024`\), sans donner les valeurs effectivement utilisées dans la recherche de) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 297.8 Tm (configuration ni la section BN \(`chapter4.tex:2415-2442`, `2839-2928`\).) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 284.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 277.4 Tm (**Enjeu.** Ces paramètres déterminent la précision des scores de reproductibilité et des) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 264.0 Tm (fréquences de sélection. Ils sont indispensables pour reproduire les figures et interpréter le) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 250.6 Tm (seuil de stabilité.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 237.2 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 230.2 Tm (**Correction.** Ajouter un tableau ou une phrase avec `M`, `rho`, seed de référence, seeds) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 216.8 Tm (alternatifs, `B_boot`, seed bootstrap et `tau_stab = 0.60`. Donner aussi le nombre d'arêtes) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 203.4 Tm (parmi les 18 atteignant le seuil.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 190.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 177.0 Tm (P1.3 Population « carpentry and joinery » insuffisamment auditable) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 162.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 155.0 Tm (**Preuve.** Le groupe est présenté comme suffisamment représenté et spécifique) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 141.6 Tm (\(`chapter4.tex:2343-2357`\), mais sans codes d'activité, table de correspondance,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 128.2 Tm (inclusions/exclusions ni règle de sélection.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 114.8 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 107.8 Tm (**Enjeu.** Les 417 accidents fondent toutes les estimations du chapitre 4. Sans définition) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 94.4 Tm (vérifiable, l'échantillon n'est pas reproductible et son domaine de généralisation reste flou.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 81.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 74.0 Tm (**Correction.** Ajouter une table « code activité brut -> famille », les effectifs à chaque) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 10 0 R >>
+endobj
+10 0 obj
+<< /Length 7042 >>
+stream
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 812.0 Tm (Complete manuscript review - priority findings) Tj ET
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 27.0 Tm (29 September 2026   |   Page 3 of 4) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 784.0 Tm (étape \(6 040 -> familles éligibles -> 417\), les exclusions, et préciser si ce choix de famille) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 770.6 Tm (était a priori.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 757.2 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 744.2 Tm (P1.4 Revue qualitative des facteurs insuffisamment décrite) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 729.2 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 722.2 Tm (**Preuve.** La cohérence sémantique est vérifiée sur « a set of representative factual units ») Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 708.8 Tm (\(`chapter4.tex:2786-2792`\), sans taille de l'échantillon, règle de sélection, nombre) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 695.4 Tm (d'évaluateurs ni traitement de l'ambiguïté.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 682.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 675.0 Tm (**Enjeu.** Les labels et l'interprétation préventive reposent en partie sur cette étape. Elle) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 661.6 Tm (peut être perçue comme ad hoc si elle n'est pas traçable.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 648.2 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 641.2 Tm (**Correction.** Mettre en annexe : nombre d'unités vues par facteur, règle de sélection,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 627.8 Tm (relecteurs et traitement des désaccords. Conserver l'information déjà présente selon laquelle) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 614.4 Tm (cette revue ne modifie pas les clusters.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 601.0 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 588.0 Tm (P2 -- améliorations importantes de présentation et d'interprétation) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 570.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 557.0 Tm (P2.1 Sensibilité au seuil de récurrence) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 542.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 535.0 Tm (Le chapitre annonce une analyse de sensibilité à `n_min` \(`chapter4.tex:1341-1345`\) mais) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 521.6 Tm (l'application ne montre que les nombres de configurations à 3, 5, 8 et 10 accidents) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 508.2 Tm (\(`chapter4.tex:2939-2976`\). Ajouter la persistance des scénarios centraux aux seuils 8 et 10, ou) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 494.8 Tm (un indice de recouvrement entre inventaires. Cela répond à la question substantielle : les) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 481.4 Tm (conclusions changent-elles avec le seuil ?) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 468.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 455.0 Tm (P2.2 Règle de sélection des huit scénarios annotés du scatter plot) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 440.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 433.0 Tm (La figure/table de récurrence BN annotent S1--S8 \(`chapter4.tex:3264-3367`\) sans règle de) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 419.6 Tm (sélection. Ajouter une phrase : S1--S3 sont les plus grands écarts positifs, S4--S6 les plus) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 406.2 Tm (grands écarts négatifs, S7--S8 sont les scénarios proches de la diagonale selon une règle) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 392.8 Tm (annoncée. Le texte actuel sur le caractère descriptif et non testé est juste et doit être) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 379.4 Tm (conservé \(`chapter4.tex:3394-3416`\).) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 366.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 353.0 Tm (P2.3 Sensibilité BN aux faibles cellules) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 338.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 331.0 Tm (La table BN rapporte deux lignes de CPT avec `N <= 5`, un minimum de 4 et trois MLE de frontière) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 317.6 Tm (\(`chapter4.tex:2851-2895`\). Le texte est prudent, mais les probabilités BN alimentent ensuite) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 304.2 Tm (les écarts de récurrence. Ajouter en annexe une sensibilité avec lissage de Jeffreys ou Laplace) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 290.8 Tm (pour les scénarios aux plus grands écarts. Elle ne doit ni modifier le BIC ni être interprétée) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 277.4 Tm (causalement.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 264.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 251.0 Tm (P2.4 Passage éditorial complet du chapitre 2) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 236.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 229.0 Tm (Exemples visibles : mélange français/anglais dans une équation \(`chapter2.tex:337`, « avec »\),) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 215.6 Tm (confusion Figure/Table \(`chapter2.tex:747` commente une figure dont le label commence par) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 202.2 Tm (`tab`\), accord « one day exceed » \(`chapter2.tex:76,126`\) et répétition de la phrase annonçant) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 188.8 Tm (la table des variables \(`chapter2.tex:482`\). Une passe éditoriale complète des captions, labels,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 175.4 Tm (accords et majuscules est recommandée.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 162.0 Tm () Tj ET
+BT /F2 11 Tf 0.520 0.120 0.120 rg 1 0 0 1 48.0 149.0 Tm (P2.5 Déclaration de reproductibilité de thèse) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 134.0 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 127.0 Tm (Ajouter une déclaration concise donnant le dépôt du code, les paramètres, l'environnement et, si) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 113.6 Tm (les données ne sont pas diffusables, les métadonnées, scripts de préparation et procédure) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 100.2 Tm (d'accès. Cela consolidera les chapitres 2 à 4 sans exposer de récits sensibles.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 86.8 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 73.8 Tm (P3 -- harmonisation finale) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 55.8 Tm () Tj ET
+endstream
+endobj
+11 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents 12 0 R >>
+endobj
+12 0 obj
+<< /Length 3113 >>
+stream
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 812.0 Tm (Complete manuscript review - priority findings) Tj ET
+BT /F1 8 Tf 0.350 0.350 0.350 rg 1 0 0 1 48.0 27.0 Tm (29 September 2026   |   Page 4 of 4) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 784.0 Tm (Choisir une variante anglaise uniforme, puis réserver « candidate configuration », « closed) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 770.6 Tm (pattern » et « scenario » à leurs usages techniques définis. Lorsque les tableaux donnent déjà) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 757.2 Tm (les comptes, privilégier dans le texte leur interprétation. La section BN de récurrence va déjà) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 743.8 Tm (dans cette direction.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 730.4 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 717.4 Tm (Ordre de révision conseillé) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 699.4 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 692.4 Tm (1. Supprimer les placeholders et le marqueur Markdown ; corriger les trois renvois et trois) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 679.0 Tm (citations invalides.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 665.6 Tm (2. Reconstituer les annexes du chapitre 2, puis compiler `main.tex` dans une arborescence propre) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 652.2 Tm (jusqu'à disparition des warnings de références et citations.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 638.8 Tm (3. Clarifier le split temporel du chapitre 2, puis compléter stabilité, population et revue) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 625.4 Tm (qualitative du chapitre 4.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 612.0 Tm (4. Ajouter les analyses ciblées : persistance des scénarios, règles de labellisation du scatter,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 598.6 Tm (sensibilité CPT si utile.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 585.2 Tm (5. Réaliser la relecture éditoriale et la vérification visuelle finales.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 571.8 Tm () Tj ET
+BT /F2 13 Tf 0.120 0.300 0.480 rg 1 0 0 1 48.0 558.8 Tm (Forces à préserver) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 48.0 540.8 Tm () Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 61.0 533.8 Tm (- Progression nette entre les trois niveaux d'analyse de la thèse.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 61.0 520.4 Tm (- Chapitre 3 : sélection des modèles sans utiliser les domaines cibles.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 61.0 507.0 Tm (- Chapitre 4 : distinction rigoureuse entre récurrence, lift, dépendance conditionnelle,) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 61.0 493.6 Tm (  stabilité bootstrap et écart BN ; absence d'interprétation causale indue.) Tj ET
+BT /F1 10.2 Tf 0.000 0.000 0.000 rg 1 0 0 1 61.0 480.2 Tm (- Discussion explicite des limites in-sample et de la sélection des scénarios.) Tj ET
+endstream
+endobj
+xref
+0 13
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000140 00000 n 
+0000000237 00000 n 
+0000000339 00000 n 
+0000000475 00000 n 
+0000007486 00000 n 
+0000007622 00000 n 
+0000014941 00000 n 
+0000015078 00000 n 
+0000022172 00000 n 
+0000022310 00000 n 
+trailer
+<< /Size 13 /Root 1 0 R >>
+startxref
+25475
+%%EOF
