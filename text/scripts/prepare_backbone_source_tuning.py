@@ -9,6 +9,7 @@ this once, run the 12 commands written to ``commands.sh``, inspect each
 from __future__ import annotations
 
 import copy
+import argparse
 from pathlib import Path
 
 import yaml
@@ -27,11 +28,16 @@ def _write(path: Path, value: dict) -> None:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--include-qwen3-btp", action="store_true", help="RecrÃ©er les trois sÃ©lections dÃ©jÃ  disponibles dans l'Ã©tude principale.")
+    args = parser.parse_args()
     root = ROOT / "output" / "backbone_source_factorial" / "source_only_tuning"
     commands: list[str] = []
     for source, dataset in SOURCES.items():
         for backbone_id, (backbone, prefix) in BACKBONES.items():
             for method in ("softtriple", "supcon", "cross_entropy"):
+                if source == "btp" and backbone_id == "qwen3" and not args.include_qwen3_btp:
+                    continue
                 stem = f"{backbone_id}_{source}_{method}"
                 base = yaml.safe_load((ROOT / "configs" / "methods" / ("supervised_macro_ft.yaml" if method == "cross_entropy" else f"{method}.yaml")).read_text(encoding="utf-8"))
                 base["test_corpora"] = []

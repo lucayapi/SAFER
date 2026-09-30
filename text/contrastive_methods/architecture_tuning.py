@@ -275,6 +275,8 @@ def _run_full_pipeline_group_cv(
     combo_dir: Path,
     classifier_grid: Sequence[Mapping[str, Any]],
     variant: str,
+    *,
+    cleanup_fold_outputs: bool = False,
 ) -> List[Dict[str, Any]]:
     """CV honnête: nouvel encodeur contrastif entraîné dans chaque fold."""
     def fold_dir_fn(fold_id: int) -> str:
@@ -287,6 +289,7 @@ def _run_full_pipeline_group_cv(
         log_prefix=f"architecture/{variant}",
         save_tables=False,
         post_eval_grid=[dict(params) for params in classifier_grid],
+        cleanup_fold_outputs=cleanup_fold_outputs,
     )
     return fold_rows
 
@@ -397,7 +400,8 @@ def run_architecture_tuning(method_name: str, argv: Optional[List[str]] = None) 
             flush=True,
         )
         fold_rows = _run_full_pipeline_group_cv(
-            cfg, runner, combo_dir, classifier_grid, variant
+            cfg, runner, combo_dir, classifier_grid, variant,
+            cleanup_fold_outputs=bool(args.skip_final_fit),
         )
         cv_dir = combo_dir / "cv"
         cv_dir.mkdir(parents=True, exist_ok=True)

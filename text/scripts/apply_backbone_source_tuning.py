@@ -42,6 +42,8 @@ def main() -> None:
             raise ValueError(f"Cannot infer method from model id: {model_id}")
         if method == "frozen":
             continue
+        if bool(model.get("reuse_existing_selection", False)):
+            continue
         prefix = model_id.rsplit("_" + method, 1)[0]
         # Tuning output naming includes the whole method for cross_entropy.
         tuning_dir = tuning_root / f"{prefix}_{method}"
