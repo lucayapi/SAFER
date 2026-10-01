@@ -51,6 +51,33 @@ def test_e5_recipes_keep_prefix_for_all_adapted_methods() -> None:
             assert spec["overrides"]["model"]["input_prefix"] == "query: "
 
 
+def test_full_encoder_final_recipe_keeps_the_reduced_training_budget() -> None:
+    from scripts.apply_backbone_source_tuning import _apply_scope_training_overrides
+
+    cross_entropy: dict = {"overrides": {"training": {"epochs": 30, "use_amp": True, "lr_backbone": 2e-5}}}
+    _apply_scope_training_overrides(cross_entropy, method="cross_entropy", scope=None)
+    assert cross_entropy["overrides"]["training"] == {
+        "epochs": 3,
+        "use_amp": False,
+        "lr_backbone": 2e-6,
+    }
+
+    supcon: dict = {"overrides": {"training": {"epochs": 30, "use_amp": True, "learning_rate": 2e-5}}}
+    _apply_scope_training_overrides(supcon, method="supcon", scope=None)
+    assert supcon["overrides"]["training"] == {
+        "epochs": 3,
+        "use_amp": False,
+        "learning_rate": 2e-6,
+    }
+
+    _apply_scope_training_overrides(supcon, method="supcon", scope=2)
+    assert supcon["overrides"]["training"] == {
+        "epochs": 15,
+        "use_amp": True,
+        "learning_rate": 2e-5,
+    }
+
+
 def test_ood_common_target_summary_uses_both_target_frames() -> None:
     import numpy as np
     import pandas as pd

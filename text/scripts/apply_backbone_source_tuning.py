@@ -10,6 +10,11 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 
+# These values are part of the source-only grid, so the final repeated-seed
+# recipe must use the same scope-specific optimisation budget.  In particular,
+# full encoder adaptation is deliberately restricted to three epochs.
+EPOCHS_BY_ENCODER_SCOPE = {1: 30, 2: 15, 3: 10, None: 3}
+
 
 def _best_row(path: Path) -> pd.Series:
     df = pd.read_csv(path)
@@ -33,6 +38,26 @@ def _scope(row: pd.Series) -> int | None:
     if label in {"last 3 layers", "last_3", "last_3_layers"}:
         return 3
     raise ValueError(f"Unknown encoder scope in selection summary: {label!r}")
+
+
+def _apply_scope_training_overrides(model: dict, *, method: str, scope: int | None) -> None:
+    """Keep final repeated-seed optimisation consistent with source-only CV."""
+    training = model.setdefault("overrides", {}).setdefault("training", {})
+    training["epochs"] = EPOCHS_BY_ENCODER_SCOPE[scope]
+    if scope is None:
+        training["use_amp"] = False
+        if method == "cross_entropy":
+            training["lr_backbone"] = 2.0e-6
+        else:
+            training["learning_rate"] = 2.0e-6
+    else:
+        # Make repeated applications of this script deterministic if a new
+        # selection replaces an earlier full-encoder selection.
+        training["use_amp"] = True
+        if method == "cross_entropy":
+            training["lr_backbone"] = 2.0e-5
+        else:
+            training["learning_rate"] = 2.0e-5
 
 
 def main() -> None:
@@ -61,13 +86,15 @@ def main() -> None:
         row = _best_row(summary)
         overrides = model.setdefault("overrides", {})
         model_override = overrides.setdefault("model", {})
-        model_override["train_last_n_layers"] = _scope(row)
+        scope = _scope(row)
+        model_override["train_last_n_layers"] = scope
         yes = str(row.get("projector", "Yes")).strip().lower() in {"yes", "true", "1"}
         model_override["use_projector"] = yes
         if not yes:
             model_override["projection"] = None
         if method in {"supcon", "softtriple"} and pd.notna(row.get("best_lr_C")):
             model.setdefault("classifier", {})["C"] = float(row["best_lr_C"])
+        _apply_scope_training_overrides(model, method=method, scope=scope)
         model["source_only_selection"] = {"summary": str(summary.relative_to(ROOT)).replace("\\", "/"), "score": float(row.get("selection_score", row.get("cv_ba_mean", row.get("mean_balanced_accuracy"))))}
         changes.append(model_id)
     if args.write:

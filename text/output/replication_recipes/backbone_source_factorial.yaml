@@ -80,9 +80,9 @@ model_templates:
 
 models:
   qwen3_btp_frozen: {template: frozen_qwen3, source_corpus: btp}
-  qwen3_btp_cross_entropy: {template: cross_entropy_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv, data_csv: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: false, projection: null}}}
-  qwen3_btp_supcon: {template: supcon_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: true, projection: mlp_sklearn}}}
-  qwen3_btp_softtriple: {template: softtriple_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: true, projection: mlp_sklearn}}}
+  qwen3_btp_cross_entropy: {template: cross_entropy_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv, data_csv: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: false, projection: null}, training: {epochs: 3, use_amp: false, lr_backbone: 2.0e-6}}}
+  qwen3_btp_supcon: {template: supcon_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: true, projection: mlp_sklearn}, training: {epochs: 3, use_amp: false, learning_rate: 2.0e-6}}}
+  qwen3_btp_softtriple: {template: softtriple_qwen3, source_corpus: btp, reuse_existing_selection: true, overrides: {data: {dataset_path: dataset/data_btp.csv}, model: {train_last_n_layers: null, use_projector: true, projection: mlp_sklearn}, training: {epochs: 3, use_amp: false, learning_rate: 2.0e-6}}}
   qwen3_metallurgie_frozen: {template: frozen_qwen3, source_corpus: metallurgie}
   qwen3_metallurgie_cross_entropy: {template: cross_entropy_qwen3, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv, data_csv: dataset/data_metallurgie.csv}}}
   qwen3_metallurgie_supcon: {template: supcon_qwen3, source_corpus: metallurgie, overrides: {data: {dataset_path: dataset/data_metallurgie.csv}}}
