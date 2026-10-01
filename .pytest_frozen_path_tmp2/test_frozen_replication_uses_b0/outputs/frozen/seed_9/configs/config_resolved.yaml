@@ -1,0 +1,11 @@
+runner: frozen
+source_corpus: btp
+backbone_name: Qwen/Qwen3-Embedding-0.6B
+backbone_id: qwen3
+test_corpora:
+- caou
+data:
+  dataset_path: C:\Users\aho\Documents\analysis factor project\SAFER\.pytest_frozen_path_tmp2\test_frozen_replication_uses_b0\data_btp.csv
+replication_model_id: frozen
+training_seed: 9
+split_seed: 42

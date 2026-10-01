@@ -328,7 +328,12 @@ def run_replication(
     raw["source_corpus"] = source_corpus
     if str(spec["runner"]) == "frozen":
         from safer_core.test_corpus import resolve_test_corpus
-        raw["data"] = {"dataset_path": str(resolve_test_corpus(source_corpus, require_files=True).data_csv)}
+        # Frozen replication resolves embeddings separately with the selected
+        # backbone-specific path (embeddings/<backbone>/<corpus>.csv).  Do not
+        # require the legacy registry embedding path here.
+        raw["data"] = {"dataset_path": str(resolve_test_corpus(
+            source_corpus, require_files=True, require_emb_csv=False
+        ).data_csv)}
     _write_fold_partitions(raw, n_folds=n_folds, split_seed=split_seed, destination=run_dir / "cv" / "fold_partitions.csv")
     manifest = {
         "status": "running", "model_id": model_id, "runner": spec["runner"],

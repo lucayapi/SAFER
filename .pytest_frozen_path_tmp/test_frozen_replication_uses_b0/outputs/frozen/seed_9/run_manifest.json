@@ -1,0 +1,15 @@
+{
+  "status": "complete",
+  "model_id": "frozen",
+  "runner": "frozen",
+  "training_seed": 9,
+  "split_seed": 42,
+  "n_folds": 3,
+  "source_corpus": "btp",
+  "test_corpora": [
+    "caou"
+  ],
+  "recipe_path": "C:\\Users\\aho\\Documents\\analysis factor project\\SAFER\\unused.yaml",
+  "task_wall_time_sec": 0.002455800073221326,
+  "checkpoint_dir": null
+}

@@ -67,6 +67,35 @@ def test_replication_source_corpus_is_recorded_and_removed_from_targets(tmp_path
     assert manifest["test_corpora"] == ["btp", "caou"]
 
 
+def test_frozen_replication_uses_backbone_specific_embedding_resolution(tmp_path: Path, monkeypatch):
+    """Frozen runs must not require the legacy flat Qwen embedding CSV."""
+    from types import SimpleNamespace
+
+    import replication.frozen as frozen
+    import replication.runner as runner
+    import safer_core.test_corpus as test_corpus
+
+    config = {
+        "output_root": str(tmp_path / "outputs"),
+        "training": {"n_seeds": 1, "n_folds": 3, "test_corpora": ["btp", "caou"]},
+        "models": {"frozen": {"runner": "frozen", "source_corpus": "btp", "backbone_name": "Qwen/Qwen3-Embedding-0.6B", "backbone_id": "qwen3"}},
+    }
+    calls: list[dict] = []
+    monkeypatch.setattr(runner, "load_replication_config", lambda _: config)
+    monkeypatch.setattr(runner, "_write_fold_partitions", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_require_predictions", lambda *args, **kwargs: None)
+    monkeypatch.setattr(runner, "_cleanup_completed_run", lambda *args, **kwargs: None)
+
+    def resolve(corpus: str, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(data_csv=tmp_path / f"data_{corpus}.csv")
+
+    monkeypatch.setattr(test_corpus, "resolve_test_corpus", resolve)
+    monkeypatch.setattr(frozen, "run_frozen_replication", lambda *args, **kwargs: {"checkpoint_dir": None})
+    runner.run_replication("unused.yaml", model_id="frozen", training_seed=9)
+    assert calls == [{"require_files": True, "require_emb_csv": False}]
+
+
 def test_replication_results_notebook_is_structurally_valid():
     import nbformat
 

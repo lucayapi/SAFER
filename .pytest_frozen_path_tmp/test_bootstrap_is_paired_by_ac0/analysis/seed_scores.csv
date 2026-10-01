@@ -1,0 +1,9 @@
+corpus,model,training_seed,metric,score,n_units,n_accidents
+target,good,994300728,balanced_accuracy,1.0,8,4
+target,good,1316869688,balanced_accuracy,1.0,8,4
+target,good,994300728,macro_f1,1.0,8,4
+target,good,1316869688,macro_f1,1.0,8,4
+target,bad,994300728,balanced_accuracy,0.25,8,4
+target,bad,1316869688,balanced_accuracy,0.25,8,4
+target,bad,994300728,macro_f1,0.1,8,4
+target,bad,1316869688,macro_f1,0.1,8,4
