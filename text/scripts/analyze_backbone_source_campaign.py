@@ -8,6 +8,7 @@ model or expose target labels to source-only selection.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 import itertools
 import json
 import sys
@@ -28,6 +29,34 @@ from safer_core.embedding_paths import backbone_storage_id
 
 ROLE_ORDER = ["A0", "A1", "B", "C"]
 METHOD_ORDER = ["frozen", "cross_entropy", "supcon", "softtriple"]
+
+
+def _task_seed(base_seed: int, stage: int, index: int) -> int:
+    """Stable independent seed for one parallel bootstrap block."""
+    sequence = np.random.SeedSequence([int(base_seed), int(stage), int(index)])
+    return int(sequence.generate_state(1, dtype=np.uint64)[0] % (2**63 - 1))
+
+
+def _parallel_map(tasks: list[tuple], worker, *, n_workers: int) -> list[Any]:
+    if n_workers <= 1:
+        return [worker(task) for task in tasks]
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        return list(executor.map(worker, tasks))
+
+
+def _summary_task(task: tuple) -> dict[str, float]:
+    seed_frames, seed, n_boot, confidence = task
+    return _summary(seed_frames, rng=np.random.default_rng(seed), n_boot=n_boot, confidence=confidence)
+
+
+def _multi_target_summary_task(task: tuple) -> dict[str, float]:
+    by_target, seed, n_boot, confidence = task
+    return _multi_target_summary(by_target, rng=np.random.default_rng(seed), n_boot=n_boot, confidence=confidence)
+
+
+def _paired_bootstrap_task(task: tuple) -> np.ndarray:
+    left_frames, right_frames, seed, n_boot = task
+    return _paired_bootstrap_difference(left_frames, right_frames, rng=np.random.default_rng(seed), n_boot=n_boot)
 
 
 def _method(spec: dict[str, Any]) -> str:
@@ -132,7 +161,10 @@ def main() -> None:
     p.add_argument("--config", default="output/replication_recipes/backbone_source_factorial.yaml")
     p.add_argument("--output", default="output/backbone_source_factorial_analysis")
     p.add_argument("--n-bootstrap", type=int, default=2000)
+    p.add_argument("--n-workers", type=int, default=1, help="Nombre de processus bootstrap parallèles.")
     args = p.parse_args()
+    if args.n_workers < 1:
+        raise ValueError("--n-workers doit être >= 1")
     config_path = ROOT / args.config if not Path(args.config).is_absolute() else Path(args.config)
     config, frames, records = _load_runs(config_path)
     if not records:
@@ -141,27 +173,41 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(records).to_csv(out / "prediction_inventory.csv", index=False)
     confidence = float(config.get("bootstrap", {}).get("confidence_level", 0.95))
-    rng = np.random.default_rng(int(config.get("bootstrap", {}).get("seed", 2027)))
+    bootstrap_seed = int(config.get("bootstrap", {}).get("seed", 2027))
 
     grouped: dict[tuple[str, str, str, str], list[pd.DataFrame]] = {}
     for r in records:
         grouped.setdefault((r["backbone"], r["source_corpus"], r["method"], r["evaluation_corpus"]), []).append(frames[(r["model_id"], r["seed"], r["evaluation_corpus"])])
+    target_tasks = []
+    target_keys = []
+    for index, (key, seed_frames) in enumerate(grouped.items()):
+        target_keys.append(key)
+        target_tasks.append((seed_frames, _task_seed(bootstrap_seed, 1, index), args.n_bootstrap, confidence))
+    target_summaries = _parallel_map(target_tasks, _summary_task, n_workers=args.n_workers)
     target_rows = []
-    for key, seed_frames in grouped.items():
-        backbone, source, method, target = key
-        target_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "evaluation_corpus": target, **_summary(seed_frames, rng=rng, n_boot=args.n_bootstrap, confidence=confidence)})
+    for (backbone, source, method, target), summary in zip(target_keys, target_summaries):
+        target_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "evaluation_corpus": target, **summary})
     target_summary = pd.DataFrame(target_rows)
     target_summary.to_csv(out / "ood_metrics_by_target.csv", index=False)
 
     ood_rows = []
+    ood_tasks = []
+    ood_keys = []
+    ood_metadata = []
+    ood_index = 0
     for (backbone, source, method), frame in target_summary.groupby(["backbone", "source_corpus", "method"], sort=False):
         model_id = pd.DataFrame(records).query("backbone == @backbone and source_corpus == @source and method == @method").model_id.iloc[0]
         for scope, targets in (("all_targets", list(frame.evaluation_corpus)), ("common_caou_nicollin", ["caou", "nicollin"])):
             selected = [t for t in targets if (model_id, training_seeds(config)[0], t) in frames]
             if len(selected) != len(targets):
                 continue
-            summary = _multi_target_summary({t: [frames[(model_id, seed, t)] for seed in training_seeds(config) if (model_id, seed, t) in frames] for t in selected}, rng=rng, n_boot=args.n_bootstrap, confidence=confidence)
-            ood_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "ood_scope": scope, "n_targets": len(selected), **summary})
+            by_target = {t: [frames[(model_id, seed, t)] for seed in training_seeds(config) if (model_id, seed, t) in frames] for t in selected}
+            ood_tasks.append((by_target, _task_seed(bootstrap_seed, 2, ood_index), args.n_bootstrap, confidence))
+            ood_keys.append((backbone, source, method, scope, len(selected)))
+            ood_index += 1
+    ood_summaries = _parallel_map(ood_tasks, _multi_target_summary_task, n_workers=args.n_workers)
+    for (backbone, source, method, scope, n_targets), summary in zip(ood_keys, ood_summaries):
+        ood_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "ood_scope": scope, "n_targets": n_targets, **summary})
     ood = pd.DataFrame(ood_rows)
     ood.to_csv(out / "ood_summary.csv", index=False)
 
@@ -206,6 +252,9 @@ def main() -> None:
     fig.tight_layout(); fig.savefig(out / "ood_balanced_accuracy.png", dpi=220); plt.close(fig)
 
     paired_rows = []
+    paired_tasks = []
+    paired_metadata = []
+    paired_index = 0
     for (backbone, source, target), data in pd.DataFrame(records).groupby(["backbone", "source_corpus", "evaluation_corpus"]):
         available = {row.method: row.model_id for row in data.drop_duplicates("method").itertuples()}
         for left, right in itertools.combinations(sorted(available), 2):
@@ -221,9 +270,13 @@ def main() -> None:
                 if not aa[keys].equals(bb[keys]) or not aa.true_macro.equals(bb.true_macro):
                     raise ValueError(f"Predictions not aligned for paired comparison {left} vs {right} on {target}")
                 diffs.append(balanced_accuracy_score(aa.true_macro, aa.pred_macro) - balanced_accuracy_score(bb.true_macro, bb.pred_macro))
-            draws = _paired_bootstrap_difference(left_frames, right_frames, rng=rng, n_boot=args.n_bootstrap)
-            alpha = (1 - confidence) / 2
-            paired_rows.append({"backbone": backbone, "source_corpus": source, "evaluation_corpus": target, "method_left": left, "method_right": right, "balanced_accuracy_difference": float(np.mean(diffs)), "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": len(diffs)})
+            paired_tasks.append((left_frames, right_frames, _task_seed(bootstrap_seed, 3, paired_index), args.n_bootstrap))
+            paired_metadata.append((backbone, source, target, left, right, float(np.mean(diffs)), len(diffs)))
+            paired_index += 1
+    paired_draws = _parallel_map(paired_tasks, _paired_bootstrap_task, n_workers=args.n_workers)
+    alpha = (1 - confidence) / 2
+    for (backbone, source, target, left, right, mean_difference, n_seeds), draws in zip(paired_metadata, paired_draws):
+        paired_rows.append({"backbone": backbone, "source_corpus": source, "evaluation_corpus": target, "method_left": left, "method_right": right, "balanced_accuracy_difference": mean_difference, "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": n_seeds})
     pd.DataFrame(paired_rows).to_csv(out / "paired_method_differences.csv", index=False)
 
 
