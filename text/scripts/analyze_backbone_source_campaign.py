@@ -89,12 +89,25 @@ def _balanced_accuracy_from_confusion(counts: np.ndarray) -> float:
     return float(recalls[valid].mean())
 
 
-def _method(spec: dict[str, Any]) -> str:
+def _method(spec: dict[str, Any], model_id: str | None = None) -> str:
     if spec["runner"] == "frozen":
         return "frozen"
     if spec["runner"] == "supervised_macro_ft":
         return "cross_entropy"
-    return str(spec.get("method_name") or spec.get("method") or "").lower()
+    method = str(spec.get("method_name") or spec.get("method") or "").lower()
+    if not method:
+        # Replication templates inherit the method from the base YAML in the
+        # training runner, but the resolved recipe may not expose that field.
+        # Recover it from the base config or, as a final fallback, the model id.
+        base_name = Path(str(spec.get("base_config", ""))).stem.lower()
+        if base_name in {"supcon", "softtriple"}:
+            method = base_name
+        elif model_id:
+            suffix = str(model_id).lower().rsplit("_", 1)[-1]
+            if suffix in {"supcon", "softtriple"}:
+                method = suffix
+    aliases = {"supervised_contrastive": "supcon", "soft_triple": "softtriple"}
+    return aliases.get(method, method)
 
 
 def _backbone(spec: dict[str, Any]) -> str:
@@ -185,7 +198,7 @@ def _load_runs(config_path: Path) -> tuple[dict[str, Any], dict[tuple[str, int, 
                 if required - set(frame):
                     raise ValueError(f"Prediction columns missing in {path}: {sorted(required - set(frame))}")
                 frames[(model_id, seed, target)] = frame
-                records.append({"model_id": model_id, "source_corpus": source, "evaluation_corpus": target, "backbone": _backbone(spec), "method": _method(spec), "seed": seed, "path": str(path)})
+                records.append({"model_id": model_id, "source_corpus": source, "evaluation_corpus": target, "backbone": _backbone(spec), "method": _method(spec, model_id), "seed": seed, "path": str(path)})
     return config, frames, records
 
 
@@ -256,13 +269,19 @@ def main() -> None:
     roles.to_csv(out / "per_role_metrics.csv", index=False)
 
     sns.set_theme(style="whitegrid")
+    short_backbone = {"multilingual_e5_large": "E5", "qwen3": "Qwen3"}
+    short_source = {"btp": "BTP", "metallurgie": "MET"}
+    short_method = {"frozen": "F", "cross_entropy": "CE", "supcon": "SC", "softtriple": "ST"}
     for target, table in roles.groupby("evaluation_corpus", sort=True):
         heat = table.groupby(["backbone", "source_corpus", "method", "role"], as_index=False).agg(recall=("recall", "mean"), support=("support", "mean"))
-        heat["row"] = heat.backbone + " / " + heat.source_corpus + " / " + heat.method
+        heat["row"] = (
+            heat.backbone.map(short_backbone).fillna(heat.backbone)
+            + " / " + heat.source_corpus.map(short_source).fillna(heat.source_corpus)
+            + " / " + heat.method.map(short_method).fillna(heat.method)
+        )
         matrix = heat.pivot(index="row", columns="role", values="recall").reindex(columns=ROLE_ORDER) * 100
-        labels = heat.pivot(index="row", columns="role", values="support").reindex(index=matrix.index, columns=ROLE_ORDER)
-        annot = matrix.round(1).astype(str) + "\n(n=" + labels.fillna(0).astype(int).astype(str) + ")"
-        fig, ax = plt.subplots(figsize=(9, max(4, 0.5 * len(matrix))))
+        annot = matrix.apply(lambda column: column.map(lambda value: "" if pd.isna(value) else f"{value:.1f}"))
+        fig, ax = plt.subplots(figsize=(7.5, max(4, 0.36 * len(matrix))))
         sns.heatmap(matrix, annot=annot, fmt="", cmap="viridis", vmin=0, vmax=100, cbar_kws={"label": "Role recall (%)"}, ax=ax)
         ax.set(xlabel="Role", ylabel="Backbone / source / method", title=f"Per-role recall: {target}")
         fig.tight_layout(); fig.savefig(out / f"role_recall_{target}.png", dpi=220); plt.close(fig)
