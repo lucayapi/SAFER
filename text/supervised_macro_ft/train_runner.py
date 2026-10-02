@@ -285,13 +285,24 @@ def run_supervised_macro_ft_training(
     seed = int(train_cfg.get("seed", 42))
     split_seed = int(train_cfg.get("split_seed", seed))
     selection_metric = str(train_cfg.get("selection_metric", "balanced_accuracy"))
+    skip_cross_validation = bool(train_cfg.get("skip_cross_validation", False))
     metrics_dir = out_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
+    if skip_cross_validation:
+        if cv_only:
+            raise ValueError("cv_only is incompatible with training.skip_cross_validation=true")
+
+        def cv_runner(*args, **kwargs):
+            return [], pd.DataFrame(), pd.DataFrame()
+
+        logger.info("[macro_ft] Cross-validation skipped: selected settings are reused.")
+    else:
+        cv_runner = run_group_kfold_cv
     log_phase(
         "Phase 1/3 — CV GroupKFold",
         detail=f"{n_folds} folds, metric={selection_metric}",
     )
-    fold_rows, cv_summary, cv_history = run_group_kfold_cv(
+    fold_rows, cv_summary, cv_history = cv_runner(
         dataset,
         tokenizer,
         model_cfg=model_cfg,
@@ -667,6 +678,7 @@ def run_supervised_macro_ft_training(
         "method_name": method_name,
         "output_dir": str(out_dir),
         "checkpoint_dir": str(ckpt_dir) if ckpt_dir is not None else None,
+        "cross_validation_skipped": bool(skip_cross_validation),
         "cv_summary": cv_summary.to_dict(orient="records"),
         "final_fit_metrics": final_metrics,
         "final_fit_train_wall_time_sec": float(final_fit_train_wall_time_sec),

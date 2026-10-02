@@ -1,0 +1,54 @@
+# Final reference fit for the qualitative representation figure.
+# Its settings were selected in the completed source-only grid. This run does
+# not repeat model selection.
+
+method_name: supervised_macro_ft
+source_corpus: btp
+output_dir: output/article_visualization/cross_entropy_qwen3_construction_tsne
+test_corpora: [nicollin]
+
+data:
+  data_csv: dataset/data_btp.csv
+  text_col: sentence
+  label_col: pred_label
+  group_col: accident_id
+  pred_ok_col: pred_ok
+
+model:
+  backbone_name: Qwen/Qwen3-Embedding-0.6B
+  backbone_trainable: true
+  train_last_n_layers: null
+  max_seq_length: 256
+  pooling: mean
+  projection: null
+  hiddim: 128
+  proj_hidden: 256
+  dropout: 0.1
+  n_classes: 4
+  oversampling: false
+  class_weight: balanced
+  gradient_checkpointing: true
+  cache_backbone_embeddings: false
+  standardize_backbone: false
+
+training:
+  # Two epochs were selected for the full-encoder, no-projector condition.
+  epochs: 2
+  final_epochs_from_cv: false
+  skip_cross_validation: true
+  n_folds: 3
+  seed: 42
+  split_seed: 42
+  selection_metric: balanced_accuracy
+  batch_size: 32
+  lr_backbone: 2.0e-6
+  lr_projector: 1.0e-3
+  lr_head: 1.0e-3
+  weight_decay: 0.01
+  early_stopping_patience: 3
+  early_stopping_inner_val_ratio: 0.1
+  use_amp: false
+
+exports:
+  save_checkpoint: false
+  save_btp_embeddings: true
