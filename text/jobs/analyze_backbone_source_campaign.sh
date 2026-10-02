@@ -5,9 +5,9 @@
 
 #SBATCH --job-name=backbone-source-analysis
 #SBATCH --partition=normal
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=64G
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-user=lucayapi@gmail.com
@@ -23,7 +23,7 @@ fi
 CONFIG="${CONFIG:-output/replication_recipes/backbone_source_factorial.yaml}"
 OUTPUT="${OUTPUT:-output/backbone_source_factorial_analysis}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-1000}"
-N_WORKERS="${N_WORKERS:-${SLURM_CPUS_PER_TASK:-8}}"
+N_WORKERS="${N_WORKERS:-${SLURM_CPUS_PER_TASK:-16}}"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "Config=${CONFIG}"

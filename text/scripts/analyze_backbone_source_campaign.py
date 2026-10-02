@@ -59,6 +59,36 @@ def _paired_bootstrap_task(task: tuple) -> np.ndarray:
     return _paired_bootstrap_difference(left_frames, right_frames, rng=np.random.default_rng(seed), n_boot=n_boot)
 
 
+def _accident_confusion_counts(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Precompute one 4x4 confusion matrix for every accident.
+
+    Bootstrap resampling then only sums these small matrices. This avoids
+    rebuilding pandas DataFrames and calling sklearn for every draw.
+    """
+    accident_codes, _ = pd.factorize(frame["accident_id"].astype(str), sort=False)
+    true_codes = pd.Categorical(frame["true_macro"].astype(str), categories=ROLE_ORDER).codes
+    pred_codes = pd.Categorical(frame["pred_macro"].astype(str), categories=ROLE_ORDER).codes
+    if np.any(true_codes < 0) or np.any(pred_codes < 0):
+        raise ValueError("Unknown role in stored predictions")
+    n_accidents = int(accident_codes.max()) + 1 if len(accident_codes) else 0
+    counts = np.zeros((n_accidents, len(ROLE_ORDER), len(ROLE_ORDER)), dtype=np.int64)
+    np.add.at(counts, (accident_codes, true_codes, pred_codes), 1)
+    labels = pd.unique(frame["accident_id"].astype(str)).astype(str)
+    return labels, counts
+
+
+def _balanced_accuracy_from_confusion(counts: np.ndarray) -> float:
+    row_totals = counts.sum(axis=1)
+    valid = row_totals > 0
+    if not np.any(valid):
+        return float("nan")
+    recalls = np.divide(
+        np.diag(counts), row_totals,
+        out=np.zeros(len(ROLE_ORDER), dtype=float), where=valid,
+    )
+    return float(recalls[valid].mean())
+
+
 def _method(spec: dict[str, Any]) -> str:
     if spec["runner"] == "frozen":
         return "frozen"
@@ -79,15 +109,13 @@ def _bootstrap_mean_ba(seed_frames: list[pd.DataFrame], rng: np.random.Generator
     values = np.empty(n, dtype=float)
     prepared = []
     for frame in seed_frames:
-        ids = frame["accident_id"].astype(str).unique()
-        by_accident = {acc: chunk for acc, chunk in frame.groupby(frame["accident_id"].astype(str), sort=False)}
-        prepared.append((ids, by_accident))
+        labels, counts = _accident_confusion_counts(frame)
+        prepared.append((np.arange(len(labels), dtype=np.int64), counts))
     for i in range(n):
         scores = []
-        for ids, by_accident in prepared:
+        for ids, counts in prepared:
             sampled = rng.choice(ids, size=len(ids), replace=True)
-            sample = pd.concat([by_accident[str(acc)] for acc in sampled], ignore_index=True)
-            scores.append(balanced_accuracy_score(sample["true_macro"], sample["pred_macro"]))
+            scores.append(_balanced_accuracy_from_confusion(counts[sampled].sum(axis=0)))
         values[i] = float(np.mean(scores))
     return values
 
@@ -115,17 +143,22 @@ def _paired_bootstrap_difference(left_frames: list[pd.DataFrame], right_frames: 
     draws = np.empty(n_boot)
     pairs = []
     for left, right in zip(left_frames, right_frames):
-        ids = left["accident_id"].astype(str).unique()
-        left_groups = {acc: group for acc, group in left.groupby(left["accident_id"].astype(str), sort=False)}
-        right_groups = {acc: group for acc, group in right.groupby(right["accident_id"].astype(str), sort=False)}
-        pairs.append((ids, left_groups, right_groups))
+        left_labels, left_counts = _accident_confusion_counts(left)
+        right_labels, right_counts = _accident_confusion_counts(right)
+        right_index = {label: index for index, label in enumerate(right_labels)}
+        if set(left_labels) != set(right_labels):
+            raise ValueError("Paired predictions have different accident identifiers")
+        right_counts = right_counts[[right_index[label] for label in left_labels]]
+        if len(left_labels) != len(right_labels):
+            raise ValueError("Paired predictions have different accident counts")
+        pairs.append((np.arange(len(left_labels), dtype=np.int64), left_counts, right_counts))
     for draw in range(n_boot):
         diffs = []
-        for ids, left_groups, right_groups in pairs:
+        for ids, left_counts, right_counts in pairs:
             sampled = rng.choice(ids, len(ids), replace=True)
-            l = pd.concat([left_groups[str(acc)] for acc in sampled], ignore_index=True)
-            r = pd.concat([right_groups[str(acc)] for acc in sampled], ignore_index=True)
-            diffs.append(balanced_accuracy_score(l.true_macro, l.pred_macro) - balanced_accuracy_score(r.true_macro, r.pred_macro))
+            left_ba = _balanced_accuracy_from_confusion(left_counts[sampled].sum(axis=0))
+            right_ba = _balanced_accuracy_from_confusion(right_counts[sampled].sum(axis=0))
+            diffs.append(left_ba - right_ba)
         draws[draw] = np.mean(diffs)
     return draws
 
