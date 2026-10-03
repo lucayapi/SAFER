@@ -1,0 +1,14 @@
+# Frozen CamemBERT embeddings isolated from Qwen3 and E5 exports.
+backbone_name: almanach/camembert-base
+backbone_id: camembert_base
+output_root: embeddings
+input_prefix: ""
+text_col: sentence
+label_col: pred_label
+group_col: accident_id
+pred_ok_col: pred_ok
+encode_batch_size: 32
+max_seq_length: 256
+use_prompt: false
+skip_existing: true
+corpora: [btp, metallurgie, caou, nicollin]

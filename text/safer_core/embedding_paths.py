@@ -11,6 +11,7 @@ from safer_core.paths import TEXT_ROOT
 _KNOWN_BACKBONES = {
     "qwen/qwen3-embedding-0.6b": "qwen3",
     "intfloat/multilingual-e5-large": "multilingual_e5_large",
+    "almanach/camembert-base": "camembert_base",
 }
 
 

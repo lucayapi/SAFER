@@ -19,6 +19,7 @@ SOURCES = {"btp": "dataset/data_btp.csv", "metallurgie": "dataset/data_metallurg
 BACKBONES = {
     "qwen3": ("Qwen/Qwen3-Embedding-0.6B", ""),
     "multilingual_e5_large": ("intfloat/multilingual-e5-large", "query: "),
+    "camembert_base": ("almanach/camembert-base", ""),
 }
 
 
@@ -29,12 +30,14 @@ def _write(path: Path, value: dict) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--backbones", nargs="+", choices=sorted(BACKBONES), default=["qwen3", "multilingual_e5_large"])
     parser.add_argument("--include-qwen3-btp", action="store_true", help="RecrÃ©er les trois sÃ©lections dÃ©jÃ  disponibles dans l'Ã©tude principale.")
     args = parser.parse_args()
     root = ROOT / "output" / "backbone_source_factorial" / "source_only_tuning"
     commands: list[str] = []
     for source, dataset in SOURCES.items():
-        for backbone_id, (backbone, prefix) in BACKBONES.items():
+        for backbone_id in args.backbones:
+            backbone, prefix = BACKBONES[backbone_id]
             for method in ("softtriple", "supcon", "cross_entropy"):
                 if source == "btp" and backbone_id == "qwen3" and not args.include_qwen3_btp:
                     continue

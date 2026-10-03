@@ -38,6 +38,27 @@ def test_factorial_recipe_has_16_conditions_and_no_source_target() -> None:
         assert source not in targets
 
 
+def test_camembert_recipe_has_40_runs_and_separate_embedding_exports() -> None:
+    import yaml
+    from safer_core.embedding_paths import embedding_export_path
+
+    root = Path(__file__).resolve().parents[1]
+    config = load_replication_config(root / "output/replication_recipes/camembert_source_factorial.yaml")
+    assert len(config["models"]) == 8
+    assert len(task_matrix(config)) == 40
+    assert embedding_export_path("btp", backbone_name="almanach/camembert-base", output_root="embeddings") == root / "embeddings/camembert_base/btp.csv"
+    export_cfg = yaml.safe_load((root / "configs/export_embeddings_camembert.yaml").read_text(encoding="utf-8"))
+    assert export_cfg["backbone_name"] == "almanach/camembert-base"
+    assert export_cfg["input_prefix"] == ""
+    for model_id in config["models"]:
+        spec = _model_config(config, model_id)
+        backbone = spec.get("backbone_name") or spec.get("overrides", {}).get("model", {}).get("backbone_name")
+        assert backbone == "almanach/camembert-base"
+        assert spec["source_corpus"] in {"btp", "metallurgie"}
+        requested = spec.get("test_corpora", config["training"]["test_corpora"])
+        assert spec["source_corpus"] not in [x for x in requested if x != spec["source_corpus"]]
+
+
 def test_e5_recipes_keep_prefix_for_all_adapted_methods() -> None:
     root = Path(__file__).resolve().parents[1]
     cfg = load_replication_config(root / "output/replication_recipes/backbone_source_factorial.yaml")
