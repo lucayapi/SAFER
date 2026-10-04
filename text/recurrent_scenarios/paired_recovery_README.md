@@ -1,0 +1,75 @@
+# Paired recovery experiment for the JRSS C manuscript
+
+Run these commands from `text/` on the Slurm cluster. The experiment compares
+the fixed reference factors with factors reconstructed from the **same 80% of
+distinct accidents** in each replicate. The selected UMAP and HDBSCAN settings
+are read from the archived carpentry and joinery run; the original grid search
+is not repeated.
+
+## Pilot (10 replicates)
+
+```bash
+N_REPLICATES=10 OUTPUT_DIR=recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery_pilot \
+  sbatch --array=0 jobs/run_recurrent_scenarios_paired_recovery.sh
+```
+
+After that job succeeds:
+
+```bash
+OUTPUT_DIR=recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery_pilot \
+  sbatch jobs/summarise_recurrent_scenarios_paired_recovery.sh
+```
+
+The pilot checks the pipeline, but its recovery frequencies have large Monte
+Carlo error and must not be used in the manuscript.
+
+## Full experiment (500 replicates)
+
+```bash
+sbatch jobs/run_recurrent_scenarios_paired_recovery.sh
+```
+
+The command prints an array job ID. Submit the summary only after all array
+tasks succeed; replace `JOB_ID` with that ID:
+
+```bash
+sbatch --dependency=afterok:JOB_ID jobs/summarise_recurrent_scenarios_paired_recovery.sh
+```
+
+The array has 50 tasks, ten replicates each, with at most ten tasks running at
+once. A completed replicate is skipped on resubmission if its design hash
+matches. If tasks fail, fix the cause and resubmit the same array. The summary
+refuses to run until all 500 replicate files are present and the source files
+still match their hashes.
+
+The full output is under
+`recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery/`:
+
+- `design.json`: source-file hashes and analysis settings;
+- `replicates/`: selected accident IDs, factor matches, and both learned graphs
+  for every replicate;
+- `factor_recovery_by_role.csv` and `factor_recovery_tau_*.csv`;
+- `edge_recovery_tau_*.csv`: all 18 reference edges, joint endpoint and
+  conditional edge recovery, paired differences and Monte Carlo standard errors;
+- `scenario_recovery_tau_*.csv`: all 80 reference scenarios and their paired
+  recovery estimates;
+- `article_scenario_recovery.csv`: the manuscript's S1--S4 configurations,
+  linked to their archived scenario IDs;
+- `edge_recovery_real.pdf`, `scenario_recovery_real.pdf` and
+  `observed_results.md`: vector figures and numerical interpretation generated
+  from the actual outputs.
+
+One-to-one factor matching maximises total unit-level Jaccard similarity within
+each role. The main matching threshold is 0.50, with 0.40 and 0.60 sensitivity.
+Scenario recovery requires all constituent factors to match and the observed
+subsample support to reach the original rate, 5/417. It does not require the
+pattern to remain closed in that subsample. A factor absent from the sampled
+units is counted as unrecovered. The Bayesian network is re-estimated on **all**
+reconstructed non-noise factors before reference edges are matched, so unmatched
+factors can compete for parent sets.
+
+The archive's earlier 500-resample fixed-factor bootstrap sampled accidents
+with replacement. These new fixed-factor frequencies use 80% distinct
+accidents and must be compared only with the paired reconstruction branch.
+The output describes recovery under this perturbation scheme; it does not
+estimate causal effects or posterior probabilities.

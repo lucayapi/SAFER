@@ -1,8 +1,16 @@
 #!/bin/bash
-# Soumet les 40 exécutions CamemBERT (8 conditions x 5 graines).
-# À lancer après les sélections source-only et après mise à jour de la recette :
+# Apply source-only CamemBERT selections, then submit the 40 final runs
+# (8 conditions x 5 seeds) as a Slurm job array.
+# Submit only after all six source-only selection jobs have completed:
 #   cd ~/SAFER/text
-#   bash jobs/submit_camembert_replications.sh
+#   sbatch jobs/submit_camembert_replications.sh
+#SBATCH --job-name=camembert-submit
+#SBATCH --cpus-per-task=2
+#SBATCH --mem=8G
+#SBATCH --time=00:15:00
+#SBATCH --output=slurm-%x-%j.out
+#SBATCH --error=slurm-%x-%j.err
+
 set -euo pipefail
 if [[ -n "${SLURM_SUBMIT_DIR:-}" && -f "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh" ]]; then
   source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
@@ -11,6 +19,11 @@ else
 fi
 
 CONFIG="${CONFIG:-output/replication_recipes/camembert_source_factorial.yaml}"
+python scripts/apply_backbone_source_tuning.py \
+  --recipe "${CONFIG}" \
+  --tuning-root output/backbone_source_factorial/source_only_tuning \
+  --write
+
 TASK_COUNT="$(python scripts/run_replication.py --config "${CONFIG}" --print-task-count)"
 if [[ "${TASK_COUNT}" != "40" ]]; then
   echo "Expected 40 CamemBERT runs, got ${TASK_COUNT}. Check n_seeds and models in ${CONFIG}." >&2
