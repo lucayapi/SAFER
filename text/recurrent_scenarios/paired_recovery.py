@@ -29,7 +29,6 @@ from scenario_pipeline import (
 )
 
 DEFAULT_DATASET = "btp_carpentry_and_joinery"
-TAUS = (0.4, 0.5, 0.6)
 REFERENCE_MIN_COUNT = 5
 ARTICLE_SCENARIOS = {"S1": "SC_00197", "S2": "SC_00221",
                      "S3": "SC_04076", "S4": "SC_00211"}
@@ -61,6 +60,26 @@ def _selected_parameters(run_dir: Path) -> dict[str, dict]:
         result[role] = {key: row[key].item() if isinstance(row[key], np.generic) else row[key]
                         for key in keys}
     return result
+
+
+def paired_recovery_settings(config: dict) -> dict:
+    """Read and validate the prespecified paired-recovery design."""
+    settings = dict(config.get("paired_recovery", {}))
+    n_replicates = int(settings.get("n_replicates", 500))
+    fraction = float(settings.get("resampling_fraction", 0.80))
+    seed = int(settings.get("random_state", 2026))
+    thresholds = tuple(float(value) for value in settings.get("matching_thresholds", [0.40, 0.50, 0.60]))
+    main_threshold = float(settings.get("main_matching_threshold", 0.50))
+    per_task = int(settings.get("replicates_per_task", 1))
+    if n_replicates < 1 or not 0 < fraction <= 1 or per_task < 1:
+        raise ValueError("Invalid paired_recovery n_replicates, fraction or replicates_per_task")
+    if not thresholds or any(not 0 < value <= 1 for value in thresholds):
+        raise ValueError("matching_thresholds must contain values in (0, 1]")
+    if len(set(thresholds)) != len(thresholds) or main_threshold not in thresholds:
+        raise ValueError("matching thresholds must be distinct and include main_matching_threshold")
+    return {"n_replicates": n_replicates, "fraction": fraction, "seed": seed,
+            "thresholds": thresholds, "main_threshold": main_threshold,
+            "replicates_per_task": per_task}
 
 
 def _reference_assignments(units: pd.DataFrame, run_dir: Path, matrix: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -172,7 +191,7 @@ def _scenarios(path: Path, reference_names: set[str]) -> list[dict]:
 
 
 def _design(config_path: Path, run_dir: Path, config: dict, replicates: int,
-            fraction: float, seed: int) -> dict:
+            fraction: float, seed: int, thresholds: tuple[float, ...], main_threshold: float) -> dict:
     paths = {
         "config": config_path,
         "selected": run_dir / "selected_configurations_summary.csv",
@@ -188,7 +207,8 @@ def _design(config_path: Path, run_dir: Path, config: dict, replicates: int,
            for role in ROLES},
     }
     return {"replicates": replicates, "fraction": fraction, "seed": seed,
-            "tau": list(TAUS), "reference_min_count": REFERENCE_MIN_COUNT,
+            "matching_thresholds": list(thresholds), "main_matching_threshold": main_threshold,
+            "reference_min_count": REFERENCE_MIN_COUNT,
             "d_max": int(config["bayesian_networks"]["d_max"]),
             "files_sha256": {key: sha256_file(path) for key, path in paths.items()}}
 
@@ -214,9 +234,15 @@ def run(args: argparse.Namespace) -> None:
     run_dir = args.run_dir.resolve()
     output = args.output.resolve()
     config = load_bn_analysis_config(config_path, args.dataset, run_dir)
-    if not 0 < args.fraction <= 1 or args.replicates < 1 or args.start < 0 or args.count < 1:
+    settings = paired_recovery_settings(config)
+    replicates = settings["n_replicates"] if args.replicates is None else args.replicates
+    fraction = settings["fraction"] if args.fraction is None else args.fraction
+    seed = settings["seed"] if args.seed is None else args.seed
+    thresholds = settings["thresholds"]
+    main_threshold = settings["main_threshold"]
+    if not 0 < fraction <= 1 or replicates < 1 or args.start < 0 or args.count < 1:
         raise ValueError("Invalid subsampling settings")
-    if args.start >= args.replicates:
+    if args.start >= replicates:
         return
     parameters = _selected_parameters(run_dir)
     units, _ = load_units(config)
@@ -241,7 +267,7 @@ def run(args: argparse.Namespace) -> None:
         archived = _scenario_count(matrix, scenario["factors"])
         if archived != scenario["full_count"]:
             raise ValueError(f"Archived scenario count differs for {scenario['id']}")
-    design = _design(config_path, run_dir, config, args.replicates, args.fraction, args.seed)
+    design = _design(config_path, run_dir, config, replicates, fraction, seed, thresholds, main_threshold)
     fingerprint = _fingerprint(design)
     manifest_path = output / "design.json"
     if manifest_path.exists():
@@ -250,8 +276,8 @@ def run(args: argparse.Namespace) -> None:
             raise ValueError(f"Output directory contains a different design: {output}")
     else:
         _write_json(manifest_path, design)
-    n_sample = max(1, min(len(accident_ids), round(args.fraction * len(accident_ids))))
-    for replicate in range(args.start, min(args.start + args.count, args.replicates)):
+    n_sample = max(1, min(len(accident_ids), round(fraction * len(accident_ids))))
+    for replicate in range(args.start, min(args.start + args.count, replicates)):
         path = output / "replicates" / f"replicate_{replicate:04d}.json"
         if path.exists():
             existing = json.loads(path.read_text(encoding="utf-8"))
@@ -259,7 +285,7 @@ def run(args: argparse.Namespace) -> None:
                 raise ValueError(f"Stale replicate output: {path}")
             print(f"Skipping completed replicate {replicate}", flush=True)
             continue
-        rng = np.random.default_rng(np.random.SeedSequence([args.seed, replicate]))
+        rng = np.random.default_rng(np.random.SeedSequence([seed, replicate]))
         sampled = sorted(str(x) for x in rng.choice(accident_ids, size=n_sample, replace=False))
         sampled_set = set(sampled)
         subset_mask = units["_accident_id"].isin(sampled_set).to_numpy()
@@ -287,7 +313,7 @@ def run(args: argparse.Namespace) -> None:
         for scenario in scenarios:
             fixed_count = _scenario_count(fixed_matrix, scenario["factors"])
             reconstructed_counts = {}
-            for tau in TAUS:
+            for tau in thresholds:
                 names = [matching[name]["candidate"] if matching[name]["jaccard"] >= tau else None
                          for name in scenario["factors"]]
                 reconstructed_counts[str(tau)] = _scenario_count(reconstructed_matrix, names)
@@ -370,7 +396,10 @@ def summarise(args: argparse.Namespace) -> None:
         records.append(record)
     run_dir = args.run_dir.resolve()
     config = load_bn_analysis_config(args.config.resolve(), args.dataset, run_dir)
-    current = _design(args.config.resolve(), run_dir, config, m, float(design["fraction"]), int(design["seed"]))
+    thresholds = tuple(float(value) for value in design["matching_thresholds"])
+    main_threshold = float(design["main_matching_threshold"])
+    current = _design(args.config.resolve(), run_dir, config, m, float(design["fraction"]),
+                      int(design["seed"]), thresholds, main_threshold)
     if _fingerprint(current) != fingerprint:
         raise ValueError("Source files or analysis settings changed after the jobs were run")
     roles = json.loads((run_dir / "bn_results_exact/matrix/variable_roles.json").read_text(encoding="utf-8"))
@@ -381,7 +410,7 @@ def summarise(args: argparse.Namespace) -> None:
     scenario_by_id = {item["id"]: item for item in scenarios}
     q0 = REFERENCE_MIN_COUNT / len(pd.read_parquet(
         run_dir / "bn_results_exact/matrix/accident_factor_matrix.parquet"))
-    for tau in TAUS:
+    for tau in thresholds:
         factor_rows = []
         for name, role in roles.items():
             recovered = [int(r["matches"][name]["candidate"] is not None
@@ -446,7 +475,7 @@ def summarise(args: argparse.Namespace) -> None:
                                   "mean_reconstructed_count": _mean(reconstructed_counts)})
         scenario_table = pd.DataFrame(scenario_rows)
         scenario_table.to_csv(output / f"scenario_recovery_tau_{tau:.1f}.csv", index=False)
-        if tau == 0.5:
+        if tau == main_threshold:
             _plot_edges(edge_table, output)
             if args.dataset == DEFAULT_DATASET:
                 article = scenario_table.set_index("scenario_id").loc[list(ARTICLE_SCENARIOS.values())].reset_index()
@@ -473,7 +502,8 @@ def summarise(args: argparse.Namespace) -> None:
                 "# Observed paired recovery results" if m >= 100 else "# Pilot quality check: do not cite these frequencies",
                 "",
                 f"Design: {m} paired samples, {design['fraction']:.0%} distinct accidents, "
-                "Jaccard matching threshold 0.50; sensitivity files cover 0.40 and 0.60.",
+                f"Jaccard matching threshold {main_threshold:.2f}; sensitivity files cover "
+                + ", ".join(f"{value:.2f}" for value in thresholds if value != main_threshold) + ".",
                 "This pilot is for execution and output checks only; run the prespecified 500 replicates "
                 "before interpreting or citing recovery frequencies." if m < 100 else "",
                 f"Reference objects: {len(roles)} factors, {len(reference_edges)} network edges, "
@@ -523,7 +553,7 @@ def summarise(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
-    for command in ("run", "summarise"):
+    for command in ("run", "summarise", "settings"):
         p = sub.add_parser(command)
         p.add_argument("--config", type=Path, default=Path("recurrent_scenarios/config.yaml"))
         p.add_argument("--dataset", default=DEFAULT_DATASET)
@@ -532,13 +562,17 @@ def main() -> None:
         p.add_argument("--output", type=Path,
                        default=Path(f"recurrent_scenarios/runs/theme_discovery_audit/{DEFAULT_DATASET}/paired_recovery"))
         if command == "run":
-            p.add_argument("--replicates", type=int, default=500)
-            p.add_argument("--fraction", type=float, default=0.8)
-            p.add_argument("--seed", type=int, default=2026)
+            p.add_argument("--replicates", type=int)
+            p.add_argument("--fraction", type=float)
+            p.add_argument("--seed", type=int)
             p.add_argument("--start", type=int, default=0)
             p.add_argument("--count", type=int, default=10)
     args = parser.parse_args()
-    (run if args.command == "run" else summarise)(args)
+    if args.command == "settings":
+        settings = paired_recovery_settings(load_bn_analysis_config(args.config.resolve(), args.dataset, args.run_dir.resolve()))
+        print("\n".join(str(settings[name]) for name in ("n_replicates", "fraction", "seed", "replicates_per_task")))
+    else:
+        (run if args.command == "run" else summarise)(args)
 
 
 if __name__ == "__main__":

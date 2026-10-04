@@ -6,6 +6,11 @@ distinct accidents** in each replicate. The selected UMAP and HDBSCAN settings
 are read from the archived carpentry and joinery run; the original grid search
 is not repeated.
 
+The prespecified statistical design is in `recurrent_scenarios/config.yaml`,
+under `paired_recovery`: the number of replicates, sampling fraction, random
+seed, matching thresholds and repetitions per array task. The environment
+variables in the pilot command below temporarily override those values only.
+
 ## Pilot (10 replicates)
 
 ```bash
@@ -36,8 +41,9 @@ tasks succeed; replace `JOB_ID` with that ID:
 sbatch --dependency=afterok:JOB_ID jobs/summarise_recurrent_scenarios_paired_recovery.sh
 ```
 
-The array has 50 tasks, ten replicates each, with at most ten tasks running at
-once. A completed replicate is skipped on resubmission if its design hash
+By default, the array has 500 tasks, one replicate each, with at most ten tasks
+running at once. Adjust the `%10` in the job script (or use an `sbatch --array`
+override) to use more independent CPU cores. A completed replicate is skipped on resubmission if its design hash
 matches. If tasks fail, fix the cause and resubmit the same array. The summary
 refuses to run until all 500 replicate files are present and the source files
 still match their hashes.

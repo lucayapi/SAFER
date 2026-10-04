@@ -98,6 +98,19 @@ scenario_mining:
   rare_high_lift_max_count: 5
   rare_high_lift_min_lift: 5.0
 
+# JRSS C paired stability assessment. These settings define the statistical
+# experiment and are written to design.json with hashes of all source inputs.
+# Slurm resources (CPU, memory and concurrent array tasks) remain in jobs/.
+paired_recovery:
+  n_replicates: 500
+  resampling_fraction: 0.80
+  random_state: 2026
+  matching_thresholds: [0.40, 0.50, 0.60]
+  main_matching_threshold: 0.50
+  # Execution only: one replicate per Slurm array task is best for using
+  # multiple CPU cores through independent tasks.
+  replicates_per_task: 1
+
 expected_inventory:
   caou:
     n_accidents: 838
