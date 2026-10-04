@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from replication.runner import _model_config
 from safer_core.embedding_paths import backbone_storage_id
-
-ROOT = Path(__file__).resolve().parents[1]
 
 # These values are part of the source-only grid, so the final repeated-seed
 # recipe must use the same scope-specific optimisation budget.  In particular,
