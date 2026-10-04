@@ -8,21 +8,14 @@ is not repeated.
 
 The prespecified statistical design is in `recurrent_scenarios/config.yaml`,
 under `paired_recovery`: the number of replicates, sampling fraction, random
-seed, matching thresholds and repetitions per array task. The environment
-variables in the pilot command below temporarily override those values only.
+seed, matching thresholds and worker count. With `n_workers: auto`, the
+program uses all CPUs allocated to its one Slurm job.
 
 ## Pilot (10 replicates)
 
 ```bash
 N_REPLICATES=10 OUTPUT_DIR=recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery_pilot \
-  sbatch --array=0 jobs/run_recurrent_scenarios_paired_recovery.sh
-```
-
-After that job succeeds:
-
-```bash
-OUTPUT_DIR=recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery_pilot \
-  sbatch jobs/summarise_recurrent_scenarios_paired_recovery.sh
+  sbatch jobs/run_recurrent_scenarios_paired_recovery.sh
 ```
 
 The pilot checks the pipeline, but its recovery frequencies have large Monte
@@ -34,19 +27,12 @@ Carlo error and must not be used in the manuscript.
 sbatch jobs/run_recurrent_scenarios_paired_recovery.sh
 ```
 
-The command prints an array job ID. Submit the summary only after all array
-tasks succeed; replace `JOB_ID` with that ID:
-
-```bash
-sbatch --dependency=afterok:JOB_ID jobs/summarise_recurrent_scenarios_paired_recovery.sh
-```
-
-By default, the array has 500 tasks, one replicate each, with at most ten tasks
-running at once. Adjust the `%10` in the job script (or use an `sbatch --array`
-override) to use more independent CPU cores. A completed replicate is skipped on resubmission if its design hash
-matches. If tasks fail, fix the cause and resubmit the same array. The summary
-refuses to run until all 500 replicate files are present and the source files
-still match their hashes.
+This is one Slurm job. Its 30 allocated CPUs run up to 30 independent
+replications at once; when one completes, the worker takes the next remaining
+replication. The job automatically writes the summary and figures only after
+all 500 replicates succeed. A completed replicate is skipped on resubmission if
+its design hash matches. The summary refuses to run until all 500 replicate
+files are present and the source files still match their hashes.
 
 The full output is under
 `recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_recovery/`:

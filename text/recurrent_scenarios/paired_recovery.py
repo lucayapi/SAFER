@@ -7,8 +7,10 @@ branches.  The script deliberately does not repeat hyperparameter selection.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import hashlib
 import json
+import multiprocessing
 import os
 import tempfile
 from pathlib import Path
@@ -70,16 +72,27 @@ def paired_recovery_settings(config: dict) -> dict:
     seed = int(settings.get("random_state", 2026))
     thresholds = tuple(float(value) for value in settings.get("matching_thresholds", [0.40, 0.50, 0.60]))
     main_threshold = float(settings.get("main_matching_threshold", 0.50))
-    per_task = int(settings.get("replicates_per_task", 1))
-    if n_replicates < 1 or not 0 < fraction <= 1 or per_task < 1:
-        raise ValueError("Invalid paired_recovery n_replicates, fraction or replicates_per_task")
+    workers = settings.get("n_workers", "auto")
+    if n_replicates < 1 or not 0 < fraction <= 1:
+        raise ValueError("Invalid paired_recovery n_replicates or fraction")
     if not thresholds or any(not 0 < value <= 1 for value in thresholds):
         raise ValueError("matching_thresholds must contain values in (0, 1]")
     if len(set(thresholds)) != len(thresholds) or main_threshold not in thresholds:
         raise ValueError("matching thresholds must be distinct and include main_matching_threshold")
     return {"n_replicates": n_replicates, "fraction": fraction, "seed": seed,
             "thresholds": thresholds, "main_threshold": main_threshold,
-            "replicates_per_task": per_task}
+            "n_workers": workers}
+
+
+def resolve_worker_count(settings: dict, requested: int | None = None) -> int:
+    """Use the Slurm CPU allocation unless a worker count is explicitly set."""
+    value = settings["n_workers"] if requested is None else requested
+    if value in (None, "", "auto"):
+        value = os.environ.get("SLURM_CPUS_PER_TASK") or (os.cpu_count() or 1)
+    workers = int(value)
+    if workers < 1:
+        raise ValueError("n_workers must be at least one")
+    return workers
 
 
 def _reference_assignments(units: pd.DataFrame, run_dir: Path, matrix: pd.DataFrame) -> dict[str, pd.DataFrame]:
@@ -229,6 +242,70 @@ def _write_json(path: Path, value: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+_RECOVERY_CONTEXT: dict | None = None
+
+
+def _run_one_replicate(replicate: int) -> tuple[int, int]:
+    """Run one independent replicate using the forked read-only worker state."""
+    if _RECOVERY_CONTEXT is None:
+        raise RuntimeError("Paired-recovery worker context is unavailable")
+    context = _RECOVERY_CONTEXT
+    output = context["output"]
+    fingerprint = context["fingerprint"]
+    path = output / "replicates" / f"replicate_{replicate:04d}.json"
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing.get("design_hash") != fingerprint:
+            raise ValueError(f"Stale replicate output: {path}")
+        return replicate, -1
+    rng = np.random.default_rng(np.random.SeedSequence([context["seed"], replicate]))
+    sampled = sorted(str(x) for x in rng.choice(context["accident_ids"], size=context["n_sample"], replace=False))
+    sampled_set = set(sampled)
+    units = context["units"]
+    subset_mask = units["_accident_id"].isin(sampled_set).to_numpy()
+    subset_units = units.loc[subset_mask].reset_index(drop=True)
+    subset_embeddings = context["embeddings"][subset_mask]
+    matrix = context["matrix"]
+    roles = context["roles"]
+    d_max = context["d_max"]
+    fixed_matrix = matrix.set_index("accident_id").loc[sampled].reset_index()
+    fixed_edges = _edges(fixed_matrix, roles, d_max)
+    refit_labels = {}
+    matching = {}
+    for role in ROLES:
+        role_mask = subset_units["_role"].eq(role).to_numpy()
+        role_units = subset_units.loc[role_mask].reset_index(drop=True)
+        labels, _ = _fit_cluster_with_embedding(
+            role_units["_text"].tolist(), subset_embeddings[role_mask], context["parameters"][role],
+            context["umap_seed"], context["config"],
+        )
+        refit_labels[role] = labels
+        reference = context["assignments"][role].set_index("_fact_id").loc[role_units["_fact_id"]].reset_index()
+        reference_names = [name for name, assigned_role in roles.items() if assigned_role == role]
+        matching.update(match_factors(reference, labels, role, reference_names))
+    reconstructed_matrix, reconstructed_roles = _matrix_for_candidates(subset_units, refit_labels, sampled)
+    reconstructed_edges = _edges(reconstructed_matrix, reconstructed_roles, d_max)
+    scenario_results = {}
+    for scenario in context["scenarios"]:
+        fixed_count = _scenario_count(fixed_matrix, scenario["factors"])
+        reconstructed_counts = {}
+        for tau in context["thresholds"]:
+            names = [matching[name]["candidate"] if matching[name]["jaccard"] >= tau else None
+                     for name in scenario["factors"]]
+            reconstructed_counts[str(tau)] = _scenario_count(reconstructed_matrix, names)
+        scenario_results[scenario["id"]] = {
+            "fixed_count": fixed_count, "reconstructed_counts": reconstructed_counts}
+    record = {"replicate": replicate, "design_hash": fingerprint, "accident_ids": sampled,
+              "sample_size": context["n_sample"], "matches": matching,
+              "fixed_edges": sorted([list(x) for x in fixed_edges]),
+              "reconstructed_edges": sorted([list(x) for x in reconstructed_edges]),
+              "n_reconstructed_factors": {role: sum(value == role for value in reconstructed_roles.values())
+                                          for role in ROLES},
+              "scenarios": scenario_results}
+    _write_json(path, record)
+    return replicate, len(reconstructed_edges)
+
+
 def run(args: argparse.Namespace) -> None:
     config_path = args.config.resolve()
     run_dir = args.run_dir.resolve()
@@ -240,7 +317,9 @@ def run(args: argparse.Namespace) -> None:
     seed = settings["seed"] if args.seed is None else args.seed
     thresholds = settings["thresholds"]
     main_threshold = settings["main_threshold"]
-    if not 0 < fraction <= 1 or replicates < 1 or args.start < 0 or args.count < 1:
+    count = (replicates - args.start) if args.count is None else args.count
+    workers = resolve_worker_count(settings, args.workers)
+    if not 0 < fraction <= 1 or replicates < 1 or args.start < 0 or count < 1:
         raise ValueError("Invalid subsampling settings")
     if args.start >= replicates:
         return
@@ -276,58 +355,36 @@ def run(args: argparse.Namespace) -> None:
             raise ValueError(f"Output directory contains a different design: {output}")
     else:
         _write_json(manifest_path, design)
-    n_sample = max(1, min(len(accident_ids), round(fraction * len(accident_ids))))
-    for replicate in range(args.start, min(args.start + args.count, replicates)):
-        path = output / "replicates" / f"replicate_{replicate:04d}.json"
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if existing.get("design_hash") != fingerprint:
-                raise ValueError(f"Stale replicate output: {path}")
-            print(f"Skipping completed replicate {replicate}", flush=True)
-            continue
-        rng = np.random.default_rng(np.random.SeedSequence([seed, replicate]))
-        sampled = sorted(str(x) for x in rng.choice(accident_ids, size=n_sample, replace=False))
-        sampled_set = set(sampled)
-        subset_mask = units["_accident_id"].isin(sampled_set).to_numpy()
-        subset_units = units.loc[subset_mask].reset_index(drop=True)
-        subset_embeddings = embeddings[subset_mask]
-        fixed_matrix = matrix.set_index("accident_id").loc[sampled].reset_index()
-        fixed_edges = _edges(fixed_matrix, roles, int(config["bayesian_networks"]["d_max"]))
-        refit_labels = {}
-        matching = {}
-        for role in ROLES:
-            role_mask = subset_units["_role"].eq(role).to_numpy()
-            role_units = subset_units.loc[role_mask].reset_index(drop=True)
-            labels, _ = _fit_cluster_with_embedding(
-                role_units["_text"].tolist(), subset_embeddings[role_mask], parameters[role],
-                int(config.get("validation", {}).get("random_state", config.get("random_state", 42))), config,
-            )
-            refit_labels[role] = labels
-            ref = assignments[role].set_index("_fact_id").loc[role_units["_fact_id"]].reset_index()
-            ref_names = [name for name, assigned_role in roles.items() if assigned_role == role]
-            matching.update(match_factors(ref, labels, role, ref_names))
-        reconstructed_matrix, reconstructed_roles = _matrix_for_candidates(subset_units, refit_labels, sampled)
-        reconstructed_edges = _edges(reconstructed_matrix, reconstructed_roles,
-                                     int(config["bayesian_networks"]["d_max"]))
-        scenario_results = {}
-        for scenario in scenarios:
-            fixed_count = _scenario_count(fixed_matrix, scenario["factors"])
-            reconstructed_counts = {}
-            for tau in thresholds:
-                names = [matching[name]["candidate"] if matching[name]["jaccard"] >= tau else None
-                         for name in scenario["factors"]]
-                reconstructed_counts[str(tau)] = _scenario_count(reconstructed_matrix, names)
-            scenario_results[scenario["id"]] = {
-                "fixed_count": fixed_count, "reconstructed_counts": reconstructed_counts}
-        record = {"replicate": replicate, "design_hash": fingerprint, "accident_ids": sampled,
-                  "sample_size": n_sample, "matches": matching,
-                  "fixed_edges": sorted([list(x) for x in fixed_edges]),
-                  "reconstructed_edges": sorted([list(x) for x in reconstructed_edges]),
-                  "n_reconstructed_factors": {role: sum(value == role for value in reconstructed_roles.values())
-                                              for role in ROLES},
-                  "scenarios": scenario_results}
-        _write_json(path, record)
-        print(f"Completed replicate {replicate}: {len(reconstructed_edges)} reconstructed edges", flush=True)
+    requested = list(range(args.start, min(args.start + count, replicates)))
+    global _RECOVERY_CONTEXT
+    _RECOVERY_CONTEXT = {
+        "output": output, "fingerprint": fingerprint, "seed": seed,
+        "n_sample": max(1, min(len(accident_ids), round(fraction * len(accident_ids)))),
+        "accident_ids": accident_ids, "units": units, "embeddings": embeddings,
+        "matrix": matrix, "roles": roles, "d_max": int(config["bayesian_networks"]["d_max"]),
+        "parameters": parameters, "umap_seed": int(config.get("validation", {}).get(
+            "random_state", config.get("random_state", 42))),
+        "config": config, "assignments": assignments, "scenarios": scenarios,
+        "thresholds": thresholds,
+    }
+    print(f"Running {len(requested)} replicates with {min(workers, len(requested))} local workers", flush=True)
+    if workers == 1 or len(requested) == 1:
+        results = (_run_one_replicate(replicate) for replicate in requested)
+        for replicate, n_edges in results:
+            message = f"Skipping completed replicate {replicate}" if n_edges < 0 else \
+                f"Completed replicate {replicate}: {n_edges} reconstructed edges"
+            print(message, flush=True)
+        return
+    if "fork" not in multiprocessing.get_all_start_methods():
+        raise RuntimeError("Parallel paired recovery requires a POSIX fork-capable environment")
+    with ProcessPoolExecutor(max_workers=min(workers, len(requested)),
+                             mp_context=multiprocessing.get_context("fork")) as executor:
+        futures = [executor.submit(_run_one_replicate, replicate) for replicate in requested]
+        for future in as_completed(futures):
+            replicate, n_edges = future.result()
+            message = f"Skipping completed replicate {replicate}" if n_edges < 0 else \
+                f"Completed replicate {replicate}: {n_edges} reconstructed edges"
+            print(message, flush=True)
 
 
 def _mean(values: list[float]) -> float:
@@ -565,12 +622,15 @@ def main() -> None:
             p.add_argument("--replicates", type=int)
             p.add_argument("--fraction", type=float)
             p.add_argument("--seed", type=int)
+            p.add_argument("--workers", type=int,
+                           help="Override paired_recovery.n_workers for this run")
             p.add_argument("--start", type=int, default=0)
-            p.add_argument("--count", type=int, default=10)
+            p.add_argument("--count", type=int,
+                           help="Run this many replicates; defaults to all remaining replicates")
     args = parser.parse_args()
     if args.command == "settings":
         settings = paired_recovery_settings(load_bn_analysis_config(args.config.resolve(), args.dataset, args.run_dir.resolve()))
-        print("\n".join(str(settings[name]) for name in ("n_replicates", "fraction", "seed", "replicates_per_task")))
+        print("\n".join(str(settings[name]) for name in ("n_replicates", "fraction", "seed", "n_workers")))
     else:
         (run if args.command == "run" else summarise)(args)
 
