@@ -59,6 +59,14 @@ def test_camembert_recipe_has_40_runs_and_separate_embedding_exports() -> None:
         assert spec["source_corpus"] not in [x for x in requested if x != spec["source_corpus"]]
 
 
+def test_camembert_selection_uses_canonical_backbone_directory() -> None:
+    from scripts.apply_backbone_source_tuning import _selection_stem
+
+    root = Path(__file__).resolve().parents[1]
+    config = load_replication_config(root / "output/replication_recipes/camembert_source_factorial.yaml")
+    assert _selection_stem(config, "camembert_btp_cross_entropy", "cross_entropy") == "camembert_base_btp_cross_entropy"
+
+
 def test_e5_recipes_keep_prefix_for_all_adapted_methods() -> None:
     root = Path(__file__).resolve().parents[1]
     cfg = load_replication_config(root / "output/replication_recipes/backbone_source_factorial.yaml")

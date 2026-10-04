@@ -8,6 +8,9 @@ from pathlib import Path
 import pandas as pd
 import yaml
 
+from replication.runner import _model_config
+from safer_core.embedding_paths import backbone_storage_id
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # These values are part of the source-only grid, so the final repeated-seed
@@ -60,6 +63,16 @@ def _apply_scope_training_overrides(model: dict, *, method: str, scope: int | No
             training["learning_rate"] = 2.0e-5
 
 
+def _selection_stem(recipe: dict, model_id: str, method: str) -> str:
+    """Return the source-only tuning directory stem for a recipe model."""
+    spec = _model_config(recipe, model_id)
+    backbone_name = spec.get("backbone_name") or spec.get("overrides", {}).get("model", {}).get("backbone_name")
+    if not backbone_name:
+        raise ValueError(f"Cannot determine backbone for {model_id}")
+    backbone_id = str(spec.get("backbone_id") or backbone_storage_id(str(backbone_name)))
+    return f"{backbone_id}_{spec['source_corpus']}_{method}"
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--recipe", default="output/replication_recipes/backbone_source_factorial.yaml")
@@ -77,9 +90,9 @@ def main() -> None:
             continue
         if bool(model.get("reuse_existing_selection", False)):
             continue
-        prefix = model_id.rsplit("_" + method, 1)[0]
-        # Tuning output naming includes the whole method for cross_entropy.
-        tuning_dir = tuning_root / f"{prefix}_{method}"
+        # Tuning directories use the canonical backbone ID.  This differs
+        # from the shorter CamemBERT model IDs used in its final recipe.
+        tuning_dir = tuning_root / _selection_stem(recipe, model_id, method)
         summary = tuning_dir / ("results_summary.csv" if method == "cross_entropy" else "grid_summary.csv")
         if not summary.is_file():
             raise FileNotFoundError(f"Selection summary missing for {model_id}: {summary}")
