@@ -132,6 +132,25 @@ def _base_with_recipe(spec: Mapping[str, Any]) -> Dict[str, Any]:
     return _deep_merge(load_yaml(base_path), dict(spec.get("overrides") or {}))
 
 
+def _force_source_dataset(raw: Mapping[str, Any], *, source_corpus: str, runner: str) -> Dict[str, Any]:
+    """Bind an adapted run to its declared source corpus.
+
+    Method base files historically point to Construction.  A source-factorial
+    recipe must not silently inherit that path when ``source_corpus`` changes.
+    """
+    from safer_core.test_corpus import resolve_test_corpus
+
+    source = resolve_test_corpus(source_corpus, require_files=True, require_emb_csv=False)
+    resolved = copy.deepcopy(dict(raw))
+    data = dict(resolved.get("data") or {})
+    source_path = str(source.data_csv)
+    data["dataset_path"] = source_path
+    if runner == "supervised_macro_ft" or "data_csv" in data:
+        data["data_csv"] = source_path
+    resolved["data"] = data
+    return resolved
+
+
 def _write_fold_partitions(
     raw_cfg: Mapping[str, Any],
     *,
@@ -321,19 +340,15 @@ def run_replication(
 
     ensure_dir(run_dir)
     task_started = time.perf_counter()
-    raw = _base_with_recipe(spec) if str(spec["runner"]) != "frozen" else dict(spec)
+    runner_name = str(spec["runner"])
+    raw = _base_with_recipe(spec) if runner_name != "frozen" else dict(spec)
     split_seed = int(training.get("split_seed", 42))
     n_folds = int(training["n_folds"])
     raw["test_corpora"] = corpora
     raw["source_corpus"] = source_corpus
-    if str(spec["runner"]) == "frozen":
-        from safer_core.test_corpus import resolve_test_corpus
-        # Frozen replication resolves embeddings separately with the selected
-        # backbone-specific path (embeddings/<backbone>/<corpus>.csv).  Do not
-        # require the legacy registry embedding path here.
-        raw["data"] = {"dataset_path": str(resolve_test_corpus(
-            source_corpus, require_files=True, require_emb_csv=False
-        ).data_csv)}
+    # Resolve the source path for every runner. This is essential for adapted
+    # models because their base method YAMLs default to data_btp.csv.
+    raw = _force_source_dataset(raw, source_corpus=source_corpus, runner=runner_name)
     _write_fold_partitions(raw, n_folds=n_folds, split_seed=split_seed, destination=run_dir / "cv" / "fold_partitions.csv")
     manifest = {
         "status": "running", "model_id": model_id, "runner": spec["runner"],

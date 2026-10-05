@@ -67,6 +67,23 @@ def test_replication_source_corpus_is_recorded_and_removed_from_targets(tmp_path
     assert manifest["test_corpora"] == ["btp", "caou"]
 
 
+def test_adapted_replication_forces_the_declared_source_dataset(tmp_path: Path, monkeypatch):
+    """A method base pointing to BTP must not override a Metallurgy source."""
+    import replication.runner as runner
+    import safer_core.test_corpus as test_corpus
+    from types import SimpleNamespace
+
+    metal_csv = tmp_path / "data_metallurgie.csv"
+    metal_csv.write_text("placeholder", encoding="utf-8")
+    raw = {"data": {"dataset_path": "dataset/data_btp.csv", "data_csv": "dataset/data_btp.csv"}}
+    monkeypatch.setattr(test_corpus, "resolve_test_corpus", lambda corpus, **kwargs: SimpleNamespace(data_csv=metal_csv))
+
+    resolved = runner._force_source_dataset(raw, source_corpus="metallurgie", runner="supervised_macro_ft")
+    assert resolved["data"]["dataset_path"] == str(metal_csv)
+    assert resolved["data"]["data_csv"] == str(metal_csv)
+    assert raw["data"]["dataset_path"] == "dataset/data_btp.csv"
+
+
 def test_frozen_replication_uses_backbone_specific_embedding_resolution(tmp_path: Path, monkeypatch):
     """Frozen runs must not require the legacy flat Qwen embedding CSV."""
     from types import SimpleNamespace

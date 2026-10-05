@@ -143,12 +143,21 @@ def _summary(seed_frames: list[pd.DataFrame], *, rng: np.random.Generator, n_boo
 def _multi_target_summary(by_target: dict[str, list[pd.DataFrame]], *, rng: np.random.Generator, n_boot: int, confidence: float) -> dict[str, float]:
     """Equal-weight target mean with accident-level bootstrap in every target."""
     target_summaries = [_summary(frames, rng=rng, n_boot=n_boot, confidence=confidence) for frames in by_target.values()]
-    n_seeds = min(item["n_seeds"] for item in target_summaries)
+    seed_counts = {len(frames) for frames in by_target.values()}
+    if len(seed_counts) != 1 or not seed_counts or 0 in seed_counts:
+        raise ValueError("Equal-target summaries require matching nonempty seed lists")
+    n_seeds = seed_counts.pop()
+    # Lists are built in the same training_seeds(config) order by the caller.
+    # Average targets within each run before computing between-run dispersion.
+    per_seed = np.mean([
+        [balanced_accuracy_score(f["true_macro"], f["pred_macro"]) for f in frames]
+        for frames in by_target.values()
+    ], axis=0)
     alpha = (1 - confidence) / 2
     draws = np.empty(n_boot)
     for i in range(n_boot):
         draws[i] = np.mean([_bootstrap_mean_ba(frames, rng, 1)[0] for frames in by_target.values()])
-    return {"balanced_accuracy_mean": float(np.mean([x["balanced_accuracy_mean"] for x in target_summaries])), "balanced_accuracy_seed_sd": float(np.mean([x["balanced_accuracy_seed_sd"] for x in target_summaries])), "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": n_seeds}
+    return {"balanced_accuracy_mean": float(np.mean(per_seed)), "balanced_accuracy_seed_sd": float(np.std(per_seed, ddof=1)) if n_seeds > 1 else 0.0, "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": n_seeds}
 
 
 def _paired_bootstrap_difference(left_frames: list[pd.DataFrame], right_frames: list[pd.DataFrame], *, rng: np.random.Generator, n_boot: int) -> np.ndarray:

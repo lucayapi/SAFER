@@ -59,6 +59,23 @@ def test_camembert_recipe_has_40_runs_and_separate_embedding_exports() -> None:
         assert spec["source_corpus"] not in [x for x in requested if x != spec["source_corpus"]]
 
 
+def test_camembert_metallurgie_repair_contains_only_the_15_invalidated_runs() -> None:
+    root = Path(__file__).resolve().parents[1]
+    path = root / "output/replication_recipes/camembert_metallurgie_repair.yaml"
+    config = load_replication_config(path)
+    tasks = task_matrix(config)
+    assert len(config["models"]) == 3
+    assert len(tasks) == 15
+    assert config["output_root"] == "output/camembert_metallurgie_repair"
+    for model_id in config["models"]:
+        spec = _model_config(config, model_id)
+        assert model_id.startswith("camembert_metallurgie_")
+        assert not model_id.endswith("_frozen")
+        assert spec["source_corpus"] == "metallurgie"
+        data = spec["overrides"]["data"]
+        assert all(str(value).endswith("data_metallurgie.csv") for value in data.values())
+
+
 def test_camembert_selection_uses_canonical_backbone_directory() -> None:
     from scripts.apply_backbone_source_tuning import _selection_stem
 
@@ -118,3 +135,22 @@ def test_ood_common_target_summary_uses_both_target_frames() -> None:
     assert result["n_seeds"] == 1
     assert result["balanced_accuracy_mean"] == 0.875
     assert result["ci_low"] <= result["balanced_accuracy_mean"] <= result["ci_high"]
+
+
+def test_common_target_sd_is_computed_after_averaging_each_seed() -> None:
+    import numpy as np
+    import pandas as pd
+    from scripts.analyze_backbone_source_campaign import _multi_target_summary
+
+    perfect = pd.DataFrame({"accident_id": ["a", "b", "c", "d"],
+                            "true_macro": ["A0", "A1", "B", "C"],
+                            "pred_macro": ["A0", "A1", "B", "C"]})
+    wrong = perfect.assign(pred_macro=["A1", "B", "C", "A0"])
+    # Opposite target fluctuations cancel in the per-seed target average.
+    result = _multi_target_summary(
+        {"caou": [perfect, wrong], "nicollin": [wrong, perfect]},
+        rng=np.random.default_rng(4), n_boot=10, confidence=0.95,
+    )
+    assert result["balanced_accuracy_mean"] == 0.5
+    assert result["balanced_accuracy_seed_sd"] == 0.0
+    assert result["n_seeds"] == 2
