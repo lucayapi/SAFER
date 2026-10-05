@@ -5,8 +5,8 @@
 
 #SBATCH --job-name=camembert-analysis
 #SBATCH --partition=normal
-#SBATCH --cpus-per-task=3
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=28
+#SBATCH --mem=64G
 #SBATCH --time=04:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
@@ -23,7 +23,7 @@ fi
 CONFIG="${CONFIG:-output/replication_recipes/camembert_source_factorial.yaml}"
 OUTPUT="${OUTPUT:-output/camembert_source_factorial_analysis}"
 N_BOOTSTRAP="${N_BOOTSTRAP:-2000}"
-N_WORKERS="${N_WORKERS:-${SLURM_CPUS_PER_TASK:-3}}"
+N_WORKERS="${N_WORKERS:-${SLURM_CPUS_PER_TASK:-28}}"
 
 echo "HOST=$(hostname) DATE=$(date -Iseconds) JOB_ID=${SLURM_JOB_ID:-local}"
 echo "Config=${CONFIG}"
