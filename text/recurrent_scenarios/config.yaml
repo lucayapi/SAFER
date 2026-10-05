@@ -108,6 +108,10 @@ paired_recovery:
   matching_thresholds: [0.40, 0.50, 0.60]
   main_matching_threshold: 0.50
   n_workers: auto
+  sensitivity:
+    # A separate single Slurm job; each policy uses the same sampled reports.
+    # Replicate count, seeds and workers inherit paired_recovery above.
+    parameter_policies: [fixed, scaled_cluster_size, scaled_density]
 
 expected_inventory:
   caou:

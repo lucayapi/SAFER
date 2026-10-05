@@ -32,6 +32,7 @@ from scenario_pipeline import (
 
 DEFAULT_DATASET = "btp_carpentry_and_joinery"
 REFERENCE_MIN_COUNT = 5
+PARAMETER_POLICIES = ("fixed", "scaled_cluster_size", "scaled_density")
 ARTICLE_SCENARIOS = {"S1": "SC_00197", "S2": "SC_00221",
                      "S3": "SC_04076", "S4": "SC_00211"}
 ARTICLE_DESCRIPTIONS = {
@@ -203,8 +204,32 @@ def _scenarios(path: Path, reference_names: set[str]) -> list[dict]:
     return result
 
 
+def reconstruction_parameters(parameters: dict, n_subset: int, n_full: int, policy: str) -> dict:
+    """Change absolute HDBSCAN sizes using the retained role-specific unit fraction.
+
+    scaled_cluster_size changes only the minimum cluster size; scaled_density
+    additionally changes min_samples. UMAP settings and reference fits stay fixed.
+    """
+    if policy not in PARAMETER_POLICIES or n_full < 1 or not 0 <= n_subset <= n_full:
+        raise ValueError("Invalid reconstruction parameter policy or unit counts")
+    result = dict(parameters)
+    if policy != "fixed":
+        fraction = n_subset / n_full
+        result["hdbscan_min_cluster_size"] = max(2, int(np.floor(
+            float(parameters["hdbscan_min_cluster_size"]) * fraction + 0.5)))
+        if policy == "scaled_density":
+            value = parameters.get("hdbscan_min_samples")
+            if value is None:
+                raise ValueError("scaled_density requires explicit selected min_samples")
+            result["hdbscan_min_samples"] = max(1, int(np.floor(float(value) * fraction + 0.5)))
+    return result
+
+
 def _design(config_path: Path, run_dir: Path, config: dict, replicates: int,
-            fraction: float, seed: int, thresholds: tuple[float, ...], main_threshold: float) -> dict:
+            fraction: float, seed: int, thresholds: tuple[float, ...], main_threshold: float,
+            parameter_policy: str = "fixed") -> dict:
+    if parameter_policy not in PARAMETER_POLICIES:
+        raise ValueError(f"Unknown parameter policy: {parameter_policy}")
     paths = {
         "config": config_path,
         "selected": run_dir / "selected_configurations_summary.csv",
@@ -219,11 +244,16 @@ def _design(config_path: Path, run_dir: Path, config: dict, replicates: int,
         **{f"assignments_{role}": run_dir / "discovery" / role / "selected/topic_assignments.csv"
            for role in ROLES},
     }
-    return {"replicates": replicates, "fraction": fraction, "seed": seed,
+    result = {"replicates": replicates, "fraction": fraction, "seed": seed,
             "matching_thresholds": list(thresholds), "main_matching_threshold": main_threshold,
             "reference_min_count": REFERENCE_MIN_COUNT,
             "d_max": int(config["bayesian_networks"]["d_max"]),
             "files_sha256": {key: sha256_file(path) for key, path in paths.items()}}
+    # Preserve the design representation of historical fixed-parameter runs.
+    if parameter_policy != "fixed":
+        result["parameter_policy"] = parameter_policy
+        result["parameter_scaling"] = "retained role units / full role units; round half up"
+    return result
 
 
 def _fingerprint(design: dict) -> str:
@@ -272,11 +302,15 @@ def _run_one_replicate(replicate: int) -> tuple[int, int]:
     fixed_edges = _edges(fixed_matrix, roles, d_max)
     refit_labels = {}
     matching = {}
+    fitted_parameters = {}
     for role in ROLES:
         role_mask = subset_units["_role"].eq(role).to_numpy()
         role_units = subset_units.loc[role_mask].reset_index(drop=True)
+        fitted_parameters[role] = reconstruction_parameters(
+            context["parameters"][role], len(role_units), len(context["assignments"][role]),
+            context.get("parameter_policy", "fixed"))
         labels, _ = _fit_cluster_with_embedding(
-            role_units["_text"].tolist(), subset_embeddings[role_mask], context["parameters"][role],
+            role_units["_text"].tolist(), subset_embeddings[role_mask], fitted_parameters[role],
             context["umap_seed"], context["config"],
         )
         refit_labels[role] = labels
@@ -296,6 +330,8 @@ def _run_one_replicate(replicate: int) -> tuple[int, int]:
         scenario_results[scenario["id"]] = {
             "fixed_count": fixed_count, "reconstructed_counts": reconstructed_counts}
     record = {"replicate": replicate, "design_hash": fingerprint, "accident_ids": sampled,
+              "parameter_policy": context.get("parameter_policy", "fixed"),
+              "fitted_parameters": fitted_parameters, "umap_seed": context["umap_seed"],
               "sample_size": context["n_sample"], "matches": matching,
               "fixed_edges": sorted([list(x) for x in fixed_edges]),
               "reconstructed_edges": sorted([list(x) for x in reconstructed_edges]),
@@ -346,7 +382,9 @@ def run(args: argparse.Namespace) -> None:
         archived = _scenario_count(matrix, scenario["factors"])
         if archived != scenario["full_count"]:
             raise ValueError(f"Archived scenario count differs for {scenario['id']}")
-    design = _design(config_path, run_dir, config, replicates, fraction, seed, thresholds, main_threshold)
+    parameter_policy = getattr(args, "parameter_policy", "fixed")
+    design = _design(config_path, run_dir, config, replicates, fraction, seed, thresholds, main_threshold,
+                     parameter_policy)
     fingerprint = _fingerprint(design)
     manifest_path = output / "design.json"
     if manifest_path.exists():
@@ -365,7 +403,7 @@ def run(args: argparse.Namespace) -> None:
         "parameters": parameters, "umap_seed": int(config.get("validation", {}).get(
             "random_state", config.get("random_state", 42))),
         "config": config, "assignments": assignments, "scenarios": scenarios,
-        "thresholds": thresholds,
+        "thresholds": thresholds, "parameter_policy": parameter_policy,
     }
     print(f"Running {len(requested)} replicates with {min(workers, len(requested))} local workers", flush=True)
     if workers == 1 or len(requested) == 1:
@@ -456,7 +494,8 @@ def summarise(args: argparse.Namespace) -> None:
     thresholds = tuple(float(value) for value in design["matching_thresholds"])
     main_threshold = float(design["main_matching_threshold"])
     current = _design(args.config.resolve(), run_dir, config, m, float(design["fraction"]),
-                      int(design["seed"]), thresholds, main_threshold)
+                      int(design["seed"]), thresholds, main_threshold,
+                      design.get("parameter_policy", "fixed"))
     if _fingerprint(current) != fingerprint:
         raise ValueError("Source files or analysis settings changed after the jobs were run")
     roles = json.loads((run_dir / "bn_results_exact/matrix/variable_roles.json").read_text(encoding="utf-8"))
@@ -619,6 +658,7 @@ def main() -> None:
         p.add_argument("--output", type=Path,
                        default=Path(f"recurrent_scenarios/runs/theme_discovery_audit/{DEFAULT_DATASET}/paired_recovery"))
         if command == "run":
+            p.add_argument("--parameter-policy", choices=PARAMETER_POLICIES, default="fixed")
             p.add_argument("--replicates", type=int)
             p.add_argument("--fraction", type=float)
             p.add_argument("--seed", type=int)

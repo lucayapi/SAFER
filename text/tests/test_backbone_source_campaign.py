@@ -154,3 +154,85 @@ def test_common_target_sd_is_computed_after_averaging_each_seed() -> None:
     assert result["balanced_accuracy_mean"] == 0.5
     assert result["balanced_accuracy_seed_sd"] == 0.0
     assert result["n_seeds"] == 2
+
+
+def test_mean_bootstrap_uses_one_accident_sample_for_all_seeds() -> None:
+    import numpy as np
+    import pandas as pd
+    from scripts.analyze_backbone_source_campaign import _bootstrap_mean_ba
+
+    class RecordedRng:
+        calls = 0
+
+        def multinomial(self, n, probabilities, size):
+            self.calls += 1
+            assert n == 4 and size == 3
+            assert np.allclose(probabilities, [0.25] * 4)
+            return np.tile([2, 1, 1, 0], (size, 1))
+
+    labels = ["A0", "A1", "B", "C"]
+    first = pd.DataFrame({"accident_id": ["a", "b", "c", "d"], "true_macro": labels, "pred_macro": labels})
+    second = first.assign(pred_macro=["A1", "A1", "B", "C"]).iloc[::-1].reset_index(drop=True)
+    rng = RecordedRng()
+    draws = _bootstrap_mean_ba([first, second], rng, 3)
+
+    # The shared draw [a, a, b, c] gives mean BA (1.0 + 2/3) / 2.
+    assert rng.calls == 1
+    assert np.allclose(draws, 5 / 6)
+
+
+def test_paired_bootstrap_uses_same_accident_sample_across_methods_and_seeds() -> None:
+    import numpy as np
+    import pandas as pd
+    from scripts.analyze_backbone_source_campaign import _paired_bootstrap_difference
+
+    class RecordedRng:
+        calls = 0
+
+        def multinomial(self, n, probabilities, size):
+            self.calls += 1
+            assert n == 4 and size == 5
+            assert np.allclose(probabilities, [0.25] * 4)
+            return np.tile([2, 1, 1, 0], (size, 1))
+
+    labels = ["A0", "A1", "B", "C"]
+    left = pd.DataFrame({"accident_id": ["a", "b", "c", "d"], "true_macro": labels, "pred_macro": labels})
+    right = left.assign(pred_macro=["A1", "A1", "B", "C"]).iloc[::-1].reset_index(drop=True)
+    rng = RecordedRng()
+    draws = _paired_bootstrap_difference([left, left], [right, right], rng=rng, n_boot=5)
+
+    assert rng.calls == 1
+    assert np.allclose(draws, 1 / 3)
+
+
+def test_grouped_pairwise_bootstrap_matches_individual_paired_contrast() -> None:
+    import numpy as np
+    import pandas as pd
+    from scripts.analyze_backbone_source_campaign import (
+        _all_pairwise_bootstrap_task,
+        _paired_bootstrap_difference,
+    )
+
+    labels = ["A0", "A1", "B", "C"]
+    left = pd.DataFrame({"accident_id": list("abcd"), "true_macro": labels, "pred_macro": labels})
+    right = left.assign(pred_macro=["A1", "A1", "B", "C"]).iloc[::-1].reset_index(drop=True)
+    seed = 19
+    grouped = _all_pairwise_bootstrap_task(({"left": [left, left], "right": [right, right]}, seed, 12))
+    individual = _paired_bootstrap_difference(
+        [left, left], [right, right], rng=np.random.default_rng(seed), n_boot=12,
+    )
+
+    assert set(grouped) == {("left", "right")}
+    assert np.allclose(grouped[("left", "right")], individual)
+
+
+def test_bootstrap_rejects_different_accident_sets_across_seeds() -> None:
+    import numpy as np
+    import pandas as pd
+    import pytest
+    from scripts.analyze_backbone_source_campaign import _bootstrap_mean_ba
+
+    frame = pd.DataFrame({"accident_id": ["a", "b"], "true_macro": ["A0", "A1"], "pred_macro": ["A0", "A1"]})
+    other = frame.assign(accident_id=["a", "other"])
+    with pytest.raises(ValueError, match="different accident identifiers"):
+        _bootstrap_mean_ba([frame, other], np.random.default_rng(1), 2)

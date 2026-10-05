@@ -21,7 +21,7 @@ N_REPLICATES=10 OUTPUT_DIR=recurrent_scenarios/runs/theme_discovery_audit/btp_ca
 The pilot checks the pipeline, but its recovery frequencies have large Monte
 Carlo error and must not be used in the manuscript.
 
-## Full experiment (500 replicates)
+## Full experiment (200 replicates)
 
 ```bash
 sbatch jobs/run_recurrent_scenarios_paired_recovery.sh
@@ -30,8 +30,8 @@ sbatch jobs/run_recurrent_scenarios_paired_recovery.sh
 This is one Slurm job. Its 30 allocated CPUs run up to 30 independent
 replications at once; when one completes, the worker takes the next remaining
 replication. The job automatically writes the summary and figures only after
-all 500 replicates succeed. A completed replicate is skipped on resubmission if
-its design hash matches. The summary refuses to run until all 500 replicate
+all 200 replicates succeed. A completed replicate is skipped on resubmission if
+its design hash matches. The summary refuses to run until all 200 replicate
 files are present and the source files still match their hashes.
 
 The full output is under

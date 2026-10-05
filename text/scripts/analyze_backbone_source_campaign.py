@@ -59,13 +59,29 @@ def _paired_bootstrap_task(task: tuple) -> np.ndarray:
     return _paired_bootstrap_difference(left_frames, right_frames, rng=np.random.default_rng(seed), n_boot=n_boot)
 
 
+def _all_pairwise_bootstrap_task(task: tuple) -> dict[tuple[str, str], np.ndarray]:
+    method_frames, seed, n_boot = task
+    methods = list(method_frames)
+    frames = [frame for method in methods for frame in method_frames[method]]
+    _, _, prepared = _aligned_accident_counts(frames)
+    scores = _balanced_accuracy_from_totals(
+        _bootstrap_confusion_totals(prepared, np.random.default_rng(seed), n_boot)
+    ).reshape(n_boot, len(methods), -1).mean(axis=2)
+    return {
+        (left, right): scores[:, i] - scores[:, j]
+        for i, left in enumerate(methods)
+        for j, right in enumerate(methods)
+        if i < j
+    }
+
+
 def _accident_confusion_counts(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     """Precompute one 4x4 confusion matrix for every accident.
 
     Bootstrap resampling then only sums these small matrices. This avoids
     rebuilding pandas DataFrames and calling sklearn for every draw.
     """
-    accident_codes, _ = pd.factorize(frame["accident_id"].astype(str), sort=False)
+    accident_codes, accident_ids = pd.factorize(frame["accident_id"].astype(str), sort=True)
     true_codes = pd.Categorical(frame["true_macro"].astype(str), categories=ROLE_ORDER).codes
     pred_codes = pd.Categorical(frame["pred_macro"].astype(str), categories=ROLE_ORDER).codes
     if np.any(true_codes < 0) or np.any(pred_codes < 0):
@@ -73,8 +89,7 @@ def _accident_confusion_counts(frame: pd.DataFrame) -> tuple[np.ndarray, np.ndar
     n_accidents = int(accident_codes.max()) + 1 if len(accident_codes) else 0
     counts = np.zeros((n_accidents, len(ROLE_ORDER), len(ROLE_ORDER)), dtype=np.int64)
     np.add.at(counts, (accident_codes, true_codes, pred_codes), 1)
-    labels = pd.unique(frame["accident_id"].astype(str)).astype(str)
-    return labels, counts
+    return accident_ids.astype(str), counts
 
 
 def _balanced_accuracy_from_confusion(counts: np.ndarray) -> float:
@@ -117,20 +132,56 @@ def _backbone(spec: dict[str, Any]) -> str:
     return backbone_storage_id(str(spec.get("overrides", {}).get("model", {}).get("backbone_name", "unknown")))
 
 
-def _bootstrap_mean_ba(seed_frames: list[pd.DataFrame], rng: np.random.Generator, n: int) -> np.ndarray:
-    """Bootstrap accident IDs separately within each seed then average seeds."""
-    values = np.empty(n, dtype=float)
-    prepared = []
-    for frame in seed_frames:
+def _aligned_accident_counts(frames: list[pd.DataFrame]) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    """Return per-accident confusion matrices in a shared accident order."""
+    if not frames:
+        raise ValueError("Bootstrap requires at least one prediction frame")
+    reference_labels, reference_counts = _accident_confusion_counts(frames[0])
+    prepared = [reference_counts]
+    for frame in frames[1:]:
         labels, counts = _accident_confusion_counts(frame)
-        prepared.append((np.arange(len(labels), dtype=np.int64), counts))
-    for i in range(n):
-        scores = []
-        for ids, counts in prepared:
-            sampled = rng.choice(ids, size=len(ids), replace=True)
-            scores.append(_balanced_accuracy_from_confusion(counts[sampled].sum(axis=0)))
-        values[i] = float(np.mean(scores))
-    return values
+        if len(labels) != len(reference_labels) or set(labels) != set(reference_labels):
+            raise ValueError("Prediction frames have different accident identifiers")
+        prepared.append(counts[[{label: index for index, label in enumerate(labels)}[label] for label in reference_labels]])
+    return reference_labels, np.arange(len(reference_labels), dtype=np.int64), prepared
+
+
+def _bootstrap_confusion_totals(
+    prepared: list[np.ndarray], rng: np.random.Generator, n: int
+) -> np.ndarray:
+    """Compute cluster-bootstrap totals in batches using multinomial weights."""
+    # A multinomial draw is equivalent to sampling n accident IDs with
+    # replacement, but avoids repeatedly materialising full confusion matrices.
+    n_accidents = prepared[0].shape[0]
+    probability = np.full(n_accidents, 1.0 / n_accidents)
+    statistics = np.stack([
+        np.stack((counts.sum(axis=2), np.diagonal(counts, axis1=1, axis2=2)), axis=-1)
+        for counts in prepared
+    ])
+    totals = np.empty((n, len(prepared), len(ROLE_ORDER), 2), dtype=np.float64)
+    for start in range(0, n, 128):
+        stop = min(start + 128, n)
+        weights = rng.multinomial(n_accidents, probability, size=stop - start)
+        totals[start:stop] = np.einsum("ba,sarc->bsrc", weights, statistics, optimize=True)
+    return totals
+
+
+def _balanced_accuracy_from_totals(totals: np.ndarray) -> np.ndarray:
+    supports = totals[..., 0]
+    true_positives = totals[..., 1]
+    valid = supports > 0
+    recalls = np.divide(true_positives, supports, out=np.zeros_like(true_positives), where=valid)
+    return np.divide(
+        (recalls * valid).sum(axis=-1), valid.sum(axis=-1),
+        out=np.full(valid.shape[:-1], np.nan, dtype=float), where=valid.sum(axis=-1) > 0,
+    )
+
+
+def _bootstrap_mean_ba(seed_frames: list[pd.DataFrame], rng: np.random.Generator, n: int) -> np.ndarray:
+    """Bootstrap target accidents once per draw, shared across training seeds."""
+    _, ids, prepared = _aligned_accident_counts(seed_frames)
+    del ids  # The number of sampled clusters is the number in the target corpus.
+    return _balanced_accuracy_from_totals(_bootstrap_confusion_totals(prepared, rng, n)).mean(axis=1)
 
 
 def _summary(seed_frames: list[pd.DataFrame], *, rng: np.random.Generator, n_boot: int, confidence: float) -> dict[str, float]:
@@ -142,7 +193,6 @@ def _summary(seed_frames: list[pd.DataFrame], *, rng: np.random.Generator, n_boo
 
 def _multi_target_summary(by_target: dict[str, list[pd.DataFrame]], *, rng: np.random.Generator, n_boot: int, confidence: float) -> dict[str, float]:
     """Equal-weight target mean with accident-level bootstrap in every target."""
-    target_summaries = [_summary(frames, rng=rng, n_boot=n_boot, confidence=confidence) for frames in by_target.values()]
     seed_counts = {len(frames) for frames in by_target.values()}
     if len(seed_counts) != 1 or not seed_counts or 0 in seed_counts:
         raise ValueError("Equal-target summaries require matching nonempty seed lists")
@@ -154,35 +204,26 @@ def _multi_target_summary(by_target: dict[str, list[pd.DataFrame]], *, rng: np.r
         for frames in by_target.values()
     ], axis=0)
     alpha = (1 - confidence) / 2
-    draws = np.empty(n_boot)
-    for i in range(n_boot):
-        draws[i] = np.mean([_bootstrap_mean_ba(frames, rng, 1)[0] for frames in by_target.values()])
+    target_draws = [_bootstrap_mean_ba(frames, rng, n_boot) for frames in by_target.values()]
+    draws = np.mean(target_draws, axis=0)
     return {"balanced_accuracy_mean": float(np.mean(per_seed)), "balanced_accuracy_seed_sd": float(np.std(per_seed, ddof=1)) if n_seeds > 1 else 0.0, "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": n_seeds}
 
 
 def _paired_bootstrap_difference(left_frames: list[pd.DataFrame], right_frames: list[pd.DataFrame], *, rng: np.random.Generator, n_boot: int) -> np.ndarray:
-    """Paired accident bootstrap; prediction rows have been alignment-checked."""
-    draws = np.empty(n_boot)
-    pairs = []
-    for left, right in zip(left_frames, right_frames):
-        left_labels, left_counts = _accident_confusion_counts(left)
-        right_labels, right_counts = _accident_confusion_counts(right)
-        right_index = {label: index for index, label in enumerate(right_labels)}
-        if set(left_labels) != set(right_labels):
-            raise ValueError("Paired predictions have different accident identifiers")
-        right_counts = right_counts[[right_index[label] for label in left_labels]]
-        if len(left_labels) != len(right_labels):
-            raise ValueError("Paired predictions have different accident counts")
-        pairs.append((np.arange(len(left_labels), dtype=np.int64), left_counts, right_counts))
-    for draw in range(n_boot):
-        diffs = []
-        for ids, left_counts, right_counts in pairs:
-            sampled = rng.choice(ids, len(ids), replace=True)
-            left_ba = _balanced_accuracy_from_confusion(left_counts[sampled].sum(axis=0))
-            right_ba = _balanced_accuracy_from_confusion(right_counts[sampled].sum(axis=0))
-            diffs.append(left_ba - right_ba)
-        draws[draw] = np.mean(diffs)
-    return draws
+    """Paired bootstrap with one shared accident sample across methods and seeds."""
+    if len(left_frames) != len(right_frames) or not left_frames:
+        raise ValueError("Paired bootstrap requires matching nonempty seed lists")
+    left_labels, _, left_counts = _aligned_accident_counts(left_frames)
+    right_labels, _, right_counts = _aligned_accident_counts(right_frames)
+    if len(left_labels) != len(right_labels) or set(left_labels) != set(right_labels):
+        raise ValueError("Paired methods have different accident identifiers")
+    right_index = {label: index for index, label in enumerate(right_labels)}
+    right_counts = [counts[[right_index[label] for label in left_labels]] for counts in right_counts]
+    scores = _balanced_accuracy_from_totals(
+        _bootstrap_confusion_totals([*left_counts, *right_counts], rng, n_boot)
+    )
+    n_seeds = len(left_counts)
+    return (scores[:, :n_seeds] - scores[:, n_seeds:]).mean(axis=1)
 
 
 def _load_runs(config_path: Path) -> tuple[dict[str, Any], dict[tuple[str, int, str], pd.DataFrame], list[dict[str, Any]]]:
@@ -217,6 +258,8 @@ def main() -> None:
     p.add_argument("--output", default="output/backbone_source_factorial_analysis")
     p.add_argument("--n-bootstrap", type=int, default=2000)
     p.add_argument("--n-workers", type=int, default=1, help="Nombre de processus bootstrap parallèles.")
+    p.add_argument("--reuse-target-summary", action="store_true", help="Reuse existing target-level bootstrap results and recompute only multi-target and paired summaries.")
+    p.add_argument("--reuse-ood-summary", action="store_true", help="Reuse the existing multi-target summary and recompute only paired contrasts and outputs.")
     args = p.parse_args()
     if args.n_workers < 1:
         raise ValueError("--n-workers doit être >= 1")
@@ -233,38 +276,51 @@ def main() -> None:
     grouped: dict[tuple[str, str, str, str], list[pd.DataFrame]] = {}
     for r in records:
         grouped.setdefault((r["backbone"], r["source_corpus"], r["method"], r["evaluation_corpus"]), []).append(frames[(r["model_id"], r["seed"], r["evaluation_corpus"])])
-    target_tasks = []
-    target_keys = []
-    for index, (key, seed_frames) in enumerate(grouped.items()):
-        target_keys.append(key)
-        target_tasks.append((seed_frames, _task_seed(bootstrap_seed, 1, index), args.n_bootstrap, confidence))
-    target_summaries = _parallel_map(target_tasks, _summary_task, n_workers=args.n_workers)
-    target_rows = []
-    for (backbone, source, method, target), summary in zip(target_keys, target_summaries):
-        target_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "evaluation_corpus": target, **summary})
-    target_summary = pd.DataFrame(target_rows)
-    target_summary.to_csv(out / "ood_metrics_by_target.csv", index=False)
+    target_summary_path = out / "ood_metrics_by_target.csv"
+    if args.reuse_target_summary:
+        if not target_summary_path.is_file():
+            raise FileNotFoundError(f"Cannot reuse missing target-level summary: {target_summary_path}")
+        target_summary = pd.read_csv(target_summary_path)
+    else:
+        target_tasks = []
+        target_keys = []
+        target_order = sorted({key[3] for key in grouped})
+        for (key, seed_frames) in grouped.items():
+            target_keys.append(key)
+            # Reuse each target's accident resamples across all model conditions.
+            target_tasks.append((seed_frames, _task_seed(bootstrap_seed, 1, target_order.index(key[3])), args.n_bootstrap, confidence))
+        target_summaries = _parallel_map(target_tasks, _summary_task, n_workers=args.n_workers)
+        target_rows = []
+        for (backbone, source, method, target), summary in zip(target_keys, target_summaries):
+            target_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "evaluation_corpus": target, **summary})
+        target_summary = pd.DataFrame(target_rows)
+        target_summary.to_csv(target_summary_path, index=False)
 
-    ood_rows = []
-    ood_tasks = []
-    ood_keys = []
-    ood_metadata = []
-    ood_index = 0
-    for (backbone, source, method), frame in target_summary.groupby(["backbone", "source_corpus", "method"], sort=False):
-        model_id = pd.DataFrame(records).query("backbone == @backbone and source_corpus == @source and method == @method").model_id.iloc[0]
-        for scope, targets in (("all_targets", list(frame.evaluation_corpus)), ("common_caou_nicollin", ["caou", "nicollin"])):
-            selected = [t for t in targets if (model_id, training_seeds(config)[0], t) in frames]
-            if len(selected) != len(targets):
-                continue
-            by_target = {t: [frames[(model_id, seed, t)] for seed in training_seeds(config) if (model_id, seed, t) in frames] for t in selected}
-            ood_tasks.append((by_target, _task_seed(bootstrap_seed, 2, ood_index), args.n_bootstrap, confidence))
-            ood_keys.append((backbone, source, method, scope, len(selected)))
-            ood_index += 1
-    ood_summaries = _parallel_map(ood_tasks, _multi_target_summary_task, n_workers=args.n_workers)
-    for (backbone, source, method, scope, n_targets), summary in zip(ood_keys, ood_summaries):
-        ood_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "ood_scope": scope, "n_targets": n_targets, **summary})
-    ood = pd.DataFrame(ood_rows)
-    ood.to_csv(out / "ood_summary.csv", index=False)
+    ood_path = out / "ood_summary.csv"
+    if args.reuse_ood_summary:
+        if not ood_path.is_file():
+            raise FileNotFoundError(f"Cannot reuse missing multi-target summary: {ood_path}")
+        ood = pd.read_csv(ood_path)
+    else:
+        ood_rows = []
+        ood_tasks = []
+        ood_keys = []
+        for (backbone, source, method), frame in target_summary.groupby(["backbone", "source_corpus", "method"], sort=False):
+            model_id = pd.DataFrame(records).query("backbone == @backbone and source_corpus == @source and method == @method").model_id.iloc[0]
+            for scope, targets in (("all_targets", list(frame.evaluation_corpus)), ("common_caou_nicollin", ["caou", "nicollin"])):
+                selected = [t for t in targets if (model_id, training_seeds(config)[0], t) in frames]
+                if len(selected) != len(targets):
+                    continue
+                by_target = {t: [frames[(model_id, seed, t)] for seed in training_seeds(config) if (model_id, seed, t) in frames] for t in selected}
+                # Identical target scopes share bootstrap streams across conditions.
+                scope_index = 0 if scope == "all_targets" else 1
+                ood_tasks.append((by_target, _task_seed(bootstrap_seed, 2, scope_index), args.n_bootstrap, confidence))
+                ood_keys.append((backbone, source, method, scope, len(selected)))
+        ood_summaries = _parallel_map(ood_tasks, _multi_target_summary_task, n_workers=args.n_workers)
+        for (backbone, source, method, scope, n_targets), summary in zip(ood_keys, ood_summaries):
+            ood_rows.append({"backbone": backbone, "source_corpus": source, "method": method, "ood_scope": scope, "n_targets": n_targets, **summary})
+        ood = pd.DataFrame(ood_rows)
+        ood.to_csv(ood_path, index=False)
 
     role_rows = []
     for record in records:
@@ -315,28 +371,43 @@ def main() -> None:
     paired_rows = []
     paired_tasks = []
     paired_metadata = []
-    paired_index = 0
+    paired_group_keys = []
+    paired_groups = sorted(set((r["backbone"], r["source_corpus"], r["evaluation_corpus"]) for r in records))
+    paired_group_index = {key: index for index, key in enumerate(paired_groups)}
     for (backbone, source, target), data in pd.DataFrame(records).groupby(["backbone", "source_corpus", "evaluation_corpus"]):
         available = {row.method: row.model_id for row in data.drop_duplicates("method").itertuples()}
-        for left, right in itertools.combinations(sorted(available), 2):
-            left_frames = [frames[(available[left], seed, target)] for seed in training_seeds(config) if (available[left], seed, target) in frames]
-            right_frames = [frames[(available[right], seed, target)] for seed in training_seeds(config) if (available[right], seed, target) in frames]
-            if len(left_frames) != len(right_frames) or not left_frames:
-                continue
-            # Pair by seed, checking exact unit alignment before paired bootstrap.
-            diffs = []
-            for a, b in zip(left_frames, right_frames):
+        method_frames: dict[str, list[pd.DataFrame]] = {}
+        method_scores: dict[str, list[float]] = {}
+        for method, model_id in sorted(available.items()):
+            run_frames = [frames[(model_id, seed, target)] for seed in training_seeds(config) if (model_id, seed, target) in frames]
+            if run_frames:
+                method_frames[method] = run_frames
+                method_scores[method] = [balanced_accuracy_score(f.true_macro, f.pred_macro) for f in run_frames]
+        if len(method_frames) < 2:
+            continue
+        # Check alignment once across every method and seed in this group.
+        reference = method_frames[next(iter(method_frames))]
+        for method, runs in method_frames.items():
+            if len(runs) != len(reference):
+                raise ValueError(f"Unequal seed count for {method} on {target}")
+            for seed_index, (a, b) in enumerate(zip(reference, runs)):
                 keys = ["doc_id"] if "doc_id" in a and "doc_id" in b else ["accident_id", "true_macro"]
                 aa = a.sort_values(keys).reset_index(drop=True); bb = b.sort_values(keys).reset_index(drop=True)
                 if not aa[keys].equals(bb[keys]) or not aa.true_macro.equals(bb.true_macro):
-                    raise ValueError(f"Predictions not aligned for paired comparison {left} vs {right} on {target}")
-                diffs.append(balanced_accuracy_score(aa.true_macro, aa.pred_macro) - balanced_accuracy_score(bb.true_macro, bb.pred_macro))
-            paired_tasks.append((left_frames, right_frames, _task_seed(bootstrap_seed, 3, paired_index), args.n_bootstrap))
-            paired_metadata.append((backbone, source, target, left, right, float(np.mean(diffs)), len(diffs)))
-            paired_index += 1
-    paired_draws = _parallel_map(paired_tasks, _paired_bootstrap_task, n_workers=args.n_workers)
+                    raise ValueError(f"Predictions not aligned for {method} at seed index {seed_index} on {target}")
+        paired_tasks.append((method_frames, _task_seed(bootstrap_seed, 3, paired_group_index[(backbone, source, target)]), args.n_bootstrap))
+        paired_group_keys.append((backbone, source, target))
+        for left, right in itertools.combinations(method_frames, 2):
+            left_scores, right_scores = method_scores[left], method_scores[right]
+            if len(left_scores) != len(right_scores):
+                continue
+            mean_difference = float(np.mean(np.asarray(left_scores) - np.asarray(right_scores)))
+            paired_metadata.append((backbone, source, target, left, right, mean_difference, len(left_scores)))
+    paired_group_draws = _parallel_map(paired_tasks, _all_pairwise_bootstrap_task, n_workers=args.n_workers)
+    draws_by_group = dict(zip(paired_group_keys, paired_group_draws))
     alpha = (1 - confidence) / 2
-    for (backbone, source, target, left, right, mean_difference, n_seeds), draws in zip(paired_metadata, paired_draws):
+    for backbone, source, target, left, right, mean_difference, n_seeds in paired_metadata:
+        draws = draws_by_group[(backbone, source, target)][(left, right)]
         paired_rows.append({"backbone": backbone, "source_corpus": source, "evaluation_corpus": target, "method_left": left, "method_right": right, "balanced_accuracy_difference": mean_difference, "ci_low": float(np.quantile(draws, alpha)), "ci_high": float(np.quantile(draws, 1-alpha)), "n_seeds": n_seeds})
     pd.DataFrame(paired_rows).to_csv(out / "paired_method_differences.csv", index=False)
 
