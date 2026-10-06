@@ -65,3 +65,34 @@ with replacement. These new fixed-factor frequencies use 80% distinct
 accidents and must be compared only with the paired reconstruction branch.
 The output describes recovery under this perturbation scheme; it does not
 estimate causal effects or posterior probabilities.
+
+## Recovery by sampling fraction
+
+To estimate how scenario recovery changes with the number of available
+reports, submit one job from `text/`:
+
+```bash
+sbatch jobs/run_recurrent_scenarios_fraction_curve.sh
+```
+
+The job uses 30 CPUs and runs 200 paired replicates at fractions 0.6, 0.7,
+0.8, and 0.9, followed by a single full-sample (fraction 1.0) identity check.
+Each fraction is written to a separate directory under
+`recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_fraction_sensitivity/`.
+The combined `fraction_curve_summary.csv` reports median fixed and
+reconstructed recovery across reference scenarios and relationships, plus
+the object-wise paired differences. `full_sample_identity_check.json` records
+whether refitting at fraction 1.0 recovered every reference factor, scenario,
+and relationship. A failed identity check should be diagnosed before the
+fraction curve is interpreted.
+
+The full run comprises 800 subsampling replicates plus the single full-sample
+check. It is one Slurm job with the replicate work parallelised within the
+allocated CPUs. If the job reaches the time limit, resubmit the same command:
+completed replicates with matching design hashes are reused. To override the
+defaults, for example:
+
+```bash
+N_REPLICATES=100 N_WORKERS=30 OUTPUT_ROOT=recurrent_scenarios/runs/theme_discovery_audit/btp_carpentry_and_joinery/paired_fraction_sensitivity_pilot \
+  sbatch jobs/run_recurrent_scenarios_fraction_curve.sh
+```

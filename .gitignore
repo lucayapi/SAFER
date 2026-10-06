@@ -74,11 +74,13 @@ archives script mesocentre/
 .DS_Store
 
 # Local manuscript packages, reference articles, and derived review material
+/Manuscript de thèse AHO/
 /Pretrained text representation strategies under domain shift_ An empirical study of occupational accident narratives/
 /Pretrained text representation strategies under domain shift_ An empirical study of occupational accident narratives.zip
 /Cross-sector generalization of accident-process role classification in occupational accident narratives/
 /article exemple/
 /article exemple scenario/
+/exemple manuscript/
 /template jrss/
 /figures/
 /jrssc_recurrent_accident_scenarios_source/
