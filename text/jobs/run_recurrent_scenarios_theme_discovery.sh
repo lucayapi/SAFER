@@ -49,6 +49,7 @@ export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
+export NUMBA_NUM_THREADS=1
 
 # Leave the dataset unset unless the job explicitly receives DATASET=...
 # so that config.yaml's data.dataset_id remains the default source of truth.

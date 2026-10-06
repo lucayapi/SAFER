@@ -3478,6 +3478,10 @@ def run_theme_discovery(
 
     raw_config = select_dataset_config(load_yaml_config(config_path), dataset_id)
     config = resolve_config_paths(raw_config, config_path)
+    if stage == "all" and config.get("factor_annotation", {}).get("enabled", False):
+        from factor_annotation import check_annotation_credentials
+
+        check_annotation_credentials(config)
 
     if run_dir is not None:
         output_base = Path(run_dir).expanduser().resolve()
@@ -3686,6 +3690,11 @@ def run_theme_discovery(
                 reestimate=reestimate,
             )
         write_umap_seed_sensitivity_all_roles_figure(output_base / "figures", run_dir=output_base)
+    if stage == "all" and config.get("factor_annotation", {}).get("enabled", False):
+        from factor_annotation import annotate_selected_factors
+
+        _log_progress("Nomination des facteurs s\u00e9lectionn\u00e9s par LLM")
+        annotate_selected_factors(prepared, selections, config, output_base)
     _log_progress(f"DONE stage={stage} output={output_base}")
     return output_base
 
