@@ -1,9 +1,0 @@
-accident_id,fact_id,true_macro,pred_macro
-a,0,A0,A0
-a,1,A1,A1
-b,2,B,B
-b,3,C,C
-c,4,A0,A0
-c,5,A1,A1
-d,6,B,B
-d,7,C,C

@@ -1,9 +1,0 @@
-corpus,source_corpus,classifier,role,precision,recall,f1,support
-metallurgie,metallurgie,logistic_regression,A0,1.0,1.0,1.0,1
-metallurgie,metallurgie,logistic_regression,A1,0.0,0.0,0.0,1
-metallurgie,metallurgie,logistic_regression,B,0.5,1.0,0.6666666666666666,1
-metallurgie,metallurgie,logistic_regression,C,1.0,1.0,1.0,1
-caou,metallurgie,logistic_regression,A0,1.0,1.0,1.0,1
-caou,metallurgie,logistic_regression,A1,0.0,0.0,0.0,1
-caou,metallurgie,logistic_regression,B,0.5,1.0,0.6666666666666666,1
-caou,metallurgie,logistic_regression,C,1.0,1.0,1.0,1

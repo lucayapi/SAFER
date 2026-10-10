@@ -1,2 +1,0 @@
-model,cv_ba_mean,cv_ba_std,cv_ba,ba_ood_avg,ba_ood_worst,accuracy_metallurgie,macro_f1_metallurgie,balanced_accuracy_metallurgie,accuracy_caou,macro_f1_caou,balanced_accuracy_caou
-supcon,0.7,0.1,0.70 ± 0.10,0.45,0.4,0.48,0.45,0.5,0.38,0.35,0.4

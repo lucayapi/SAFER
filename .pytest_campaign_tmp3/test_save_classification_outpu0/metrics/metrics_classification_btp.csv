@@ -1,2 +1,0 @@
-corpus,classifier,balanced_accuracy,macro_f1,accuracy
-btp,logistic_regression,0.75,0.7,0.72

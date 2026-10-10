@@ -1,2 +1,0 @@
-model,cv_ba_mean,cv_ba_std,cv_ba,ba_ood_avg,ba_ood_worst,accuracy_caou,macro_f1_caou,balanced_accuracy_caou
-softtriple,,,nan ± nan,0.5,0.5,0.48,0.45,0.5

@@ -491,6 +491,7 @@ def summarise(args: argparse.Namespace) -> None:
         records.append(record)
     run_dir = args.run_dir.resolve()
     config = load_bn_analysis_config(args.config.resolve(), args.dataset, run_dir)
+    planned_replicates = paired_recovery_settings(config)["n_replicates"]
     thresholds = tuple(float(value) for value in design["matching_thresholds"])
     main_threshold = float(design["main_matching_threshold"])
     current = _design(args.config.resolve(), run_dir, config, m, float(design["fraction"]),
@@ -600,7 +601,7 @@ def summarise(args: argparse.Namespace) -> None:
                 f"Design: {m} paired samples, {design['fraction']:.0%} distinct accidents, "
                 f"Jaccard matching threshold {main_threshold:.2f}; sensitivity files cover "
                 + ", ".join(f"{value:.2f}" for value in thresholds if value != main_threshold) + ".",
-                "This pilot is for execution and output checks only; run the prespecified 500 replicates "
+                f"This pilot is for execution and output checks only; run the prespecified {planned_replicates} replicates "
                 "before interpreting or citing recovery frequencies." if m < 100 else "",
                 f"Reference objects: {len(roles)} factors, {len(reference_edges)} network edges, "
                 f"{len(scenarios)} closed recurrent scenarios.",

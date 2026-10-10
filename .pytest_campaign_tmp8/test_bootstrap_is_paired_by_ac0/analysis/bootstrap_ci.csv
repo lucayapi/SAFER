@@ -1,5 +1,0 @@
-corpus,model,metric,mean_across_seeds,std_across_seeds,ci_low,ci_high,confidence_level,n_resamples,n_seeds,n_units,n_accidents,resampling_unit
-target,good,balanced_accuracy,1.0,0.0,1.0,1.0,0.95,100,2,8,4,accident_id
-target,good,macro_f1,1.0,0.0,0.5,1.0,0.95,100,2,8,4,accident_id
-target,bad,balanced_accuracy,0.25,0.0,0.0,0.5,0.95,100,2,8,4,accident_id
-target,bad,macro_f1,0.1,0.0,0.0,0.16666666666666666,0.95,100,2,8,4,accident_id
