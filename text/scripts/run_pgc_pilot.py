@@ -154,7 +154,8 @@ def tokenizer_for(cfg):
     return tokenizer
 
 
-def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Path):
+def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Path,
+        diagnostics_every: int = 0):
     if not torch.cuda.is_available():
         raise RuntimeError("Full Qwen3 fine-tuning requires a CUDA GPU")
     set_seed(seed)
@@ -170,6 +171,7 @@ def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Pa
         raise ValueError("Pilot currently requires AMP disabled to match the selected CE recipe")
     group_values = dataset.get_groups()
     history = []
+    batch_diagnostics = []
     total_graph_pairs = Counter()
     for epoch in range(int(training["epochs"])):
         batches = accident_batches(
@@ -181,7 +183,7 @@ def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Pa
         totals = Counter()
         edge_pairs = Counter()
         edge_batches = Counter()
-        for batch in loader:
+        for batch_number, batch in enumerate(loader, start=1):
             original_indices = batch["indices"].tolist()
             accident_ids = [str(group_values[i]) for i in original_indices]
             batch = batch_to_device(batch, torch.device("cuda"))
@@ -189,7 +191,26 @@ def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Pa
             logits, z, _ = model.forward_with_latents(batch)
             ce = criterion(logits, batch["label_ids"])
             graph, counts = pgc_loss(z, batch["label_ids"], accident_ids)
+            if not torch.isfinite(ce) or not torch.isfinite(graph):
+                raise FloatingPointError(f"Non-finite CE/PGC loss: epoch={epoch + 1}, batch={batch_number}")
             loss = ce + float(lam) * graph
+            if diagnostics_every and batch_number % diagnostics_every == 0:
+                ce_grad = torch.autograd.grad(ce, z, retain_graph=True)[0]
+                pgc_grad = torch.autograd.grad(graph, z, retain_graph=True)[0]
+                ce_value = float(ce.detach())
+                graph_value = float(graph.detach())
+                ce_norm = float(torch.linalg.vector_norm(ce_grad.detach()))
+                graph_norm = float(torch.linalg.vector_norm(pgc_grad.detach()))
+                batch_diagnostics.append({
+                    "epoch": epoch + 1, "batch": batch_number, "lambda": lam,
+                    "n_units": len(original_indices), "ce": ce_value, "pgc": graph_value,
+                    "weighted_pgc": lam * graph_value,
+                    "weighted_loss_ratio": lam * graph_value / max(ce_value, 1e-12),
+                    "ce_z_grad_norm": ce_norm, "pgc_z_grad_norm": graph_norm,
+                    "weighted_z_grad_ratio": lam * graph_norm / max(ce_norm, 1e-12),
+                    "active_edges": sum(count > 0 for count in counts.values()),
+                    **{f"pairs_{edge}": count for edge, count in counts.items()},
+                })
             loss.backward()
             optimizer.step()
             totals["units"] += len(original_indices)
@@ -213,6 +234,8 @@ def fit(cfg, dataset, indices: np.ndarray, *, lam: float, seed: int, out_dir: Pa
         raise RuntimeError("PGC had no eligible accident pairs in any epoch")
     out_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(history).to_csv(out_dir / "history.csv", index=False)
+    if diagnostics_every:
+        pd.DataFrame(batch_diagnostics).to_csv(out_dir / "batch_diagnostics.csv", index=False)
     return model, tokenizer
 
 
