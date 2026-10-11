@@ -493,7 +493,7 @@ def run_supervised_macro_ft_training(
             z_btp,
             meta_df,
             emb_dir,
-            "btp",
+            source_corpus,
             label_col=label_col,
             group_col=group_col,
             text_col=text_col,

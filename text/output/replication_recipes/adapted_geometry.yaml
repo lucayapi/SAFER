@@ -1,0 +1,796 @@
+output_root: output/adapted_geometry/runs
+storage:
+  cleanup_after_completion: true
+  keep_final_checkpoint: false
+  keep_embeddings: true
+  max_parallel_seeds: 4
+training:
+  n_seeds: 5
+  seed_generator: 2026
+  split_seed: 42
+  n_folds: 3
+  selection_metric: balanced_accuracy
+  test_corpora:
+  - btp
+  - metallurgie
+  - caou
+  - nicollin
+models:
+  qwen3_btp_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: null
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+        use_projector: false
+      training:
+        epochs: 3
+        batch_size: 32
+        lr_backbone: 2.0e-06
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: false
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+      data:
+        dataset_path: dataset/data_btp.csv
+        data_csv: dataset/data_btp.csv
+    source_corpus: btp
+    reuse_existing_selection: true
+  qwen3_btp_supcon:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 3
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-06
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: false
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_btp.csv
+    source_corpus: btp
+    reuse_existing_selection: true
+  qwen3_btp_softtriple:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 3
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-06
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: false
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_btp.csv
+    source_corpus: btp
+    reuse_existing_selection: true
+  qwen3_metallurgie_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: mlp_sklearn
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 30
+        batch_size: 32
+        lr_backbone: 2.0e-05
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: true
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+        data_csv: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  qwen3_metallurgie_supcon:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  qwen3_metallurgie_softtriple:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: Qwen/Qwen3-Embedding-0.6B
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  multilingual_e5_large_btp_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: mlp_sklearn
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 30
+        batch_size: 32
+        lr_backbone: 2.0e-05
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: true
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+      data:
+        dataset_path: dataset/data_btp.csv
+        data_csv: dataset/data_btp.csv
+    source_corpus: btp
+  multilingual_e5_large_btp_supcon:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_btp.csv
+    source_corpus: btp
+  multilingual_e5_large_btp_softtriple:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_btp.csv
+    source_corpus: btp
+  multilingual_e5_large_metallurgie_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: mlp_sklearn
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 30
+        batch_size: 32
+        lr_backbone: 2.0e-05
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: true
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+        data_csv: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  multilingual_e5_large_metallurgie_supcon:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  multilingual_e5_large_metallurgie_softtriple:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: intfloat/multilingual-e5-large
+        input_prefix: 'query: '
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+    source_corpus: metallurgie
+  camembert_btp_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        max_seq_length: 256
+        pooling: mean
+        projection: mlp_sklearn
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 30
+        batch_size: 32
+        lr_backbone: 2.0e-05
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: true
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+    source_corpus: btp
+  camembert_btp_supcon:
+    runner: contrastive
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+        pooling: mean
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+    source_corpus: btp
+  camembert_btp_softtriple:
+    runner: contrastive
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: null
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+        pooling: mean
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 30
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+    source_corpus: btp
+  camembert_metallurgie_cross_entropy:
+    runner: supervised_macro_ft
+    base_config: configs/methods/supervised_macro_ft.yaml
+    overrides:
+      data:
+        data_csv: dataset/data_metallurgie.csv
+        dataset_path: dataset/data_metallurgie.csv
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: 3
+        max_seq_length: 256
+        pooling: mean
+        use_projector: false
+        projection: null
+        hiddim: 128
+        proj_hidden: 256
+        dropout: 0.1
+        n_classes: 4
+        oversampling: false
+        class_weight: balanced
+        gradient_checkpointing: true
+        cache_backbone_embeddings: false
+        standardize_backbone: false
+      training:
+        epochs: 10
+        batch_size: 32
+        lr_backbone: 2.0e-05
+        lr_projector: 0.001
+        lr_head: 0.001
+        weight_decay: 0.01
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        use_amp: true
+      exports:
+        save_btp_embeddings: true
+        save_checkpoint: false
+    source_corpus: metallurgie
+  camembert_metallurgie_supcon:
+    runner: contrastive
+    method: supcon
+    base_config: configs/methods/supcon.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: 3
+        cache_backbone_embeddings: false
+        use_projector: false
+        projection: null
+        hiddim: 128
+        max_seq_length: 256
+        pooling: mean
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 10
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      supcon:
+        temperature: 0.07
+        base_temperature: 0.07
+        contrast_mode: all
+        normalize_embeddings: true
+      post_eval:
+        enabled: true
+        oversampling: false
+    source_corpus: metallurgie
+  camembert_metallurgie_softtriple:
+    runner: contrastive
+    method: softtriple
+    base_config: configs/methods/softtriple.yaml
+    classifier:
+      C: 0.01
+      class_weight: balanced
+      penalty: l2
+      solver: lbfgs
+    overrides:
+      data:
+        dataset_path: dataset/data_metallurgie.csv
+      model:
+        backbone_name: almanach/camembert-base
+        input_prefix: ''
+        backbone_trainable: true
+        train_last_n_layers: 3
+        cache_backbone_embeddings: false
+        use_projector: true
+        projection: mlp_sklearn
+        hiddim: 128
+        max_seq_length: 256
+        pooling: mean
+      training:
+        batch_size: 64
+        eval_batch_size: 64
+        encode_batch_size: 64
+        epochs: 10
+        early_stopping_patience: 3
+        early_stopping_inner_val_ratio: 0.1
+        final_epochs_from_cv: true
+        learning_rate: 2.0e-05
+        gradient_accumulation_steps: 1
+        distance_metric: cosine
+        use_amp: true
+      softtriple:
+        centers_per_class: 20
+        gamma: 0.1
+        lambda: 10.0
+        delta: 0.01
+        tau: 0.2
+        normalize_embeddings: true
+        normalize_centers: true
+        center_max_similarity: 0.5
+        center_min_distance: 0.3
+        center_regularization_type: merge_l21
+      post_eval:
+        enabled: true
+        oversampling: false
+    source_corpus: metallurgie
