@@ -125,7 +125,9 @@ def _key_table(frame: pd.DataFrame) -> pd.DataFrame:
 def prepare(cfg: dict, run_dir: Path) -> None:
     if run_dir.exists():
         raise FileExistsError(run_dir)
-    registry_target = resolve_test_corpus("nicollin", anchor=ROOT, require_files=True).data_csv
+    registry_target = resolve_test_corpus(
+        "nicollin", anchor=ROOT, require_files=True, require_emb_csv=False
+    ).data_csv
     if _absolute(cfg["target_file"]).resolve() != registry_target.resolve():
         raise ValueError("Configured target differs from the nicollin test registry")
     sources = {name: _read_source(_absolute(cfg["source_files"][name]), name) for name in SOURCES}
