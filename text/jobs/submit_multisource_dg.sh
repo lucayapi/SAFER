@@ -11,6 +11,7 @@
 
 set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 run_dir="${MSDG_RUN_DIR:-$PWD/output/multisource_dg/run_${SLURM_JOB_ID:?Submit with sbatch}}"
 if [[ -e "$run_dir" ]]; then
   echo "Run directory already exists: $run_dir" >&2

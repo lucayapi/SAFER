@@ -8,6 +8,7 @@
 
 set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 : "${MSDG_RUN_DIR:?MSDG_RUN_DIR is required}"
 export OMP_NUM_THREADS=29 OPENBLAS_NUM_THREADS=29 MKL_NUM_THREADS=29 NUMEXPR_NUM_THREADS=29
 python -u scripts/multisource_dg.py analyze --run-dir "${MSDG_RUN_DIR}"

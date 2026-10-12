@@ -1,12 +1,26 @@
 """Scientific invariants for source-mixture sampling and target alignment."""
 
 from pathlib import Path
+import os
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
 import pytest
 
 from scripts.multisource_dg import _aligned_predictions, _key_table, _metrics, _sample_nested
+
+
+def test_direct_script_entrypoint_resolves_project_modules():
+    text_root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    result = subprocess.run(
+        [sys.executable, str(text_root / "scripts" / "multisource_dg.py"), "--help"],
+        cwd=text_root, env=env, capture_output=True, text=True, check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_whole_accident_nested_sampling():

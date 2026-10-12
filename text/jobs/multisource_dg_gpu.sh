@@ -11,6 +11,7 @@
 
 set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/jobs/_bootstrap.sh"
+export PYTHONPATH="$PWD${PYTHONPATH:+:$PYTHONPATH}"
 : "${MSDG_RUN_DIR:?MSDG_RUN_DIR is required}"
 : "${SLURM_ARRAY_TASK_ID:?Submit as an array}"
 export OMP_NUM_THREADS=29 OPENBLAS_NUM_THREADS=29 MKL_NUM_THREADS=29 NUMEXPR_NUM_THREADS=29

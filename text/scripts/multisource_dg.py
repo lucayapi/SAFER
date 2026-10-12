@@ -10,6 +10,7 @@ import argparse
 import copy
 import json
 import shutil
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,11 +18,13 @@ import pandas as pd
 import yaml
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, f1_score, precision_score, recall_score
 
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
 from scgm_text.data_metadata import load_filtered_metadata
 from safer_core.test_corpus import resolve_test_corpus
 
 
-ROOT = Path(__file__).resolve().parents[1]
 ROLES = ("A0", "A1", "B", "C")
 SOURCES = ("btp", "metallurgie", "caou")
 CONDITIONS = {
