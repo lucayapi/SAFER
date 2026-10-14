@@ -1,0 +1,24 @@
+# Equal-total-size EPICEA learning curves. Company is evaluation-only.
+source_files:
+  btp: dataset/data_btp.csv
+  metallurgie: dataset/data_metallurgie.csv
+  caou: dataset/data_caou.csv
+target_file: dataset/data_nicollin.csv
+
+budgets: [2000, 4000, 6000, 9000, 12000]
+draws: 5
+training_seeds: [101, 202, 303]
+sample_candidates: 64
+max_budget_deviation_units: 50
+max_role_share_deviation_pp: 5.0
+bootstrap_resamples: 2000
+bootstrap_seed: 2029
+
+base_model_config: configs/methods/supervised_macro_ft.yaml
+backbone_name: Qwen/Qwen3-Embedding-0.6B
+epochs: 3
+batch_size: 32
+max_seq_length: 256
+lr_backbone: 2.0e-6
+lr_head: 1.0e-3
+weight_decay: 0.01
