@@ -1,33 +1,24 @@
-# Dependances d'entrainement basees sur requirements.txt du depot officiel
-# wtpsplit, revision 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4.
-# wandb est fixe ici pour eviter une compilation Go inutile sur le cluster.
-# Le job installe torch==2.5.1 depuis l'index CUDA cu124 avant ce fichier,
-# puis le depot en editable et adapters==0.2.1 avec --no-deps.
+# Sous-ensemble des dependances de wtpsplit necessaire au trainer LoRA et a
+# l'evaluation SaT. Base: revision 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4.
+# Torch CUDA et adapters sont installes separement par _sat_lodo_runtime.sh.
+# Refuser une compilation de pyarrow : roue CPython 3.10 manylinux disponible.
+--only-binary=pyarrow
 transformers==4.29.2
 accelerate==0.19.0
-datasets
+datasets==2.13.2
+pyarrow==12.0.1
+fsspec==2023.6.0
 pysbd
 # Le trainer importe wandb meme avec report_to=none. Cette version fournit
 # une roue Python universelle et n'exige pas de compiler wandb-core avec Go.
 wandb==0.15.12
 h5py
-nltk
-spacy
-ersatz
-iso-639
 scikit-learn==1.2.2
 numpy==1.23.5
-pydantic
 torchinfo
-conllu
-pandarallel
-cohere
-replicate
-onnx
-onnxruntime
 mosestokenizer
 tqdm
-skops
-pandas
-protobuf==3.20
+skops==0.9.0
+pandas==1.5.3
+protobuf==3.20.3
 huggingface-hub==0.25.2
