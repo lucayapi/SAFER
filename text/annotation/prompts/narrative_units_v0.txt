@@ -1,0 +1,39 @@
+Tu préannotes des récits d'accidents pour une étude scientifique. Tu ne vois pas les
+segments proposés par SaT. Travaille uniquement à partir du récit fourni.
+
+Une unité factuelle est le plus petit passage continu interprétable qui rapporte
+une situation, un état, une action, un événement ou un résultat. Préserve les
+sous-chaînes exactes : les offsets sont des indices Python en caractères dans le
+texte fourni, à partir de zéro, début inclus et fin exclue. Ne normalise pas le
+texte, ne paraphrase pas, n'invente aucun fait. Les unités sont ordonnées et ne
+se chevauchent pas. Ne suppose aucun ordre A0 → A1 → B → C.
+
+Rôles proposés pour ce pilote :
+- A0 : situation ou activité de travail ;
+- A1 : condition défavorable explicitement rapportée, jamais inférée de l'accident ;
+- B : événement accidentel ou déviation ;
+- C : conséquence de l'accident ;
+- AUTRE : autre fait rapporté ne relevant pas des quatre rôles.
+
+Un passage non factuel n'est pas une unité : indique-le dans excluded_spans.
+Ne transforme pas un acte de secours en conséquence par défaut. Si une même
+phrase rapporte plusieurs faits, sépare-les si des passages continus distincts
+permettent de le faire sans perdre le sens. Si ce n'est pas possible, conserve le
+passage minimal interprétable et signale la difficulté dans issues.
+
+Assertion : AFFIRME, HYPOTHETIQUE, NIE ou INCERTAIN décrit le statut du fait
+dans le récit, et non ta confiance. HYPOTHETIQUE désigne une possibilité ou
+condition envisagée ; INCERTAIN une occurrence présentée comme incertaine.
+Une proposition niée n'est pas un accident avéré. Pour des paroles attribuées,
+sépare autant que possible le contenu rapporté de l'attribution ; signale les
+cas impossibles à séparer.
+
+Le booléen uncertain concerne seulement ton incertitude d'annotation. Utilise
+needs_review=true si une frontière, un rôle ou une assertion mérite vérification,
+ou si issues n'est pas vide. Sinon, needs_review=false. Une difficulté non
+résolue ne doit pas être masquée par AUTRE.
+
+Vérifie avant de répondre que, pour chaque unité, text est exactement égal à
+récit[start:end], et que les unités et excluded_spans ne se chevauchent pas.
+Signale dans issues tout passage factuel potentiellement omis. Réponds uniquement
+avec l'objet JSON conforme au schéma demandé.

@@ -1,0 +1,1345 @@
+from __future__ import annotations
+
+import contextlib
+import math
+import os
+import warnings
+from pathlib import Path
+from typing import Literal
+
+import numpy as np
+
+# Import skops before transformers: skops enumerates trusted types at import time
+# and can otherwise trigger transformers' lazy vision submodules (torchvision), which
+# wtpsplit does not use for segmentation.
+import skops.io as sio
+
+# avoid the "None of PyTorch, TensorFlow, etc. have been found" warning.
+with contextlib.redirect_stderr(open(os.devnull, "w")):
+    import transformers  # noqa
+
+from huggingface_hub import hf_hub_download
+from transformers import AutoConfig, AutoModelForTokenClassification, AutoTokenizer
+from transformers.utils.hub import cached_file
+
+from wtpsplit.extract import BertCharORTWrapper, SaTORTWrapper, PyTorchWrapper, extract
+from wtpsplit.utils import Constants, indices_to_sentences, sigmoid, token_to_char_probs
+from wtpsplit.utils.constraints import (
+    constrained_segmentation,
+    _enforce_segment_constraints,
+)
+from wtpsplit.utils.priors import create_prior_function
+
+__version__ = "2.2.2"
+
+# suppress docopt syntax warnings (triggered in Python 3.14+)
+warnings.filterwarnings("ignore", category=SyntaxWarning, module="docopt")
+# suppress torchaudio backend dispatch warning (triggered by skops)
+warnings.filterwarnings("ignore", category=UserWarning, message="Torchaudio's I/O functions now support.*")
+
+warnings.simplefilter("default", DeprecationWarning)  # show by default
+warnings.simplefilter("ignore", category=FutureWarning)  # for transformers
+
+
+def _manual_lora_merge(model, lora_load_path):
+    """Merge LoRA adapter weights directly into a model's parameters.
+
+    Lightweight alternative to ``adapters`` library that only
+    supports the ``merge_lora=True`` path (the default). Reads the
+    adapter‐hub file format produced by ``wtpsplit/train/train_lora.py``.
+    """
+    import json
+    import torch
+
+    lora_dir = Path(lora_load_path)
+
+    # --- read adapter config for LoRA hyper-parameters ---
+    config_path = lora_dir / "adapter_config.json"
+    with open(config_path) as f:
+        adapter_cfg = json.load(f)
+    try:
+        config_section = adapter_cfg["config"]
+        lora_r = config_section["r"]
+        lora_alpha = config_section["alpha"]
+        scaling = lora_alpha / lora_r
+    except KeyError as e:
+        raise ValueError(
+            f"Invalid LoRA adapter configuration in '{config_path}': "
+            f"missing required key {e!r}. Expected keys: 'config' with 'r' and 'alpha'."
+        ) from e
+    except TypeError as e:
+        raise ValueError(
+            f"Invalid LoRA adapter configuration in '{config_path}': "
+            "unexpected structure; expected a JSON object with a 'config' mapping containing 'r' and 'alpha'."
+        ) from e
+    except ZeroDivisionError as e:
+        raise ValueError(f"Invalid LoRA adapter configuration in '{config_path}': 'r' must be a non-zero value.") from e
+
+    # --- merge LoRA weight deltas into the base model ---
+    adapter_weights = torch.load(lora_dir / "pytorch_adapter.bin", map_location="cpu", weights_only=True)
+
+    # Group lora_A / lora_B pairs by their target module.
+    # Key pattern: ``<module_path>.loras.<adapter_name>.lora_A``
+    lora_pairs: dict = {}
+    for key, tensor in adapter_weights.items():
+        if ".loras." not in key:
+            continue
+        base_key = key.rsplit(".loras.", 1)[0]
+        if key.endswith(".lora_A"):
+            lora_pairs.setdefault(base_key, {})["A"] = tensor
+        elif key.endswith(".lora_B"):
+            lora_pairs.setdefault(base_key, {})["B"] = tensor
+
+    model_params = dict(model.named_parameters())
+    for base_key, pair in lora_pairs.items():
+        if "A" not in pair or "B" not in pair:
+            raise ValueError(
+                f"Incomplete LoRA pair for '{base_key}' in '{lora_dir / 'pytorch_adapter.bin'}': "
+                "each module must have both lora_A and lora_B weights."
+            )
+        param_key = base_key + ".weight"
+        if param_key not in model_params:
+            raise KeyError(f"LoRA target parameter '{param_key}' not found in model.")
+        param = model_params[param_key]
+        # LoRA merge: W_new = W + (alpha / r) * B @ A
+        delta = pair["B"] @ pair["A"]
+        with torch.no_grad():
+            param.add_(scaling * delta.to(device=param.device, dtype=param.dtype))
+
+    # --- load classification-head weights ---
+    head_path = lora_dir / "pytorch_model_head.bin"
+    if head_path.exists():
+        head_weights = torch.load(head_path, map_location="cpu", weights_only=True)
+        for key, tensor in head_weights.items():
+            if key in model_params:
+                with torch.no_grad():
+                    model_params[key].data.copy_(
+                        tensor.to(device=model_params[key].device, dtype=model_params[key].dtype)
+                    )
+
+
+class WtP:
+    def __init__(
+        self,
+        model_name_or_model,
+        from_pretrained_kwargs=None,
+        ort_providers=None,
+        ort_kwargs=None,
+        mixtures=None,
+        hub_prefix="benjamin",
+        ignore_legacy_warning=False,
+        language: str = None,
+    ):
+        self.model_name_or_model = model_name_or_model
+        self.ort_providers = ort_providers
+        self.ort_kwargs = ort_kwargs
+        self.language = language  # Store for language-aware prior defaults
+
+        mixture_path = None
+
+        if not ignore_legacy_warning:
+            # WtP is deprecated!
+            warnings.warn(
+                "You are using WtP, the old sentence segmentation model. "
+                "It is highly encouraged to use SaT instead due to strongly improved performance and efficiency. "
+                "See https://github.com/segment-any-text/wtpsplit for more info. "
+                "To ignore this warning, set ignore_legacy_warning=True.",
+                DeprecationWarning,
+            )
+
+        if isinstance(model_name_or_model, (str, Path)):
+            model_name = str(model_name_or_model)
+            is_local = os.path.isdir(model_name)
+
+            if not is_local and hub_prefix is not None:
+                model_name_to_fetch = f"{hub_prefix}/{model_name}"
+            else:
+                model_name_to_fetch = model_name
+
+            if is_local:
+                model_path = Path(model_name)
+                mixture_path = model_path / "mixtures.skops"
+                if not mixture_path.exists():
+                    mixture_path = None
+                onnx_path = model_path / "model.onnx"
+                if not onnx_path.exists():
+                    onnx_path = None
+            else:
+                try:
+                    mixture_path = cached_file(model_name_to_fetch, "mixtures.skops", **(from_pretrained_kwargs or {}))
+                except OSError:
+                    mixture_path = None
+
+                # no need to load if no ort_providers set
+                if ort_providers is not None:
+                    onnx_path = cached_file(model_name_to_fetch, "model.onnx", **(from_pretrained_kwargs or {}))
+                else:
+                    onnx_path = None
+
+            if ort_providers is not None:
+                if onnx_path is None:
+                    raise ValueError(
+                        "Could not find an ONNX model in the model directory. Try `use_ort=False` to run with PyTorch."
+                    )
+
+                try:
+                    import onnxruntime as ort  # noqa
+                except ModuleNotFoundError:
+                    raise ValueError("Please install `onnxruntime` to use WtP with an ONNX model.")
+
+                # to register models for AutoConfig
+                import wtpsplit.configs  # noqa
+
+                self.model = BertCharORTWrapper(
+                    AutoConfig.from_pretrained(model_name_to_fetch, **(from_pretrained_kwargs or {})),
+                    ort.InferenceSession(str(onnx_path), providers=ort_providers, **(ort_kwargs or {})),
+                )
+            else:
+                # to register models for AutoConfig
+                try:
+                    import torch  # noqa
+                except ModuleNotFoundError:
+                    raise ValueError("Please install `torch` to use WtP with a PyTorch model.")
+
+                import wtpsplit.models  # noqa
+
+                self.model = PyTorchWrapper(
+                    AutoModelForTokenClassification.from_pretrained(
+                        model_name_to_fetch, **(from_pretrained_kwargs or {})
+                    )
+                )
+        else:
+            if ort_providers is not None:
+                raise ValueError("You can only use onnxruntime with a model directory, not a model object.")
+
+            self.model = model_name_or_model
+
+        if mixtures is not None:
+            self.mixtures = mixtures
+        elif mixture_path is not None:
+            self.mixtures = sio.load(
+                mixture_path,
+                ["numpy.float32", "numpy.float64", "sklearn.linear_model._logistic.LogisticRegression"],
+            )
+        else:
+            self.mixtures = None
+
+    def __getattr__(self, name):
+        assert hasattr(self, "model")
+        return getattr(self.model, name)
+
+    def optimize(
+        self,
+        backend: str = "inductor",
+        *,
+        mode: str = None,
+        fullgraph: bool = False,
+        dynamic: bool = True,
+        **compile_kwargs,
+    ):
+        """Compile the PyTorch model with ``torch.compile`` (TorchInductor by default). Not available for ONNX."""
+        if not isinstance(self.model, PyTorchWrapper):
+            raise ValueError(
+                "optimize() only applies to PyTorch models loaded from a checkpoint. "
+                "It does not apply to ONNX Runtime (set ort_providers=None) or to ad-hoc model objects "
+                "that are not wrapped as expected."
+            )
+        self.model.optimize(
+            backend=backend, mode=mode, fullgraph=fullgraph, dynamic=dynamic, **compile_kwargs
+        )
+        return self
+
+    def predict_proba(
+        self,
+        text_or_texts,
+        lang_code: str = None,
+        style: str = None,
+        stride=256,
+        block_size: int = 512,
+        batch_size=32,
+        pad_last_batch: bool = False,
+        weighting: Literal["uniform", "hat"] = "uniform",
+        remove_whitespace_before_inference: bool = False,
+        outer_batch_size=1000,
+        return_paragraph_probabilities=False,
+        verbose: bool = False,
+    ):
+        if isinstance(text_or_texts, str):
+            return next(
+                self._predict_proba(
+                    [text_or_texts],
+                    lang_code=lang_code,
+                    style=style,
+                    stride=stride,
+                    block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    remove_whitespace_before_inference=remove_whitespace_before_inference,
+                    outer_batch_size=outer_batch_size,
+                    return_paragraph_probabilities=return_paragraph_probabilities,
+                    verbose=verbose,
+                )
+            )
+        else:
+            return self._predict_proba(
+                text_or_texts,
+                lang_code=lang_code,
+                style=style,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                return_paragraph_probabilities=return_paragraph_probabilities,
+                verbose=verbose,
+            )
+
+    def _predict_proba(
+        self,
+        texts,
+        lang_code: str,
+        style: str,
+        stride: int,
+        block_size: int,
+        batch_size: int,
+        pad_last_batch: bool,
+        weighting: Literal["uniform", "hat"],
+        remove_whitespace_before_inference: bool,
+        outer_batch_size: int,
+        return_paragraph_probabilities: bool,
+        verbose: bool,
+    ):
+        if style is not None:
+            if lang_code is None:
+                raise ValueError("Please specify a `lang_code` when passing a `style` to adapt to.")
+
+            if self.mixtures is None:
+                raise ValueError(
+                    "This model does not have any associated mixtures. Maybe they are missing from the model directory?"
+                )
+
+            try:
+                clf, _, _, _ = self.mixtures[lang_code][style]
+            except KeyError:
+                raise ValueError(f"Could not find a mixture for the style '{style}'.")
+        else:
+            clf = None
+
+        n_outer_batches = math.ceil(len(texts) / outer_batch_size)
+
+        for outer_batch_idx in range(n_outer_batches):
+            start, end = outer_batch_idx * outer_batch_size, min((outer_batch_idx + 1) * outer_batch_size, len(texts))
+
+            outer_batch_texts = texts[start:end]
+            input_texts = []
+            space_positions = []
+
+            for text in outer_batch_texts:
+                if remove_whitespace_before_inference:
+                    text_space_positions = []
+                    input_text = ""
+
+                    for c in text:
+                        if c == " ":
+                            text_space_positions.append(len(input_text) + len(text_space_positions))
+                        else:
+                            input_text += c
+
+                    space_positions.append(text_space_positions)
+                else:
+                    input_text = text
+
+                input_texts.append(input_text)
+
+            empty_string_indices = [i for i, text in enumerate(input_texts) if not text.strip()]
+            # remove empty strings from input_texts
+            input_texts = [text for text in input_texts if text.strip()]
+
+            if input_texts:
+                outer_batch_logits = extract(
+                    input_texts,
+                    self.model,
+                    lang_code=lang_code,
+                    stride=stride,
+                    max_block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    verbose=verbose,
+                )[0]
+            else:
+                outer_batch_logits = []
+
+            def newline_probability_fn(logits):
+                return sigmoid(logits[:, Constants.NEWLINE_INDEX])
+
+            # add back empty strings
+            for i in empty_string_indices:
+                outer_batch_logits.insert(i, np.ones([1, 1]) * -np.inf)
+
+            for i, (text, logits) in enumerate(zip(outer_batch_texts, outer_batch_logits)):
+                if style is not None:
+                    sentence_probs = clf.predict_proba(logits)[:, 1]
+                    newline_probs = newline_probability_fn(logits)
+                else:
+                    sentence_probs = newline_probs = newline_probability_fn(logits)
+
+                if remove_whitespace_before_inference:
+                    full_newline_probs, full_sentence_probs = list(newline_probs), list(sentence_probs)
+
+                    for j in space_positions[i]:
+                        full_newline_probs.insert(j, np.zeros_like(newline_probs[0]))
+                        full_sentence_probs.insert(j, np.zeros_like(sentence_probs[0]))
+
+                    newline_probs = np.array(full_newline_probs)
+                    sentence_probs = np.array(full_sentence_probs)
+
+                if return_paragraph_probabilities:
+                    yield sentence_probs, newline_probs
+                else:
+                    yield sentence_probs
+
+    def split(
+        self,
+        text_or_texts,
+        lang_code: str = None,
+        style: str = None,
+        threshold: float = None,  # ignored when max_length is set
+        stride=64,
+        block_size: int = 512,
+        batch_size=32,
+        pad_last_batch: bool = False,
+        weighting: Literal["uniform", "hat"] = "uniform",
+        remove_whitespace_before_inference: bool = False,
+        outer_batch_size=1000,
+        paragraph_threshold: float = 0.5,
+        strip_whitespace: bool = False,
+        do_paragraph_segmentation=False,
+        verbose: bool = False,
+        min_length: int = 1,
+        max_length: int = None,  # when set, segments may contain newlines; use ''.join(segments)
+        prior_type: str = "uniform",
+        prior_kwargs: dict = None,
+        algorithm: str = "viterbi",
+    ):
+        # Input validation
+        if max_length is not None and min_length > max_length:
+            raise ValueError(f"min_length ({min_length}) cannot be greater than max_length ({max_length})")
+        if min_length < 1:
+            raise ValueError(f"min_length must be >= 1, got {min_length}")
+        if max_length is not None and max_length < 1:
+            raise ValueError(f"max_length must be >= 1, got {max_length}")
+        valid_priors = ["uniform", "gaussian", "clipped_polynomial", "lognormal"]
+        if prior_type not in valid_priors:
+            raise ValueError(f"Unknown prior_type: '{prior_type}'. Must be one of {valid_priors}")
+        valid_algorithms = ["viterbi", "greedy"]
+        if algorithm not in valid_algorithms:
+            raise ValueError(f"Unknown algorithm: '{algorithm}'. Must be one of {valid_algorithms}")
+
+        if max_length is not None and threshold is not None:
+            warnings.warn(
+                "Both 'threshold' and 'max_length' are set. When using length-constrained "
+                "segmentation (max_length), the threshold parameter is ignored.",
+                UserWarning,
+            )
+
+        if isinstance(text_or_texts, str):
+            return next(
+                self._split(
+                    [text_or_texts],
+                    lang_code=lang_code,
+                    style=style,
+                    threshold=threshold,
+                    stride=stride,
+                    block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    remove_whitespace_before_inference=remove_whitespace_before_inference,
+                    outer_batch_size=outer_batch_size,
+                    paragraph_threshold=paragraph_threshold,
+                    strip_whitespace=strip_whitespace,
+                    do_paragraph_segmentation=do_paragraph_segmentation,
+                    verbose=verbose,
+                    min_length=min_length,
+                    max_length=max_length,
+                    prior_type=prior_type,
+                    prior_kwargs=prior_kwargs,
+                    algorithm=algorithm,
+                )
+            )
+        else:
+            return self._split(
+                text_or_texts,
+                lang_code=lang_code,
+                style=style,
+                threshold=threshold,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                paragraph_threshold=paragraph_threshold,
+                strip_whitespace=strip_whitespace,
+                do_paragraph_segmentation=do_paragraph_segmentation,
+                verbose=verbose,
+                min_length=min_length,
+                max_length=max_length,
+                prior_type=prior_type,
+                prior_kwargs=prior_kwargs,
+                algorithm=algorithm,
+            )
+
+    def get_threshold(self, lang_code: str, style: str, return_punctuation_threshold: bool = False):
+        try:
+            _, _, punctuation_threshold, threshold = self.mixtures[lang_code][style]
+        except KeyError:
+            raise ValueError(f"Could not find a mixture for the style '{style}' and language '{lang_code}'.")
+
+        if return_punctuation_threshold:
+            return punctuation_threshold
+
+        return threshold
+
+    def _split(
+        self,
+        texts,
+        lang_code: str | None,
+        style: str | None,
+        threshold: float | None,
+        stride: int,
+        block_size: int,
+        batch_size: int,
+        pad_last_batch: bool,
+        weighting: Literal["uniform", "hat"],
+        remove_whitespace_before_inference: bool,
+        outer_batch_size: int,
+        paragraph_threshold: float,
+        do_paragraph_segmentation: bool,
+        strip_whitespace: bool,
+        verbose: bool,
+        min_length: int,
+        max_length: int | None,
+        prior_type: str,
+        prior_kwargs: dict | None,
+        algorithm: str,
+    ):
+        if style is not None:
+            if lang_code is None:
+                raise ValueError("Please specify a `lang_code` when passing a `style` to adapt to.")
+
+            if self.mixtures is None:
+                raise ValueError(
+                    "This model does not have any associated mixtures. Maybe they are missing from the model directory?"
+                )
+
+            try:
+                _, _, default_threshold, _ = self.mixtures[lang_code][style]
+            except KeyError:
+                raise ValueError(f"Could not find a mixture for the style '{style}'.")
+        else:
+            # the established default for newline prob threshold is 0.01
+            default_threshold = 0.01
+
+        sentence_threshold = threshold if threshold is not None else default_threshold
+
+        for text, probs in zip(
+            texts,
+            self.predict_proba(
+                texts,
+                lang_code=lang_code,
+                style=style,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                return_paragraph_probabilities=do_paragraph_segmentation,
+                verbose=verbose,
+            ),
+        ):
+            if do_paragraph_segmentation:
+                sentence_probs, newline_probs = probs
+
+                offset = 0
+
+                paragraphs = []
+
+                for paragraph in indices_to_sentences(text, np.where(newline_probs > paragraph_threshold)[0]):
+                    sentences = []
+
+                    if max_length is not None or min_length > 1:
+                        paragraph_probs = sentence_probs[offset : offset + len(paragraph)]
+                        # Create fresh copy each iteration to avoid state leakage
+                        local_prior_kwargs = {} if prior_kwargs is None else prior_kwargs.copy()
+                        if max_length is not None:
+                            local_prior_kwargs["max_length"] = max_length
+                        # Use model's language for prior defaults if not explicitly set
+                        if (
+                            self.language
+                            and "lang_code" not in local_prior_kwargs
+                            and "target_length" not in local_prior_kwargs
+                        ):
+                            local_prior_kwargs["lang_code"] = self.language
+                        prior_fn = create_prior_function(prior_type, local_prior_kwargs)
+
+                        boundaries = constrained_segmentation(
+                            paragraph_probs, prior_fn, min_length=min_length, max_length=max_length, algorithm=algorithm
+                        )
+                        indices = [b - 1 for b in boundaries]
+
+                        sentences = _enforce_segment_constraints(
+                            paragraph, indices, min_length, max_length, strip_whitespace=strip_whitespace
+                        )
+                    else:
+                        for sentence in indices_to_sentences(
+                            paragraph,
+                            np.where(
+                                sentence_probs[offset : offset + len(paragraph)] > sentence_threshold,
+                            )[0],
+                            strip_whitespace=strip_whitespace,
+                        ):
+                            sentences.append(sentence)
+
+                    paragraphs.append(sentences)
+                    offset += len(paragraph)
+
+                yield paragraphs
+            else:
+                if max_length is not None or min_length > 1:
+                    # Create fresh copy each iteration to avoid state leakage
+                    local_prior_kwargs = {} if prior_kwargs is None else prior_kwargs.copy()
+                    if max_length is not None:
+                        local_prior_kwargs["max_length"] = max_length
+                    # Use model's language for prior defaults if not explicitly set
+                    if (
+                        self.language
+                        and "lang_code" not in local_prior_kwargs
+                        and "target_length" not in local_prior_kwargs
+                    ):
+                        local_prior_kwargs["lang_code"] = self.language
+                    prior_fn = create_prior_function(prior_type, local_prior_kwargs)
+                    boundaries = constrained_segmentation(
+                        probs, prior_fn, min_length=min_length, max_length=max_length, algorithm=algorithm
+                    )
+                    indices = [b - 1 for b in boundaries]
+                    sentences = _enforce_segment_constraints(
+                        text, indices, min_length, max_length, strip_whitespace=strip_whitespace
+                    )
+                else:
+                    sentences = indices_to_sentences(
+                        text, np.where(probs > sentence_threshold)[0], strip_whitespace=strip_whitespace
+                    )
+                yield sentences
+
+
+class SaT:
+    def __init__(
+        self,
+        model_name_or_model,
+        tokenizer_name_or_path="facebookAI/xlm-roberta-base",
+        from_pretrained_kwargs=None,
+        ort_providers=None,
+        ort_kwargs=None,
+        style_or_domain: str = None,
+        language: str = None,
+        lora_path: str = None,  # local
+        hub_prefix="segment-any-text",
+        merge_lora: bool = True,
+    ):
+        if not isinstance(model_name_or_model, (str, Path)):
+            raise TypeError(
+                f"`model_name_or_model` must be a string or Path (Hugging Face ID or local directory path), "
+                f"received object of type: {type(model_name_or_model)}. "
+                "For offline ONNX use, please provide the path to the directory containing 'model_optimized.onnx' and 'config.json'."
+            )
+
+        self.model_name_or_model = model_name_or_model
+        self.ort_providers = ort_providers
+        self.ort_kwargs = ort_kwargs
+        self.language = language  # Store for language-aware prior defaults
+
+        self.use_lora = False
+
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path)
+        self.special_tokens = [self.tokenizer.cls_token, self.tokenizer.sep_token, self.tokenizer.pad_token]
+
+        if isinstance(model_name_or_model, (str, Path)):
+            model_name = str(model_name_or_model)
+            is_local = os.path.isdir(model_name)
+
+            if not is_local and hub_prefix is not None:
+                model_name_to_fetch = f"{hub_prefix}/{model_name}"
+            else:
+                model_name_to_fetch = model_name
+
+            if is_local:
+                model_path = Path(model_name)
+                onnx_path = model_path / "model_optimized.onnx"
+                if not onnx_path.exists():
+                    onnx_path = None
+            else:
+                # no need to load if no ort_providers set
+                if ort_providers is not None:
+                    onnx_path = cached_file(
+                        model_name_to_fetch, "model_optimized.onnx", **(from_pretrained_kwargs or {})
+                    )
+                else:
+                    onnx_path = None
+
+            if ort_providers is not None:
+                if onnx_path is None:
+                    raise ValueError(
+                        "Could not find an ONNX model in the model directory. Try `use_ort=False` to run with PyTorch."
+                    )
+
+                try:
+                    import onnxruntime as ort  # noqa
+                except ModuleNotFoundError:
+                    raise ValueError("Please install `onnxruntime` to use SaT with an ONNX model.")
+
+                # to register models for AutoConfig
+                import wtpsplit.configs  # noqa
+
+                self.model = SaTORTWrapper(
+                    AutoConfig.from_pretrained(model_name_to_fetch, **(from_pretrained_kwargs or {})),
+                    ort.InferenceSession(str(onnx_path), providers=ort_providers, **(ort_kwargs or {})),
+                )
+                if lora_path:
+                    raise ValueError(
+                        "If using ONNX with LoRA, execute `scripts/export_to_onnx_sat.py` with `use_lora=True`."
+                        "Reference the chosen `output_dir` here for `model_name_or_model`. and set `lora_path=None`."
+                    )
+            else:
+                # to register models for AutoConfig
+                try:
+                    import torch  # noqa
+                except ModuleNotFoundError:
+                    raise ValueError("Please install `torch` to use WtP with a PyTorch model.")
+
+                import wtpsplit.models  # noqa
+
+                # Check if LoRA adapter has a head with different num_labels than the base model.
+                # This is needed because sm models have num_labels=1 but LoRA training uses num_labels=111+.
+                # We check BEFORE loading the model so we can load with the correct num_labels.
+                effective_kwargs = dict(from_pretrained_kwargs or {})
+                if lora_path or (style_or_domain and language):
+                    import json
+
+                    head_config_path = None
+                    adapter_num_labels = None
+
+                    try:
+                        if lora_path:
+                            # Local adapter: read head_config.json directly
+                            lora_dir = Path(lora_path)
+                            head_config_path = lora_dir / "head_config.json"
+                            if head_config_path.exists():
+                                with open(head_config_path) as f:
+                                    head_config = json.load(f)
+                                adapter_num_labels = head_config.get("num_labels")
+                        else:
+                            # Hub adapter: fetch head_config.json first to check num_labels
+                            try:
+                                head_config_file = hf_hub_download(
+                                    repo_id=model_name_to_fetch,
+                                    subfolder=f"loras/{style_or_domain}/{language}",
+                                    filename="head_config.json",
+                                    local_dir=Constants.CACHE_DIR,
+                                )
+                                head_config_path = Path(head_config_file)
+                                with open(head_config_path) as f:
+                                    head_config = json.load(f)
+                                adapter_num_labels = head_config.get("num_labels")
+                            except Exception:
+                                # If head_config.json doesn't exist or download fails,
+                                # proceed without num_labels detection (will fail later if mismatch)
+                                pass
+
+                        if adapter_num_labels is not None:
+                            # Get base model's num_labels
+                            base_config = AutoConfig.from_pretrained(model_name_to_fetch)
+                            base_num_labels = getattr(base_config, "num_labels", None)
+                            if base_num_labels != adapter_num_labels:
+                                # Warn if overriding user-provided values
+                                user_num_labels = effective_kwargs.get("num_labels")
+                                if user_num_labels is not None and user_num_labels != adapter_num_labels:
+                                    warnings.warn(
+                                        f"`num_labels` provided in `from_pretrained_kwargs` "
+                                        f"({user_num_labels}) is being overridden to "
+                                        f"{adapter_num_labels} to match the LoRA adapter head.",
+                                        UserWarning,
+                                    )
+                                user_ignore = effective_kwargs.get("ignore_mismatched_sizes")
+                                if user_ignore is not None and not user_ignore:
+                                    warnings.warn(
+                                        "`ignore_mismatched_sizes` provided in `from_pretrained_kwargs` "
+                                        "is being overridden to True to allow loading a LoRA adapter "
+                                        "with a different classification head size.",
+                                        UserWarning,
+                                    )
+                                # Override to match adapter's head
+                                effective_kwargs["num_labels"] = adapter_num_labels
+                                effective_kwargs["ignore_mismatched_sizes"] = True
+                    except (OSError, json.JSONDecodeError, ValueError) as e:
+                        raise RuntimeError(
+                            f"Failed to auto-detect 'num_labels' from LoRA head configuration"
+                            f"{f' at {head_config_path}' if head_config_path else ''}: {e}"
+                        ) from e
+
+                self.model = PyTorchWrapper(
+                    AutoModelForTokenClassification.from_pretrained(model_name_to_fetch, **effective_kwargs)
+                )
+            # LoRA LOADING
+            if not lora_path:
+                if (style_or_domain and not language) or (language and not style_or_domain):
+                    raise ValueError("Please specify both language and style_or_domain!")
+            if (style_or_domain and language) or lora_path:
+                try:
+                    # 1. Locate / download adapter files
+                    if not lora_path:
+                        for file in [
+                            "adapter_config.json",
+                            "head_config.json",
+                            "pytorch_adapter.bin",
+                            "pytorch_model_head.bin",
+                        ]:
+                            hf_hub_download(
+                                repo_id=model_name_to_fetch,
+                                subfolder=f"loras/{style_or_domain}/{language}",
+                                filename=file,
+                                local_dir=Constants.CACHE_DIR,
+                            )
+                        lora_load_path = str(Constants.CACHE_DIR / "loras" / style_or_domain / language)
+                    else:
+                        lora_load_path = str(lora_path)
+                        lora_dir = Path(lora_load_path)
+                        if not lora_dir.is_dir():
+                            raise FileNotFoundError(f"`lora_path` must be a directory, but got: {lora_load_path}")
+
+                        expected_files = [
+                            "adapter_config.json",
+                            "pytorch_adapter.bin",
+                        ]
+                        if True:  # keep in sync with load_adapter(with_head=True)
+                            expected_files.extend(["head_config.json", "pytorch_model_head.bin"])
+
+                        missing = [f for f in expected_files if not (lora_dir / f).exists()]
+                        if missing:
+                            raise FileNotFoundError(
+                                "Could not load LoRA adapter from `lora_path` because required files are missing.\n"
+                                f"- lora_path: {lora_load_path}\n"
+                                f"- missing: {missing}\n"
+                                "If you trained via `wtpsplit/train/train_lora.py`, the adapter is saved under:\n"
+                                "  <output_dir>/<dataset_name>/<language_code>/\n"
+                                "and that folder should contain the files listed above."
+                            )
+
+                    # 2. Load adapter – prefer `adapters` library, fall back to manual merge
+                    _has_adapters_lib = False
+                    try:
+                        import adapters  # noqa
+
+                        _has_adapters_lib = True
+                    except ImportError:
+                        pass
+
+                    if _has_adapters_lib:
+                        from adapters.models import MODEL_MIXIN_MAPPING  # noqa
+                        from adapters.models.bert.mixin_bert import BertModelAdaptersMixin  # noqa
+
+                        # monkey patch mixin to avoid forking whole adapters library
+                        MODEL_MIXIN_MAPPING["SubwordXLMRobertaModel"] = BertModelAdaptersMixin
+                        model_type = self.model.model.config.model_type
+                        # adapters need xlm-roberta as model type.
+                        self.model.model.config.model_type = "xlm-roberta"
+                        adapters.init(self.model.model)
+                        # reset model type (used later)
+                        self.model.model.config.model_type = model_type
+                        self.model.model.load_adapter(
+                            lora_load_path,
+                            set_active=True,
+                            with_head=True,
+                            load_as="sat-lora",
+                        )
+                        # merge lora weights into transformer for 0 efficiency overhead
+                        if merge_lora:
+                            self.model.model.merge_adapter("sat-lora")
+                            # After merging, keeping the adapter around can trigger confusing warnings
+                            # ("adapters available but none activated") in some adapters versions.
+                            try:
+                                self.model.model.delete_adapter("sat-lora")
+                            except Exception:
+                                pass
+                        else:
+                            # Some adapters versions ignore `set_active=True` on load; ensure activation.
+                            try:
+                                self.model.model.set_active_adapters("sat-lora")
+                            except Exception:
+                                pass
+                    else:
+                        # Manual LoRA merge – works without the `adapters` library.
+                        if not merge_lora:
+                            raise RuntimeError(
+                                "merge_lora=False requires the 'adapters' library which is not "
+                                "installed.\nInstall it with: pip install adapters\n"
+                                "Or use merge_lora=True (the default) which works without it."
+                            )
+                        _manual_lora_merge(self.model.model, lora_load_path)
+
+                    self.use_lora = True
+                except Exception as e:  # noqa
+                    if lora_path:
+                        raise RuntimeError(
+                            "Failed to load the local LoRA adapter provided via `lora_path`.\n"
+                            f"- lora_path: {lora_path}\n"
+                            "Tip: `lora_path` must point to the adapter folder containing "
+                            "`adapter_config.json`, `pytorch_adapter.bin` (and if trained with head: "
+                            "`head_config.json`, `pytorch_model_head.bin`).\n"
+                            "Note: Adapters are model-variant specific (e.g. sat-12l-sm vs sat-12l)."
+                        ) from e
+                    raise RuntimeError(
+                        "Failed to load the LoRA adapter from the Hugging Face Hub.\n"
+                        f"- style_or_domain: {style_or_domain!r}\n"
+                        f"- language: {language!r}\n"
+                        "Troubleshooting tips:\n"
+                        "- Ensure that an adapter with this (style_or_domain, language) combination "
+                        "exists on the Hub.\n"
+                        "- Check for typos and that both `style_or_domain` and `language` are "
+                        "supported values.\n"
+                        "- Verify that you have an active internet connection and, for private "
+                        "repositories, are logged in.\n"
+                        "- If you intended to load a local adapter instead, provide its directory "
+                        "via `lora_path`."
+                    ) from e
+        else:
+            if ort_providers is not None:
+                raise ValueError("You can only use onnxruntime with a model directory, not a model object.")
+
+            self.model = model_name_or_model
+
+    def __getattr__(self, name):
+        assert hasattr(self, "model")
+        return getattr(self.model, name)
+
+    def optimize(
+        self,
+        backend: str = "inductor",
+        *,
+        mode: str = None,
+        fullgraph: bool = False,
+        dynamic: bool = True,
+        **compile_kwargs,
+    ):
+        """Compile the PyTorch model with ``torch.compile`` (TorchInductor by default). Not available for ONNX."""
+        if not isinstance(self.model, PyTorchWrapper):
+            raise ValueError(
+                "optimize() only applies to PyTorch models loaded from a checkpoint. "
+                "It does not apply to ONNX Runtime (set ort_providers=None) or to ad-hoc model objects "
+                "that are not wrapped as expected."
+            )
+        self.model.optimize(
+            backend=backend, mode=mode, fullgraph=fullgraph, dynamic=dynamic, **compile_kwargs
+        )
+        return self
+
+    def predict_proba(
+        self,
+        text_or_texts,
+        stride=256,
+        block_size: int = 512,
+        batch_size=32,
+        pad_last_batch: bool = False,
+        weighting: Literal["uniform", "hat"] = "uniform",
+        remove_whitespace_before_inference: bool = False,
+        outer_batch_size=1000,
+        return_paragraph_probabilities=False,
+        verbose: bool = False,
+    ):
+        if isinstance(text_or_texts, str):
+            return next(
+                self._predict_proba(
+                    [text_or_texts],
+                    stride=stride,
+                    block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    remove_whitespace_before_inference=remove_whitespace_before_inference,
+                    outer_batch_size=outer_batch_size,
+                    return_paragraph_probabilities=return_paragraph_probabilities,
+                    verbose=verbose,
+                )
+            )
+        else:
+            return self._predict_proba(
+                text_or_texts,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                return_paragraph_probabilities=return_paragraph_probabilities,
+                verbose=verbose,
+            )
+
+    def _predict_proba(
+        self,
+        texts,
+        stride: int,
+        block_size: int,
+        batch_size: int,
+        pad_last_batch: bool,
+        weighting: Literal["uniform", "hat"],
+        remove_whitespace_before_inference: bool,
+        outer_batch_size: int,
+        return_paragraph_probabilities: bool,
+        verbose: bool,
+    ):
+        def newline_probability_fn(logits):
+            return sigmoid(logits[:, Constants.NEWLINE_INDEX])
+
+        n_outer_batches = math.ceil(len(texts) / outer_batch_size)
+
+        for outer_batch_idx in range(n_outer_batches):
+            start, end = outer_batch_idx * outer_batch_size, min((outer_batch_idx + 1) * outer_batch_size, len(texts))
+
+            outer_batch_texts = texts[start:end]
+            input_texts = []
+            space_positions = []
+
+            for text in outer_batch_texts:
+                if remove_whitespace_before_inference:
+                    text_space_positions = []
+                    input_text = ""
+
+                    for c in text:
+                        if c == " ":
+                            text_space_positions.append(len(input_text) + len(text_space_positions))
+                        else:
+                            input_text += c
+
+                    space_positions.append(text_space_positions)
+                else:
+                    input_text = text
+
+                input_texts.append(input_text)
+
+            empty_string_indices = [i for i, text in enumerate(input_texts) if not text.strip()]
+            # remove empty strings from input_texts
+            input_texts = [text for text in input_texts if text.strip()]
+            if input_texts:
+                outer_batch_logits, _, tokenizer, tokenizer_output = extract(
+                    input_texts,
+                    self.model,
+                    stride=stride,
+                    max_block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    verbose=verbose,
+                    tokenizer=self.tokenizer,
+                )
+
+                # convert token probabilities to character probabilities for the entire array
+                outer_batch_logits = [
+                    token_to_char_probs(
+                        input_texts[i],
+                        tokenizer_output["input_ids"][i],
+                        outer_batch_logits[i],
+                        self.special_tokens,
+                        tokenizer_output["offset_mapping"][i],
+                    )
+                    for i in range(len(input_texts))
+                ]
+            else:
+                outer_batch_logits = []
+
+            # add back empty strings
+            for i in empty_string_indices:
+                outer_batch_logits.insert(i, np.ones([1, 1]) * -np.inf)
+
+            for i, (text, logits) in enumerate(zip(outer_batch_texts, outer_batch_logits)):
+                sentence_probs = newline_probs = newline_probability_fn(logits)
+
+                if remove_whitespace_before_inference:
+                    full_newline_probs, full_sentence_probs = list(newline_probs), list(sentence_probs)
+
+                    for j in space_positions[i]:
+                        full_newline_probs.insert(j, np.zeros_like(newline_probs[0]))
+                        full_sentence_probs.insert(j, np.zeros_like(sentence_probs[0]))
+
+                    newline_probs = np.array(full_newline_probs)
+                    sentence_probs = np.array(full_sentence_probs)
+
+                if return_paragraph_probabilities:
+                    yield sentence_probs, newline_probs
+                else:
+                    yield sentence_probs
+
+    def split(
+        self,
+        text_or_texts,
+        threshold: float = None,  # ignored when max_length is set
+        stride=64,
+        block_size: int = 512,
+        batch_size=32,
+        pad_last_batch: bool = False,
+        weighting: Literal["uniform", "hat"] = "uniform",
+        remove_whitespace_before_inference: bool = False,
+        outer_batch_size=1000,
+        paragraph_threshold: float = 0.5,
+        strip_whitespace: bool = False,
+        do_paragraph_segmentation: bool = False,
+        split_on_input_newlines: bool = True,  # only applies when max_length is not set
+        treat_newline_as_space=None,  # Deprecated
+        verbose: bool = False,
+        min_length: int = 1,
+        max_length: int = None,  # when set, segments may contain newlines; use ''.join(segments)
+        prior_type: str = "uniform",
+        prior_kwargs: dict = None,
+        algorithm: str = "viterbi",
+    ):
+        if treat_newline_as_space is not None:
+            warnings.warn(
+                "treat_newlines_as_spaces is deprecated and will be removed in a future release. "
+                "Use split_on_input_newlines with inverse bools instead.",
+                DeprecationWarning,
+            )
+            split_on_input_newlines = not treat_newline_as_space
+
+        # Input validation
+        if max_length is not None and min_length > max_length:
+            raise ValueError(f"min_length ({min_length}) cannot be greater than max_length ({max_length})")
+        if min_length < 1:
+            raise ValueError(f"min_length must be >= 1, got {min_length}")
+        if max_length is not None and max_length < 1:
+            raise ValueError(f"max_length must be >= 1, got {max_length}")
+        valid_priors = ["uniform", "gaussian", "clipped_polynomial", "lognormal"]
+        if prior_type not in valid_priors:
+            raise ValueError(f"Unknown prior_type: '{prior_type}'. Must be one of {valid_priors}")
+        valid_algorithms = ["viterbi", "greedy"]
+        if algorithm not in valid_algorithms:
+            raise ValueError(f"Unknown algorithm: '{algorithm}'. Must be one of {valid_algorithms}")
+
+        if max_length is not None and threshold is not None:
+            warnings.warn(
+                "Both 'threshold' and 'max_length' are set. When using length-constrained "
+                "segmentation (max_length), the threshold parameter is ignored.",
+                UserWarning,
+            )
+
+        if (max_length is not None or min_length > 1) and split_on_input_newlines:
+            warnings.warn(
+                "When using length constraints (max_length/min_length), segments may contain newlines. "
+                "split_on_input_newlines is ignored; use ''.join(segments) to reconstruct the original text. "
+                "To split at newlines with constraints, pre-split your text at newlines and process each line.",
+                UserWarning,
+            )
+
+        if isinstance(text_or_texts, str):
+            return next(
+                self._split(
+                    [text_or_texts],
+                    threshold=threshold,
+                    stride=stride,
+                    block_size=block_size,
+                    batch_size=batch_size,
+                    pad_last_batch=pad_last_batch,
+                    weighting=weighting,
+                    remove_whitespace_before_inference=remove_whitespace_before_inference,
+                    outer_batch_size=outer_batch_size,
+                    paragraph_threshold=paragraph_threshold,
+                    strip_whitespace=strip_whitespace,
+                    do_paragraph_segmentation=do_paragraph_segmentation,
+                    split_on_input_newlines=split_on_input_newlines,
+                    verbose=verbose,
+                    min_length=min_length,
+                    max_length=max_length,
+                    prior_type=prior_type,
+                    prior_kwargs=prior_kwargs,
+                    algorithm=algorithm,
+                )
+            )
+        else:
+            return self._split(
+                text_or_texts,
+                threshold=threshold,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                paragraph_threshold=paragraph_threshold,
+                strip_whitespace=strip_whitespace,
+                do_paragraph_segmentation=do_paragraph_segmentation,
+                split_on_input_newlines=split_on_input_newlines,
+                verbose=verbose,
+                min_length=min_length,
+                max_length=max_length,
+                prior_type=prior_type,
+                prior_kwargs=prior_kwargs,
+                algorithm=algorithm,
+            )
+
+    def _split(
+        self,
+        texts,
+        threshold: float | None,
+        stride: int,
+        block_size: int,
+        batch_size: int,
+        pad_last_batch: bool,
+        weighting: Literal["uniform", "hat"],
+        paragraph_threshold: float,
+        remove_whitespace_before_inference: bool,
+        outer_batch_size: int,
+        do_paragraph_segmentation: bool,
+        split_on_input_newlines: bool,
+        min_length: int,
+        max_length: int | None,
+        strip_whitespace: bool,
+        verbose: bool,
+        prior_type: str,
+        prior_kwargs: dict | None,
+        algorithm: str,
+    ):
+        def get_default_threshold(model_str: str):
+            # basic type check for safety
+            if not isinstance(model_str, str):
+                warnings.warn(
+                    f"get_default_threshold received non-string argument: {type(model_str)}. Using base default."
+                )
+                return 0.025  # default fallback
+            if self.use_lora:
+                return 0.5
+            if "sm" in model_str:
+                return 0.25
+            if "no-limited-lookahead" in model_str and "sm" not in model_str:
+                return 0.01
+            return 0.025
+
+        default_threshold = get_default_threshold(self.model_name_or_model)
+        sentence_threshold = threshold if threshold is not None else default_threshold
+
+        for text, probs in zip(
+            texts,
+            self.predict_proba(
+                texts,
+                stride=stride,
+                block_size=block_size,
+                batch_size=batch_size,
+                pad_last_batch=pad_last_batch,
+                weighting=weighting,
+                remove_whitespace_before_inference=remove_whitespace_before_inference,
+                outer_batch_size=outer_batch_size,
+                return_paragraph_probabilities=do_paragraph_segmentation,
+                verbose=verbose,
+            ),
+        ):
+            if do_paragraph_segmentation:
+                sentence_probs, newline_probs = probs
+
+                offset = 0
+                paragraphs = []
+
+                for paragraph in indices_to_sentences(text, np.where(newline_probs > paragraph_threshold)[0]):
+                    sentences = []
+
+                    if max_length is not None or min_length > 1:
+                        paragraph_probs = sentence_probs[offset : offset + len(paragraph)]
+                        # Create fresh copy each iteration to avoid state leakage
+                        local_prior_kwargs = {} if prior_kwargs is None else prior_kwargs.copy()
+                        if max_length is not None:
+                            local_prior_kwargs["max_length"] = max_length
+                        # Use model's language for prior defaults if not explicitly set
+                        if (
+                            self.language
+                            and "lang_code" not in local_prior_kwargs
+                            and "target_length" not in local_prior_kwargs
+                        ):
+                            local_prior_kwargs["lang_code"] = self.language
+                        prior_fn = create_prior_function(prior_type, local_prior_kwargs)
+
+                        boundaries = constrained_segmentation(
+                            paragraph_probs, prior_fn, min_length=min_length, max_length=max_length, algorithm=algorithm
+                        )
+                        indices = [b - 1 for b in boundaries]
+
+                        sentences = _enforce_segment_constraints(
+                            paragraph, indices, min_length, max_length, strip_whitespace=strip_whitespace
+                        )
+                    else:
+                        for sentence in indices_to_sentences(
+                            paragraph,
+                            np.where(
+                                sentence_probs[offset : offset + len(paragraph)] > sentence_threshold,
+                            )[0],
+                            strip_whitespace=strip_whitespace,
+                        ):
+                            sentences.append(sentence)
+
+                    paragraphs.append(sentences)
+                    offset += len(paragraph)
+
+                yield paragraphs
+            else:
+                if max_length is not None or min_length > 1:
+                    # Create fresh copy each iteration to avoid state leakage
+                    local_prior_kwargs = {} if prior_kwargs is None else prior_kwargs.copy()
+                    if max_length is not None:
+                        local_prior_kwargs["max_length"] = max_length
+                    # Use model's language for prior defaults if not explicitly set
+                    if (
+                        self.language
+                        and "lang_code" not in local_prior_kwargs
+                        and "target_length" not in local_prior_kwargs
+                    ):
+                        local_prior_kwargs["lang_code"] = self.language
+                    prior_fn = create_prior_function(prior_type, local_prior_kwargs)
+
+                    boundaries = constrained_segmentation(
+                        probs, prior_fn, min_length=min_length, max_length=max_length, algorithm=algorithm
+                    )
+                    indices = [b - 1 for b in boundaries]
+                    sentences = _enforce_segment_constraints(
+                        text, indices, min_length, max_length, strip_whitespace=strip_whitespace
+                    )
+                    # Note: when constraints are used, newlines may appear inside segments.
+                    # Use "".join(segments) == text for reconstruction (not "\n".join()).
+                else:
+                    sentences = indices_to_sentences(
+                        text, np.where(probs > sentence_threshold)[0], strip_whitespace=strip_whitespace
+                    )
+
+                    if split_on_input_newlines:
+                        # within the model, newlines in the text were ignored - they were treated as spaces.
+                        # this is the default behavior: additionally split on newlines as provided in the input
+                        # Note: use "\n".join(segments) to reconstruct text (not "".join())
+                        new_sentences = []
+                        for i, sentence in enumerate(sentences):
+                            # Strip ONE trailing newline from non-final segments to avoid
+                            # duplicate delimiters when joined (but preserve internal newlines)
+                            if i < len(sentences) - 1 and sentence.endswith("\n"):
+                                sentence = sentence[:-1]
+                            new_sentences.extend(sentence.split("\n"))
+                        sentences = new_sentences
+                    else:
+                        warnings.warn(
+                            "split_on_input_newlines=False will lead to newlines in the output "
+                            "if they were present in the input. Within the model, such newlines are "
+                            "treated as spaces. "
+                            "If you want to split on such newlines, set split_on_input_newlines=True."
+                        )
+                yield sentences

@@ -1,0 +1,30 @@
+# Dependances d'entrainement du depot officiel wtpsplit, revision
+# 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4 (requirements.txt).
+# Le job installe torch==2.5.1 depuis l'index CUDA cu124 avant ce fichier,
+# puis le depot en editable et adapters==0.2.1 avec --no-deps.
+transformers==4.29.2
+accelerate==0.19.0
+datasets
+pysbd
+wandb
+h5py
+nltk
+spacy
+ersatz
+iso-639
+scikit-learn==1.2.2
+numpy==1.23.5
+pydantic
+torchinfo
+conllu
+pandarallel
+cohere
+replicate
+onnx
+onnxruntime
+mosestokenizer
+tqdm
+skops
+pandas
+protobuf==3.20
+huggingface-hub==0.25.2
