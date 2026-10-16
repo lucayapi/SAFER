@@ -398,6 +398,24 @@ def run_trainer(repo: Path, config: dict, config_path: Path) -> None:
                    cwd=repo, env=env, check=True)
 
 
+def export_loss_history(trainer_state: Path, output_csv: Path) -> None:
+    """Keep loss values independently of rotating training checkpoints."""
+    state = json.loads(trainer_state.read_text(encoding="utf-8"))
+    history = state.get("log_history")
+    if not isinstance(history, list):
+        raise ValueError(f"Missing log_history in {trainer_state}")
+    rows = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        for metric, value in entry.items():
+            if metric in {"loss", "eval_loss", "train_loss"} or metric.endswith("/loss"):
+                rows.append({"step": entry.get("step"), "epoch": entry.get("epoch"),
+                             "metric": metric, "value": value,
+                             "learning_rate": entry.get("learning_rate")})
+    write_csv(output_csv, rows, ("step", "epoch", "metric", "value", "learning_rate"))
+
+
 def base_config(bundle: Path, target: str, output_dir: Path) -> dict:
     config = json.loads(TEMPLATE.read_text(encoding="utf-8"))
     if config.get("model_name_or_path") != "segment-any-text/" + MODEL or config.get("subsample") is not None:
@@ -449,6 +467,8 @@ def smoke(args: argparse.Namespace) -> None:
                    "per_device_eval_batch_size": 2,
                    "gradient_accumulation_steps": 1})
     run_trainer(repo, config, smoke_dir / "config.json")
+    export_loss_history(smoke_dir / "trainer" / "trainer_state.json",
+                        smoke_dir / "loss_history.csv")
     adapter = adapter_folder(smoke_dir / "trainer")
     if not adapter_exists(adapter):
         raise RuntimeError(f"Smoke adapter not saved at {adapter}")
@@ -502,6 +522,9 @@ def fit(args: argparse.Namespace) -> None:
         run_trainer(repo, config, run / "config.json")
         if not adapter_exists(adapter):
             raise RuntimeError(f"Trainer finished without a loadable adapter: {adapter}")
+    state_path = output_dir / "trainer_state.json"
+    if state_path.is_file():
+        export_loss_history(state_path, run / "loss_history.csv")
     write_json(run / "training_done.json", {"target": target, "model": MODEL,
                "seed": manifest["seed"], "adapter": str(adapter),
                "wtpsplit_revision": revision,

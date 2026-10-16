@@ -1,0 +1,5 @@
+﻿step,epoch,metric,value,learning_rate
+50,0.5,loss,0.8,0.0002
+100,1.0,eval_loss,0.6,
+100,1.0,eval_safer_lodo/fr/loss,0.6,
+100,1.0,train_loss,0.7,

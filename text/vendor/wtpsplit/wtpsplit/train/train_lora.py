@@ -569,6 +569,7 @@ def main():
                     **kwargs,
                 )
                 trainer.train(resume_from_checkpoint=training_args.resume_from_checkpoint)
+                trainer.save_state()
                 logger.warning(f"Finished training for {lang} {dataset_name}.")
 
                 # only save trained module

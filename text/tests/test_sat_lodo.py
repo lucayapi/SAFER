@@ -155,3 +155,22 @@ def test_exact_metric_and_threshold_selection_use_only_validation(tmp_path: Path
     assert sat_lodo.counts_for([row], db, "base", 0.25)["exact_f1"] == 1
     assert sat_lodo.counts_for([row], db, "base", 0.10)["exact_f1"] == 0
     db.close()
+
+
+def test_export_loss_history_keeps_train_and_validation_values(tmp_path: Path) -> None:
+    import csv
+
+    state = tmp_path / "trainer_state.json"
+    state.write_text(json.dumps({"log_history": [
+        {"step": 50, "epoch": 0.5, "loss": 0.8, "learning_rate": 0.0002},
+        {"step": 100, "epoch": 1.0, "eval_loss": 0.6,
+         "eval_safer_lodo/fr/loss": 0.6, "eval_runtime": 2.0},
+        {"step": 100, "epoch": 1.0, "train_loss": 0.7},
+    ]}), encoding="utf-8")
+    output = tmp_path / "loss_history.csv"
+    sat_lodo.export_loss_history(state, output)
+    with output.open(encoding="utf-8-sig", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    assert [(row["step"], row["metric"], row["value"]) for row in rows] == [
+        ("50", "loss", "0.8"), ("100", "eval_loss", "0.6"),
+        ("100", "eval_safer_lodo/fr/loss", "0.6"), ("100", "train_loss", "0.7")]

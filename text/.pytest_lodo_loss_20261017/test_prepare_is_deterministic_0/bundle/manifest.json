@@ -1,0 +1,123 @@
+{
+  "created_at_utc": "2026-10-16T23:40:07.297138+00:00",
+  "reference": "AI_DIRECT_PREANNOTATIONS_NOT_HUMAN_GOLD",
+  "model": "sat-12l-sm",
+  "seed": 42,
+  "corpora": [
+    "btp",
+    "metallurgie",
+    "caou_chimie_plas",
+    "bois_textille",
+    "service_temporaire",
+    "nicollin"
+  ],
+  "fold_order": [
+    "btp",
+    "metallurgie",
+    "caou_chimie_plas",
+    "bois_textille",
+    "service_temporaire",
+    "nicollin"
+  ],
+  "train_fraction": 0.8,
+  "thresholds": [
+    0.01,
+    0.05,
+    0.1,
+    0.2,
+    0.25,
+    0.3,
+    0.4,
+    0.5,
+    0.6,
+    0.7,
+    0.8,
+    0.9
+  ],
+  "default_threshold": 0.25,
+  "eligibility": "direct v2; no issues/uncertain; exact nonoverlapping offsets; no alphanumeric gaps; no newlines inside units",
+  "training_gap_policy": "gaps prefix next unit; trailing gap suffix last; CR/LF in gaps become spaces only in derived training chunks",
+  "source_report": {
+    "btp": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 0,
+      "documents_sha256": "5755d029b765351592f6d71927d653ca27db0f12b7a1adf9ff76bbf89e4b3084",
+      "annotations_sha256": "f3b1c05fc249746be631fb31d57ca616e318deaebffccb8c47b622b6b2b12472"
+    },
+    "metallurgie": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 0,
+      "documents_sha256": "bddf82e2dc0a9831225e1b462fd1a67ae0a286e1973193af66707e99ef174c54",
+      "annotations_sha256": "d37168c3573c402d4f0d27877795bf4de1c7594ca04f9f94f85d5e5365b5eb53"
+    },
+    "caou_chimie_plas": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 0,
+      "documents_sha256": "fd11d8960878a120c648ed11f8ce7594bffa61efa467b9e029f53faf2e3bd941",
+      "annotations_sha256": "c13f0a17c2d57a6c0d8f960c235f39c632f126911fac862fd9af56b5475d656f"
+    },
+    "bois_textille": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 0,
+      "documents_sha256": "ad5171118e0159b4af08231dd21bb20ee10c3d6505a82fc440bbec4d2fa98619",
+      "annotations_sha256": "473829fd74790b26d48994328d022d4a370032501abbb2602c4c8a4249377dd8"
+    },
+    "service_temporaire": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 0,
+      "documents_sha256": "3def8ac35e963de045c2c15b78de1fc7e148ed0a104a17a3c3a1d6fe8b3a5b00",
+      "annotations_sha256": "e9aa47437ce04fac23f6aaf4b535dd1510c7da5a517ff373e7040e764d3f9b42"
+    },
+    "nicollin": {
+      "documents": 5,
+      "eligible": 5,
+      "excluded": {},
+      "training_newline_characters_replaced": 5,
+      "documents_sha256": "359e5b8bede010eb0e537e6746acbffaaadace16c869a10444a3be5d7246199a",
+      "annotations_sha256": "084fe454096567dcf903a3754adf58d154a8c7200aa124151c1fcf75204be256"
+    }
+  },
+  "template_sha256": "14e07c2d14d8fa99f091c4b3861c21c2cfd56ac2f4da7b54aea93d6c1d4c2de3",
+  "files": {
+    "folds/target_btp/train.jsonl": "100a5938f9d2db13081ec77f069998a4ad382317c24f5bcde2670eda63a0dc83",
+    "folds/target_btp/val.jsonl": "050507ab50e5a04fb7ff108e0afa95e2d7e6069431919f9493fbc25cdbe57022",
+    "folds/target_btp/test.jsonl": "7a59dd09f021226c5bb5c32134b96b158cd2ffb83944820ffd611d4c92606255",
+    "folds/target_btp/split_ids.json": "a2fd747922925c58bc76efd44bc919bfb4e277c1b8da05728623d51a44977cd6",
+    "folds/target_btp/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27",
+    "folds/target_metallurgie/train.jsonl": "7b4989feb1b1ac0af6ff3f23f793f192caaa092bf848859d8385fe5b23c03c43",
+    "folds/target_metallurgie/val.jsonl": "1236f2c65892c237c93806514a4646df24c5761b6fcc6883f061608665b2ea13",
+    "folds/target_metallurgie/test.jsonl": "e85ef5409860f05f74ae90ada7c07eca80ac9fb7bebc3c0bf1fe163680e24374",
+    "folds/target_metallurgie/split_ids.json": "3352ba6c7f19395515af827ae550ef60ef18672f27438df205b716f68e4375d2",
+    "folds/target_metallurgie/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27",
+    "folds/target_caou_chimie_plas/train.jsonl": "e7fec26a4b98f62d4fb61227c890d71cab705d3770d777b98e77d47542faedc9",
+    "folds/target_caou_chimie_plas/val.jsonl": "69838d86b4658c210f35c901c8f8cbac61a13489a72236eab159305c79f4afba",
+    "folds/target_caou_chimie_plas/test.jsonl": "4049bd8ed19e9eaaf76cf7a98a2efa2e41a04b92c5fc8b123aba95bd649d6f27",
+    "folds/target_caou_chimie_plas/split_ids.json": "0116fe567ff6c8e6a8ca1f5a9eb3b533dc4e4e5cf7f88b273ab873e3f662753c",
+    "folds/target_caou_chimie_plas/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27",
+    "folds/target_bois_textille/train.jsonl": "f36fffecbe406793bbca65263a96d63b16cd759fa75a6c71095ebcc33c7b3d4e",
+    "folds/target_bois_textille/val.jsonl": "9ada3a5b4dfeda537c4520b0148e8c21a17798f2b9b20b7e76960635a309f8c3",
+    "folds/target_bois_textille/test.jsonl": "6856039d7190d12e8ad0a9409e16c399badc5d891fd1921e5440b8cde21093bf",
+    "folds/target_bois_textille/split_ids.json": "c63165f254d371978ea38d95a6eb764785de204710a9e0c323c09e28fdb3efea",
+    "folds/target_bois_textille/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27",
+    "folds/target_service_temporaire/train.jsonl": "846918bf3a3f07f6b245d060c2a39e5e3d19ff5f27d51c35e24c9c11f7f0fa8a",
+    "folds/target_service_temporaire/val.jsonl": "3424a938ab0f44cfd482d97deb381ce33f5ceeee368823dd1986a609777c3617",
+    "folds/target_service_temporaire/test.jsonl": "0bce766081e69fd24b7b46bd7820905e09ccf13ea090b127099c5d649feba8c5",
+    "folds/target_service_temporaire/split_ids.json": "c50a59524cfae26ad10364d737945488722bd32c745adc926368a79ec4adb4a1",
+    "folds/target_service_temporaire/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27",
+    "folds/target_nicollin/train.jsonl": "4d0c401f83f356836083dc13924e2d842d3e097adad32ac6f11e70ce0d75d67b",
+    "folds/target_nicollin/val.jsonl": "11ff05b0fef760778e6ee866bb531ef35e3fac00766d029183642ba79a054b6a",
+    "folds/target_nicollin/test.jsonl": "e740cb902a52aed705564751cec10836f7003cc95941b5c97234d8c7145149cf",
+    "folds/target_nicollin/split_ids.json": "59bc6ff72796f252a3ae778b46d015461285351fab6d28fda98cd89f1729b453",
+    "folds/target_nicollin/training.pth": "ae5128c7aab49a8e4a1b28bf39502eff742f7649d4f2b51e5ea2f0322cad5b27"
+  }
+}

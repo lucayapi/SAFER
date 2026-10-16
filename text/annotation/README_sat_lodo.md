@@ -110,8 +110,18 @@ Une tâche relancée reprend le dernier checkpoint officiel disponible. Si son
 adaptateur final existe déjà, elle reprend directement l'évaluation. Chaque
 tâche écrit `target_<corpus>/metrics.json`, les courbes de seuils sur la
 validation source et une base SQLite de prédictions permettant de reprendre
-l'évaluation sans recommencer les inférences terminées. Une fois les six
-tâches terminées :
+l'évaluation sans recommencer les inférences terminées.
+
+Les valeurs de loss d'entraînement et de validation sont aussi conservées dans
+`target_<corpus>/trainer/trainer_state.json` (historique complet du trainer)
+et dans `target_<corpus>/loss_history.csv` (une ligne par valeur journalisée,
+avec le pas et l'époque). Le fichier CSV est produit à la fin de
+l'entraînement ; pendant l'exécution, les valeurs restent visibles dans le
+journal Slurm `.out`. Le job smoke produit ses propres fichiers analogues sous
+`smoke/`. Les checkpoints intermédiaires conservent l'historique atteint au
+moment de chaque sauvegarde, ce qui aide en cas d'interruption.
+
+Une fois les six tâches terminées :
 
 ```bash
 sbatch text/jobs/sat_lodo_summary.sh

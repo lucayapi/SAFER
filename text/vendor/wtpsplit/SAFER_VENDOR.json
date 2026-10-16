@@ -2,7 +2,7 @@
   "source": "https://github.com/segment-any-text/wtpsplit",
   "revision": "3ef928c8e163d11dc6f6336ad610bff2ffe0bda4",
   "license": "MIT",
-  "note": "Tracked upstream checkout, excluding only its .git metadata and .gitignore.",
+  "note": "Vendored upstream checkout with the documented local Trainer state persistence patch; .git metadata and .gitignore excluded.",
   "files": {
     ".gitattributes": "a9f3c6d84a6938d53b60b83021d5fd1c309ec0fa4557b0327470cbc8e4af573c",
     ".github/workflows/python.yml": "e2065d50633da87db10398bd594f0cf4bd3702c1fcc03ebb36a5af24abbfa258",
@@ -358,7 +358,7 @@
     "wtpsplit/train/evaluate.py": "b990db0f2c7e6c3a504eade0365fc40f91d9b175c1660e8fb56166cd5ffa2340",
     "wtpsplit/train/hf_compat.py": "0355b3d326add37b8e82a617e02b5d51d359ca2d8d9a4633866d7f3ff50515e0",
     "wtpsplit/train/train.py": "2837057920c821cb61ff9f267d98447df7c9c80ec824f8f50d05e195561ce2cc",
-    "wtpsplit/train/train_lora.py": "243553ef2a3cc855e3e7a5078978a5fc0d5343fa915ef66c09c73a30dffb3f00",
+    "wtpsplit/train/train_lora.py": "7a050618c11626ccf5d396f240acd8395adefd1380a545c0d190dfb14a47fb98",
     "wtpsplit/train/train_SM.py": "d36d3cd221535d6f6f63126c575dd187eb6fca27fca79f97cb0c00068d037404",
     "wtpsplit/train/trainer.py": "cc6f2ef7fdb409d627c078bb25553e93e43e3b3c4188410e67a7309eca2509ab",
     "wtpsplit/train/transformers_trainer_imports.py": "3f9edb9f6e7d481788a0bb90af394b4b38d9a2fba5241af10004b6403b3e3384",
@@ -370,5 +370,8 @@
     "wtpsplit/utils/download_spacy.py": "3ca86f2a656b8fa4a66ed8e8d838f3a33fd3e655a7a56b5da66dd05035f7e063",
     "wtpsplit/utils/priors.py": "b2de7c8f05f6aa6f9476695cde46ed3f4917038f0a31abcc1fd3e8eeb686c965",
     "wtpsplit/utils/remove_unks.py": "dd3d0400ed7193d72796318ac363600ceaff0b459dbb7c76de97657af24805ca"
+  },
+  "local_modifications": {
+    "wtpsplit/train/train_lora.py": "Persist the complete Hugging Face Trainer state after training, including logged train and evaluation losses."
   }
 }
