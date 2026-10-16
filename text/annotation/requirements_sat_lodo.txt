@@ -1,12 +1,15 @@
-# Dependances d'entrainement du depot officiel wtpsplit, revision
-# 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4 (requirements.txt).
+# Dependances d'entrainement basees sur requirements.txt du depot officiel
+# wtpsplit, revision 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4.
+# wandb est fixe ici pour eviter une compilation Go inutile sur le cluster.
 # Le job installe torch==2.5.1 depuis l'index CUDA cu124 avant ce fichier,
 # puis le depot en editable et adapters==0.2.1 avec --no-deps.
 transformers==4.29.2
 accelerate==0.19.0
 datasets
 pysbd
-wandb
+# Le trainer importe wandb meme avec report_to=none. Cette version fournit
+# une roue Python universelle et n'exige pas de compiler wandb-core avec Go.
+wandb==0.15.12
 h5py
 nltk
 spacy
