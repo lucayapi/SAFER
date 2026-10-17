@@ -409,11 +409,93 @@ def select_model(bundle: Path, run: Path, model_dir: Path,
     return selection, adapters[chosen["candidate"]]
 
 
+def smoke(args: argparse.Namespace) -> None:
+    """Exercise the new bundle, trainer, checkpoint export and adapted inference."""
+    import torch
+
+    bundle = Path(args.bundle).resolve()
+    check_bundle(bundle)
+    root = Path(args.run_root).resolve()
+    marker = root / "smoke_ok.json"
+    expected = run_signature(bundle)
+    if marker.is_file():
+        if json.loads(marker.read_text(encoding="utf-8"))["signature"] != expected:
+            raise ValueError("Smoke result belongs to different code or data")
+        print(f"Smoke already passed: {marker}", flush=True)
+        return
+    repo = Path(args.wtpsplit_repo).resolve()
+    base.legacy.git_revision(repo)
+    base.legacy.gpu_runtime(repo)
+    model_dir, tokenizer_dir = base.pinned_backbone(bundle)
+    source = base.CORPORA[0]
+    run = root / "smoke"
+    bind_run(run, bundle)
+    original = torch.load(bundle / "folds" / f"target_{source}" / "training.pth",
+                          map_location="cpu", weights_only=False)
+    examples = original["fr"]["sentence"][base.DATASET_NAME]
+    sample_data = {"fr": {"sentence": {base.DATASET_NAME: {
+        "meta": {"train_data": examples["meta"]["train_data"][:8]},
+        "data": examples["data"][:4]}}}}
+    sample_path = run / "training.pth"
+    if not sample_path.is_file():
+        torch.save(sample_data, sample_path)
+    elif torch.load(sample_path, map_location="cpu", weights_only=False) != sample_data:
+        raise ValueError("Smoke training sample changed")
+    trainer = run / "trainer"
+    config = base.trainer_config(bundle, source, trainer, model_dir, tokenizer_dir)
+    config.update({"text_path": str(sample_path), "num_train_epochs": 1,
+                   "max_steps": 2, "save_steps": 1, "save_total_limit": None,
+                   "load_best_model_at_end": False,
+                   "per_device_train_batch_size": 2, "per_device_eval_batch_size": 2,
+                   "gradient_accumulation_steps": 1, "logging_steps": 1})
+    final_adapter = base.legacy.adapter_folder(trainer)
+    if not checkpoints.complete_adapter(final_adapter):
+        latest = checkpoints.latest_resumable_checkpoint(trainer)
+        if latest:
+            config["resume_from_checkpoint"] = str(latest)
+        checkpoints.run_upstream(repo, config, run / "config.json")
+    if not checkpoints.complete_adapter(final_adapter):
+        raise RuntimeError("Smoke trainer did not save an adapter")
+    choices = candidates(trainer, 1)
+    intermediate = next((row for row in choices if row["checkpoint"] is not None), None)
+    if intermediate is None:
+        raise RuntimeError("Smoke trainer did not save an intermediate checkpoint")
+    exported = run / "checkpoint_adapter"
+    checkpoints.export_checkpoint_adapter(intermediate["checkpoint"], exported,
+                                          final_adapter)
+    val = base.read_jsonl(bundle / "folds" / f"target_{source}" / "val.jsonl")[:4]
+    selections = []
+    for label, adapter in (("checkpoint", exported), ("final", final_adapter)):
+        cache = run / f"{label}_probabilities.sqlite3"
+        cache_binding(cache, bundle, adapter)
+        with closing(base._probability_connection(cache, create=True)) as db:
+            sat = base.load_pinned_sat(model_dir, tokenizer_dir, adapter)
+            infer_fixed_batches(sat, db, val, f"Smoke {label}")
+            del sat
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            curve = validation_curve(val, db, label, intermediate["step"] if
+                                     label == "checkpoint" else choices[-1]["step"], 0.0)
+            selections.extend(curve)
+    best = best_candidate(selections)
+    atomic_json(marker, {"signature": expected, "source": source,
+                         "n_train": 8, "n_validation": len(val),
+                         "checkpoint": intermediate["step"],
+                         "selected_candidate": best["candidate"],
+                         "selected_threshold": best["threshold"],
+                         "adapter_sha256": base.digest(final_adapter / "pytorch_adapter.bin")})
+    print(json.dumps({"smoke_ok": True, "marker": str(marker)}, indent=2), flush=True)
+
+
 def fit(args: argparse.Namespace) -> None:
     import torch
 
     bundle = Path(args.bundle).resolve()
     manifest = check_bundle(bundle)
+    smoke_marker = Path(args.run_root).resolve() / "smoke_ok.json"
+    if not smoke_marker.is_file() or json.loads(smoke_marker.read_text(
+            encoding="utf-8")).get("signature") != run_signature(bundle):
+        raise RuntimeError("Run the in-domain smoke job before the six GPU jobs")
     if not 0 <= args.task_index < len(base.CORPORA):
         raise ValueError("Slurm task index must be in 0..5")
     source = manifest["fold_order"][args.task_index]
@@ -642,6 +724,11 @@ def main() -> None:
     check_cmd = commands.add_parser("check-bundle")
     check_cmd.add_argument("--bundle", type=Path, default=BUNDLE)
     check_cmd.set_defaults(func=check_command)
+    smoke_cmd = commands.add_parser("smoke")
+    smoke_cmd.add_argument("--bundle", type=Path, required=True)
+    smoke_cmd.add_argument("--run-root", type=Path, required=True)
+    smoke_cmd.add_argument("--wtpsplit-repo", type=Path, required=True)
+    smoke_cmd.set_defaults(func=smoke)
     fit_cmd = commands.add_parser("fit")
     fit_cmd.add_argument("--bundle", type=Path, required=True)
     fit_cmd.add_argument("--run-root", type=Path, required=True)

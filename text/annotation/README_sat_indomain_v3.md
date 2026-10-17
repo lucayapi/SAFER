@@ -47,15 +47,15 @@ conservé le paquet privé `sat12l_sm_gold_v3_rq1` de l'expérience précédente
 installé l'environnement `.venv1` déjà utilisé par les jobs RQ1 :
 
 ```bash
-prep=$(sbatch --parsable text/jobs/sat_indomain_v3_prepare.sh)
-train=$(sbatch --parsable --dependency=afterok:$prep text/jobs/sat_indomain_v3_gpu.sh)
-sbatch --dependency=afterok:$train text/jobs/sat_indomain_v3_summary.sh
+sbatch text/jobs/sat_indomain_v3_launch.sh
 ```
 
-Le premier job reconstruit le nouveau paquet à partir de la référence privée
-déjà présente sur le cluster. Il n'envoie aucune donnée dans Git. Le deuxième
-est un tableau Slurm `0-5%2` avec au plus deux GPU simultanés. Le troisième ne
-s'exécute que si **toutes** les tâches GPU ont réussi. Les journaux Slurm
+Ce job reconstruit le nouveau paquet à partir de la référence privée déjà
+présente sur le cluster, puis soumet un essai GPU court, un tableau Slurm
+`0-5%2` avec au plus deux GPU simultanés et une synthèse dépendante de sa réussite.
+Il n'envoie aucune donnée dans Git. Le journal du job de lancement affiche
+les identifiants de l'essai, du tableau GPU et de la synthèse. Cette commande suppose que
+le cluster autorise `sbatch` depuis un job Slurm. Les journaux Slurm
 `slurm-sat-indomain-*.out/.err` se trouvent dans le dossier de soumission.
 
 Par défaut, le paquet privé est dans
