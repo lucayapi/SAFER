@@ -48,6 +48,10 @@ copier seulement `training.pth`, car l'évaluation utilise aussi les textes
 GOLD et les probabilités SaT initiales épinglées. Le code de `text/` et la
 copie versionnée de `text/vendor/wtpsplit/` doivent être présents sur le
 cluster via le dépôt. Aucun récit privé ne doit être commité.
+Le job accepte aussi le dossier déjà copié dans
+`SAFER/annotation/lodo_sat_transfer/sat12l_sm_gold_v3_rq1/` ; il affiche le
+chemin effectivement choisi. Si les données sont ailleurs, définir
+`SAT_LODO_BUNDLE` vers le dossier contenant `manifest.json` et `complete.json`.
 
 ## Lancer uniquement avec Slurm
 
