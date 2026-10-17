@@ -67,10 +67,11 @@ versions installées sont conservés dans `${SCRATCH:-$HOME}/safer_sat_lodo/runt
 Le fichier de dépendances ne garde que les paquets utilisés par l'entraînement
 LoRA et l'évaluation. `wandb` est fixé à `0.15.12` : le trainer l'importe même
 si `report_to=none`, et cette version dispose d'une roue Python qui évite la
-compilation Go du paquet récent. `datasets==2.13.2` et `pyarrow==12.0.1`
-évitent la compilation de PyArrow et de ses dépendances Rust sur Python 3.10 ;
-si la roue compatible n'est pas disponible, l'installation échoue directement
-au lieu de tenter une compilation. Aucune journalisation W&B n'est activée.
+compilation Go du paquet récent. `datasets==2.13.2`, `pyarrow==12.0.1` et
+`h5py==3.10.0` disposent de roues compatibles avec Python 3.10 sur Linux.
+Les bibliothèques natives doivent être installées depuis leurs roues ; si une
+roue compatible manque, l'installation échoue directement au lieu de tenter
+une compilation nécessitant Rust ou HDF5. Aucune journalisation W&B n'est activée.
 Cette étape suppose que les nœuds GPU ont accès à PyPI, l'index CUDA
 et Hugging Face pour installer les dépendances et obtenir le modèle. Si le cluster bloque ces téléchargements depuis les nœuds
 GPU, le journal du premier job indiquera l'étape en échec.

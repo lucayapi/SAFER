@@ -1,8 +1,8 @@
 # Sous-ensemble des dependances de wtpsplit necessaire au trainer LoRA et a
 # l'evaluation SaT. Base: revision 3ef928c8e163d11dc6f6336ad610bff2ffe0bda4.
 # Torch CUDA et adapters sont installes separement par _sat_lodo_runtime.sh.
-# Refuser une compilation de pyarrow : roue CPython 3.10 manylinux disponible.
---only-binary=pyarrow
+# Refuser la compilation locale des bibliotheques natives sur le cluster.
+--only-binary=pyarrow,h5py,numpy,scikit-learn,pandas
 transformers==4.29.2
 accelerate==0.19.0
 datasets==2.13.2
@@ -12,7 +12,7 @@ pysbd
 # Le trainer importe wandb meme avec report_to=none. Cette version fournit
 # une roue Python universelle et n'exige pas de compiler wandb-core avec Go.
 wandb==0.15.12
-h5py
+h5py==3.10.0
 scikit-learn==1.2.2
 numpy==1.23.5
 torchinfo
