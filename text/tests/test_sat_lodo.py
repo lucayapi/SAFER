@@ -103,6 +103,20 @@ def test_prepare_is_deterministic_and_has_no_target_leakage(tmp_path: Path) -> N
         sat_lodo.verify_bundle(out)
 
 
+def test_lora_config_keeps_the_pretrained_single_output_head(tmp_path: Path, monkeypatch) -> None:
+    config = sat_lodo.base_config(tmp_path, "nicollin", tmp_path / "trainer")
+    assert config["model_name_or_path"] == "segment-any-text/sat-12l-sm"
+    assert config["use_auxiliary"] is False
+    assert config["do_auxiliary_training"] is False
+    assert not config.get("clf_from_scratch", False)
+
+    wrong_template = tmp_path / "wrong_template.json"
+    wrong_template.write_text(json.dumps({**config, "use_auxiliary": True}), encoding="utf-8")
+    monkeypatch.setattr(sat_lodo, "TEMPLATE", wrong_template)
+    with pytest.raises(ValueError, match="labels"):
+        sat_lodo.base_config(tmp_path, "nicollin", tmp_path / "trainer")
+
+
 def test_preflight_blocks_missing_sixth_domain(tmp_path: Path) -> None:
     root = tmp_path / "annotation"
     fixture_corpora(root)

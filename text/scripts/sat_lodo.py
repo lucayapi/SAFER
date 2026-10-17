@@ -430,8 +430,10 @@ def export_loss_history(trainer_state: Path, output_csv: Path) -> None:
 
 def base_config(bundle: Path, target: str, output_dir: Path) -> dict:
     config = json.loads(TEMPLATE.read_text(encoding="utf-8"))
-    if config.get("model_name_or_path") != "segment-any-text/" + MODEL or config.get("subsample") is not None:
-        raise ValueError("Unexpected LoRA model or subsample in template")
+    if (config.get("model_name_or_path") != "segment-any-text/" + MODEL or
+            config.get("subsample") is not None or config.get("use_auxiliary") is not False or
+            config.get("do_auxiliary_training") is not False or config.get("clf_from_scratch", False)):
+        raise ValueError("Unexpected LoRA model, labels, or subsample in template")
     config.update({"text_path": str((bundle / "folds" / f"target_{target}" / "training.pth").resolve()),
                    "output_dir": str(output_dir.resolve()), "seed": SEED})
     return config
@@ -491,6 +493,7 @@ def smoke(args: argparse.Namespace) -> None:
     runtime["base_model_revision"] = cached_hub_revision("segment-any-text/" + MODEL)
     runtime["tokenizer_revision"] = cached_hub_revision("FacebookAI/xlm-roberta-base")
     write_json(marker, {"bundle_manifest_sha256": digest(bundle / "manifest.json"),
+                        "template_sha256": digest(TEMPLATE),
                         "wtpsplit_revision": revision, "model": MODEL,
                         "adapter": str(adapter), "runtime": runtime,
                         "checked_at_utc": stamp()})
@@ -510,6 +513,7 @@ def fit(args: argparse.Namespace) -> None:
         raise RuntimeError("Run the GPU smoke test before the six full tasks")
     passed = json.loads(marker.read_text(encoding="utf-8"))
     if passed.get("bundle_manifest_sha256") != digest(bundle / "manifest.json") or \
+       passed.get("template_sha256") != digest(TEMPLATE) or \
        passed.get("wtpsplit_revision") != revision or passed.get("model") != MODEL:
         raise RuntimeError("Smoke test used another bundle, code revision or model")
     if passed.get("runtime", {}).get("wtpsplit") != runtime["wtpsplit"] or \

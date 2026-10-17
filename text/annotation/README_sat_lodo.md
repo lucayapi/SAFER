@@ -19,14 +19,14 @@ Depuis la racine de SAFER, après import des annotations directes de
 
 ```powershell
 .\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py preflight
-.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py prepare --out annotation\lodo_sat_transfer\sat12l_sm_lodo_v1
-.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py check-bundle --bundle annotation\lodo_sat_transfer\sat12l_sm_lodo_v1
+.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py prepare --out annotation\lodo_sat_transfer\sat12l_sm_lodo_v2
+.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py check-bundle --bundle annotation\lodo_sat_transfer\sat12l_sm_lodo_v2
 ```
 
 Le lot `service_temporaire` a été importé localement le 17 octobre 2026 :
 2 523 préannotations directes et 416 réponses rejetées. Le précontrôle retient
 980 récits de ce corpus selon les critères ci-dessous. Le dossier préparé est
-`annotation/lodo_sat_transfer/sat12l_sm_lodo_v1/`. **Il est ignoré par Git et
+`annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/`. **Il est ignoré par Git et
 contient les récits complets.** Transférez-le vers un répertoire privé du
 cluster, hors dépôt Git. Ne commitez que le code sous `text/`.
 
@@ -44,10 +44,10 @@ de partage 80/20 sont sauvegardés avec leurs empreintes SHA-256.
 ## Environnement du cluster
 
 Le code arrive sur le cluster par votre `commit`/`push` manuel. Le dossier
-**privé** `annotation/lodo_sat_transfer/sat12l_sm_lodo_v1/` reste hors de Git :
+**privé** `annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` reste hors de Git :
 copiez-le séparément, de préférence dans
-`$SCRATCH/safer_private/sat12l_sm_lodo_v1/`. Le job le détecte aussi à
-`SAFER/annotation/lodo_sat_transfer/sat12l_sm_lodo_v1/` si vous préférez ce
+`$SCRATCH/safer_private/sat12l_sm_lodo_v2/`. Le job le détecte aussi à
+`SAFER/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` si vous préférez ce
 chemin. Il doit contenir `manifest.json`, `complete.json` et `folds/`.
 
 Une copie du dépôt officiel `wtpsplit` est incluse dans
@@ -84,7 +84,7 @@ et Hugging Face pour installer les dépendances et obtenir le modèle. Si le clu
 GPU, le journal du premier job indiquera l'étape en échec.
 
 Les sorties vont automatiquement dans
-`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v1/`. Aucune variable
+`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v2/`. Aucune variable
 d'environnement n'est requise pour les chemins standard. Le job vérifie le
 GPU, les versions, les empreintes du bundle et la révision de `wtpsplit` avant
 chaque entraînement. PyTorch 2.5.x est retenu car le trainer officiel appelle
@@ -95,6 +95,10 @@ sert de base au fichier `text/annotation/sat_lodo_lora_template.json`. Ici,
 `model_name_or_path` vaut `segment-any-text/sat-12l-sm`, le lot GPU vaut 8 avec
 accumulation 8, et `subsample` est désactivé. Les autres choix substantiels
 (30 époques, taux `3e-4`, LoRA `r=16`, `alpha=32`) restent ceux de l'exemple.
+Pour `sat-12l-sm`, `use_auxiliary=false` conserve la tête préentraînée à une
+sortie. Avec `true`, le trainer crée 111 sorties et réinitialise la tête ; ce
+choix de l'exemple officiel convient à son modèle source, mais changerait ici
+le point de départ de la comparaison LoRA.
 La journalisation externe est désactivée ; les sorties restent sur le cluster.
 
 ## Essai GPU puis six tâches
@@ -109,7 +113,7 @@ sbatch text/jobs/sat_lodo_smoke.sh
 Ce job installe les dépendances, entraîne un seul pas, recharge l'adaptateur
 avec `SaT("sat-12l-sm", lora_path=...)` et vérifie un découpage. Attendez sa
 fin **réussie** ; le fichier
-`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v1/smoke_ok.json`
+`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v2/smoke_ok.json`
 est alors créé. Ensuite, toujours depuis `SAFER/` :
 
 ```bash

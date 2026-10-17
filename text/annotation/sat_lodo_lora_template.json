@@ -25,7 +25,7 @@
   "warmup_ratio": 0.1,
   "non_punctuation_sample_ratio": null,
   "prediction_loss_only": true,
-  "use_auxiliary": true,
+  "use_auxiliary": false,
   "ddp_timeout": 3600,
   "use_subwords": true,
   "custom_punctuation_file": "punctuation_xlmr_unk.txt",
