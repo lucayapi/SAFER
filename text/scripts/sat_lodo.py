@@ -367,7 +367,7 @@ def gpu_runtime(repo: Path) -> dict:
     if major_minor >= (2, 6):
         raise RuntimeError("Official train_lora.py uses torch.load without weights_only=False; use torch 2.5.x")
     versions = {"torch": torch.__version__, "gpu": torch.cuda.get_device_name(0)}
-    for package in ("wtpsplit", "transformers", "adapters"):
+    for package in ("wtpsplit", "transformers", "adapters", "safetensors"):
         try:
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError as exc:
@@ -376,6 +376,9 @@ def gpu_runtime(repo: Path) -> dict:
     expected_package = (repo / "wtpsplit").resolve()
     if not spec or not spec.origin or Path(spec.origin).resolve().parent != expected_package:
         raise RuntimeError("Install the vendored wtpsplit checkout in SAT_LODO_VENV with pip install -e")
+    from transformers.utils import is_safetensors_available
+    if not is_safetensors_available():
+        raise RuntimeError("Transformers cannot load sat-12l-sm model.safetensors; install safetensors in SAT_LODO_VENV")
     versions["wtpsplit_source"] = str(expected_package)
     return versions
 

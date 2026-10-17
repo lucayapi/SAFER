@@ -75,6 +75,10 @@ compilation Go du paquet récent. `datasets==2.13.2`, `pyarrow==12.0.1` et
 Les bibliothèques natives doivent être installées depuis leurs roues ; si une
 roue compatible manque, l'installation échoue directement au lieu de tenter
 une compilation nécessitant Rust ou HDF5. Aucune journalisation W&B n'est activée.
+`sat-12l-sm` publie ses poids sous `model.safetensors` ; `safetensors==0.4.5`
+est installé explicitement pour que `transformers==4.29.2` puisse charger le
+modèle de base. Après cette mise à jour des dépendances, le job smoke les
+réinstalle automatiquement dans son environnement isolé.
 Cette étape suppose que les nœuds GPU ont accès à PyPI, l'index CUDA
 et Hugging Face pour installer les dépendances et obtenir le modèle. Si le cluster bloque ces téléchargements depuis les nœuds
 GPU, le journal du premier job indiquera l'étape en échec.
