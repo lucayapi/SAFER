@@ -117,6 +117,30 @@ def test_lora_config_keeps_the_pretrained_single_output_head(tmp_path: Path, mon
         sat_lodo.base_config(tmp_path, "nicollin", tmp_path / "trainer")
 
 
+def test_migrate_verified_v1_bundle_without_changing_data(tmp_path: Path) -> None:
+    root = tmp_path / "annotation"
+    fixture_corpora(root)
+    source = tmp_path / "sat12l_sm_lodo_v1"
+    out = tmp_path / "sat12l_sm_lodo_v2"
+    sat_lodo.prepare(SimpleNamespace(annotation_root=str(root), allow_fixture_counts=True,
+                                     out=str(source), seed=42))
+    original = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    original["template_sha256"] = sat_lodo.LEGACY_TEMPLATE_SHA256
+    sat_lodo.write_json(source / "manifest.json", original)
+
+    sat_lodo.migrate_bundle(SimpleNamespace(source=str(source), out=str(out)))
+    migrated = sat_lodo.verify_bundle(out)
+    assert migrated["files"] == original["files"]
+    assert migrated["template_sha256"] == sat_lodo.digest(sat_lodo.TEMPLATE)
+    assert migrated["migration"]["source_manifest_sha256"] == sat_lodo.digest(source / "manifest.json")
+    assert json.loads((source / "manifest.json").read_text(encoding="utf-8")) == original
+
+    damaged = out / "folds" / "target_nicollin" / "train.jsonl"
+    damaged.write_text("{}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="modified bundle file"):
+        sat_lodo.verify_bundle(out)
+
+
 def test_preflight_blocks_missing_sixth_domain(tmp_path: Path) -> None:
     root = tmp_path / "annotation"
     fixture_corpora(root)

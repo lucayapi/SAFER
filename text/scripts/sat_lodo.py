@@ -16,6 +16,7 @@ import importlib.util
 import json
 import math
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -36,6 +37,7 @@ DEFAULT = 0.25
 THRESHOLDS = (0.01, 0.05, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90)
 SEED = 20261017
 DATASET_NAME = "safer_lodo"
+LEGACY_TEMPLATE_SHA256 = "14e07c2d14d8fa99f091c4b3861c21c2cfd56ac2f4da7b54aea93d6c1d4c2de3"
 
 
 def stamp() -> str:
@@ -305,6 +307,42 @@ def verify_bundle(bundle: Path) -> dict:
         if any(r["corpus"] != target for r in groups["test"]):
             raise ValueError(f"Non-target test record: {target}")
     return manifest
+
+
+def migrate_bundle(args: argparse.Namespace) -> None:
+    """Reuse an intact v1 data bundle when only the LoRA template changed."""
+    source = Path(args.source).resolve()
+    out = Path(args.out).resolve()
+    if source.name != "sat12l_sm_lodo_v1" or out.name != "sat12l_sm_lodo_v2":
+        raise ValueError("Migration requires sat12l_sm_lodo_v1 -> sat12l_sm_lodo_v2")
+    if out.exists():
+        raise FileExistsError(f"Destination already exists: {out}")
+    manifest_path = source / "manifest.json"
+    if not manifest_path.is_file() or not (source / "complete.json").is_file():
+        raise RuntimeError(f"Incomplete v1 bundle: {source}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if (manifest.get("template_sha256") != LEGACY_TEMPLATE_SHA256 or
+            manifest.get("model") != MODEL or manifest.get("corpora") != list(CORPORA)):
+        raise ValueError("The v1 bundle does not match the verified source experiment")
+    if not isinstance(manifest.get("files"), dict) or not manifest["files"]:
+        raise ValueError("The v1 bundle has no data-file manifest")
+    for relative, expected in manifest["files"].items():
+        path = (source / relative).resolve()
+        if not path.is_relative_to(source) or not path.is_file() or digest(path) != expected:
+            raise ValueError(f"Missing or modified v1 bundle file: {relative}")
+    staging = out.with_name(out.name + ".migrating")
+    if staging.exists():
+        raise FileExistsError(f"Incomplete earlier migration: {staging}")
+    shutil.copytree(source, staging)
+    updated = json.loads((staging / "manifest.json").read_text(encoding="utf-8"))
+    updated["template_sha256"] = digest(TEMPLATE)
+    updated["migration"] = {"from": str(source), "source_manifest_sha256": digest(manifest_path),
+                            "reason": "single-output pretrained classifier; data files unchanged"}
+    write_json(staging / "manifest.json", updated)
+    verify_bundle(staging)
+    staging.rename(out)
+    print(json.dumps({"migrated_bundle": str(out), "data_files": len(updated["files"]),
+                      "source_manifest_sha256": digest(manifest_path)}, indent=2))
 
 
 def check_bundle(args: argparse.Namespace) -> None:
@@ -783,6 +821,10 @@ def main() -> None:
     cmd = sub.add_parser("check-bundle")
     cmd.add_argument("--bundle", required=True)
     cmd.set_defaults(func=check_bundle)
+    cmd = sub.add_parser("migrate-bundle")
+    cmd.add_argument("--source", required=True)
+    cmd.add_argument("--out", required=True)
+    cmd.set_defaults(func=migrate_bundle)
     for name, func in (("smoke", smoke), ("fit", fit), ("evaluate", evaluate_command)):
         cmd = sub.add_parser(name)
         cmd.add_argument("--bundle", required=True)

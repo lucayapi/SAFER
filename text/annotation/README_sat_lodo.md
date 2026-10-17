@@ -27,8 +27,10 @@ Le lot `service_temporaire` a été importé localement le 17 octobre 2026 :
 2 523 préannotations directes et 416 réponses rejetées. Le précontrôle retient
 980 récits de ce corpus selon les critères ci-dessous. Le dossier préparé est
 `annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/`. **Il est ignoré par Git et
-contient les récits complets.** Transférez-le vers un répertoire privé du
-cluster, hors dépôt Git. Ne commitez que le code sous `text/`.
+contient les récits complets.** Si le bundle privé `v1` est déjà sur le cluster,
+le job smoke peut en créer automatiquement une copie `v2` après avoir vérifié
+les 30 empreintes de données et la configuration d'origine. Sinon, transférez
+le dossier `v2` séparément, hors dépôt Git. Ne commitez que le code sous `text/`.
 
 La préparation garde uniquement les annotations directes v2 aux extraits
 exacts, ordonnées et sans chevauchement, sans `issues`, sans unité incertaine,
@@ -44,8 +46,12 @@ de partage 80/20 sont sauvegardés avec leurs empreintes SHA-256.
 ## Environnement du cluster
 
 Le code arrive sur le cluster par votre `commit`/`push` manuel. Le dossier
-**privé** `annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` reste hors de Git :
-copiez-le séparément, de préférence dans
+**privé** `annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` reste hors de Git.
+Si `v1` se trouve déjà dans `$SCRATCH/safer_private/` ou dans
+`SAFER/annotation/lodo_sat_transfer/`, le job smoke crée `v2` dans le même
+dossier sans toucher à `v1`. La migration vérifie toutes les empreintes et
+consigne la provenance dans le nouveau manifeste. Sinon, copiez `v2` séparément,
+de préférence dans
 `$SCRATCH/safer_private/sat12l_sm_lodo_v2/`. Le job le détecte aussi à
 `SAFER/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` si vous préférez ce
 chemin. Il doit contenir `manifest.json`, `complete.json` et `folds/`.
