@@ -36,6 +36,17 @@ Depuis la racine `SAFER/` sur le cluster, après `git pull`, avec le bundle v3
 déjà transféré et le runtime `.venv1` existant :
 
 ```bash
+sbatch text/jobs/sat_lodo_gold_v3_checkpoint_launch.sh
+```
+
+Le lanceur soumet l'essai GPU, les six rotations après sa réussite et la
+synthèse après la réussite du tableau. Les identifiants des jobs sont affichés
+dans `slurm-sat-v3-ckpt-launch-<jobid>.out`. Il faut que le cluster autorise
+`sbatch` depuis un job Slurm.
+
+Pour soumettre les étapes séparément, commencer par :
+
+```bash
 sbatch text/jobs/sat_lodo_gold_v3_checkpoint_smoke.sh
 ```
 
