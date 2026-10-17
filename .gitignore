@@ -92,3 +92,4 @@ test.txt
 
 # Corpus et application locale de revue des récits (données sensibles)
 /annotation/
+/safer_sat_lodo/

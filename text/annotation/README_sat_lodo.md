@@ -90,3 +90,44 @@ sbatch text/jobs/sat_lodo_summary.sh
 `summary.csv` compare M0, M1 et M3 par corpus, puis leur moyenne macro.
 Ces scores sont exploratoires et ne doivent pas être présentés comme des
 performances sur un gold humain indépendant.
+
+## Vérifier la borne basse des seuils M1
+
+Le rapport d'article normalise les espaces périphériques. M1 atteint la borne
+`0,01` dans cinq rotations sur six : cela appelle une vérification sur les
+**validations sources uniquement**. Le script
+`text/scripts/sat_lodo_low_thresholds.py` ajoute `0,001`, `0,0025`,
+`0,005` et `0,0075`, contrôle `0,01` contre le cache initial, puis choisit
+le meilleur seuil de SaT initial par moyenne macro des F1 de segments
+neutralisés des cinq sources. Aucun fichier `test.jsonl` cible n'est ouvert.
+Les prédictions et le rapport sont séparés sous
+`safer_sat_lodo/resultats_articles/validation_seuils_inferieurs/` ;
+le tableau d'article existant et les prédictions cibles ne sont pas modifiés.
+Une reprise saute les récits déjà calculés après vérification des empreintes.
+
+Sur le cluster, avec le bundle v3 et les six caches de prédictions déjà en
+place, depuis `SAFER/` :
+
+```bash
+sbatch text/jobs/sat_lodo_low_thresholds.sh
+```
+
+Le journal Slurm montre la barre `tqdm` et les seuils retenus. Pour un essai
+local limité à un récit, depuis `SAFER/` :
+
+```powershell
+.\text\.venv\Scripts\python.exe text\scripts\sat_lodo_low_thresholds.py run --max-documents 1
+```
+
+Cet essai n'écrit pas de courbes finales. Après la vérification source, il
+faudra produire de nouvelles prédictions cibles **uniquement si** un seuil
+inférieur à `0,01` est effectivement retenu, avant de recalculer les métriques
+finales.
+
+Un calcul local complet a été effectué sur les 3 252 récits distincts des
+validations sources. BTP, Bois–textile et Service temporaire restent à `0,01`,
+Nicollin reste à `0,05`, tandis que Métallurgie et Chimie–plastiques
+sélectionnent `0,001` avec des gains source de `0,000163` et `0,001609` en F1.
+`0,001` est encore une borne de grille ; aucune amélioration sur les cibles
+n'est déduite de ce contrôle. Les détails sont dans
+`safer_sat_lodo/resultats_articles/validation_seuils_inferieurs/README.md`.
