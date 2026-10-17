@@ -136,6 +136,33 @@ def test_vendored_trainer_detects_changed_or_extra_files(tmp_path: Path) -> None
         sat_lodo.git_revision(repo)
 
 
+def test_vendor_hashes_accept_only_line_ending_conversion_for_text(tmp_path: Path) -> None:
+    import hashlib
+
+    repo = tmp_path / "wtpsplit"
+    repo.mkdir()
+    text_file = repo / ".gitattributes"
+    binary_file = repo / "image.png"
+    text_file.write_bytes(b"first\r\nsecond\r\n")
+    binary_file.write_bytes(b"\x89PNG\x00\r\n")
+    manifest = {"revision": sat_lodo.VENDOR_REVISION,
+                "hash_mode": "lf_normalized_text", "binary_files": ["image.png"],
+                "files": {
+                    ".gitattributes": hashlib.sha256(b"first\nsecond\n").hexdigest(),
+                    "image.png": sat_lodo.digest(binary_file)}}
+    (repo / "SAFER_VENDOR.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert sat_lodo.git_revision(repo) == sat_lodo.VENDOR_REVISION
+    text_file.write_bytes(b"first\nsecond\n")
+    assert sat_lodo.git_revision(repo) == sat_lodo.VENDOR_REVISION
+    text_file.write_bytes(b"first\nchanged\n")
+    with pytest.raises(RuntimeError, match="changed"):
+        sat_lodo.git_revision(repo)
+    text_file.write_bytes(b"first\nsecond\n")
+    binary_file.write_bytes(b"\x89PNG\x00\n")
+    with pytest.raises(RuntimeError, match="changed"):
+        sat_lodo.git_revision(repo)
+
+
 def test_exact_metric_and_threshold_selection_use_only_validation(tmp_path: Path) -> None:
     import sqlite3
 

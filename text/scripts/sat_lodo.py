@@ -338,6 +338,12 @@ def git_revision(repo: Path) -> str:
     revision = manifest.get("revision")
     if not isinstance(expected, dict) or revision != VENDOR_REVISION:
         raise ValueError("Invalid vendored wtpsplit manifest")
+    hash_mode = manifest.get("hash_mode", "raw")
+    binary_files = manifest.get("binary_files", [])
+    if hash_mode not in {"raw", "lf_normalized_text"} or not isinstance(binary_files, list) or \
+       not all(isinstance(item, str) for item in binary_files) or \
+       not set(binary_files).issubset(expected):
+        raise ValueError("Invalid vendored wtpsplit hash mode")
     actual = {p.relative_to(repo).as_posix() for p in repo.rglob("*")
               if p.is_file() and p != manifest_path and not p.name.endswith(".pyc")
               and not any(part in {"__pycache__", ".pytest_cache", "build", "dist"}
@@ -345,7 +351,10 @@ def git_revision(repo: Path) -> str:
     if actual != set(expected):
         raise RuntimeError("Vendored wtpsplit files differ from their manifest")
     for relative, recorded_hash in expected.items():
-        if digest(repo / relative) != recorded_hash:
+        content = (repo / relative).read_bytes()
+        if hash_mode == "lf_normalized_text" and relative not in binary_files:
+            content = content.replace(b"\r\n", b"\n")
+        if hashlib.sha256(content).hexdigest() != recorded_hash:
             raise RuntimeError(f"Vendored wtpsplit file changed: {relative}")
     return revision
 

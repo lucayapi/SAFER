@@ -57,6 +57,9 @@ de plusieurs modules internes au dépôt
 La copie correspond à la révision
 `3ef928c8e163d11dc6f6336ad610bff2ffe0bda4` ; ses fichiers et leurs
 empreintes sont consignés dans `text/vendor/wtpsplit/SAFER_VENDOR.json`.
+Les empreintes des fichiers texte utilisent des fins de ligne LF canoniques,
+pour être identiques après un checkout Windows ou Linux ; les fichiers binaires
+sont vérifiés octet par octet.
 Les métadonnées Git internes ont été retirées pour que le code soit réellement
 versionné par SAFER, et la licence MIT est conservée. Aucun clone GitHub n'est
 fait sur le cluster. Le premier job GPU crée un environnement isolé et installe
