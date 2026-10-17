@@ -37,6 +37,8 @@ DEFAULT = 0.25
 THRESHOLDS = (0.01, 0.05, 0.10, 0.20, 0.25, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80, 0.90)
 SEED = 20261017
 DATASET_NAME = "safer_lodo"
+DATA_POLICY = "direct_except_quality_queue_v3"
+QUALITY_FILES = ("cases_to_validate.jsonl", "source_quality_warnings.jsonl")
 LEGACY_TEMPLATE_SHA256 = "14e07c2d14d8fa99f091c4b3861c21c2cfd56ac2f4da7b54aea93d6c1d4c2de3"
 
 
@@ -80,19 +82,15 @@ def write_csv(path: Path, rows: list[dict], fields: tuple[str, ...]) -> None:
 
 
 def validate_record(raw: str, ann: dict) -> str | None:
-    """Return the first exclusion reason; the model learns only unambiguous facts."""
+    """Reject only annotations that cannot supply exact, ordered factual spans."""
     if ann.get("annotation_source") not in SOURCES:
         return "not_direct"
     if ann.get("guide_version") != "narrative_v2":
         return "wrong_guide"
-    if ann.get("issues"):
-        return "issues"
     units = ann.get("units")
     excluded = ann.get("excluded_spans")
     if not isinstance(units, list) or not units or not isinstance(excluded, list):
         return "missing_units"
-    if any(not isinstance(u, dict) or u.get("uncertain") is not False for u in units):
-        return "uncertain_unit"
     spans = []
     for kind, entries in (("unit", units), ("excluded", excluded)):
         for item in entries:
@@ -114,45 +112,68 @@ def validate_record(raw: str, ann: dict) -> str | None:
     for unit in units:
         if unit["start"] < cursor:
             return "unordered_units"
-        if "\n" in unit["text"] or "\r" in unit["text"]:
-            return "newline_in_unit"
-        if any(c.isalnum() for c in raw[cursor:unit["start"]]):
-            return "informative_gap"
         cursor = unit["end"]
-    if any(c.isalnum() for c in raw[cursor:]):
-        return "informative_gap"
     return None
 
 
-def training_chunks(raw: str, units: list[dict]) -> tuple[list[str], int]:
-    """Put noninformative gaps before the next unit, keeping factual end cuts.
+def training_chunks(raw: str, units: list[dict]) -> tuple[list[str], int, str, int]:
+    """Build a trainer copy without inventing factual labels for informative gaps.
 
-    Only the derived training copy replaces line breaks in gaps by spaces.
-    The untouched source text and offsets remain in fold JSONL files.
+    Incomplete narratives use only their annotated units; the original full text
+    and offsets are retained separately for evaluation. CR/LF become spaces only
+    in this derived trainer copy.
     """
+    gaps = []
+    cursor = 0
+    for unit in units:
+        gaps.append(raw[cursor:unit["start"]])
+        cursor = unit["end"]
+    gaps.append(raw[cursor:])
+    if any(any(char.isalnum() for char in gap) for gap in gaps):
+        chunks = [unit["text"].replace("\r", " ").replace("\n", " ") for unit in units]
+        if any(not chunk for chunk in chunks):
+            raise ValueError("Empty derived training unit")
+        replacements = sum(unit["text"].count("\r") + unit["text"].count("\n")
+                           for unit in units)
+        return chunks, replacements, "facts_only", sum(len(gap) for gap in gaps)
     chunks = []
     cursor = 0
-    changed = 0
     for unit in units:
         gap = raw[cursor:unit["start"]]
-        changed += gap.count("\n") + gap.count("\r")
-        gap = gap.replace("\r", " ").replace("\n", " ")
-        chunks.append(gap + unit["text"])
+        chunks.append((gap + unit["text"]).replace("\r", " ").replace("\n", " "))
         cursor = unit["end"]
     tail = raw[cursor:]
-    changed += tail.count("\n") + tail.count("\r")
     chunks[-1] += tail.replace("\r", " ").replace("\n", " ")
     if any(not chunk or "\n" in chunk or "\r" in chunk for chunk in chunks):
         raise ValueError("Invalid derived training chunk")
     if "".join(chunks) != raw.replace("\r", " ").replace("\n", " "):
         raise AssertionError("Derived training text does not reconstruct source")
-    return chunks, changed
+    return chunks, raw.count("\r") + raw.count("\n"), "full_text", 0
+
+
+def quality_control_ids(annotation_root: Path) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """Read the researcher-review queue and source-integrity warnings."""
+    folder = annotation_root / "audit" / "validation_queue_20261016"
+    flagged = {corpus: set() for corpus in CORPORA}
+    hashes = {}
+    for filename in QUALITY_FILES:
+        path = folder / filename
+        if not path.is_file():
+            raise FileNotFoundError(f"Quality-control list missing: {path}")
+        hashes[filename] = digest(path)
+        for row in read_jsonl(path):
+            corpus, ident = row.get("corpus"), row.get("document_id")
+            if corpus not in flagged or not isinstance(ident, str):
+                raise ValueError(f"Invalid quality-control ID in {path}: {corpus}/{ident}")
+            flagged[corpus].add(ident)
+    return flagged, hashes
 
 
 def load_corpora(annotation_root: Path, *, check_counts: bool = True) -> tuple[dict, dict]:
     records: dict[str, dict[str, dict]] = {}
     report: dict[str, dict] = {}
     seen_ids: set[str] = set()
+    quality_ids, quality_hashes = quality_control_ids(annotation_root)
     for corpus in CORPORA:
         documents_path = annotation_root / "data" / corpus / "documents.jsonl"
         if not documents_path.is_file():
@@ -173,6 +194,10 @@ def load_corpora(annotation_root: Path, *, check_counts: bool = True) -> tuple[d
         reasons = collections.Counter()
         ann_digest = hashlib.sha256()
         changed_newlines = 0
+        facts_only_documents = 0
+        omitted_gap_characters = 0
+        issues_retained = 0
+        uncertain_retained = 0
         for ident, raw in docs.items():
             path = annotation_root / "preannotations" / corpus / f"{ident}.json"
             if not path.is_file():
@@ -188,21 +213,38 @@ def load_corpora(annotation_root: Path, *, check_counts: bool = True) -> tuple[d
             if ann.get("document_id") != ident:
                 reasons["wrong_id"] += 1
                 continue
+            if ann.get("annotation_source") not in SOURCES:
+                reasons["not_direct"] += 1
+                continue
+            if ident in quality_ids[corpus]:
+                reasons["quality_control"] += 1
+                continue
             reason = validate_record(raw, ann)
             if reason:
                 reasons[reason] += 1
                 continue
-            chunks, n = training_chunks(raw, ann["units"])
+            chunks, n, mode, omitted = training_chunks(raw, ann["units"])
             changed_newlines += n
+            facts_only_documents += mode == "facts_only"
+            omitted_gap_characters += omitted
+            issues_retained += bool(ann.get("issues"))
+            uncertain_retained += any(u.get("uncertain") is True for u in ann["units"])
             accepted[ident] = {"corpus": corpus, "document_id": ident,
                                "raw_text": raw, "units": [
                                    {k: u[k] for k in ("start", "end", "text", "role", "assertion")}
                                    for u in ann["units"]],
                                "training_chunks": chunks,
+                               "training_mode": mode,
                                "annotation_source": ann["annotation_source"]}
         records[corpus] = accepted
         report[corpus] = {"documents": len(docs), "eligible": len(accepted),
                           "excluded": dict(sorted(reasons.items())),
+                          "quality_control_ids": len(quality_ids[corpus]),
+                          "quality_control_sha256": quality_hashes,
+                          "training_facts_only_documents": facts_only_documents,
+                          "training_gap_characters_omitted": omitted_gap_characters,
+                          "retained_with_issues": issues_retained,
+                          "retained_with_uncertain_unit": uncertain_retained,
                           "training_newline_characters_replaced": changed_newlines,
                           "documents_sha256": digest(documents_path),
                           "annotations_sha256": ann_digest.hexdigest()}
@@ -271,8 +313,9 @@ def prepare(args: argparse.Namespace) -> None:
                 "model": MODEL, "seed": args.seed, "corpora": list(CORPORA),
                 "fold_order": list(CORPORA), "train_fraction": 0.8,
                 "thresholds": list(THRESHOLDS), "default_threshold": DEFAULT,
-                "eligibility": "direct v2; no issues/uncertain; exact nonoverlapping offsets; no alphanumeric gaps; no newlines inside units",
-                "training_gap_policy": "gaps prefix next unit; trailing gap suffix last; CR/LF in gaps become spaces only in derived training chunks",
+                "data_policy": DATA_POLICY,
+                "eligibility": "direct v2; exclude researcher quality-control queue and source warnings; exact nonoverlapping factual offsets; at least one unit",
+                "training_gap_policy": "complete narratives: noninformative gaps prefix next unit; incomplete narratives: annotated facts only; CR/LF become spaces only in derived training chunks",
                 "source_report": report, "template_sha256": digest(TEMPLATE), "files": files}
     write_json(out / "manifest.json", manifest)
     write_json(out / "complete.json", {"created_at_utc": stamp(), "folds": len(CORPORA)})
@@ -296,6 +339,20 @@ def verify_bundle(bundle: Path) -> dict:
     for target in CORPORA:
         folder = bundle / "folds" / f"target_{target}"
         groups = {name: read_jsonl(folder / f"{name}.jsonl") for name in ("train", "val", "test")}
+        if manifest.get("data_policy") == DATA_POLICY:
+            for rows in groups.values():
+                for row in rows:
+                    raw = row["raw_text"]
+                    check = validate_record(raw, {
+                        "annotation_source": row["annotation_source"],
+                        "guide_version": "narrative_v2", "units": row["units"],
+                        "excluded_spans": [],
+                    })
+                    if check:
+                        raise ValueError(f"Invalid bundled factual spans: {target}/{row['document_id']}: {check}")
+                    expected_chunks, _, mode, _ = training_chunks(raw, row["units"])
+                    if row.get("training_mode") != mode or row.get("training_chunks") != expected_chunks:
+                        raise ValueError(f"Invalid trainer copy: {target}/{row['document_id']}")
         keys = {name: {(r["corpus"], r["document_id"]) for r in rows}
                 for name, rows in groups.items()}
         if any(len(keys[name]) != len(groups[name]) or not groups[name] for name in groups):
@@ -541,29 +598,17 @@ def smoke(args: argparse.Namespace) -> None:
 def fit(args: argparse.Namespace) -> None:
     bundle = Path(args.bundle).resolve()
     manifest = verify_bundle(bundle)
+    if manifest.get("data_policy") != DATA_POLICY:
+        raise RuntimeError("Full training requires the new direct-except-quality-control bundle")
     target = fold_for_index(manifest, args.task_index)
     repo = Path(args.wtpsplit_repo).resolve()
     revision = git_revision(repo)
     runtime = gpu_runtime(repo)
     root = Path(args.run_root).resolve()
-    marker = root / "smoke_ok.json"
-    if not marker.is_file():
-        raise RuntimeError("Run the GPU smoke test before the six full tasks")
-    passed = json.loads(marker.read_text(encoding="utf-8"))
-    if passed.get("bundle_manifest_sha256") != digest(bundle / "manifest.json") or \
-       passed.get("template_sha256") != digest(TEMPLATE) or \
-       passed.get("wtpsplit_revision") != revision or passed.get("model") != MODEL:
-        raise RuntimeError("Smoke test used another bundle, code revision or model")
-    if passed.get("runtime", {}).get("wtpsplit") != runtime["wtpsplit"] or \
-       passed.get("runtime", {}).get("adapters") != runtime["adapters"]:
-        raise RuntimeError("LoRA package versions changed since smoke test")
     runtime["base_model_revision"] = cached_hub_revision("segment-any-text/" + MODEL)
     runtime["tokenizer_revision"] = cached_hub_revision("FacebookAI/xlm-roberta-base")
-    if passed["runtime"].get("base_model_revision") != runtime["base_model_revision"] or \
-       passed["runtime"].get("tokenizer_revision") != runtime["tokenizer_revision"]:
-        raise RuntimeError("Hugging Face model/tokenizer revisions changed since smoke test")
     run = root / f"target_{target}"
-    run.mkdir(parents=True, exist_ok=True)
+    bind_run_to_bundle(run, bundle)
     output_dir = run / "trainer"
     config = base_config(bundle, target, output_dir)
     config["seed"] = manifest["seed"]
@@ -586,6 +631,22 @@ def fit(args: argparse.Namespace) -> None:
                "bundle_manifest_sha256": digest(bundle / "manifest.json"),
                "config_sha256": digest(run / "config.json"), "completed_at_utc": stamp()})
     evaluate_fold(bundle, target, run, adapter)
+
+
+def bind_run_to_bundle(run: Path, bundle: Path) -> None:
+    """Prevent resuming an adapter or checkpoint trained on another bundle."""
+    binding = run / "bundle_binding.json"
+    expected = digest(bundle / "manifest.json")
+    if run.exists() and any(run.iterdir()):
+        if not binding.is_file():
+            raise RuntimeError(f"Existing run has no bundle binding: {run}")
+        recorded = json.loads(binding.read_text(encoding="utf-8"))
+        if recorded.get("bundle_manifest_sha256") != expected:
+            raise RuntimeError(f"Existing run belongs to another data bundle: {run}")
+    else:
+        run.mkdir(parents=True, exist_ok=True)
+        write_json(binding, {"bundle_manifest_sha256": expected,
+                             "data_policy": DATA_POLICY, "created_at_utc": stamp()})
 
 
 def pieces_to_spans(raw: str, pieces: list[str]) -> list[tuple[int, int]]:

@@ -32,6 +32,10 @@ def annotation(raw: str, ident: str) -> dict:
 
 
 def fixture_corpora(root: Path) -> None:
+    quality = root / "audit" / "validation_queue_20261016"
+    quality.mkdir(parents=True)
+    for filename in sat_lodo.QUALITY_FILES:
+        (quality / filename).write_text("", encoding="utf-8")
     for corpus in sat_lodo.CORPORA:
         docs = root / "data" / corpus / "documents.jsonl"
         anns = root / "preannotations" / corpus
@@ -48,22 +52,71 @@ def fixture_corpora(root: Path) -> None:
                     json.dumps(annotation(raw, ident), ensure_ascii=False), encoding="utf-8")
 
 
-def test_eligibility_rejects_omissions_and_uncertainty() -> None:
+def test_eligibility_keeps_direct_annotations_with_uncertainty_and_gaps() -> None:
     raw = "Un salarié travaillait. Puis il est tombé."
     ann = annotation(raw, "x")
     assert sat_lodo.validate_record(raw, ann) is None
-    chunks, replacements = sat_lodo.training_chunks(raw, ann["units"])
+    chunks, replacements, mode, omitted = sat_lodo.training_chunks(raw, ann["units"])
     assert "".join(chunks) == raw and replacements == 0
+    assert mode == "full_text" and omitted == 0
     assert chunks[0] == "Un salarié travaillait"
     assert chunks[1].startswith(". Puis")
     ann["units"][1]["start"] += 1
     assert sat_lodo.validate_record(raw, ann) == "inexact_text"
     ann = annotation(raw, "x")
     ann["units"][0]["uncertain"] = True
-    assert sat_lodo.validate_record(raw, ann) == "uncertain_unit"
+    ann["issues"] = ["frontière à revoir"]
+    assert sat_lodo.validate_record(raw, ann) is None
     ann = annotation(raw, "x")
     ann["units"].pop()
-    assert sat_lodo.validate_record(raw, ann) == "informative_gap"
+    assert sat_lodo.validate_record(raw, ann) is None
+    chunks, _, mode, omitted = sat_lodo.training_chunks(raw, ann["units"])
+    assert chunks == [ann["units"][0]["text"]]
+    assert mode == "facts_only" and omitted > 0
+
+
+def test_quality_queue_excludes_whole_narrative(tmp_path: Path) -> None:
+    root = tmp_path / "annotation"
+    fixture_corpora(root)
+    quality = root / "audit" / "validation_queue_20261016"
+    (quality / "cases_to_validate.jsonl").write_text(
+        json.dumps({"corpus": "btp", "document_id": "btp_0"}) + "\n", encoding="utf-8")
+    (quality / "source_quality_warnings.jsonl").write_text(
+        json.dumps({"corpus": "btp", "document_id": "btp_1"}) + "\n", encoding="utf-8")
+    records, report = sat_lodo.load_corpora(root, check_counts=False)
+    assert len(records["btp"]) == 3
+    assert report["btp"]["excluded"]["quality_control"] == 2
+    assert report["btp"]["quality_control_ids"] == 2
+
+
+def test_informative_gap_and_newline_do_not_create_factual_labels() -> None:
+    raw = "Un salarié travaille. Titre non annoté.\nIl est tombé."
+    units = [
+        {"start": 0, "end": len("Un salarié travaille"),
+         "text": "Un salarié travaille", "role": "A0", "assertion": "AFFIRME"},
+        {"start": raw.index("Il est tombé"), "end": len(raw) - 1,
+         "text": "Il est tombé", "role": "B", "assertion": "AFFIRME"},
+    ]
+    chunks, replacements, mode, omitted = sat_lodo.training_chunks(raw, units)
+    assert chunks == ["Un salarié travaille", "Il est tombé"]
+    assert replacements == 0 and mode == "facts_only" and omitted > 0
+    units[1]["start"] = raw.index("\n")
+    units[1]["text"] = raw[units[1]["start"]:units[1]["end"]]
+    chunks, replacements, mode, _ = sat_lodo.training_chunks(raw, units)
+    assert mode == "facts_only" and replacements == 1
+    assert "\n" not in "".join(chunks)
+
+
+def test_run_cannot_resume_from_another_bundle(tmp_path: Path) -> None:
+    bundle = tmp_path / "bundle"
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text("first", encoding="utf-8")
+    run = tmp_path / "run" / "target_btp"
+    sat_lodo.bind_run_to_bundle(run, bundle)
+    sat_lodo.bind_run_to_bundle(run, bundle)
+    (bundle / "manifest.json").write_text("second", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="another data bundle"):
+        sat_lodo.bind_run_to_bundle(run, bundle)
 
 
 def test_prepare_is_deterministic_and_has_no_target_leakage(tmp_path: Path) -> None:
@@ -77,6 +130,7 @@ def test_prepare_is_deterministic_and_has_no_target_leakage(tmp_path: Path) -> N
     sat_lodo.prepare(args)
     manifest = sat_lodo.verify_bundle(out)
     assert manifest["seed"] == 42
+    assert manifest["data_policy"] == sat_lodo.DATA_POLICY
     assert all(manifest["source_report"][c]["eligible"] == 5 for c in sat_lodo.CORPORA)
     assert manifest["source_report"]["nicollin"]["training_newline_characters_replaced"] == 5
     for target in sat_lodo.CORPORA:

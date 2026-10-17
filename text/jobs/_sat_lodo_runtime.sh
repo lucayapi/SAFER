@@ -4,42 +4,28 @@
 SAT_LODO_WTPSPLIT_REV="3ef928c8e163d11dc6f6336ad610bff2ffe0bda4"
 
 sat_lodo_set_paths() {
-  local safer_root storage_root candidate legacy destination
+  local safer_root storage_root candidate
   safer_root="$(cd "${SAT_LODO_TEXT_ROOT}/.." && pwd)"
   storage_root="${SCRATCH:-$HOME}"
   SAT_LODO_RUNTIME_ROOT="${SAT_LODO_RUNTIME_ROOT:-${storage_root}/safer_sat_lodo/runtime}"
-  SAT_LODO_RUN_ROOT="${SAT_LODO_RUN_ROOT:-${storage_root}/safer_sat_lodo/runs/sat12l_sm_lodo_v2}"
+  SAT_LODO_RUN_ROOT="${SAT_LODO_RUN_ROOT:-${storage_root}/safer_sat_lodo/runs/sat12l_sm_lodo_v3}"
   SAT_WTPSPLIT_REPO="${SAT_WTPSPLIT_REPO:-${SAT_LODO_TEXT_ROOT}/vendor/wtpsplit}"
   SAT_LODO_VENV="${SAT_LODO_VENV:-${SAT_LODO_RUNTIME_ROOT}/venv}"
   SAT_LODO_REQUIREMENTS="${SAT_LODO_TEXT_ROOT}/annotation/requirements_sat_lodo.txt"
-  candidate="${storage_root}/safer_private/sat12l_sm_lodo_v2"
+  candidate="${storage_root}/safer_private/sat12l_sm_lodo_v3"
   if [[ -z "${SAT_LODO_BUNDLE:-}" ]]; then
     if [[ -f "${candidate}/manifest.json" ]]; then
       SAT_LODO_BUNDLE="${candidate}"
-    elif [[ -f "${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/manifest.json" ]]; then
-      SAT_LODO_BUNDLE="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2"
+    elif [[ -f "${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v3/manifest.json" ]]; then
+      SAT_LODO_BUNDLE="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v3"
     else
-      if [[ -f "${storage_root}/safer_private/sat12l_sm_lodo_v1/manifest.json" ]]; then
-        legacy="${storage_root}/safer_private/sat12l_sm_lodo_v1"
-        destination="${candidate}"
-      elif [[ -f "${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v1/manifest.json" ]]; then
-        legacy="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v1"
-        destination="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2"
-      fi
-      if [[ -n "${legacy:-}" ]]; then
-        echo "Migration controlee du bundle prive ${legacy} vers ${destination}"
-        python -u "${SAT_LODO_TEXT_ROOT}/scripts/sat_lodo.py" migrate-bundle \
-          --source "${legacy}" --out "${destination}"
-        SAT_LODO_BUNDLE="${destination}"
-      else
-        SAT_LODO_BUNDLE="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2"
-      fi
+      SAT_LODO_BUNDLE="${safer_root}/annotation/lodo_sat_transfer/sat12l_sm_lodo_v3"
     fi
   fi
   export SAT_LODO_RUNTIME_ROOT SAT_LODO_RUN_ROOT SAT_WTPSPLIT_REPO SAT_LODO_VENV SAT_LODO_BUNDLE
   [[ -f "${SAT_LODO_BUNDLE}/manifest.json" && -f "${SAT_LODO_BUNDLE}/complete.json" ]] || {
     echo "Dossier prive introuvable ou incomplet: ${SAT_LODO_BUNDLE}" >&2
-    echo "Copier sat12l_sm_lodo_v2 dans \$SCRATCH/safer_private/ ou SAFER/annotation/lodo_sat_transfer/." >&2
+    echo "Copier sat12l_sm_lodo_v3 dans \$SCRATCH/safer_private/ ou SAFER/annotation/lodo_sat_transfer/." >&2
     return 1
   }
   [[ -f "${SAT_LODO_REQUIREMENTS}" ]] || {

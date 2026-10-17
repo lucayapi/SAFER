@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Six rotations LoRA. Soumettre le smoke avant ce tableau.
+# Six rotations LoRA. Utilise l'environnement LoRA déjà installé.
 # Depuis SAFER/ : sbatch text/jobs/sat_lodo_gpu.sh
 # Depuis SAFER/text/ : sbatch jobs/sat_lodo_gpu.sh
 #SBATCH --job-name=sat-lodo

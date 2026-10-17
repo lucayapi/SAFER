@@ -1,164 +1,92 @@
 # SaT-LoRA : six rotations LODO exploratoires
 
-Ce protocole compare `sat-12l-sm` initial (M0), son seuil calibré sur les cinq
-corpus sources (M1) et un adaptateur LoRA entraîné sur ces sources puis calibré
-sur leur validation (M3). Chaque cible est absente de l'entraînement, de la
-validation et du choix du seuil. Une rotation correspond à **une tâche GPU** ;
-le tableau Slurm lance les six rotations avec deux tâches simultanées au maximum.
+Ce protocole entraîne `sat-12l-sm` sur cinq corpus sources et évalue le sixième,
+répété pour les six cibles. Les seuils de M1 (SaT initial) et M3 (LoRA) sont
+choisis uniquement sur la validation des sources. M0 utilise le seuil par défaut.
+Les références restent des **préannotations IA**, et non un gold humain validé.
 
-**Nature de la référence :** les unités employées ici sont des préannotations IA
-directes, pas des annotations humaines validées. Les métriques produites sont
-exploratoires et ne constituent pas des performances finales pour un article.
-Les six bases de revue ne contenaient aucun récit `validated` lors de la mise en
-place du protocole.
+## Données utilisées
 
-## Préparer les données sur le PC
+Le bundle privé `sat12l_sm_lodo_v3` reprend toutes les préannotations directes
+`narrative_v2` qui possèdent au moins une unité et des extraits exacts, ordonnés
+et sans chevauchement. Les champs `issues` et `uncertain` ne sont plus des motifs
+d'exclusion. Les annotations produites par les anciennes règles locales restent
+exclues, conformément au choix antérieur de n'utiliser que l'annotation directe.
 
-Depuis la racine de SAFER, après import des annotations directes de
-`service_temporaire` :
+Le « contrôle qualité » est la file
+`annotation/audit/validation_queue_20261016/` : tout récit cité dans
+`cases_to_validate.jsonl` ou `source_quality_warnings.jsonl` est écarté de
+l'entraînement **et de l'évaluation**. Le manifeste conserve les empreintes
+SHA-256 de ces deux listes et les effectifs par corpus. Un signal de la file
+reste un cas à examiner, pas nécessairement une erreur confirmée.
+
+Lorsqu'un récit contient du texte informatif hors des unités annotées, seule la
+suite de ses unités sert à l'entraînement : aucun faux segment n'est inventé
+pour le passage manquant. Cette transformation réduit le contexte du modèle
+pour ces récits. Les retours à la ligne sont remplacés par des espaces dans
+la seule copie d'entraînement. Les récits et offsets d'origine restent intacts
+dans `train.jsonl`, `val.jsonl` et `test.jsonl` pour l'évaluation. Les récits
+sans unité factuelle ne peuvent pas former un exemple du trainer officiel et
+sont comptés séparément. Les données des six rotations et le partage 80/20
+reproductible sont décrits dans `manifest.json`.
+
+Préparation effectuée sur le PC, depuis `SAFER/` :
 
 ```powershell
 .\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py preflight
-.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py prepare --out annotation\lodo_sat_transfer\sat12l_sm_lodo_v2
-.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py check-bundle --bundle annotation\lodo_sat_transfer\sat12l_sm_lodo_v2
+.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py prepare --out annotation\lodo_sat_transfer\sat12l_sm_lodo_v3
+.\text\.venv\Scripts\python.exe text\scripts\sat_lodo.py check-bundle --bundle annotation\lodo_sat_transfer\sat12l_sm_lodo_v3
 ```
 
-Le lot `service_temporaire` a été importé localement le 17 octobre 2026 :
-2 523 préannotations directes et 416 réponses rejetées. Le précontrôle retient
-980 récits de ce corpus selon les critères ci-dessous. Le dossier préparé est
-`annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/`. **Il est ignoré par Git et
-contient les récits complets.** Si le bundle privé `v1` est déjà sur le cluster,
-le job smoke peut en créer automatiquement une copie `v2` après avoir vérifié
-les 30 empreintes de données et la configuration d'origine. Sinon, transférez
-le dossier `v2` séparément, hors dépôt Git. Ne commitez que le code sous `text/`.
-
-La préparation garde uniquement les annotations directes v2 aux extraits
-exacts, ordonnées et sans chevauchement, sans `issues`, sans unité incertaine,
-sans saut de ligne au sein d'une unité et sans trou alphanumérique entre les
-unités. Le manifeste donne les effectifs et les exclusions par corpus. Les
-passages entre unités, s'ils ne portent aucun caractère alphanumérique, sont
-conservés dans une **copie dérivée d'entraînement** en préfixe de l'unité
-suivante. Les retours à la ligne de ces passages deviennent des espaces dans
-cette seule copie ; les textes et positions originaux restent inchangés dans
-les JSONL d'évaluation. Les trois partitions par rotation et les identifiants
-de partage 80/20 sont sauvegardés avec leurs empreintes SHA-256.
+Le dossier `annotation/` est ignoré par Git. **Ne commitez pas les récits.**
+Transférez séparément `annotation/lodo_sat_transfer/sat12l_sm_lodo_v3/` vers
+`$SCRATCH/safer_private/sat12l_sm_lodo_v3/` sur le cluster, ou vers
+`SAFER/annotation/lodo_sat_transfer/sat12l_sm_lodo_v3/`. Les anciens bundles
+`v1`/`v2` sont des archives : ils ne sont pas convertibles en `v3`, car les
+partitions et les données ont changé.
 
 ## Environnement du cluster
 
-Le code arrive sur le cluster par votre `commit`/`push` manuel. Le dossier
-**privé** `annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` reste hors de Git.
-Si `v1` se trouve déjà dans `$SCRATCH/safer_private/` ou dans
-`SAFER/annotation/lodo_sat_transfer/`, le job smoke crée `v2` dans le même
-dossier sans toucher à `v1`. La migration vérifie toutes les empreintes et
-consigne la provenance dans le nouveau manifeste. Sinon, copiez `v2` séparément,
-de préférence dans
-`$SCRATCH/safer_private/sat12l_sm_lodo_v2/`. Le job le détecte aussi à
-`SAFER/annotation/lodo_sat_transfer/sat12l_sm_lodo_v2/` si vous préférez ce
-chemin. Il doit contenir `manifest.json`, `complete.json` et `folds/`.
+Le code `text/vendor/wtpsplit/` est une copie versionnée du trainer officiel,
+révision `3ef928c8e163d11dc6f6336ad610bff2ffe0bda4`. Le job vérifie
+ses empreintes, le GPU, les versions Python, la configuration et le bundle.
+Le runtime isolé installé lors de l'essai GPU précédent est réutilisé depuis
+`${SCRATCH:-$HOME}/safer_sat_lodo/runtime/`. Il comprend PyTorch 2.5.1 CUDA 12.4,
+les dépendances de `text/annotation/requirements_sat_lodo.txt`, ainsi que
+`wtpsplit` et `adapters`. Aucun clone ni installation manuelle n'est nécessaire
+si ce runtime est déjà prêt. Aucune journalisation W&B n'est activée.
 
-Une copie du dépôt officiel `wtpsplit` est incluse dans
-`text/vendor/wtpsplit/` et poussée avec le code SAFER. Son trainer LoRA dépend
-de plusieurs modules internes au dépôt
-[officiel](https://github.com/segment-any-text/wtpsplit/blob/main/README.md#adapt-to-your-own-corpus-via-lora).
-La copie correspond à la révision
-`3ef928c8e163d11dc6f6336ad610bff2ffe0bda4` ; ses fichiers et leurs
-empreintes sont consignés dans `text/vendor/wtpsplit/SAFER_VENDOR.json`.
-Les empreintes des fichiers texte utilisent des fins de ligne LF canoniques,
-pour être identiques après un checkout Windows ou Linux ; les fichiers binaires
-sont vérifiés octet par octet.
-Les métadonnées Git internes ont été retirées pour que le code soit réellement
-versionné par SAFER, et la licence MIT est conservée. Aucun clone GitHub n'est
-fait sur le cluster. Le premier job GPU crée un environnement isolé et installe
-PyTorch 2.5.1 CUDA 12.4, le fichier
-`text/annotation/requirements_sat_lodo.txt`, le dépôt en mode éditable et
-`adapters==0.2.1` sans ses dépendances automatiques. Ce runtime et les
-versions installées sont conservés dans `${SCRATCH:-$HOME}/safer_sat_lodo/runtime/`.
-Le fichier de dépendances ne garde que les paquets utilisés par l'entraînement
-LoRA et l'évaluation. `wandb` est fixé à `0.15.12` : le trainer l'importe même
-si `report_to=none`, et cette version dispose d'une roue Python qui évite la
-compilation Go du paquet récent. `datasets==2.13.2`, `pyarrow==12.0.1` et
-`h5py==3.10.0` disposent de roues compatibles avec Python 3.10 sur Linux.
-Les bibliothèques natives doivent être installées depuis leurs roues ; si une
-roue compatible manque, l'installation échoue directement au lieu de tenter
-une compilation nécessitant Rust ou HDF5. Aucune journalisation W&B n'est activée.
-`sat-12l-sm` publie ses poids sous `model.safetensors` ; `safetensors==0.4.5`
-est installé explicitement pour que `transformers==4.29.2` puisse charger le
-modèle de base. Après cette mise à jour des dépendances, le job smoke les
-réinstalle automatiquement dans son environnement isolé.
-Cette étape suppose que les nœuds GPU ont accès à PyPI, l'index CUDA
-et Hugging Face pour installer les dépendances et obtenir le modèle. Si le cluster bloque ces téléchargements depuis les nœuds
-GPU, le journal du premier job indiquera l'étape en échec.
+La configuration commune est dans `text/annotation/sat_lodo_lora_template.json` :
+`sat-12l-sm`, 30 époques, taux `3e-4`, LoRA `r=16` et `alpha=32`, lot GPU 8
+avec accumulation 8, `subsample=null`. `use_auxiliary=false` garde la tête
+préentraînée à une sortie. Les sorties sont privées, dans
+`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v3/`.
 
-Les sorties vont automatiquement dans
-`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v2/`. Aucune variable
-d'environnement n'est requise pour les chemins standard. Le job vérifie le
-GPU, les versions, les empreintes du bundle et la révision de `wtpsplit` avant
-chaque entraînement. PyTorch 2.5.x est retenu car le trainer officiel appelle
-`torch.load` sans `weights_only=False`, incompatible avec le défaut de 2.6.
+## Lancer directement les six adaptations
 
-La [configuration officielle d'exemple](https://github.com/segment-any-text/wtpsplit/blob/main/configs/lora/lora_dummy_config.json)
-sert de base au fichier `text/annotation/sat_lodo_lora_template.json`. Ici,
-`model_name_or_path` vaut `segment-any-text/sat-12l-sm`, le lot GPU vaut 8 avec
-accumulation 8, et `subsample` est désactivé. Les autres choix substantiels
-(30 époques, taux `3e-4`, LoRA `r=16`, `alpha=32`) restent ceux de l'exemple.
-Pour `sat-12l-sm`, `use_auxiliary=false` conserve la tête préentraînée à une
-sortie. Avec `true`, le trainer crée 111 sorties et réinitialise la tête ; ce
-choix de l'exemple officiel convient à son modèle source, mais changerait ici
-le point de départ de la comparaison LoRA.
-La journalisation externe est désactivée ; les sorties restent sur le cluster.
-
-## Essai GPU puis six tâches
-
-Depuis la racine `SAFER/` du clone sur le cluster, après avoir transféré le
-dossier privé, la seule commande de préparation est :
-
-```bash
-sbatch text/jobs/sat_lodo_smoke.sh
-```
-
-Ce job installe les dépendances, entraîne un seul pas, recharge l'adaptateur
-avec `SaT("sat-12l-sm", lora_path=...)` et vérifie un découpage. Attendez sa
-fin **réussie** ; le fichier
-`${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_lodo_v2/smoke_ok.json`
-est alors créé. Ensuite, toujours depuis `SAFER/` :
+Après `git pull` du code et transfert du **bundle v3** sur le cluster, depuis
+la racine `SAFER/` :
 
 ```bash
 sbatch text/jobs/sat_lodo_gpu.sh
 ```
 
-Le tableau `0-5%2` et toutes les ressources Slurm sont déjà écrits dans le
-script. Si vous êtes dans `SAFER/text/`, utilisez les mêmes commandes sans
-le préfixe `text/`. Les journaux `slurm-sat-lodo*` sont écrits dans le
-répertoire depuis lequel vous avez lancé `sbatch`.
+Le tableau Slurm `0-5%2` lance six tâches avec au plus deux GPU en même temps.
+Il n'exige plus de nouveau job `smoke` pour ce bundle ; il utilise le runtime
+GPU déjà installé et effectue ses précontrôles avant chaque entraînement.
+Depuis `SAFER/text/`, la commande est `sbatch jobs/sat_lodo_gpu.sh`.
+Les journaux `slurm-sat-lodo-<job>_<index>.out` et `.err` apparaissent dans le
+dossier de soumission. Une relance reprend les checkpoints existants de `v3`.
 
-Une tâche relancée reprend le dernier checkpoint officiel disponible. Si son
-adaptateur final existe déjà, elle reprend directement l'évaluation. Chaque
-tâche écrit `target_<corpus>/metrics.json`, les courbes de seuils sur la
-validation source et une base SQLite de prédictions permettant de reprendre
-l'évaluation sans recommencer les inférences terminées.
-
-Les valeurs de loss d'entraînement et de validation sont aussi conservées dans
-`target_<corpus>/trainer/trainer_state.json` (historique complet du trainer)
-et dans `target_<corpus>/loss_history.csv` (une ligne par valeur journalisée,
-avec le pas et l'époque). Le fichier CSV est produit à la fin de
-l'entraînement ; pendant l'exécution, les valeurs restent visibles dans le
-journal Slurm `.out`. Le job smoke produit ses propres fichiers analogues sous
-`smoke/`. Les checkpoints intermédiaires conservent l'historique atteint au
-moment de chaque sauvegarde, ce qui aide en cas d'interruption.
-
-Une fois les six tâches terminées :
+Chaque cible produit son adaptateur, `loss_history.csv`, `metrics.json`, les
+courbes de seuils et un cache SQLite de prédictions. Les pertes sont aussi dans
+`trainer/trainer_state.json` et visibles pendant l'entraînement dans `.out`.
+Après les six tâches :
 
 ```bash
 sbatch text/jobs/sat_lodo_summary.sh
 ```
 
-`summary.csv` présente M0, M1, M3 et M3−M1 par corpus, puis leur moyenne
-macro. Les seuils de M1 et M3 sont sélectionnés **séparément dans chaque
-rotation** sur les cinq sources, jamais sur la cible. Le seuil `0,10` de la
-calibration antérieure BTP–métallurgie n'est pas réutilisé. Les métriques
-principales sont le F1 de paires `(start,end)` exactement égales ; les rapports
-contiennent aussi un F1 des frontières brutes et le rappel exact par rôle.
-
-Les fichiers du bundle et des résultats contiennent des récits d'accidents :
-conservez-les dans un espace privé du cluster. Cette expérience ne remplace pas
-une évaluation ultérieure sur un gold humain indépendant.
+`summary.csv` compare M0, M1 et M3 par corpus, puis leur moyenne macro.
+Ces scores sont exploratoires et ne doivent pas être présentés comme des
+performances sur un gold humain indépendant.
