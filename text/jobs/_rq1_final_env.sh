@@ -23,13 +23,20 @@ if [[ ! -f "${RQ1_FINAL_SOURCE}/complete.json" &&
   export RQ1_FINAL_SOURCE="${safer_root}/safer_sat_indomain/bundle/sat12l_sm_gold_v3_indomain_v1"
 fi
 export RQ1_FINAL_BUNDLE="${storage_root}/safer_sat_rq1_final/bundle/rq1_segmentation_final_v1"
-if [[ ! -f "${RQ1_FINAL_BUNDLE}/complete.json" &&
-      -f "${safer_root}/annotation/rq1_final_v1/bundle/complete.json" ]]; then
-  export RQ1_FINAL_BUNDLE="${safer_root}/annotation/rq1_final_v1/bundle"
+if [[ ! -f "${RQ1_FINAL_BUNDLE}/complete.json" ]]; then
+  for candidate in \
+    "${safer_root}/annotation/rq1_final_v1/bundle" \
+    "${safer_root}/annotation/lodo_sat_transfer/rq1_final_v1/bundle" \
+    "${safer_root}/annotation/lodo_sat_transfer/rq1_final_v1"; do
+    if [[ -f "${candidate}/complete.json" && -f "${candidate}/manifest.json" ]]; then
+      export RQ1_FINAL_BUNDLE="${candidate}"
+      break
+    fi
+  done
 fi
 export RQ1_FINAL_RUN_ROOT="${storage_root}/safer_sat_rq1_final/runs/rq1_segmentation_final_v1"
 [[ -f "${RQ1_FINAL_BUNDLE}/complete.json" || -f "${RQ1_FINAL_SOURCE}/complete.json" ]] || {
-  echo "Private RQ1 bundle missing. Copy the prepared annotation/rq1_final_v1/bundle/ to ${storage_root}/safer_sat_rq1_final/bundle/rq1_segmentation_final_v1/ or restore the single-source bundle at ${RQ1_FINAL_SOURCE}." >&2
+  echo "Private RQ1 bundle missing. Expected manifest.json and complete.json in ${RQ1_FINAL_BUNDLE}/, ${safer_root}/annotation/lodo_sat_transfer/rq1_final_v1[/bundle]/, or source bundle ${RQ1_FINAL_SOURCE}/." >&2
   exit 1
 }
 if [[ -f "${RQ1_FINAL_BUNDLE}/complete.json" ]]; then

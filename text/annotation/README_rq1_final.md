@@ -30,7 +30,11 @@ copier ce dossier dans
 `${SCRATCH:-$HOME}/safer_sat_rq1_final/bundle/rq1_segmentation_final_v1/`
 avant de soumettre. Le précontrôle vérifie son manifeste et toutes ses
 empreintes. Le dossier peut aussi être placé sous
-`SAFER/annotation/rq1_final_v1/bundle/` sur le cluster, toujours hors Git.
+`SAFER/annotation/rq1_final_v1/bundle/` ou
+`SAFER/annotation/lodo_sat_transfer/rq1_final_v1/` sur le cluster, toujours
+hors Git. Dans ce dernier dossier, les fichiers peuvent être directement à
+la racine ou sous `bundle/` ; le job choisit le dossier contenant
+`manifest.json` et `complete.json`.
 Si le paquet final n'est pas disponible, le job CPU peut encore le reconstruire
 à partir de l'ancien paquet mono-source
 `${SCRATCH:-$HOME}/safer_sat_indomain/bundle/sat12l_sm_gold_v3_indomain_v1/`.
