@@ -8,7 +8,11 @@
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/_rq1_final_env.sh"
+if [[ -f "${SLURM_SUBMIT_DIR:?}/text/jobs/_rq1_final_env.sh" ]]; then
+  source "${SLURM_SUBMIT_DIR}/text/jobs/_rq1_final_env.sh"
+else
+  source "${SLURM_SUBMIT_DIR}/jobs/_rq1_final_env.sh"
+fi
 
 # Two simultaneous jobs each retain one resumable full state while the next
 # checkpoint is being written. Twelve GiB covers this transient overlap with
