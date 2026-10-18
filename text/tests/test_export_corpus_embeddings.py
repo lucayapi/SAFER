@@ -18,9 +18,9 @@ from safer_core.test_corpus import (
 TEXT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_registry_lists_three_corpora():
+def test_registry_lists_six_corpora():
     ids = list_test_corpus_ids()
-    assert ids == ["btp", "caou", "metallurgie"]
+    assert ids == ["bois_textille", "btp", "caou", "metallurgie", "nicollin", "service_temporaire"]
 
 
 def test_conventional_flat_paths():
@@ -29,11 +29,12 @@ def test_conventional_flat_paths():
     assert emb_rel == "embeddings/Qwen3-Embedding-0.6B_metallurgie.csv"
 
 
-def test_resolve_metallurgie_flat_paths():
+def test_resolve_metallurgie_gold_paths():
     spec = resolve_test_corpus("metallurgie", anchor=TEXT_ROOT)
     assert spec.id == "metallurgie"
     assert spec.data_csv.name == "data_metallurgie.csv"
-    assert spec.emb_csv.name == "Qwen3-Embedding-0.6B_metallurgie.csv"
+    assert spec.emb_csv.name == "metallurgie.csv"
+    assert "gold_v3" in spec.emb_csv.parts
     assert "dataset" in str(spec.data_csv)
     assert "test" not in spec.data_csv.parts[-2:]
     assert spec.data_csv.is_absolute()
@@ -42,7 +43,8 @@ def test_resolve_metallurgie_flat_paths():
 def test_resolve_btp_paths():
     spec = resolve_test_corpus("btp", anchor=TEXT_ROOT)
     assert spec.data_csv.name == "data_btp.csv"
-    assert spec.emb_csv.name == "Qwen3-Embedding-0.6B_btp.csv"
+    assert spec.emb_csv.name == "btp.csv"
+    assert "gold_v3" in spec.emb_csv.parts
 
 
 def test_backbone_short_id():
@@ -55,9 +57,9 @@ def test_load_export_config():
     cfg = load_export_config(TEXT_ROOT / "configs" / "export_embeddings.yaml")
     assert cfg["text_col"] == "sentence"
     assert cfg["backbone_name"] == "Qwen/Qwen3-Embedding-0.6B"
-    assert resolve_corpora_ids(cfg) == ["btp", "metallurgie", "caou", "nicollin"]
+    assert resolve_corpora_ids(cfg) == ["btp", "metallurgie", "caou", "nicollin", "bois_textille", "service_temporaire"]
     assert resolve_corpora_ids(cfg, corpus="caou") == ["caou"]
-    assert resolve_corpora_ids(cfg, all_corpora=True) == ["btp", "caou", "metallurgie", "nicollin"]
+    assert resolve_corpora_ids(cfg, all_corpora=True) == ["bois_textille", "btp", "caou", "metallurgie", "nicollin", "service_temporaire"]
 
 
 def test_skip_existing_without_force(tmp_path, monkeypatch):
@@ -82,11 +84,13 @@ def test_skip_existing_without_force(tmp_path, monkeypatch):
         "a1,1,phrase test,A0,true\n",
         encoding="utf-8",
     )
-    emb_csv = tmp_path / "emb.csv"
+    emb_csv = tmp_path / "embeddings" / "qwen3" / "mini.csv"
+    emb_csv.parent.mkdir(parents=True)
     emb_csv.write_text("doc_id,dim_0001\n0,0.1\n", encoding="utf-8")
 
     cfg = load_export_config(TEXT_ROOT / "configs" / "export_embeddings.yaml")
     cfg["skip_existing"] = True
+    cfg["output_root"] = "embeddings"
 
     with patch("scripts.export_corpus_embeddings.resolve_test_corpus") as mock_resolve:
         from safer_core.test_corpus import TestCorpusSpec

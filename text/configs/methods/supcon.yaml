@@ -1,11 +1,11 @@
 method_name: supcon
 method: supcon
-output_dir: output/supcon
+output_dir: output/gold_v3/supcon
 use_prompt: false
 seed: 42
 n_folds: 3
 selection_metric: balanced_accuracy
-test_corpora: [metallurgie, caou, nicollin]
+test_corpora: [metallurgie, caou, nicollin, bois_textille, service_temporaire]
 
 data:
   dataset_path: dataset/data_btp.csv

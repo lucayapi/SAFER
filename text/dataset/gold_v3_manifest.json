@@ -1,0 +1,105 @@
+{
+  "gold_version": "narrative_v3",
+  "snapshot_sha256": "4845dbec927c5cd1161360729382ac5497c3f5c41d1562b03d5020c2f20bdca8",
+  "created_at_utc": "2026-10-18T13:46:50.126950+00:00",
+  "total_documents": 17927,
+  "total_units": 147487,
+  "corpora": {
+    "btp": {
+      "source_corpus": "btp",
+      "file": "data_btp.csv",
+      "sha256": "92d9abd6147f666d6c12d07215ef4d93b63be7a9eb97a4816e127836b764d4ff",
+      "documents": 4864,
+      "units": 49517,
+      "roles": {
+        "A0": 20207,
+        "A1": 6981,
+        "AUTRE": 5484,
+        "B": 10764,
+        "C": 6081
+      },
+      "documents_with_units": 4863,
+      "documents_without_units": 1
+    },
+    "metallurgie": {
+      "source_corpus": "metallurgie",
+      "file": "data_metallurgie.csv",
+      "sha256": "ea18d33308f9f6f5267fef9ac275b4a043768e69f68c0c759c15b245a5f757b7",
+      "documents": 2742,
+      "units": 28430,
+      "roles": {
+        "A0": 11973,
+        "A1": 3955,
+        "AUTRE": 3439,
+        "B": 5588,
+        "C": 3475
+      },
+      "documents_with_units": 2742,
+      "documents_without_units": 0
+    },
+    "caou": {
+      "source_corpus": "caou_chimie_plas",
+      "file": "data_caou.csv",
+      "sha256": "34edd932eec0aa46685f3c3e571e3c6b8cd28ff4121e5f4b2a1afbc36be8f6c2",
+      "documents": 737,
+      "units": 8200,
+      "roles": {
+        "A0": 3410,
+        "A1": 1278,
+        "AUTRE": 1154,
+        "B": 1370,
+        "C": 988
+      },
+      "documents_with_units": 737,
+      "documents_without_units": 0
+    },
+    "bois_textille": {
+      "source_corpus": "bois_textille",
+      "file": "data_bois_textille.csv",
+      "sha256": "8948d0e9f96fdd3a878f38e30ee844938205a9fe71bc75f852b193af34f8e856",
+      "documents": 1694,
+      "units": 18497,
+      "roles": {
+        "A0": 7594,
+        "A1": 2861,
+        "AUTRE": 2427,
+        "B": 3433,
+        "C": 2182
+      },
+      "documents_with_units": 1694,
+      "documents_without_units": 0
+    },
+    "service_temporaire": {
+      "source_corpus": "service_temporaire",
+      "file": "data_service_temporaire.csv",
+      "sha256": "e7f633fb683224b17b59efb18713e58225a48a6a8653049a2deafdfc497fadfa",
+      "documents": 2299,
+      "units": 23943,
+      "roles": {
+        "A0": 9932,
+        "A1": 3412,
+        "AUTRE": 3168,
+        "B": 4596,
+        "C": 2835
+      },
+      "documents_with_units": 2299,
+      "documents_without_units": 0
+    },
+    "nicollin": {
+      "source_corpus": "nicollin",
+      "file": "data_nicollin.csv",
+      "sha256": "5e15d971b3b554095a463e139e494bd7c640584fe669c004c18f4c5ab7ac750a",
+      "documents": 5591,
+      "units": 18900,
+      "roles": {
+        "A0": 7391,
+        "A1": 694,
+        "AUTRE": 2558,
+        "B": 4940,
+        "C": 3317
+      },
+      "documents_with_units": 5553,
+      "documents_without_units": 38
+    }
+  }
+}

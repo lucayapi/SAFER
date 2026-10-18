@@ -10,7 +10,7 @@ import torch
 from sklearn.model_selection import GroupShuffleSplit
 from torch.utils.data import DataLoader, Dataset, Subset
 
-from scgm_text.data_metadata import load_filtered_metadata, resolve_text_column
+from scgm_text.data_metadata import LABEL2ID, load_filtered_metadata, resolve_text_column
 
 
 def split_by_group(dataset: Dataset, val_ratio: float, seed: int) -> Tuple[np.ndarray, np.ndarray]:
@@ -56,9 +56,9 @@ class TextRawDataset(Dataset):
                 "ou filtrer les labels invalides avant TextRawDataset(metadata_df=...)."
             )
         self.label_ids = label_ids.astype(np.int64)
-        if (self.label_ids < 0).any() or (self.label_ids > 3).any():
+        if (self.label_ids < 0).any() or (self.label_ids >= len(LABEL2ID)).any():
             raise ValueError(
-                f"label_id hors plage [0, 3] : min={self.label_ids.min()}, max={self.label_ids.max()}"
+                f"label_id hors plage [0, {len(LABEL2ID) - 1}] : min={self.label_ids.min()}, max={self.label_ids.max()}"
             )
         self.groups = metadata_df[group_col].astype(str).tolist()
         self.row_ids = metadata_df["row_id"].to_numpy(dtype=np.int64)

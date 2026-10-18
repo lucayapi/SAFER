@@ -47,10 +47,10 @@ def test_summarize_ood_classification():
 
 def test_fit_logistic_and_evaluate_toy():
     rng = np.random.RandomState(0)
-    X_train = rng.randn(40, 8)
-    y_train = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10)
-    X_eval = rng.randn(20, 8)
-    y_eval = np.array(["A0"] * 5 + ["A1"] * 5 + ["B"] * 5 + ["C"] * 5)
+    X_train = rng.randn(50, 8)
+    y_train = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10 + [4] * 10)
+    X_eval = rng.randn(25, 8)
+    y_eval = np.array(["A0"] * 5 + ["A1"] * 5 + ["B"] * 5 + ["C"] * 5 + ["AUTRE"] * 5)
     metrics = fit_logistic_and_evaluate(X_train, y_train, X_eval, y_eval, seed=0)
     assert "balanced_accuracy" in metrics
 
@@ -88,11 +88,11 @@ def test_save_classification_outputs(tmp_path: Path):
 
 def test_per_role_metrics_are_saved_for_a_non_btp_source(tmp_path: Path):
     prediction = pd.DataFrame({
-        "true_macro": ["A0", "A1", "B", "C"],
-        "pred_macro": ["A0", "B", "B", "C"],
+        "true_macro": ["A0", "A1", "B", "C", "AUTRE"],
+        "pred_macro": ["A0", "B", "B", "C", "AUTRE"],
     })
     table = per_role_metrics_from_predictions(prediction)
-    assert list(table["role"]) == ["A0", "A1", "B", "C"]
+    assert list(table["role"]) == ["A0", "A1", "B", "C", "AUTRE"]
     assert table.loc[table["role"] == "A1", "recall"].item() == 0.0
     paths = save_classification_outputs(
         tmp_path,
@@ -112,17 +112,17 @@ def test_per_role_metrics_are_saved_for_a_non_btp_source(tmp_path: Path):
 
 def test_evaluate_classifier_return_details_and_save_predictions(tmp_path: Path):
     rng = np.random.RandomState(0)
-    X_train = rng.randn(40, 8)
-    y_train = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10)
+    X_train = rng.randn(50, 8)
+    y_train = np.array([0] * 10 + [1] * 10 + [2] * 10 + [3] * 10 + [4] * 10)
     for i, c in enumerate(y_train):
         X_train[i, c] += 4.0
     X_eval = X_train.copy()
-    y_eval = np.array(["A0"] * 10 + ["A1"] * 10 + ["B"] * 10 + ["C"] * 10)
+    y_eval = np.array(["A0"] * 10 + ["A1"] * 10 + ["B"] * 10 + ["C"] * 10 + ["AUTRE"] * 10)
     meta = pd.DataFrame(
         {
-            "sentence": [f"t{i}" for i in range(40)],
+            "sentence": [f"t{i}" for i in range(50)],
             "pred_label": y_eval,
-            "accident_id": list(range(40)),
+            "accident_id": list(range(50)),
         }
     )
     pipe = fit_logistic_on_embeddings(X_train, y_train, seed=0)
@@ -131,7 +131,7 @@ def test_evaluate_classifier_return_details_and_save_predictions(tmp_path: Path)
     )
     assert "balanced_accuracy" in metrics
     assert "pred_macro" in details
-    assert details["probs"].shape == (40, 4)
+    assert details["probs"].shape == (50, 5)
 
     preds, path = build_and_save_predictions(
         meta,
@@ -145,7 +145,7 @@ def test_evaluate_classifier_return_details_and_save_predictions(tmp_path: Path)
     assert (tmp_path / "transfer" / "target_macro_predictions.csv").is_file()
     loaded = load_saved_predictions(tmp_path, "btp")
     assert loaded is not None
-    assert len(loaded) == 40
+    assert len(loaded) == 50
     assert "pred_macro" in loaded.columns
     assert load_saved_predictions(tmp_path, "missing") is None
 

@@ -185,7 +185,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     parser.add_argument("--num_cycles", type=int, default=10)
     parser.add_argument("--hiddim", type=int, default=128)
-    parser.add_argument("--n_class", type=int, default=4)
+    parser.add_argument("--n_class", type=int, default=5)
     parser.add_argument("--n_subclass", type=int, default=32)
     parser.add_argument("--tau", type=float, default=0.1)
     parser.add_argument("--alpha", type=float, default=0.5)

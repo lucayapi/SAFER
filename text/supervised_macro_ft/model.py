@@ -53,7 +53,7 @@ def model_kwargs_from_cfg(model_cfg: Mapping[str, Any]) -> Dict[str, Any]:
     backbone_trainable = bool(model_cfg.get("backbone_trainable", True))
     kwargs: Dict[str, Any] = {
         "backbone_name": str(model_cfg["backbone_name"]),
-        "num_classes": int(model_cfg.get("n_classes", 4)),
+        "num_classes": int(model_cfg.get("n_classes", 5)),
         "pooling": str(model_cfg.get("pooling", "mean")),
         "backbone_trainable": backbone_trainable,
         "train_last_n_layers": model_cfg.get("train_last_n_layers"),

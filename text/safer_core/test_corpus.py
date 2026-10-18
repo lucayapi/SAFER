@@ -146,6 +146,8 @@ def _resolve_test_emb_csv(
     bid = backbone_id or DEFAULT_BACKBONE_ID
     if emb_rel:
         explicit = resolve_repo_path(str(emb_rel), repo_root=anchor).resolve()
+        if "gold_v3" in explicit.parts:
+            return explicit
         if explicit.is_file():
             return explicit
     rel_candidates = []

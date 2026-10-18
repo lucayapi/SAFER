@@ -3,7 +3,7 @@
 
 backbone_name: Qwen/Qwen3-Embedding-0.6B
 backbone_id: qwen3
-output_root: embeddings
+output_root: embeddings/gold_v3
 input_prefix: ""
 text_col: sentence
 label_col: pred_label
@@ -20,3 +20,5 @@ corpora:
   - metallurgie
   - caou
   - nicollin
+  - bois_textille
+  - service_temporaire

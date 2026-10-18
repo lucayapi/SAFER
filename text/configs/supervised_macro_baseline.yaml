@@ -11,7 +11,7 @@ selection_metric: balanced_accuracy
 
 source:
   dataset_path: dataset/data_btp.csv
-  emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+  emb_csv: embeddings/gold_v3/qwen3/btp.csv
   text_col: sentence
   label_col: pred_label
   group_col: accident_id
@@ -20,7 +20,7 @@ source:
 target:
   # Surchargé à l'exécution via cfg["corpus"] + registre test_corpora.yaml
   dataset_path: dataset/data_metallurgie.csv
-  emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
+  emb_csv: embeddings/gold_v3/qwen3/metallurgie.csv
   text_col: sentence
   label_col: pred_label
   group_col: accident_id

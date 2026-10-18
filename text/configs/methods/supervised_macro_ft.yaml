@@ -10,11 +10,13 @@
 #   null        — pas de ψ : tête Linear(d_backbone → n_classes)
 
 method_name: supervised_macro_ft
-output_dir: output/supervised_macro_ft
+output_dir: output/gold_v3/supervised_macro_ft
 test_corpora:
   - metallurgie
   - caou
   - nicollin
+  - bois_textille
+  - service_temporaire
 
 data:
   data_csv: dataset/data_btp.csv
@@ -33,7 +35,7 @@ model:
   hiddim: 128
   proj_hidden: 256
   dropout: 0.1
-  n_classes: 4
+  n_classes: 5
   oversampling: false
   class_weight: balanced
   gradient_checkpointing: true

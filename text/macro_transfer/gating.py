@@ -18,7 +18,7 @@ def apply_macro_gating(
     confidence_threshold: float = 0.5,
 ) -> pd.DataFrame:
     """
-    ``prob_matrix`` : (N, 4) colonnes dans l'ordre A0, A1, B, C.
+    ``prob_matrix`` : (N, 5) colonnes dans l'ordre A0, A1, B, C, AUTRE.
     Retourne colonnes p_*, m_hat, q_conf, ambiguous.
     """
     p = np.asarray(prob_matrix, dtype=np.float64)

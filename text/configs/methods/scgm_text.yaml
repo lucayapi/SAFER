@@ -11,8 +11,8 @@
 
 method_name: scgm_text
 use_prompt: false
-output_dir: output/scgm_text
-test_corpora: [metallurgie, caou, nicollin]
+output_dir: output/gold_v3/scgm_text
+test_corpora: [metallurgie, caou, nicollin, bois_textille, service_temporaire]
 
 data:
   data_csv: dataset/data_btp.csv
@@ -30,7 +30,7 @@ model:
   pooling: mean
   projection: mlp
   hiddim: 128
-  n_class: 4
+  n_class: 5
   n_subclass: 32
   tau: 0.1
   alpha: 0.5

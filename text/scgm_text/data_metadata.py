@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from typing import List, Optional, Sequence
+from pathlib import Path
+import hashlib
+import json
 
 import numpy as np
 import pandas as pd
 
 from scgm_text.utils_io import create_doc_id_if_missing, parse_bool_column
 
-LABEL2ID = {"A0": 0, "A1": 1, "B": 2, "C": 3}
+LABEL2ID = {"A0": 0, "A1": 1, "B": 2, "C": 3, "AUTRE": 4}
+GOLD_V3_SNAPSHOT_SHA256 = "4845dbec927c5cd1161360729382ac5497c3f5c41d1562b03d5020c2f20bdca8"
 ID2LABEL = {value: key for key, value in LABEL2ID.items()}
 VALID_LABELS = set(LABEL2ID.keys())
 
@@ -76,6 +80,25 @@ def load_filtered_metadata(
         raise ValueError(f"Labels non mappés vers LABEL2ID : {bad[:20]}")
     filtered["label_id"] = filtered["label_id"].astype(np.int64)
     filtered["row_id"] = np.arange(len(filtered), dtype=np.int64)
+    data_path = Path(data_csv)
+    gold_manifest = data_path.parent / "gold_v3_manifest.json"
+    if gold_manifest.is_file():
+        manifest = json.loads(gold_manifest.read_text(encoding="utf-8"))
+        if manifest.get("snapshot_sha256") != GOLD_V3_SNAPSHOT_SHA256:
+            raise ValueError(f"Unexpected GOLD snapshot provenance: {gold_manifest}")
+        entry = manifest.get("corpora", {}).get(data_path.stem.removeprefix("data_"))
+        if data_path.name.startswith("data_") and data_path.suffix == ".csv":
+            if not entry or entry.get("file") != data_path.name:
+                raise ValueError(f"Dataset is not registered in GOLD v3 manifest: {data_path}")
+            digest_hash = hashlib.sha256()
+            with data_path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest_hash.update(block)
+            digest = digest_hash.hexdigest()
+            if digest != entry["sha256"] or len(filtered) != entry["units"]:
+                raise ValueError(f"GOLD dataset modified or rows filtered: {data_path}")
+            filtered.attrs["gold_dataset_sha256"] = digest
+            filtered.attrs["gold_snapshot_sha256"] = manifest["snapshot_sha256"]
     if group_col not in filtered.columns:
         raise ValueError(f"Missing group column: {group_col}")
     return filtered

@@ -185,7 +185,7 @@ def run_group_kfold_cv(
         train_labels = [int(dataset.label_ids[i]) for i in inner_train_idx]
         class_weight = build_class_weights(
             train_labels if not use_oversampling else [int(dataset.label_ids[i]) for i in train_idx_fit],
-            int(model_cfg.get("n_classes", 4)),
+            int(model_cfg.get("n_classes", 5)),
             class_weight_mode,
         )
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import hashlib
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -30,9 +32,25 @@ def merge_metadata_with_embeddings(
     strict: bool = True,
     corpus_id: Optional[str] = None,
 ) -> Tuple[pd.DataFrame, List[str]]:
+    if "gold_v3" in Path(emb_csv).parts:
+        sidecar = Path(emb_csv).with_suffix(".manifest.json")
+        if not sidecar.is_file():
+            raise ValueError(f"Missing GOLD embedding provenance: {sidecar}")
+        record = json.loads(sidecar.read_text(encoding="utf-8"))
+        signature = record["signature"]
+        emb_hash = hashlib.sha256()
+        with open(emb_csv, "rb") as stream:
+            for block in iter(lambda: stream.read(1024 * 1024), b""):
+                emb_hash.update(block)
+        if (signature["dataset_sha256"] != metadata_df.attrs.get("gold_dataset_sha256")
+                or signature["gold_snapshot_sha256"] != metadata_df.attrs.get("gold_snapshot_sha256")
+                or emb_hash.hexdigest() != record["export_sha256"]):
+            raise ValueError(f"Embedding provenance differs from GOLD: {emb_csv}")
     header = pd.read_csv(emb_csv, nrows=0)
     dim_columns = get_dim_columns(header)
     emb_df = pd.read_csv(emb_csv, usecols=["doc_id"] + dim_columns)
+    if strict and len(emb_df) != len(metadata_df):
+        raise ValueError(f"Embedding count differs from GOLD metadata: {emb_csv}")
     merged = metadata_df.merge(emb_df, on="doc_id", how="inner", validate="one_to_one")
     if len(merged) != len(metadata_df):
         n_meta = len(metadata_df)

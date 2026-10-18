@@ -1,6 +1,6 @@
 # Registre des corpus annotés (BTP + corpus hors domaine).
 # Convention : dataset/data_<id>.csv
-# Embeddings : embeddings/Qwen3-Embedding-0.6B_<id>.csv
+# Embeddings GOLD v3 : embeddings/gold_v3/qwen3/<id>.csv
 
 default: metallurgie
 
@@ -8,23 +8,35 @@ corpora:
   btp:
     display_name: BTP
     data_csv: dataset/data_btp.csv
-    emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
+    emb_csv: embeddings/gold_v3/qwen3/btp.csv
     prompt_context: btp
 
   metallurgie:
     display_name: Métallurgie
     data_csv: dataset/data_metallurgie.csv
-    emb_csv: embeddings/Qwen3-Embedding-0.6B_metallurgie.csv
+    emb_csv: embeddings/gold_v3/qwen3/metallurgie.csv
     prompt_context: metallurgie
 
   caou:
     display_name: Caoutchouc / chimie / plastiques
     data_csv: dataset/data_caou.csv
-    emb_csv: embeddings/Qwen3-Embedding-0.6B_caou.csv
+    emb_csv: embeddings/gold_v3/qwen3/caou.csv
     prompt_context: caou
 
   nicollin:
     display_name: Company corpus
     data_csv: dataset/data_nicollin.csv
-    emb_csv: embeddings/Qwen3-Embedding-0.6B_nicollin.csv
+    emb_csv: embeddings/gold_v3/qwen3/nicollin.csv
     prompt_context: nicollin
+
+  bois_textille:
+    display_name: Bois–textile
+    data_csv: dataset/data_bois_textille.csv
+    emb_csv: embeddings/gold_v3/qwen3/bois_textille.csv
+    prompt_context: bois_textille
+
+  service_temporaire:
+    display_name: Service temporaire
+    data_csv: dataset/data_service_temporaire.csv
+    emb_csv: embeddings/gold_v3/qwen3/service_temporaire.csv
+    prompt_context: service_temporaire

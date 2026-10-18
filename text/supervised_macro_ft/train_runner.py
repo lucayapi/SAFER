@@ -367,7 +367,7 @@ def run_supervised_macro_ft_training(
 
     class_weight = build_class_weights(
         dataset.label_ids.tolist(),
-        int(model_cfg.get("n_classes", 4)),
+        int(model_cfg.get("n_classes", 5)),
         class_weight_mode,
     )
     if use_hidden_cache and backbone_hidden is not None:

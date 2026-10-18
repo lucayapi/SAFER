@@ -67,7 +67,7 @@ def _apply_yaml_config(args: argparse.Namespace) -> None:
         if args.data_csv is None:
             args.data_csv = cfg.get("dataset_path") or cfg.get("data_csv") or "dataset/data_btp.csv"
         if args.emb_csv is None:
-            args.emb_csv = cfg.get("emb_csv") or "embeddings/Qwen3-Embedding-0.6B_btp.csv"
+            args.emb_csv = cfg.get("emb_csv") or "embeddings/gold_v3/qwen3/btp.csv"
     if args.output_dir is None:
         args.output_dir = cfg.get("output_dir") or "output/raw_embedding"
     if args.label_col == "pred_label" and cfg.get("label_col"):
@@ -105,7 +105,7 @@ def main() -> None:
     if args.data_csv is None:
         args.data_csv = "dataset/data_btp.csv"
     if args.emb_csv is None:
-        args.emb_csv = "embeddings/Qwen3-Embedding-0.6B_btp.csv"
+        args.emb_csv = "embeddings/gold_v3/qwen3/btp.csv"
     if args.output_dir is None:
         args.output_dir = "output/raw_embedding"
     if args.method_name is None:

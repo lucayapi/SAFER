@@ -1,7 +1,7 @@
 # Export E5 isolÃ© des exports Qwen : aucun CSV existant ne peut Ãªtre remplacÃ©.
 backbone_name: intfloat/multilingual-e5-large
-backbone_id: multilingual_e5_large
-output_root: embeddings
+backbone_id: e5
+output_root: embeddings/gold_v3
 input_prefix: "query: "
 text_col: sentence
 label_col: pred_label

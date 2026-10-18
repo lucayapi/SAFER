@@ -12,9 +12,9 @@ from macro_transfer.gating import apply_macro_gating
 def test_gating_argmax_and_threshold():
     p = np.array(
         [
-            [0.7, 0.1, 0.1, 0.1],
-            [0.2, 0.2, 0.2, 0.4],
-            [0.25, 0.25, 0.25, 0.25],
+            [0.7, 0.1, 0.1, 0.05, 0.05],
+            [0.15, 0.15, 0.15, 0.4, 0.15],
+            [0.2, 0.2, 0.2, 0.2, 0.2],
         ]
     )
     g = apply_macro_gating(p, confidence_threshold=0.5)

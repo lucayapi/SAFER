@@ -1,11 +1,11 @@
 method_name: raw_embedding
 dataset_path: dataset/data_btp.csv
-emb_csv: embeddings/Qwen3-Embedding-0.6B_btp.csv
-test_corpora: [metallurgie, caou, nicollin]
+emb_csv: embeddings/gold_v3/qwen3/btp.csv
+test_corpora: [metallurgie, caou, nicollin, bois_textille, service_temporaire]
 text_col: sentence
 label_col: pred_label
 group_col: accident_id
-output_dir: output/raw_embedding
+output_dir: output/gold_v3/raw_embedding
 use_prompt: false
 seed: 42
 backbone_name: Qwen/Qwen3-Embedding-0.6B

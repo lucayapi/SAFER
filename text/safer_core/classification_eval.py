@@ -27,7 +27,9 @@ KFOLD_CLASSIFICATION_AGGREGATE_KEYS: tuple[str, ...] = CV_CLASSIFICATION_METRIC_
 DEFAULT_CLASSIFIER = "logistic_regression"
 DEFAULT_SELECTION_METRIC = "balanced_accuracy"
 
-EMBEDDING_STEMS: tuple[str, ...] = ("btp", "metallurgie", "caou", "nicollin")
+EMBEDDING_STEMS: tuple[str, ...] = (
+    "btp", "metallurgie", "caou", "bois_textille", "service_temporaire", "nicollin"
+)
 
 PredictionDetails = Dict[str, Any]
 

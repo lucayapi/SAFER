@@ -48,7 +48,7 @@ def evaluate_macro_predictions(
     return {
         "n_eval": int(len(yt)),
         "accuracy": float((yt == yp).mean()),
-        "macro_f1": float(f1_score(yt, yp, average="macro", zero_division=0)),
+        "macro_f1": float(f1_score(yt, yp, labels=list(range(len(macros))), average="macro", zero_division=0)),
         "balanced_accuracy": float(balanced_accuracy_score(yt, yp)),
         "mean_confidence": float(p.max(axis=1).mean()),
         "mean_margin": float((p_sorted[:, -1] - p_sorted[:, -2]).mean()) if p.shape[1] >= 2 else 0.0,

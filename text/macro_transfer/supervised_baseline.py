@@ -192,7 +192,13 @@ def _proba_as_macro_matrix(proba: np.ndarray, classes_: np.ndarray, macros: Sequ
     out = np.zeros((proba.shape[0], len(macros)), dtype=np.float64)
     for i, macro in enumerate(macros):
         mid = LABEL2ID[str(macro)]
-        pos = int(np.where(cls == mid)[0][0])
+        matches = np.where(cls == mid)[0]
+        if len(matches) != 1:
+            raise ValueError(
+                f"Classifier has no output for {macro}; this may be a legacy four-class checkpoint. "
+                "Retrain with A0/A1/B/C/AUTRE before evaluation on GOLD v3."
+            )
+        pos = int(matches[0])
         out[:, i] = proba[:, pos]
     return out
 

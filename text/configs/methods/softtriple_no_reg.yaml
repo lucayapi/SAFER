@@ -1,11 +1,11 @@
 method_name: softtriple
 method: softtriple
-output_dir: output/softtriple_no_reg
+output_dir: output/gold_v3/softtriple_no_reg
 use_prompt: false
 seed: 42
 n_folds: 5
 selection_metric: balanced_accuracy
-test_corpora: [metallurgie, caou, nicollin]
+test_corpora: [metallurgie, caou, nicollin, bois_textille, service_temporaire]
 
 data:
   dataset_path: dataset/data_btp.csv
