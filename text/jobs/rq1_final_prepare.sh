@@ -25,7 +25,11 @@ echo "Available filesystem KiB: ${available_kb}; required: ${required_kb}"
   exit 1
 }
 if command -v quota >/dev/null 2>&1; then quota -s || true; fi
-python -u scripts/rq1_final.py prepare --source "${RQ1_FINAL_SOURCE}" --out "${RQ1_FINAL_BUNDLE}"
+if [[ -f "${RQ1_FINAL_BUNDLE}/complete.json" ]]; then
+  echo "Using already prepared RQ1 bundle: ${RQ1_FINAL_BUNDLE}"
+else
+  python -u scripts/rq1_final.py prepare --source "${RQ1_FINAL_SOURCE}" --out "${RQ1_FINAL_BUNDLE}"
+fi
 python -u scripts/rq1_final.py check --bundle "${RQ1_FINAL_BUNDLE}" >/dev/null
 echo "Prepared ${RQ1_FINAL_BUNDLE}"
 

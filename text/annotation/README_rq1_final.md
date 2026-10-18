@@ -24,12 +24,16 @@ La dernière commande calcule localement PySBD, SaT initial et les six
 calibrations M2 sur validation source, puis écrit les métriques et prédictions
 dans `annotation/rq1_final_v1/local_baselines/`.
 
-Le cluster dispose normalement déjà du paquet privé
-`${SCRATCH:-$HOME}/safer_sat_indomain/bundle/sat12l_sm_gold_v3_indomain_v1/`
-qui a servi aux modèles mono-source. Le job CPU le contrôle et reconstruit le
-nouveau paquet LODO à partir de ce paquet : aucun transfert supplémentaire
-n'est nécessaire s'il est encore présent. Sinon, il faut restaurer ce paquet
-privé **hors Git** avant de soumettre.
+Le paquet LODO final est déjà préparé localement dans
+`annotation/rq1_final_v1/bundle/` (privé, ignoré par Git). Sur le cluster,
+copier ce dossier dans
+`${SCRATCH:-$HOME}/safer_sat_rq1_final/bundle/rq1_segmentation_final_v1/`
+avant de soumettre. Le précontrôle vérifie son manifeste et toutes ses
+empreintes. Le dossier peut aussi être placé sous
+`SAFER/annotation/rq1_final_v1/bundle/` sur le cluster, toujours hors Git.
+Si le paquet final n'est pas disponible, le job CPU peut encore le reconstruire
+à partir de l'ancien paquet mono-source
+`${SCRATCH:-$HOME}/safer_sat_indomain/bundle/sat12l_sm_gold_v3_indomain_v1/`.
 
 ## Cluster Slurm
 
