@@ -22,6 +22,13 @@ fi
 export SAT_LODO_RUN_ROOT="${SCRATCH:-$HOME}/safer_sat_lodo/runs/sat12l_sm_gold_v3_rq1_checkpoint_selection_v1"
 sat_gold_v3_setup
 : "${SLURM_ARRAY_TASK_ID:?Submit as a Slurm array}"
+# An explicit sbatch restart discards only this array task's previous target
+# outputs, including incomplete checkpoints. The smoke marker and other
+# target runs remain untouched.
+python -u scripts/reset_sat_checkpoint_target.py \
+  --bundle "${SAT_LODO_BUNDLE}" \
+  --run-root "${SAT_LODO_RUN_ROOT}" \
+  --task-index "${SLURM_ARRAY_TASK_ID}"
 python -u scripts/sat_lodo_checkpoint_select.py fit \
   --bundle "${SAT_LODO_BUNDLE}" \
   --run-root "${SAT_LODO_RUN_ROOT}" \

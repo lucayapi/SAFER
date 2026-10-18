@@ -56,6 +56,18 @@ Quand le journal confirme `Checkpoint export and optimizer-state resume passed` 
 sbatch text/jobs/sat_lodo_gold_v3_checkpoint_gpu.sh
 ```
 
+Chaque tâche GPU efface maintenant son propre dossier `target_<corpus>` avant
+de commencer. Cela supprime aussi ses anciens checkpoints, prédictions et
+scores, y compris si l'exécution précédente était terminée ; les cinq autres
+corpus et le smoke test restent intacts. Pour relancer uniquement la tâche 1
+(métallurgie) depuis `SAFER/` :
+
+```bash
+sbatch --array=1 text/jobs/sat_lodo_gold_v3_checkpoint_gpu.sh
+```
+
+Le tableau complet `0-5%2` efface et recalcule les six dossiers cibles.
+
 Les six rotations forment un tableau `0-5%2`, avec deux GPU simultanés au
 maximum. Quand les six fichiers `target_*/metrics.json` existent :
 
@@ -72,5 +84,6 @@ contiennent le test cible, et `loss_history.csv` conserve les pertes. Le
 fichier global `checkpoint_selection_summary.csv` résume les choix et
 `summary.csv` les scores cibles. Les grands checkpoints complets sont gardés
 pour audit : prévoir plusieurs gigaoctets par rotation et un espace de travail
-ayant plusieurs dizaines de gigaoctets libres. Une relance du même job reprend
-les probabilités de validation déjà enregistrées.
+ayant plusieurs dizaines de gigaoctets libres. Une relance avec le job GPU
+repart de zéro pour chaque tâche soumise ; le script Python invoqué directement
+sans cette remise à zéro conserve son contrôle de provenance et sa reprise.
