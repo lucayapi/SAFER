@@ -11,4 +11,4 @@ source "${SLURM_SUBMIT_DIR:?}/text/jobs/_role_gold_env.sh"
 mkdir -p "${ROLE_GOLD_RUN_ROOT:-${SCRATCH:-$PWD/..}/safer_role_gold_v3}"
 exec 9>"${ROLE_GOLD_RUN_ROOT:-${SCRATCH:-$PWD/..}/safer_role_gold_v3}/.prepare.lock"
 flock -x 9
-python -u scripts/role_gold_campaign.py prepare --experiment "${ROLE_GOLD_EXPERIMENT:?}" --min-free-gib "${ROLE_GOLD_MIN_FREE_GIB:-170}"
+python -u scripts/role_gold_campaign.py prepare --experiment "${ROLE_GOLD_EXPERIMENT:?}" --min-free-gib "${ROLE_GOLD_MIN_FREE_GIB:-0}"

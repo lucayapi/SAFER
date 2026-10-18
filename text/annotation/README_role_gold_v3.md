@@ -38,12 +38,19 @@ d'une relance ; un échec arrête la chaîne avant le rapport.
 
 La sortie privée est `safer_role_gold_v3/{single_source,lodo}/` sous `$SCRATCH`
 si défini, sinon sous `SAFER/`. `ROLE_GOLD_RUN_ROOT` peut fixer sa racine.
-Le précontrôle réserve environ 170 Gio pour 54 entraînements encore à faire ;
-il additionne les tâches restantes de l'autre campagne lorsqu'elle est active.
-La valeur de base peut être ajustée avec `ROLE_GOLD_MIN_FREE_GIB` après
-vérification de la capacité. Il contrôle aussi l'espace des exports E5.
-Un meilleur checkpoint complet par entraînement est conservé, sans états
-d'optimiseur ni checkpoints intermédiaires.
+Par défaut, `ROLE_GOLD_CHECKPOINT_POLICY=prune` : un seul meilleur checkpoint
+complet est utilisé pendant chaque entraînement, rechargé pour produire les
+prédictions et contrôlé par empreinte, puis supprimé après vérification des
+prédictions. Les pertes, la sélection sur validation, les empreintes du modèle,
+les prédictions et les métriques restent disponibles ; les poids supprimés ne
+pourront pas être rechargés ultérieurement. Le précontrôle requiert alors au
+moins 16 Gio libres pour les deux tâches simultanées. Il contrôle aussi
+l'espace des exports E5. Pour conserver un meilleur modèle par entraînement,
+définir `ROLE_GOLD_CHECKPOINT_POLICY=keep` avant `sbatch` ; le précontrôle
+réserve alors environ 170 Gio pour 54 entraînements restants et tient compte
+de l'autre campagne active. `ROLE_GOLD_MIN_FREE_GIB` permet d'augmenter le
+minimum requis. Aucun état d'optimiseur ni checkpoint intermédiaire n'est
+conservé dans les deux modes.
 
 ## Méthode et résultats
 

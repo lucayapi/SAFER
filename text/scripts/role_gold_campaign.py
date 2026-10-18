@@ -40,6 +40,14 @@ EPOCHS = 15
 PATIENCE = 3
 
 
+def checkpoint_policy() -> str:
+    """Keep selected weights, or discard them after verified test predictions."""
+    policy = os.getenv("ROLE_GOLD_CHECKPOINT_POLICY", "prune").strip().lower()
+    if policy not in ("prune", "keep"):
+        raise ValueError("ROLE_GOLD_CHECKPOINT_POLICY must be 'prune' or 'keep'")
+    return policy
+
+
 def digest(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as stream:
@@ -262,7 +270,11 @@ def prepare(args) -> None:
     remaining = remaining_jobs(root)
     if (other / "campaign.json").exists() and not (other / "results/manifest.json").exists():
         remaining += remaining_jobs(other)
-    minimum = max(12.0, args.min_free_gib * remaining / 54) if args.min_free_gib else 0.0
+    policy = checkpoint_policy()
+    # With pruning, only the two simultaneously running jobs need room for
+    # their selected E5 weights. Keeping all 54 models requires much more.
+    minimum = (max(16.0, args.min_free_gib) if policy == "prune" else
+               max(12.0, (args.min_free_gib or 170.0) * remaining / 54))
     disk = check_space(root, min_free_gib=minimum)
     embedding_dir = TEXT / "embeddings/gold_v3/e5"
     missing_embeddings = sum(not (embedding_dir / f"{CSV_NAME[corpus]}.csv").is_file()
@@ -282,6 +294,7 @@ def prepare(args) -> None:
     else:
         write_json(existing, record)
     print(json.dumps({"campaign": str(root), "disk": disk,
+                      "checkpoint_policy": policy,
                       "remaining_training_tasks_on_shared_filesystem": remaining,
                       "missing_e5_exports": missing_embeddings,
                       "units": sum(map(len, frames.values()))}), flush=True)
@@ -310,9 +323,15 @@ def complete_and_verified(dest: Path, targets, campaign: Path, *, checkpoint: bo
         if checkpoint:
             if not record.get("checkpoint_files_sha256"):
                 return False
-            for name, expected in record["checkpoint_files_sha256"].items():
-                artifact = dest / "best_model" / name
-                if not artifact.is_file() or digest(artifact) != expected:
+            model_dir = dest / "best_model"
+            if model_dir.exists() or record.get("checkpoint_retention") != "predictions_only":
+                for name, expected in record["checkpoint_files_sha256"].items():
+                    artifact = model_dir / name
+                    if not artifact.is_file() or digest(artifact) != expected:
+                        return False
+            for target in targets:
+                metrics = read_json(dest / f"metrics_{target}.json")
+                if metrics["predictions_sha256"] != record["targets"][target]["predictions_sha256"]:
                     return False
         else:
             classifier = dest / "classifier.joblib"
@@ -323,6 +342,22 @@ def complete_and_verified(dest: Path, targets, campaign: Path, *, checkpoint: bo
                    record["targets"][target]["predictions_sha256"] for target in targets)
     except (KeyError, ValueError, OSError, json.JSONDecodeError):
         return False
+
+
+def prune_verified_checkpoint(dest: Path, targets, campaign: Path) -> None:
+    """Free disk only after the selected model and every prediction are verified."""
+    if not complete_and_verified(dest, targets, campaign, checkpoint=True):
+        raise ValueError(f"Refusing to delete an unverified checkpoint: {dest}")
+    model_dir = dest / "best_model"
+    if not model_dir.exists():
+        return
+    if model_dir.resolve().parent != dest.resolve() or model_dir.is_symlink():
+        raise ValueError(f"Unsafe checkpoint cleanup path: {model_dir}")
+    marker = dest / "complete.json"
+    record = read_json(marker)
+    record["checkpoint_retention"] = "predictions_only"
+    write_json(marker, record)
+    shutil.rmtree(model_dir)
 
 
 def frozen(args) -> None:
@@ -458,8 +493,11 @@ def train_model(method: str, seed: int, train: pd.DataFrame, val: pd.DataFrame,
     from supervised_macro_ft.model import SupervisedMacroModel
 
     if not smoke and complete_and_verified(dest, tests, dest.parents[3] / "campaign.json", checkpoint=True):
-        print(f"[skip] {dest}", flush=True)
-        return
+        if checkpoint_policy() == "prune":
+            prune_verified_checkpoint(dest, tests, dest.parents[3] / "campaign.json")
+        if checkpoint_policy() == "prune" or (dest / "best_model").is_dir():
+            print(f"[skip] {dest}", flush=True)
+            return
     if not torch.cuda.is_available():
         raise RuntimeError("Full E5 fine-tuning requires a GPU")
     seed_all(seed)
@@ -469,6 +507,8 @@ def train_model(method: str, seed: int, train: pd.DataFrame, val: pd.DataFrame,
         tokenizer.pad_token = tokenizer.unk_token
     dest.mkdir(parents=True, exist_ok=True)
     checkpoint = dest / "best_model"
+    if not smoke and checkpoint_policy() == "prune":
+        check_space(dest, min_free_gib=8.0)
     epochs = 1 if smoke else EPOCHS
     if method == "ce":
         model = SupervisedMacroModel(backbone_name=BACKBONE, num_classes=5,
@@ -570,6 +610,8 @@ def train_model(method: str, seed: int, train: pd.DataFrame, val: pd.DataFrame,
         print(json.dumps({"method": method, "seed": seed, **row}), flush=True)
         if val_score > best_ba + 1e-12:
             best_ba, best_epoch, stale = val_score, epoch + 1, 0
+            if not smoke and checkpoint_policy() == "prune":
+                check_space(dest, min_free_gib=8.0)
             if method == "ce":
                 save_checkpoint(model, checkpoint, config={"backbone_name": BACKBONE,
                     "num_classes": 5, "pooling": "mean", "projection": None,
@@ -617,6 +659,8 @@ def train_model(method: str, seed: int, train: pd.DataFrame, val: pd.DataFrame,
         "checkpoint_files_sha256": {name: digest(checkpoint / name) for name in checkpoint_names},
         "targets": result,
         "campaign_sha256": digest(dest.parents[3] / "campaign.json") if not smoke else None})
+    if not smoke and checkpoint_policy() == "prune":
+        prune_verified_checkpoint(dest, tests, dest.parents[3] / "campaign.json")
     print(f"[done] {dest} validation_BA={best_ba:.4f}", flush=True)
 
 

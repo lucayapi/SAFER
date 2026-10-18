@@ -74,3 +74,53 @@ def test_completion_is_bound_to_campaign_and_prediction_hash(tmp_path: Path):
     assert campaign.complete_and_verified(job, ["btp"], root, checkpoint=False)
     pred.write_text("y\n", encoding="utf-8")
     assert not campaign.complete_and_verified(job, ["btp"], root, checkpoint=False)
+
+
+def test_pruning_requires_verified_predictions_and_allows_summary(tmp_path: Path):
+    root = tmp_path / "campaign.json"
+    root.write_text("{}", encoding="utf-8")
+    job = tmp_path / "job"
+    model_dir = job / "best_model"
+    model_dir.mkdir(parents=True)
+    model = model_dir / "hf_model.bin"
+    model.write_bytes(b"selected weights")
+    pred = job / "predictions_btp.csv"
+    pred.write_text("prediction\nA0\n", encoding="utf-8")
+    pred_hash = campaign.digest(pred)
+    campaign.write_json(job / "metrics_btp.json", {"predictions_sha256": pred_hash})
+    campaign.write_json(job / "complete.json", {
+        "campaign_sha256": campaign.digest(root),
+        "checkpoint_files_sha256": {"hf_model.bin": campaign.digest(model)},
+        "targets": {"btp": {"predictions_sha256": pred_hash}},
+    })
+    campaign.prune_verified_checkpoint(job, ["btp"], root)
+    assert not model_dir.exists()
+    assert campaign.read_json(job / "complete.json")["checkpoint_retention"] == "predictions_only"
+    assert campaign.complete_and_verified(job, ["btp"], root, checkpoint=True)
+    pred.write_text("prediction\nB\n", encoding="utf-8")
+    assert not campaign.complete_and_verified(job, ["btp"], root, checkpoint=True)
+
+
+def test_pruning_refuses_missing_metrics(tmp_path: Path):
+    root = tmp_path / "campaign.json"
+    root.write_text("{}", encoding="utf-8")
+    job = tmp_path / "job"
+    model_dir = job / "best_model"
+    model_dir.mkdir(parents=True)
+    model = model_dir / "hf_model.bin"
+    model.write_bytes(b"selected weights")
+    pred = job / "predictions_btp.csv"
+    pred.write_text("prediction\nA0\n", encoding="utf-8")
+    campaign.write_json(job / "complete.json", {
+        "campaign_sha256": campaign.digest(root),
+        "checkpoint_files_sha256": {"hf_model.bin": campaign.digest(model)},
+        "targets": {"btp": {"predictions_sha256": campaign.digest(pred)}},
+    })
+    assert not campaign.complete_and_verified(job, ["btp"], root, checkpoint=True)
+    try:
+        campaign.prune_verified_checkpoint(job, ["btp"], root)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("Pruning should reject missing metrics")
+    assert model.exists()
