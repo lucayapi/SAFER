@@ -3,7 +3,7 @@ analysis_id: btp_building_construction_and_masonry
 
 data:
   units_path: ../dataset/families/btp/data_btp_building_construction_and_masonry.csv
-  embeddings_path: ../embeddings/families/btp/Qwen3-Embedding-0.6B_btp_building_construction_and_masonry.csv
+  embeddings_path: ../embeddings/gold_v3/families/btp/Qwen3-Embedding-0.6B_btp_building_construction_and_masonry.csv
   accident_id_col: accident_id
   fact_id_col: fact_id
   unit_id_col: fact_id
