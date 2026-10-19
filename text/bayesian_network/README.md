@@ -2,7 +2,8 @@
 
 This directory contains a self-contained orchestration layer for the full BTP
 corpus. It keeps only valid factual units labelled A0, A1, B or C. The unit
-table is joined to the E5 export by `fact_id` = `doc_id`; unmatched valid units
+table is joined to the E5 export by the globally unique `doc_id` (the source
+`fact_id` is only an ordinal within each accident); unmatched valid units
 cause an explicit error by default. There is no encoder fallback.
 
 ## Submit one Slurm job

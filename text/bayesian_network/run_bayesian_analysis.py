@@ -49,7 +49,7 @@ def load_inputs(config):
     if not ep.is_file():
         raise FileNotFoundError(f"Required E5 embeddings are missing: {ep}. Place the aligned BTP E5 export at this path; this pipeline does not encode text or fall back to Qwen.")
     units=read_csv(up); emb=read_csv(ep)
-    needed=[dc[k] for k in ("accident_id_col","fact_id_col","text_col","role_col")]
+    needed=[dc[k] for k in ("accident_id_col","fact_id_col","unit_id_col","text_col","role_col")]
     missing=[c for c in needed if c not in units]
     if missing:raise ValueError(f"Missing unit columns: {missing}")
     idcol=dc["embedding_id_col"]
@@ -58,7 +58,10 @@ def load_inputs(config):
     if not dimcols:raise ValueError(f"No embedding dimensions beginning with {dc['embedding_dimensions_prefix']!r}")
     all_units=units.copy()
     all_units["_accident_id"]=normalized_id(all_units[dc["accident_id_col"]])
-    all_units["_fact_id"]=normalized_id(all_units[dc["fact_id_col"]])
+    # fact_id is only a within-accident ordinal in data_btp.csv. doc_id is the
+    # globally unique factual-unit identifier shared with the embedding export.
+    all_units["_source_fact_id"]=normalized_id(all_units[dc["fact_id_col"]])
+    all_units["_fact_id"]=normalized_id(all_units[dc["unit_id_col"]])
     all_units["_role"]=all_units[dc["role_col"]].astype(str).str.strip().str.upper()
     all_units["_text"]=all_units[dc["text_col"]].fillna("").astype(str)
     validflag=all_units[dc["valid_col"]].astype(str).str.lower().isin(["true","1","yes","y"]) if dc.get("valid_col") in all_units else pd.Series(True,index=all_units.index)
@@ -86,7 +89,8 @@ def load_inputs(config):
        "unmatched_valid_units":len(unmatched),"unmatched_accidents":int(unmatched["_accident_id"].nunique()),
        "source_accidents":len(source_accidents),"accidents_without_valid_A0_A1_B_C_units":len(no_role_accidents),
        "extra_embedding_rows":int((~embed.index.isin(set(matched["_join_id"]))).sum()),
-       "embedding_dimension":len(dimcols),"join":"data_btp.fact_id = E5.doc_id"}
+       "embedding_dimension":len(dimcols),"join":f"data_btp.{dc['unit_id_col']} = E5.{idcol}",
+       "source_fact_id_note":"fact_id is a within-accident ordinal; doc_id is the globally unique unit key"}
     unmatched.to_csv(RUN_DIR/"audit_unmatched_units.csv",index=False)
     (RUN_DIR/"audit_alignment.json").write_text(json.dumps(audit,indent=2),encoding="utf-8")
     if dc.get("fail_on_unmatched_units",True) and len(unmatched):
@@ -140,7 +144,7 @@ def build_factor_matrices(train_units,val_units,train_labels,val_labels,dictiona
     factor_ids=factors["factor_id"].astype(str).tolist()
     fact_role=dict(zip(factors.factor_id.astype(str),factors.role.astype(str)))
     def create(units,labels,accidents):
-        frame=units[["_accident_id","_fact_id","_role"]].copy();frame["factor_id"]=[f"{r}_{int(l):03d}" if l>=0 else "" for r,l in zip(units["_role"],labels)]
+        frame=units[["_accident_id","_fact_id","_source_fact_id","_role"]].copy();frame["factor_id"]=[f"{r}_{int(l):03d}" if l>=0 else "" for r,l in zip(units["_role"],labels)]
         frame.to_csv(RUN_DIR/("train_unit_factor_assignments.csv" if accidents==train_ids else "validation_unit_factor_assignments.csv"),index=False)
         m=pd.DataFrame(0,index=accidents,columns=factor_ids,dtype=np.int8)
         for acc,fid in zip(frame._accident_id,frame.factor_id):

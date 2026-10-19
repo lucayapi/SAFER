@@ -54,13 +54,13 @@ def test_scenario_freeze_and_jeffreys_probabilities():
 def test_explicit_id_join_excludes_other_role_and_audits_accidents(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp:
         root=Path(tmp); run=root/"run";run.mkdir(); monkeypatch.setattr(pipeline,"RUN_DIR",run,raising=False)
-        units=pd.DataFrame({"accident_id":["a","a","b","c"],"fact_id":[1,2,3,4],
+        units=pd.DataFrame({"accident_id":["a","a","b","c"],"fact_id":[1,2,1,1],"doc_id":[101,102,103,104],
           "sentence":["context","other","event","no valid role"],"pred_label":["A0","AUTRE","B","AUTRE"],"pred_ok":[True]*4})
-        emb=pd.DataFrame({"doc_id":[1,3],"dim_0001":[1.,0.],"dim_0002":[0.,1.]})
+        emb=pd.DataFrame({"doc_id":[101,103],"dim_0001":[1.,0.],"dim_0002":[0.,1.]})
         units.to_csv(root/"units.csv",index=False);emb.to_csv(root/"e5.csv",index=False)
         cfg={"data":{"units_path":str(root/"units.csv"),"embeddings_path":str(root/"e5.csv"),
           "accident_id_col":"accident_id","fact_id_col":"fact_id","text_col":"sentence","role_col":"pred_label",
-          "valid_col":"pred_ok","embedding_id_col":"doc_id","embedding_dimensions_prefix":"dim_",
+          "valid_col":"pred_ok","embedding_id_col":"doc_id","unit_id_col":"doc_id","embedding_dimensions_prefix":"dim_",
           "normalize_embeddings":False,"fail_on_unmatched_units":True}}
         selected,vectors,audit=pipeline.load_inputs(cfg)
         assert selected._role.tolist()==["A0","B"]

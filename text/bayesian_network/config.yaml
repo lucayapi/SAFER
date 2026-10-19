@@ -4,6 +4,7 @@ data:
   embeddings_path: ../embeddings/gold_v3/e5/btp.csv
   accident_id_col: accident_id
   fact_id_col: fact_id
+  unit_id_col: doc_id
   text_col: sentence
   role_col: pred_label
   valid_col: pred_ok
