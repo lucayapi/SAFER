@@ -22,7 +22,7 @@ Copier/committer d'abord le code versionné, et placer le paquet privé au chemi
 sbatch text/jobs/rq1_e2_crossfit_launch.sh
 ```
 
-Le lanceur soumet le précontrôle, le smoke GPU, cinq plis BTP (au plus deux GPU), le M3 final BTP, l'entraînement E2 BTP et un rapport pilote. Les fichiers Slurm `slurm-rq1-e2x-*.out/.err` consignent chaque étape. Les résultats privés sont sous `$SCRATCH/safer_sat_rq1_refiner_crossfit/runs/rq1_e2_crossfit_v1` (ou `$HOME` si `SCRATCH` n'est pas défini).
+Le lanceur soumet le précontrôle, le smoke GPU, cinq plis BTP (au plus deux GPU), le M3 final BTP, l'entraînement E2 BTP et un rapport pilote. Les fichiers Slurm `slurm-rq1-e2x-*.out/.err` consignent chaque étape. Les résultats privés sont sous `$SCRATCH/safer_sat_rq1_refiner_crossfit/runs/rq1_e2_crossfit_v2` (ou `$HOME` si `SCRATCH` n'est pas défini). Le suffixe `v2` isole cette correction de compatibilité avec le manifeste RQ1 de la tentative précédente ; celle-ci reste intacte.
 
 Après examen de `PILOT_RESULTS.md`, des CSV, de la courbe SVG et des logs, le chercheur peut explicitement lancer les cinq autres rotations :
 

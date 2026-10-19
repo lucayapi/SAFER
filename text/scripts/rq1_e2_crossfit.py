@@ -26,7 +26,7 @@ import sat_lodo_checkpoint_select as checkpoint
 import sat_lodo_gold_v3 as sat
 import rq1_refiner as refiner
 
-VERSION = "rq1_e2_crossfit_v1"
+VERSION = "rq1_e2_crossfit_v2"
 SEED = 20261019
 INTERNAL_VALIDATION_FRACTION = 0.10
 SAVE_STEPS = checkpoint.SAVE_STEPS
@@ -946,7 +946,7 @@ def smoke(args) -> None:
     """Run one official one-step LoRA training, reload it, then test our feature path."""
     import torch
     bundle, root, repo = args.bundle.resolve(), args.out.resolve(), args.wtpsplit_repo.resolve()
-    verified_bundle(bundle)
+    manifest = verified_bundle(bundle)
     verify_campaign_binding(root, bundle)
     marker = root / "crossfit_smoke_ok.json"
     wanted = {"bundle_sha256": digest(bundle / "manifest.json"),
@@ -958,15 +958,36 @@ def smoke(args) -> None:
             raise ValueError("Existing cross-fit smoke marker belongs to other inputs/code")
         print(f"Cross-fit smoke already passed: {marker}", flush=True)
         return
-    sat.smoke(argparse.Namespace(bundle=str(bundle), run_root=str(root),
-                                  wtpsplit_repo=str(repo)))
-    adapter = adapter_path(root / "smoke" / "trainer")
+    # sat.smoke() calls sat_lodo_gold_v3.check_bundle(), which validates an
+    # older bundle schema requiring `source_report`. The current immutable RQ1
+    # bundle is instead validated by rq1_final.check_bundle() above. Reuse its
+    # official training.pth subset and the same upstream trainer directly.
+    revision = sat.legacy.git_revision(repo)
+    runtime = sat.legacy.gpu_runtime(repo)
+    model_dir, tokenizer_dir = sat.pinned_backbone(bundle)
+    target = sat.CORPORA[0]
+    smoke_dir = root / "smoke"
+    sat.run_binding(smoke_dir, bundle)
+    original = torch.load(bundle / "folds" / f"target_{target}" / "training.pth",
+                          map_location="cpu", weights_only=False)
+    source = original["fr"]["sentence"][sat.DATASET_NAME]
+    subset = {"fr": {"sentence": {sat.DATASET_NAME: {
+        "meta": {"train_data": source["meta"]["train_data"][:8]},
+        "data": source["data"][:4]}}}}
+    if len(subset["fr"]["sentence"][sat.DATASET_NAME]["data"]) < 2:
+        raise ValueError("Not enough validation examples for LoRA smoke test")
+    smoke_data = smoke_dir / "training.pth"
+    torch.save(subset, smoke_data)
+    config = sat.trainer_config(bundle, target, smoke_dir / "trainer", model_dir, tokenizer_dir)
+    config.update({"text_path": str(smoke_data), "num_train_epochs": 1, "max_steps": 1,
+                   "save_steps": 1, "per_device_train_batch_size": 2,
+                   "per_device_eval_batch_size": 2, "gradient_accumulation_steps": 1})
+    sat.legacy.run_trainer(repo, config, smoke_dir / "config.json")
+    adapter = adapter_path(smoke_dir / "trainer")
     if not checkpoint.complete_adapter(adapter):
         raise RuntimeError("Official smoke did not leave a reloadable LoRA adapter")
-    target = sat.CORPORA[0]
     groups = bundle_groups(bundle, target)
     sample = next(row for row in groups["val"] if row["raw_text"].strip())
-    model_dir, tokenizer_dir = sat.pinned_backbone(bundle)
     model = sat.load_pinned_sat(model_dir, tokenizer_dir, adapter)
     probs, states, offsets = refiner.extract_document(model, sample["raw_text"])
     native = np.asarray(model.predict_proba(sample["raw_text"], stride=64), dtype=np.float32)
@@ -978,7 +999,12 @@ def smoke(args) -> None:
     del model
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    trainer_state = smoke_dir / "trainer" / "trainer_state.json"
+    if trainer_state.is_file():
+        sat.legacy.export_loss_history(trainer_state, smoke_dir / "loss_history.csv")
     json_write(marker, {**wanted, "adapter_sha256": final_lodo.adapter_hashes(adapter),
+        "wtpsplit_revision": revision, "runtime": runtime,
+        "model_revision": model_dir.name, "tokenizer_revision": tokenizer_dir.name,
         "sample": {"corpus": sample["corpus"], "document_id": sample["document_id"]},
         "probability_max_abs_error": float(np.max(np.abs(probs-native))),
         "projected_token_count": len(states), "projection_dim": int(states.shape[1]),
