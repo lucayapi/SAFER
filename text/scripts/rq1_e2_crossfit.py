@@ -26,7 +26,7 @@ import sat_lodo_checkpoint_select as checkpoint
 import sat_lodo_gold_v3 as sat
 import rq1_refiner as refiner
 
-VERSION = "rq1_e2_crossfit_v2"
+VERSION = "rq1_e2_crossfit_v3"
 SEED = 20261019
 INTERNAL_VALIDATION_FRACTION = 0.10
 SAVE_STEPS = checkpoint.SAVE_STEPS
@@ -350,7 +350,8 @@ def ids_hash(rows: list[dict]) -> str:
 
 
 def train_m3_select_and_refit(bundle: Path, repo: Path, root: Path, rows: list[dict],
-                              target: str, model_tag: str, seed: int) -> dict:
+                              target: str, model_tag: str, seed: int,
+                              smoke_adapter: Path) -> dict:
     """Select epoch/threshold on an inner split, then refit on all permitted rows."""
     import torch
     from tqdm import tqdm
@@ -380,7 +381,7 @@ def train_m3_select_and_refit(bundle: Path, repo: Path, root: Path, rows: list[d
     config.update({"text_path": str(pth), "save_steps": SAVE_STEPS,
                    "save_total_limit": None, "load_best_model_at_end": False,
                    "seed": SEED + seed})
-    template = adapter_path(root / "smoke" / "trainer")
+    template = smoke_adapter
     if not checkpoint.complete_adapter(template):
         raise RuntimeError("Cross-fit GPU smoke did not save the reference LoRA adapter")
     if not (selection_root / "training_done.json").is_file():
@@ -616,7 +617,8 @@ def crossfit(args) -> None:
         return
     fold_dir.mkdir(parents=True, exist_ok=True)
     selection = train_m3_select_and_refit(bundle, args.wtpsplit_repo.resolve(), fold_dir,
-                                          allowed, target, "m3", fold + sat.CORPORA.index(target)*10)
+                                          allowed, target, "m3", fold + sat.CORPORA.index(target)*10,
+                                          adapter_path(root / "smoke" / "trainer"))
     add_features(bundle, Path(selection["adapter_path"]), heldout,
                  fold_dir / "features.sqlite3", f"OOF features {target}/fold{fold+1}", limit=args.limit)
     if args.limit:
@@ -680,7 +682,8 @@ def final_model(args) -> None:
         if not marker.is_file():
             raise RuntimeError(f"Missing OOF model/features: {marker}")
     final_selection = train_m3_select_and_refit(bundle, args.wtpsplit_repo.resolve(),
-            target_root, groups["train"], target, "m3_final", 500 + args.target_index)
+            target_root, groups["train"], target, "m3_final", 500 + args.target_index,
+            adapter_path(root / "smoke" / "trainer"))
     features = target_root / "features.sqlite3"
     add_features(bundle, Path(final_selection["adapter_path"]), groups["val"] + groups["test"],
                  features, f"Final M3 features {target}", limit=args.limit)
