@@ -1,12 +1,42 @@
 import unittest
+import hashlib
+import sqlite3
+from unittest.mock import patch
 
 import numpy as np
 
-from rq1_e2_crossfit import (E2_FEATURE_SLICES, boundary_example, hash_group_split,
+from rq1_e2_crossfit import (E2_FEATURE_SLICES, baseline_threshold_from_features,
+                            boundary_example, cached_probabilities, hash_group_split, sat,
                             key, variant_features)
 
 
 class CrossfitSplitTests(unittest.TestCase):
+    def test_feature_cache_probabilities_work_without_legacy_table(self):
+        db = sqlite3.connect(":memory:")
+        db.execute("CREATE TABLE features (corpus TEXT, document_id TEXT, text_sha256 TEXT, "
+                   "prob BLOB, states BLOB, offsets BLOB, n_tokens INTEGER, "
+                   "PRIMARY KEY(corpus,document_id))")
+        rows = []
+        for corpus in ("btp", "metallurgie", "caou_chimie_plas", "bois_textille", "service_temporaire"):
+            raw = "ab"
+            row = {"corpus": corpus, "document_id": "d1", "raw_text": raw,
+                   "units": [{"start": 0, "end": 2}], "excluded_spans": []}
+            rows.append(row)
+            probabilities = np.asarray([0.1, 0.9], dtype=np.float32)
+            states = np.zeros((2, 128), dtype=np.float16)
+            offsets = np.asarray([[0, 1], [1, 2]], dtype=np.int32)
+            db.execute("INSERT INTO features VALUES (?,?,?,?,?,?,?)",
+                (corpus, "d1", hashlib.sha256(raw.encode()).hexdigest(), probabilities.tobytes(),
+                 states.tobytes(), offsets.tobytes(), 2))
+        db.commit()
+        np.testing.assert_allclose(cached_probabilities(db, rows[0]), [0.1, 0.9], rtol=1e-6)
+        with patch.object(sat.legacy, "spans_from_probabilities", return_value=[(0, 2)]), \
+                patch.object(sat, "THRESHOLDS", (0.05,)):
+            selected, curve = baseline_threshold_from_features(db, rows)
+        self.assertEqual(selected["threshold"], 0.05)
+        self.assertEqual(len(curve), 1)
+        db.close()
+
     def test_identical_narratives_are_kept_in_one_fold(self):
         rows = []
         for corpus in ("btp", "metallurgie", "caou_chimie_plas", "bois_textille", "nicollin"):

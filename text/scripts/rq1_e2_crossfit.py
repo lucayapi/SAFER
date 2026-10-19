@@ -85,6 +85,93 @@ def verify_campaign_binding(root: Path, bundle: Path) -> None:
         raise ValueError(f"Campaign binding is missing or changed: {root}")
 
 
+def rebind_completed_btp(args) -> None:
+    """Permit a narrow code-only hotfix while preserving validated BTP caches."""
+    bundle, root = args.bundle.resolve(), args.out.resolve()
+    verified_bundle(bundle)
+    expected_binding = binding(bundle)
+    binding_path = root / "binding.json"
+    if not binding_path.is_file():
+        raise FileNotFoundError(f"Campaign binding missing: {binding_path}")
+    previous = json_read(binding_path)
+    changed = {name for name in set(previous) | set(expected_binding)
+               if previous.get(name) != expected_binding.get(name)}
+    if changed != {"script_sha256"}:
+        raise ValueError(f"Unsafe campaign rebind; changed binding fields: {sorted(changed)}")
+
+    expected_split = make_split_manifest(bundle, root)
+    split_path = root / "split_manifest.json"
+    if not split_path.is_file() or json_read(split_path) != expected_split:
+        raise ValueError("Frozen BTP split differs; refusing to rebind campaign")
+
+    target = "btp"
+    groups = bundle_groups(bundle, target)
+    split = expected_split["targets"][target]
+    for fold in range(5):
+        fold_dir = root / f"target_{target}" / "crossfit" / f"fold_{fold+1}"
+        marker_path = fold_dir / "complete.json"
+        if not marker_path.is_file():
+            raise ValueError(f"Cannot rebind incomplete BTP OOF fold: {fold_dir}")
+        marker = json_read(marker_path)
+        expected_ids = {tuple((item["corpus"], item["document_id"]))
+                        for item in split["fold_keys"][str(fold)]}
+        if (marker.get("target") != target or marker.get("fold") != fold or
+                marker.get("bundle_sha256") != digest(bundle / "manifest.json") or
+                marker.get("fold_assignment_sha256") != split["fold_assignment_sha256"] or
+                marker.get("heldout_ids_sha256") != ids_hash(
+                    [row for row in groups["train"] if key(row) in expected_ids])):
+            raise ValueError(f"BTP OOF marker mismatch: {marker_path}")
+        with closing(feature_db(fold_dir / "features.sqlite3")) as db:
+            observed = set(db.execute("SELECT corpus,document_id FROM features"))
+            if observed != expected_ids:
+                raise ValueError(f"BTP OOF feature IDs mismatch: {fold_dir}")
+            by_key = {key(row): row for row in groups["train"]}
+            for item in expected_ids:
+                validate_feature_tuple(by_key[item], refiner._read_feature(db, by_key[item]))
+
+    smoke_marker_path = root / "crossfit_smoke_ok.json"
+    smoke_marker = json_read(smoke_marker_path)
+    smoke_adapter = adapter_path(root / "smoke" / "trainer")
+    if (not checkpoint.complete_adapter(smoke_adapter) or
+            smoke_marker.get("bundle_sha256") != digest(bundle / "manifest.json") or
+            smoke_marker.get("script_sha256") != previous["script_sha256"] or
+            smoke_marker.get("adapter_sha256") != final_lodo.adapter_hashes(smoke_adapter)):
+        raise ValueError("Smoke adapter or provenance is not valid; refusing rebind")
+
+    target_root = root / f"target_{target}"
+    feature_path = target_root / "features.sqlite3"
+    final_selection_path = target_root / "m3_final" / "m3_selection.json"
+    if not feature_path.is_file() or not final_selection_path.is_file():
+        raise ValueError("Final M3 features/selection are missing; cannot resume at E1 calibration")
+    with closing(feature_db(feature_path)) as db:
+        observed = set(db.execute("SELECT corpus,document_id FROM features"))
+        expected_ids = {key(row) for row in groups["val"] + groups["test"]}
+        if observed != expected_ids:
+            raise ValueError("Final M3 feature cache does not cover BTP validation and test")
+        by_key = {key(row): row for row in groups["val"] + groups["test"]}
+        for item in expected_ids:
+            validate_feature_tuple(by_key[item], refiner._read_feature(db, by_key[item]))
+    final_selection = json_read(final_selection_path)
+    final_adapter = Path(final_selection["adapter_path"])
+    if (not checkpoint.complete_adapter(final_adapter) or
+            final_lodo.adapter_hashes(final_adapter) != final_selection["refit_adapter_sha256"]):
+        raise ValueError("Final M3 adapter does not match its saved selection")
+
+    json_write(root / "compatible_rebind.json", {
+        "reason": "E1 calibration cache schema compatibility fix",
+        "old_script_sha256": previous["script_sha256"],
+        "new_script_sha256": expected_binding["script_sha256"],
+        "bundle_manifest_sha256": digest(bundle / "manifest.json"),
+        "split_assignment_sha256": split["fold_assignment_sha256"],
+        "validated_oof_folds": 5,
+        "validated_final_feature_rows": len(observed)})
+    json_write(binding_path, expected_binding)
+    print(json.dumps({"rebound": True, "target": target,
+                      "script_sha256": expected_binding["script_sha256"],
+                      "validated_oof_folds": 5, "final_feature_rows": len(observed)},
+                     indent=2), flush=True)
+
+
 def verified_bundle(bundle: Path) -> dict:
     global _VERIFIED_BUNDLE
     manifest_sha = digest(bundle / "manifest.json")
@@ -533,6 +620,38 @@ def feature_db(path: Path) -> sqlite3.Connection:
     return refiner._open_feature_db(path)
 
 
+def cached_probabilities(db: sqlite3.Connection, row: dict) -> np.ndarray:
+    """Read probabilities from either the legacy cache or a cross-fit feature cache."""
+    tables = {item[0] for item in db.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    if "features" in tables:
+        value = refiner._read_feature(db, row)
+        if value is None:
+            raise ValueError(f"Missing cached features for {key(row)}")
+        validate_feature_tuple(row, value)
+        return value[0]
+    return sat.get_probs(db, row)
+
+
+def baseline_threshold_from_features(db: sqlite3.Connection, rows: list[dict]):
+    """Select E1 threshold from a feature cache (which stores raw probability bytes)."""
+    values = []
+    for threshold in sat.THRESHOLDS:
+        counts = collections.defaultdict(collections.Counter)
+        for row in rows:
+            pred = sat.legacy.spans_from_probabilities(
+                row["raw_text"], cached_probabilities(db, row), threshold)
+            counts[row["corpus"]].update(sat.score(row, pred))
+        if len(counts) != 5:
+            raise ValueError("M3 calibration must use five sources")
+        f1 = float(np.mean([sat.prf(c["span_tp"], c["span_pred"], c["span_ref"])[2]
+                            for c in counts.values()]))
+        values.append({"threshold": threshold, "macro_exact_f1": f1})
+    selected = max(values, key=lambda x: (x["macro_exact_f1"],
+                                          -abs(x["threshold"] - 0.05), -x["threshold"]))
+    return selected, values
+
+
 def validate_feature_tuple(row: dict, value) -> None:
     probs, states, offsets = value
     n = len(row["raw_text"])
@@ -704,7 +823,7 @@ def final_model(args) -> None:
         torch.cuda.empty_cache()
     # E0's threshold is selected inside A; E1 is independently recalibrated on V.
     with closing(feature_db(features)) as db:
-        e1, curve = refiner.baseline_threshold(db, groups["val"])
+        e1, curve = baseline_threshold_from_features(db, groups["val"])
     json_write(target_root / "E1_validation.json", {"selected": e1, "curve": curve,
                 "selection_ids_sha256": ids_hash(groups["val"])})
     json_write(target_root / "m3_final.json", {**final_selection,
@@ -876,11 +995,11 @@ def refine_target(args) -> None:
             raise ValueError("Joined OOF and final-model features do not cover exact target rotation")
         # Source baseline calibration and test predictions.
         val_db=sqlite3.connect(combined.resolve().as_uri()+"?mode=ro",uri=True)
-        e1,curve=refiner.baseline_threshold(val_db,groups["val"])
+        e1,curve=baseline_threshold_from_features(val_db,groups["val"])
         json_write(output/"E1_validation.json",{"selected":e1,"curve":curve})
         test_predictions={}; test_metrics={}
         for label,threshold in (("E0",final["E0_threshold"]),("E1",e1["threshold"])):
-            preds=[sat.legacy.spans_from_probabilities(r["raw_text"],sat.get_probs(val_db,r),threshold)
+            preds=[sat.legacy.spans_from_probabilities(r["raw_text"],cached_probabilities(val_db,r),threshold)
                    for r in groups["test"]]
             save_crossfit_prediction(output/"predictions"/f"{label}.jsonl",groups["test"],preds,label,threshold,None)
             test_predictions[label]=preds; test_metrics[label]=refiner.test_metrics(groups["test"],preds,label,target)
@@ -1150,7 +1269,7 @@ def summary(args) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("prepare", "smoke", "crossfit", "final", "refine", "summary"):
+    for name in ("prepare", "rebind", "smoke", "crossfit", "final", "refine", "summary"):
         command = commands.add_parser(name)
         command.add_argument("--bundle", type=Path, required=True)
         command.add_argument("--out", type=Path, required=True)
@@ -1164,7 +1283,7 @@ def main() -> None:
             command.add_argument("--scope", choices=("pilot", "all"), required=True)
         if name in {"crossfit", "final"}:
             command.add_argument("--limit", type=int)
-    actions = {"prepare":prepare,"smoke":smoke,"crossfit":crossfit,
+    actions = {"prepare":prepare,"rebind":rebind_completed_btp,"smoke":smoke,"crossfit":crossfit,
                "final":final_model,"refine":refine_target,"summary":summary}
     args = parser.parse_args()
     actions[args.command](args)
