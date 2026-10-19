@@ -35,6 +35,7 @@ text/outputs/
 text/output/
 text/output_test/
 text/recurrent_scenarios/runs/
+text/bayesian_network/runs/
 text/recurrent_scenarios/notebooks/*.ipynb
 !text/recurrent_scenarios/notebooks/recurrent_scenarios_results.ipynb
 !text/recurrent_scenarios/notebooks/recurrent_scenarios_bn_analysis_caou.ipynb
