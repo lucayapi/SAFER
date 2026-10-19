@@ -13,10 +13,6 @@ data:
   normalize_embeddings: true
   fail_on_unmatched_units: true
 
-split:
-  train_fraction: 0.70
-  random_state: 42
-
 parallel:
   enabled: true
   n_workers: auto
@@ -40,7 +36,7 @@ screening:
     metric: euclidean
     prediction_data: true
 
-validation:
+clustering_selection:
   random_state: 42
   resampling_fraction: 0.8
   n_resampling: 10
@@ -73,7 +69,7 @@ factor_annotation:
 network:
   max_parents: 2
   jeffreys_alpha: 0.5
-  scenario_min_train_count: 5
+  scenario_min_count: 5
   scenario_two_b_sensitivity: true
   scenario_mc_draws: 20000
   bootstrap_replicates: 100

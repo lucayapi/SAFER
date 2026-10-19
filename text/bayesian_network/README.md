@@ -1,62 +1,71 @@
-# BTP Bayesian network analysis
+# Descriptive Bayesian-network and recurrent-scenario analysis
 
-This directory contains a self-contained orchestration layer for the full BTP
-corpus. It keeps only valid factual units labelled A0, A1, B or C. The unit
-table is joined to the E5 export by the globally unique `doc_id` (the source
-`fact_id` is only an ordinal within each accident); unmatched valid units
-cause an explicit error by default. There is no encoder fallback.
+This directory contains a configurable, single-job analysis for accident
+corpora and existing subfamilies. It keeps valid factual units labelled A0,
+A1, B or C, joins units to embeddings through the configured identifiers, and
+excludes `AUTRE` before factor discovery. Unmatched eligible units cause an
+explicit error; the job does not generate embeddings or switch models.
 
 ## Submit one Slurm job
 
-From the `text/` directory on the cluster:
+From the `text/` directory on the cluster, the default job uses the general
+BTP configuration:
 
 ```bash
-sbatch jobs/run_bayesian_network_btp.sh
+sbatch jobs/run_bayesian_network.sh
 ```
 
-Add `REESTIMATE=1` only when intentionally forcing clustering and stability
-fits to run again. LLM labels are fingerprinted and cached in the run directory,
-so a restarted job reuses completed labels when given the same run directory.
-To resume, submit with `RUN_DIR=bayesian_network/runs/<existing-run-name>`.
-The OpenAI key must be available in `text/.env` or the job environment.
+To analyse the Building construction and masonry family with the refreshed
+Qwen embeddings:
 
-The default E5 input is `text/embeddings/gold_v3/e5/btp.csv`. If it is absent,
-the job stops before discovery and says exactly which file is required. It does
-not switch to Qwen embeddings or generate new embeddings.
+```bash
+CONFIG=bayesian_network/config_btp_building_construction_and_masonry.yaml sbatch jobs/run_bayesian_network.sh
+```
 
-## Pipeline
+The OpenAI key must be available in `text/.env` or in the job environment.
+Each run receives a separate timestamped directory and annotation cache.
+`REESTIMATE=1` forces the UMAP/HDBSCAN candidate and resampling computations
+to run again; otherwise compatible completed discovery results and LLM labels
+are reused.
 
-1. Audit role filtering and the ID-based embedding join.
-2. Split accidents 70/30 (seed 42); all UMAP/HDBSCAN discovery and LLM naming
-   use training units only.
-3. Evaluate the configured UMAP/HDBSCAN grid and resampling stability, then
-   select each role's partition with the existing Pareto/Tchebycheff procedure.
-4. Transform validation embeddings with the fitted UMAP and assign them using
-   HDBSCAN approximate prediction.
-5. Build accident-by-factor matrices and their frequency, role, count and
-   co-occurrence summaries.
-6. Learn the primary exact role-constrained BIC network and a greedy
-   within-role sensitivity network. CPTs use Jeffreys Beta(0.5, 0.5) smoothing.
-7. Freeze training motifs (one or two A factors, one B and optional C; support
-   at least five), evaluate them on validation, and run 100 independently seeded
-   accident bootstraps in parallel. Each completed replicate is checkpointed
-   so an interrupted job can resume.
+## Analysis
 
-Network edges represent conditional statistical dependence; they are not
-causal effects. Validation metrics are conditional on the factor definitions
-and memberships learned from training data. Wilson intervals treat accidents
-as independent. Bootstrap computation likewise holds the discovered factors
-fixed and repeats network/motif selection.
+1. Audit the role filtering and one-to-one unit/embedding join.
+2. Evaluate the configured UMAP/HDBSCAN candidates on all eligible units.
+   Use the existing Pareto/Tchebycheff selection and grouped accident
+   resampling to choose a stable role-specific partition. These resamples
+   assess clustering selection and stability; no accident sample is reserved.
+3. Annotate the selected factors with the LLM and build one binary
+   accident-by-factor matrix covering the complete eligible corpus.
+4. Report factor prevalence and role distribution, the number of factors per
+   accident, and factor co-occurrences.
+5. Learn the primary role-ordered network by exact decomposable BIC search,
+   plus a greedy sensitivity network that allows within-role edges. CPTs use
+   Jeffreys Beta(0.5, 0.5) smoothing.
+6. Extract graph-connected scenario motifs that occur in at least five
+   accidents in the complete matrix. Report their observed support, lift over
+   independence and observed conditional consequence frequencies, alongside
+   Monte Carlo network probabilities. These are descriptive summaries; no
+   significance tests or held-out predictive scores are computed.
+7. Run 100 accident bootstraps to summarize edge and scenario selection
+   stability. Bootstrap results are conditional on the full-corpus factor
+   definitions, LLM labels and unit-to-factor assignments.
+
+Network edges describe conditional statistical dependence; they are not
+causal effects. Scenario support describes the configured corpus and factor
+assignments. Bootstrap stability does not include uncertainty from factor
+discovery, LLM annotation or unit-to-factor assignment.
 
 ## Main outputs
 
-Each execution creates `runs/btp_<UTC timestamp>/` with resolved config,
-input hashes, exclusion/alignment/split audits, train and validation
-assignments and matrices, factor dictionary, BN structures and CPTs,
-validation metrics and scenario tests, and bootstrap stability tables.
+Each run directory contains the resolved configuration and input/code hashes,
+alignment and exclusion audits, factor dictionary and unit assignments,
+`accident_factor_matrix.csv`, factor prevalence and co-occurrence summaries,
+both network structures and CPTs, descriptive scenario results, candidate
+catalog coverage/redundancy summaries, and bootstrap edge/scenario stability.
+No accident sample is reserved for out-of-sample evaluation, and no predictive
+performance table is produced.
 
-The grid and computational settings are in `config.yaml`. The default grid has
-16 UMAP/HDBSCAN candidates per role and 10 accident resamples per candidate;
-these can be expanded before a production run.
-Bootstrap parallelism uses the same Slurm-aware worker limit as discovery and
-can be disabled with `network.bootstrap_parallel: false`.
+The UMAP/HDBSCAN parameter grid, internal resampling settings, and compute
+limits are configured in the selected YAML file. Bootstrap and candidate
+evaluation use the Slurm CPU allocation subject to `parallel.max_workers`.

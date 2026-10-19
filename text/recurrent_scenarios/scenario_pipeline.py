@@ -8,7 +8,7 @@ Workflow:
 5. corpus-specific latent BN (Structural EM with ``Z``) and constrained MPE scenarios.
 
 Independent from SCGM / contrastive / BERTopic training pipelines. Inputs are the
-annotated unit table and frozen Qwen embedding export.
+annotated unit table and frozen Qwen or multilingual-E5 embedding export.
 """
 
 from __future__ import annotations
@@ -146,7 +146,8 @@ def _parallel_map(
         )(
             delayed(function)(task) for task in tasks
         )
-    if progress_label and config.get("validation", config.get("pareto", {})).get("show_progress", True):
+    progress_config = config.get("clustering_selection", config.get("validation", config.get("pareto", {})))
+    if progress_label and progress_config.get("show_progress", True):
         try:
             from tqdm.auto import tqdm
 
@@ -163,7 +164,10 @@ def _parallel_map(
     return list(iterator)
 
 
-def _family_dataset_config(dataset_id: str) -> dict[str, str] | None:
+def _family_dataset_config(
+    dataset_id: str,
+    embedding_variant: str = "qwen3",
+) -> dict[str, str] | None:
     """Resolve the standard files generated for a macro-activity family.
 
     Family identifiers follow ``<source_corpus>_<macro_activity_slug>`` and are
@@ -191,12 +195,21 @@ def _family_dataset_config(dataset_id: str) -> dict[str, str] | None:
     match = re.fullmatch(r"(metallurgie|caou|btp)_[a-z0-9_]+", dataset_id)
     if match is None:
         return None
+    embedding_filenames = {
+        "qwen3": f"Qwen3-Embedding-0.6B_{dataset_id}.csv",
+        "multilingual_e5_large": f"multilingual_e5_large_{dataset_id}.csv",
+    }
+    if embedding_variant not in embedding_filenames:
+        raise ValueError(
+            f"Unsupported embedding_variant {embedding_variant!r}; "
+            f"choose one of {sorted(embedding_filenames)}"
+        )
     source_corpus = match.group(1)
     return {
         "units_path": f"../dataset/families/{source_corpus}/data_{dataset_id}.csv",
         "embeddings_path": (
             f"../embeddings/families/{source_corpus}/"
-            f"Qwen3-Embedding-0.6B_{dataset_id}.csv"
+            f"{embedding_filenames[embedding_variant]}"
         ),
     }
 
@@ -206,8 +219,9 @@ def select_dataset_config(config: Mapping[str, Any], dataset_id: str | None = No
     selected = json.loads(json.dumps(config))
     data_cfg = selected.setdefault("data", {})
     chosen_id = str(dataset_id or data_cfg.get("dataset_id", "caou")).strip().lower()
+    embedding_variant = str(data_cfg.get("embedding_variant", "qwen3")).strip().lower()
     registry = data_cfg.get("dataset_registry", {})
-    source = registry.get(chosen_id) or _family_dataset_config(chosen_id)
+    source = registry.get(chosen_id) or _family_dataset_config(chosen_id, embedding_variant)
     if source is None:
         available = ", ".join(sorted(registry))
         raise ValueError(
@@ -676,8 +690,8 @@ def _configuration_id(role: str, index: int) -> str:
 
 
 def _validation_config(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Resolve validation settings with backward-compatible ``pareto`` fallback."""
-    values = dict(config.get("validation") or config.get("pareto") or {})
+    """Resolve clustering-selection settings with legacy config fallbacks."""
+    values = dict(config.get("clustering_selection") or config.get("validation") or config.get("pareto") or {})
     values.setdefault("random_state", int(config.get("random_state", 42)))
     values.setdefault("resampling_fraction", 0.8)
     values.setdefault("n_resampling", 30)

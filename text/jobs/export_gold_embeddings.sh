@@ -14,6 +14,8 @@
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 
+# Set FORCE=1 when resubmitting an encoder/corpus pair whose verified export
+# must be regenerated from the current GOLD CSV.
 set -euo pipefail
 SUBMIT_ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
 if [[ -f "${SUBMIT_ROOT}/text/jobs/_bootstrap.sh" ]]; then
@@ -51,5 +53,9 @@ if [[ ! -f "dataset/gold_v3_manifest.json" ]]; then
   exit 2
 fi
 echo "[$(date -Iseconds)] host=$(hostname) backbone=${BACKBONE} corpus=${CORPUS}"
-python scripts/export_gold_embeddings.py --backbone "${BACKBONE}" --corpus "${CORPUS}"
+args=(--backbone "${BACKBONE}" --corpus "${CORPUS}")
+if [[ "${FORCE:-0}" == "1" ]]; then
+  args+=(--force)
+fi
+python scripts/export_gold_embeddings.py "${args[@]}"
 echo "[$(date -Iseconds)] complete ${BACKBONE}/${CORPUS}"

@@ -8,8 +8,6 @@ from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
-from scipy.stats import fisher_exact
-from statsmodels.stats.multitest import multipletests
 
 ROLES = ("A0", "A1", "B", "C")
 
@@ -142,24 +140,43 @@ def topological_order(names: Sequence[str], edges: Sequence[tuple[str, str]]) ->
     return order
 
 
-def predict_metrics(matrix: pd.DataFrame, parents, edges, cpts) -> tuple[dict, dict]:
-    x=matrix.to_numpy(dtype=np.int8); names=list(matrix.columns); ix={n:i for i,n in enumerate(names)}
-    logp=np.zeros_like(x,dtype=float); p1=np.zeros_like(x,dtype=float)
-    for j, child in enumerate(names):
-        ps=parents[child]
-        for values in itertools.product((0,1),repeat=len(ps)):
-            mask=np.ones(len(x),dtype=bool)
-            for parent,v in zip(ps,values): mask &= x[:,ix[parent]]==v
-            prob=cpts[(child,values)]; p1[mask,j]=prob
-            logp[mask,j]=np.where(x[mask,j]==1,math.log(prob),math.log1p(-prob))
-    # independent Bernoulli baseline estimated on this validation sample would leak;
-    # caller can pass train probabilities, stored separately below.
-    return {"mean_log_score_per_accident":float(logp.sum(axis=1).mean()),
-            "mean_log_loss_per_factor":float(-logp.mean()),
-            "brier_per_factor":float(np.mean((p1-x)**2))}, (p1, logp)
+def _connected_factor_set(factors: Sequence[str], edges: Sequence[tuple[str, str]]) -> bool:
+    """Return whether selected factors form a weakly connected BN subgraph."""
+    selected = set(factors)
+    if len(selected) <= 1:
+        return True
+    adjacency = {factor: set() for factor in selected}
+    for parent, child in edges:
+        if parent in selected and child in selected:
+            adjacency[parent].add(child)
+            adjacency[child].add(parent)
+    seen = set()
+    stack = [next(iter(selected))]
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        stack.extend(adjacency[node] - seen)
+    return seen == selected
 
 
-def scenario_candidates(matrix: pd.DataFrame, role_map: Mapping[str,str], *, min_count=5, two_b=False):
+def scenario_candidates(
+    matrix: pd.DataFrame,
+    role_map: Mapping[str, str],
+    edges: Sequence[tuple[str, str]],
+    *,
+    min_count=5,
+    two_b=False,
+):
+    """Enumerate recurrent role motifs whose factors connect in the learned BN.
+
+    Candidates contain one or two A0/A1 factors, one B factor, and optionally
+    one C factor. A two-factor B+C motif is also allowed when no A-role edge
+    points directly to either event in the learned graph. ``two_b`` adds a
+    sensitivity set with two B factors. The minimum count is a descriptive
+    candidate screen on the complete accident matrix.
+    """
     a=sorted(n for n in matrix if role_map[n] in {"A0","A1"})
     bs=sorted(n for n in matrix if role_map[n]=="B")
     cs=sorted(n for n in matrix if role_map[n]=="C")
@@ -176,8 +193,9 @@ def scenario_candidates(matrix: pd.DataFrame, role_map: Mapping[str,str], *, min
                 return value
         return value
     motifs=[]
-    for na in (1,2):
-        for ups in itertools.combinations(a,na):
+    for na in (0,1,2):
+        upstream_sets=[()] if na==0 else itertools.combinations(a,na)
+        for ups in upstream_sets:
             upstream_mask=intersect(ups)
             if upstream_mask.bit_count()<min_count: continue
             for nb in (1,2) if two_b else (1,):
@@ -187,59 +205,70 @@ def scenario_candidates(matrix: pd.DataFrame, role_map: Mapping[str,str], *, min
                     for event in evs: joint &= masks[event]
                     count=joint.bit_count()
                     if count<min_count: continue
-                    motifs.append(base)
+                    if len(base)>1 and _connected_factor_set(base, edges):
+                        motifs.append(base)
                     for c in cs:
-                        if (joint & masks[c]).bit_count()>=min_count:
-                            motifs.append(tuple(sorted((*base,c))))
+                        motif=tuple(sorted((*base,c)))
+                        has_A_parent=any(
+                            role_map.get(parent) in {"A0", "A1"}
+                            and child in (*evs, c)
+                            for parent, child in edges
+                        )
+                        allow_BC_only=(na > 0 or not has_A_parent)
+                        if (allow_BC_only and (joint & masks[c]).bit_count()>=min_count
+                                and _connected_factor_set(motif, edges)):
+                            motifs.append(motif)
     rows=[]
     for motif in motifs:
         count=intersect(motif).bit_count()
+        motif_edges=sorted((p,c) for p,c in edges if p in motif and c in motif)
         rows.append({"scenario_id":"+".join(motif),"factor_ids":" | ".join(motif),
-                     "n_factors":len(motif),"n_train":n,"train_count":count,
-                     "train_support":count/n})
+                     "bn_edges":" | ".join(f"{p}->{c}" for p,c in motif_edges),
+                     "n_factors":len(motif),"n_accidents":n,"accident_count":count,
+                     "support":count/n})
     return pd.DataFrame(rows).drop_duplicates("scenario_id").reset_index(drop=True) if rows else pd.DataFrame(
-        columns=["scenario_id","factor_ids","n_factors","n_train","train_count","train_support"])
+        columns=["scenario_id","factor_ids","bn_edges","n_factors","n_accidents","accident_count","support"])
 
 
-def _wilson(k,n,z=1.959963984540054):
-    if n==0:return (np.nan,np.nan)
-    p=k/n; den=1+z*z/n; center=(p+z*z/(2*n))/den
-    half=z*math.sqrt(p*(1-p)/n+z*z/(4*n*n))/den
-    return center-half,center+half
-
-
-def evaluate_scenarios(candidates: pd.DataFrame, validation: pd.DataFrame) -> pd.DataFrame:
-    rows=[]; n=len(validation)
-    output_columns=[*candidates.columns,"validation_n","validation_count","validation_support",
-      "wilson_95_low","wilson_95_high","independence_expected_support","lift_over_independence",
-      "fisher_odds_ratio","p_value","p_value_BH"]
+def summarize_scenarios(candidates: pd.DataFrame, matrix: pd.DataFrame) -> pd.DataFrame:
+    """Describe selected motifs on the full accident matrix, without tests."""
+    rows=[]; n=len(matrix)
+    output_columns=[*candidates.columns,"independence_expected_support","lift_over_independence",
+      "conditional_C_n","conditional_C_count","conditional_C_support",
+      "marginal_C_support","empirical_conditional_C_lift"]
     if candidates.empty:
         return pd.DataFrame(columns=output_columns)
     for row in candidates.to_dict("records"):
-        fs=str(row["factor_ids"]).split(" | "); event=validation[fs].all(axis=1)
-        k=int(event.sum()); lo,hi=_wilson(k,n)
+        fs=str(row["factor_ids"]).split(" | "); event=matrix[fs].all(axis=1)
+        k=int(event.sum())
         # Lift of the joint motif over independence of its factor marginals.
-        marg=validation[fs].mean().to_numpy(dtype=float)
+        marg=matrix[fs].mean().to_numpy(dtype=float)
         expected=float(np.prod(marg)); support=k/n if n else np.nan
         lift=support/expected if expected>0 else np.nan
-        # Association test: upstream set versus downstream event (B, optionally C).
-        upstream=[f for f in fs if f.startswith(("A0_","A1_"))]
-        downstream=[f for f in fs if f not in upstream]
-        u=validation[upstream].all(axis=1); d=validation[downstream].all(axis=1)
-        table=[[int((u&d).sum()),int((u&~d).sum())],[int((~u&d).sum()),int((~u&~d).sum())]]
-        odds,p=fisher_exact(table,alternative="two-sided")
-        rows.append({**row,"validation_n":n,"validation_count":k,"validation_support":support,
-                     "wilson_95_low":lo,"wilson_95_high":hi,"independence_expected_support":expected,
-                     "lift_over_independence":lift,"fisher_odds_ratio":odds,"p_value":p})
-    result=pd.DataFrame(rows)
-    if not result.empty:
-        result["p_value_BH"] = multipletests(result["p_value"].fillna(1), method="fdr_bh")[1]
-    return result
+        c_factors=[f for f in fs if f.startswith("C_")]
+        conditional_n=conditional_count=0
+        conditional_support=marginal_c=conditional_lift=np.nan
+        if c_factors:
+            c_event=matrix[c_factors].all(axis=1)
+            antecedents=[f for f in fs if f not in c_factors]
+            antecedent_event=matrix[antecedents].all(axis=1)
+            conditional_n=int(antecedent_event.sum())
+            conditional_count=int((antecedent_event & c_event).sum())
+            conditional_support=conditional_count/conditional_n if conditional_n else np.nan
+            marginal_c=float(c_event.mean()) if n else np.nan
+            conditional_lift=conditional_support/marginal_c if marginal_c and np.isfinite(conditional_support) else np.nan
+        rows.append({**row,"accident_count":k,"support":support,
+                     "independence_expected_support":expected,
+                     "lift_over_independence":lift,"conditional_C_n":conditional_n,
+                     "conditional_C_count":conditional_count,"conditional_C_support":conditional_support,
+                     "marginal_C_support":marginal_c,"empirical_conditional_C_lift":conditional_lift})
+    return pd.DataFrame(rows,columns=output_columns)
 
 
 def bn_joint_probabilities(candidates: pd.DataFrame, nodes, parents, cpts, edges, *, n_sim=20000, seed=42):
     if candidates.empty:
-        return pd.DataFrame(columns=["scenario_id","bn_joint_probability_mc","mc_draws"])
+        return pd.DataFrame(columns=["scenario_id","bn_joint_probability_mc","bn_joint_mc_se",
+          "bn_conditional_C_probability_mc","bn_marginal_C_probability_mc","bn_conditional_C_lift_mc","mc_draws"])
     rng=np.random.default_rng(seed); order=topological_order(nodes,edges)
     samples=np.zeros((n_sim,len(nodes)),dtype=np.int8); ix={n:i for i,n in enumerate(nodes)}
     for child in order:
@@ -256,7 +285,22 @@ def bn_joint_probabilities(candidates: pd.DataFrame, nodes, parents, cpts, edges
     rows=[]
     for row in candidates.to_dict("records"):
         fs=str(row["factor_ids"]).split(" | ")
-        rows.append({"scenario_id":row["scenario_id"],"bn_joint_probability_mc":float(samples[:,[ix[f] for f in fs]].all(axis=1).mean()),
-                     "mc_draws":n_sim})
+        scenario_event=samples[:,[ix[f] for f in fs]].all(axis=1)
+        joint_probability=float(scenario_event.mean())
+        joint_se=math.sqrt(joint_probability*(1-joint_probability)/n_sim)
+        c_factors=[f for f in fs if f.startswith("C_")]
+        conditional_probability=marginal_probability=conditional_lift=np.nan
+        if c_factors:
+            c_event=samples[:,[ix[f] for f in c_factors]].all(axis=1)
+            antecedents=[f for f in fs if f not in c_factors]
+            antecedent_event=samples[:,[ix[f] for f in antecedents]].all(axis=1)
+            denom=float(antecedent_event.mean())
+            marginal_probability=float(c_event.mean())
+            conditional_probability=float((antecedent_event & c_event).mean()/denom) if denom else np.nan
+            conditional_lift=conditional_probability/marginal_probability if marginal_probability else np.nan
+        rows.append({"scenario_id":row["scenario_id"],"bn_joint_probability_mc":joint_probability,
+                     "bn_joint_mc_se":joint_se,"bn_conditional_C_probability_mc":conditional_probability,
+                     "bn_marginal_C_probability_mc":marginal_probability,
+                     "bn_conditional_C_lift_mc":conditional_lift,"mc_draws":n_sim})
     return pd.DataFrame(rows)
 
