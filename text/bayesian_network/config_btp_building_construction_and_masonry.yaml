@@ -63,7 +63,7 @@ topics:
 factor_annotation:
   enabled: true
   model: gpt-5.6-luna
-  reasoning_effort: low
+  reasoning_effort: medium
   max_output_tokens: 4000
   output_language: English
   prompt_version: bayesian-network-btp-building-construction-masonry-v1
