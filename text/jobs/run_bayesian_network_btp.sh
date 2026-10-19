@@ -8,7 +8,7 @@
 #SBATCH --exclude=hpcnode39,piafgpu01,iccfgpu01
 #SBATCH --cpus-per-task=24
 #SBATCH --mem=128G
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
