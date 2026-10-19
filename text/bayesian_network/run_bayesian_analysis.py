@@ -169,7 +169,7 @@ def build_factor_matrices(train_units,val_units,train_labels,val_labels,dictiona
     audit={"train_accidents":len(tr),"validation_accidents":len(va),"overlap":len(set(tr.index)&set(va.index)),
       "train_accidents_with_no_discovered_factor":int((tr.sum(axis=1)==0).sum()),"validation_accidents_with_no_assigned_factor":int((va.sum(axis=1)==0).sum()),
       "train_units_noise":int((train_units_lab._factor_id=="").sum()),"validation_units_noise":int((val_units_lab._factor_id=="").sum()),
-      "n_factors":len(factor_ids),"roles":dict(stats.groupby("role").size())}
+      "n_factors":int(len(factor_ids)),"roles":{str(role):int(count) for role,count in stats.groupby("role").size().items()}}
     (RUN_DIR/"audit_split_and_matrix.json").write_text(json.dumps(audit,indent=2),encoding="utf-8")
     return tr,va,fact_role,stats
 

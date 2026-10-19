@@ -91,3 +91,18 @@ def test_bootstrap_parallel_and_sequential_are_seed_reproducible(tmp_path,monkey
     bootstrap(x,roles,candidates,cfg)
     pd.testing.assert_frame_equal(pd.read_csv(first/"bootstrap_edge_stability.csv"),pd.read_csv(second/"bootstrap_edge_stability.csv"))
     pd.testing.assert_frame_equal(pd.read_csv(first/"bootstrap_scenario_stability.csv"),pd.read_csv(second/"bootstrap_scenario_stability.csv"))
+
+
+def test_matrix_audit_serializes_numpy_counts(tmp_path,monkeypatch):
+    monkeypatch.setattr(pipeline,"RUN_DIR",tmp_path,raising=False)
+    train=pd.DataFrame({"_accident_id":["a","b"],"_fact_id":["1","2"],
+      "_source_fact_id":["1","1"],"_role":["A0","B"]})
+    validation=pd.DataFrame({"_accident_id":["c","d"],"_fact_id":["3","4"],
+      "_source_fact_id":["1","1"],"_role":["A0","B"]})
+    dictionary=pd.DataFrame({"topic_id":["A0_000","B_000"],"role":["A0","B"],
+      "llm_label":["work setting","fall event"],"llm_description":["context","event"]})
+    tr,va,_,_=pipeline.build_factor_matrices(train,validation,np.array([0,0]),np.array([0,0]),dictionary)
+    import json
+    audit=json.loads((tmp_path/"audit_split_and_matrix.json").read_text())
+    assert audit["roles"]=={"A0":1,"B":1}
+    assert len(tr)==2 and len(va)==2
