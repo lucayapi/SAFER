@@ -311,6 +311,8 @@ def bootstrap(matrix,role_map,base_candidates,config):
 def main():
     global RUN_DIR
     p=argparse.ArgumentParser();p.add_argument("--config",type=Path,default=HERE/"config.yaml");p.add_argument("--run-dir",type=Path);p.add_argument("--reestimate",action="store_true")
+    p.add_argument("--stage",choices=("all","factors"),default="all",
+                   help="Run the complete analysis or stop after factor annotation and matrix creation")
     args=p.parse_args(); config_path=args.config.resolve()
     with config_path.open(encoding="utf-8") as f:config=yaml.safe_load(f)
     for section,key in [("data","units_path"),("data","embeddings_path"),("topics","stopwords_file")]:
@@ -322,7 +324,7 @@ def main():
     (RUN_DIR/"config_resolved.yaml").write_text(yaml.safe_dump(config,sort_keys=False,allow_unicode=True),encoding="utf-8")
     # Write an initial manifest before expensive work so interrupted runs retain provenance.
     source_files=[HERE/"run_bayesian_analysis.py",HERE/"network_analysis.py",TEXT_ROOT/"recurrent_scenarios"/"scenario_pipeline.py",TEXT_ROOT/"recurrent_scenarios"/"factor_annotation.py"]
-    initial_manifest={"created_utc":datetime.now(timezone.utc).isoformat(),"status":"running",
+    initial_manifest={"created_utc":datetime.now(timezone.utc).isoformat(),"status":"running","stage":args.stage,
       "config_sha256":sha256(RUN_DIR/"config_resolved.yaml"),"source_code_sha256":{p.name:sha256(p) for p in source_files},
       "input_sha256":{key:sha256(Path(config["data"][key])) for key in ("units_path","embeddings_path") if Path(config["data"][key]).is_file()}}
     (RUN_DIR/"manifest.json").write_text(json.dumps(initial_manifest,indent=2),encoding="utf-8")
@@ -353,13 +355,16 @@ def main():
             raise RuntimeError(f"Selected full-corpus labels do not align with the {role} units")
         factor_labels[mask]=selected_labels
     matrix,role_map,stats=build_factor_matrix(units,factor_labels,dictionary)
-    run_network(matrix,role_map,config)
-    manifest={"created_utc":datetime.now(timezone.utc).isoformat(),"status":"complete","config_sha256":sha256(RUN_DIR/"config_resolved.yaml"),
+    if args.stage=="all":
+        run_network(matrix,role_map,config)
+    manifest={"created_utc":datetime.now(timezone.utc).isoformat(),"status":"complete","stage":args.stage,
+      "config_sha256":sha256(RUN_DIR/"config_resolved.yaml"),
       "units_sha256":sha256(Path(config["data"]["units_path"])),"embeddings_sha256":sha256(Path(config["data"]["embeddings_path"])),
       "source_code_sha256":{p.name:sha256(p) for p in source_files},
       "input_audit":audit,"factor_selections":selections,
-      "descriptive_scope":"all eligible accidents in the configured corpus",
-      "bootstrap_conditional_on":"full-corpus factor discovery, LLM labels and unit-to-factor assignments; factors are held fixed across bootstrap repetitions"}
+      "descriptive_scope":"all eligible accidents in the configured corpus"}
+    if args.stage=="all":
+        manifest["bootstrap_conditional_on"]="full-corpus factor discovery, LLM labels and unit-to-factor assignments; factors are held fixed across bootstrap repetitions"
     (RUN_DIR/"manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8")
     print(f"Completed. Results: {RUN_DIR}",flush=True)
 

@@ -22,6 +22,24 @@ Qwen embeddings and HDBSCAN EOM selection:
 CONFIG=bayesian_network/config_btp_building_construction_and_masonry.yaml REESTIMATE=1 sbatch jobs/run_bayesian_network.sh
 ```
 
+For a separate EOM run with 10 rather than 30 accident resamples per
+configuration, submit only factor discovery, LLM annotation, and the
+accident-by-factor matrix:
+
+```bash
+sbatch jobs/run_btp_eom_factors_r10.sh
+```
+
+The job requests 32 CPUs and uses up to 31 clustering workers, leaving one
+CPU for coordination. This run is written under a distinct
+`btp_building_construction_and_masonry_eom_r10_<timestamp>/` directory. Its
+`manifest.json` records `stage: factors`; network, scenario, and bootstrap
+outputs are not produced. Ten resamples reduce the cost of stability screening
+but make the estimated stability and selected partitions more sensitive to the
+random subsamples than the 30-resample analysis. The new timestamped run has no
+old clustering cache; if a run is interrupted, specifying its `RUN_DIR` on
+resubmission can reuse completed stages.
+
 The OpenAI key must be available in `text/.env` or in the job environment.
 Each run receives a separate timestamped directory and annotation cache.
 `REESTIMATE=1` forces the UMAP/HDBSCAN candidate and resampling computations
