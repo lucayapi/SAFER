@@ -11,7 +11,13 @@
 #SBATCH --error=slurm-%x-%j.err
 #SBATCH --mail-type=BEGIN,END,FAIL
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SUBMIT_DIR="${SLURM_SUBMIT_DIR:?Submit this job from the text/ directory with sbatch}"
+RUNNER="${SUBMIT_DIR}/jobs/run_bayesian_network.sh"
+if [[ ! -f "${RUNNER}" ]]; then
+  echo "Missing pipeline runner: ${RUNNER}. Submit from the text/ directory." >&2
+  exit 1
+fi
+cd "${SUBMIT_DIR}"
 export CONFIG=bayesian_network/config_btp_building_construction_and_masonry_eom_r10.yaml
 export STAGE=factors REESTIMATE=0
-exec bash "${SCRIPT_DIR}/run_bayesian_network.sh"
+exec bash "${RUNNER}"
