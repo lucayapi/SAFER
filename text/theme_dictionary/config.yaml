@@ -1,0 +1,20 @@
+# Exact TDM-CC-BU-K on the completed Building construction and masonry matrix.
+# The support-12 screen passed exact preflight for K=3 and K=1. All paths
+# are relative to text/. Changes to inputs, config or code invalidate checkpoints.
+data:
+  source_run: bayesian_network/runs/btp_building_construction_and_masonry_20261019T215227Z
+output_dir: theme_dictionary/runs/mesocentre_btp_building_construction_and_masonry
+
+model:
+  max_theme_length: 4
+  min_observed_count: 12
+  overlap_values: [3, 1]
+  initial_scales: [0.25, 0.5, 1.0]
+  em_tolerance: 1.0e-8
+  em_max_iterations: 1000
+  # Resource guards: they stop rather than silently approximate the likelihood.
+  max_groups_per_component: 250000
+  max_total_groups: 2000000
+
+parallel:
+  workers: 24
