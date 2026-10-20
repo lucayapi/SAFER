@@ -59,17 +59,9 @@ def _examples(row: Mapping[str, Any], limit: int) -> dict[str, list[str]]:
         value = str(value or "")
         return [] if value.lower() == "nan" else [part.strip() for part in value.split(" || ") if part.strip()]
 
-    central = split(row.get("central_sentence", ""))[:1]
-    representatives = [value for value in split(row.get("representative_sentences", "")) if value not in central]
-    boundary = [value for value in split(row.get("boundary_sentences", "")) if value not in central and value not in representatives]
-    boundary_budget = min(len(boundary), max(1, limit // 4))
-    selected_representatives = representatives[: max(0, limit - len(central) - boundary_budget)]
-    remaining = limit - len(central) - len(selected_representatives)
-    return {
-        "central": central,
-        "representative": selected_representatives,
-        "boundary": boundary[: min(len(boundary), boundary_budget + remaining)],
-    }
+    # The catalog orders these sentences by HDBSCAN membership strength.
+    # Send only the strongest examples; do not add central or boundary samples.
+    return {"representative": split(row.get("representative_sentences", ""))[:max(0, limit)]}
 
 
 def _catalog(prepared, selections: Mapping[str, str], config: Mapping[str, Any], run_dir: Path) -> pd.DataFrame:
@@ -157,11 +149,9 @@ Write the label, description and evidence in {language}.
 The factual-unit cluster has already been constructed and must not be modified.
 Your task is only to describe its dominant semantic content.
 
-Use the sentences as the primary evidence. Keywords are auxiliary cues only and
-must not override the dominant meaning of the examples. Central and
-representative sentences define the main semantic motif. Boundary sentences are
-provided mainly to assess scope and heterogeneity; they must not determine the
-label unless they are consistent with the central examples.
+Use only the most representative sentences as evidence. They are ordered by
+their HDBSCAN membership strength, from strongest to weakest. Keywords are
+auxiliary cues only and must not override the dominant meaning of these examples.
 
 Rules for `label`:
 - 4 to 10 words, nominal phrase suitable for a figure legend.
@@ -186,7 +176,7 @@ accident-process role; `partial` when it is coherent but only partly corresponds
 information rather than the requested process component.
 
 `heterogeneity`: `low`, `moderate`, or `high`, according to how consistently the
-examples support one dominant factual motif.
+provided representative examples support one dominant factual motif.
 
 Role-specific guidance:
 {ROLE_PROMPTS[role]}
