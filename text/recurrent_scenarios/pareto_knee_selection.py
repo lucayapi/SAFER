@@ -1,8 +1,9 @@
 """Deterministic Pareto screening and normalized reference-point selection.
 
 For each role, configurations are compared on two maximized objectives:
-accident-level reproducibility ``S_R`` (``stability``) and UMAP-space ``DBCV``
-(``dbcv_umap``). Objectives are normalized on the role-specific Pareto set.
+accident-level reproducibility ``S_R`` (``stability``) and DBCV in the
+configured clustering space (historically exported as ``dbcv_umap``).
+Objectives are normalized on the role-specific Pareto set.
 The selected compromise minimizes the largest normalized shortfall from the
 empirical ideal point ``(1, 1)``. Exact numerical ties are resolved by the sum
 of normalized shortfalls, then by maximum raw reproducibility ``S_R``. The

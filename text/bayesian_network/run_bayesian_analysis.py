@@ -339,7 +339,8 @@ def main():
         merged=metrics.merge(summary[["configuration_id","stability"]],on="configuration_id",how="left")
         table,selected,rule=sp.select_configuration_for_role(merged)
         table.to_csv(RUN_DIR/"discovery"/role/"selection.csv",index=False)
-        sp.materialize_selected_partition(role,units,selected,RUN_DIR,theme)
+        space_name = "umap" if config["screening"]["umap"].get("enabled", True) else "cluster_space"
+        sp.materialize_selected_partition(role,units,selected,RUN_DIR,theme,cluster_space_name=space_name)
         selections[role]=selected
         print(f"[selection] {role}: {selected} ({rule})",flush=True)
     if config.get("factor_annotation",{}).get("enabled"):

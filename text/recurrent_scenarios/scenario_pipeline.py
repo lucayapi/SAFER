@@ -1,7 +1,7 @@
 """Auditable implementation of the recurrent-accident protocol.
 
 Workflow:
-1. theme discovery — UMAP--HDBSCAN candidates per role, DBCV / ``S_R``;
+1. theme discovery — optional UMAP followed by HDBSCAN, scored by DBCV / ``S_R``;
 2. Pareto screening on (``S_R``, DBCV), then normalized Tchebycheff selection;
 3. UMAP seed sensitivity on the selected partition;
 4. topic dictionary / labels (results notebook) on the frozen partition;
@@ -461,18 +461,22 @@ def _normalize_hdbscan_min_samples(value: Any, default: int) -> int:
 
 
 def parameter_plan(config: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Expand the shared UMAP--HDBSCAN candidate grid from ``config["screening"]``."""
+    """Expand the configured HDBSCAN grid, optionally preceded by UMAP."""
     screening_cfg = config["screening"]
     umap_cfg = screening_cfg["umap"]
     hdbscan_cfg = screening_cfg["hdbscan"]
-    keys = [
-        ("umap_n_neighbors", _grid_values(umap_cfg["n_neighbors"])),
-        ("umap_n_components", _grid_values(umap_cfg["n_components"])),
-        ("umap_min_dist", _grid_values(umap_cfg["min_dist"])),
+    keys = []
+    if bool(umap_cfg.get("enabled", True)):
+        keys.extend([
+            ("umap_n_neighbors", _grid_values(umap_cfg["n_neighbors"])),
+            ("umap_n_components", _grid_values(umap_cfg["n_components"])),
+            ("umap_min_dist", _grid_values(umap_cfg["min_dist"])),
+        ])
+    keys.extend([
         ("hdbscan_min_cluster_size", _grid_values(hdbscan_cfg["min_cluster_size"])),
         ("hdbscan_min_samples", _grid_values(hdbscan_cfg["min_samples"])),
         ("hdbscan_cluster_selection_method", _grid_values(hdbscan_cfg["cluster_selection_method"])),
-    ]
+    ])
     names = [name for name, _ in keys]
     values = [vals for _, vals in keys]
     return [dict(zip(names, combination)) for combination in itertools.product(*values)]
@@ -494,12 +498,11 @@ def _fit_cluster_with_embedding(
     *,
     return_membership_strength: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Fit one UMAP-HDBSCAN candidate and retain the fitted UMAP coordinates."""
+    """Fit one candidate in either UMAP space or the original embedding space."""
     try:
         import hdbscan
-        import umap
     except ImportError as error:
-        raise ImportError("umap-learn et hdbscan sont requis pour le clustering.") from error
+        raise ImportError("hdbscan is required for clustering.") from error
     if len(embeddings) < 3:
         labels = np.full(len(embeddings), -1, dtype=int)
         reduced = np.asarray(embeddings)
@@ -509,17 +512,24 @@ def _fit_cluster_with_embedding(
     screening_cfg = config["screening"]
     umap_cfg = screening_cfg["umap"]
     hdbscan_cfg = screening_cfg["hdbscan"]
-    n_neighbors = min(int(params["umap_n_neighbors"]), max(2, len(embeddings) - 1))
-    n_components = min(int(params["umap_n_components"]), max(2, len(embeddings) - 1))
-    umap_model = umap.UMAP(
-        n_neighbors=n_neighbors,
-        n_components=n_components,
-        min_dist=float(params["umap_min_dist"]),
-        metric=str(umap_cfg.get("metric", "cosine")),
-        random_state=int(random_state),
-        low_memory=bool(umap_cfg.get("low_memory", True)),
-        n_jobs=int(umap_cfg.get("n_jobs", 1)),
-    )
+    use_umap = bool(umap_cfg.get("enabled", True))
+    umap_model = None
+    if use_umap:
+        try:
+            import umap
+        except ImportError as error:
+            raise ImportError("umap-learn is required when screening.umap.enabled is true.") from error
+        n_neighbors = min(int(params["umap_n_neighbors"]), max(2, len(embeddings) - 1))
+        n_components = min(int(params["umap_n_components"]), max(2, len(embeddings) - 1))
+        umap_model = umap.UMAP(
+            n_neighbors=n_neighbors,
+            n_components=n_components,
+            min_dist=float(params["umap_min_dist"]),
+            metric=str(umap_cfg.get("metric", "cosine")),
+            random_state=int(random_state),
+            low_memory=bool(umap_cfg.get("low_memory", True)),
+            n_jobs=int(umap_cfg.get("n_jobs", 1)),
+        )
     min_cluster_size = min(int(params["hdbscan_min_cluster_size"]), max(2, len(embeddings)))
     min_samples = _normalize_hdbscan_min_samples(params.get("hdbscan_min_samples"), min_cluster_size)
     clusterer = hdbscan.HDBSCAN(
@@ -527,19 +537,25 @@ def _fit_cluster_with_embedding(
         min_samples=min_samples,
         cluster_selection_method=str(params["hdbscan_cluster_selection_method"]),
         metric=str(hdbscan_cfg.get("metric", "euclidean")),
+        algorithm=str(hdbscan_cfg.get("algorithm", "best")),
         prediction_data=bool(hdbscan_cfg.get("prediction_data", True)),
     )
-    reduced_embeddings = umap_model.fit_transform(embeddings)
-    labels = clusterer.fit_predict(reduced_embeddings)
+    cluster_space = umap_model.fit_transform(embeddings) if umap_model is not None else embeddings
+    cluster_input = (
+        np.asarray(cluster_space, dtype=np.float64)
+        if str(hdbscan_cfg.get("algorithm", "best")) == "generic"
+        else cluster_space
+    )
+    labels = clusterer.fit_predict(cluster_input)
     labels = np.asarray(labels, dtype=int)
-    reduced_embeddings = np.asarray(reduced_embeddings)
+    cluster_space = np.asarray(cluster_space)
     if return_membership_strength:
         strengths = np.asarray(
             getattr(clusterer, "probabilities_", np.where(labels >= 0, 1.0, 0.0)),
             dtype=np.float32,
         )
-        return labels, reduced_embeddings, strengths
-    return labels, reduced_embeddings
+        return labels, cluster_space, strengths
+    return labels, cluster_space
 
 
 def _screening_metrics(
@@ -572,7 +588,7 @@ def _screening_metrics(
     }
 
 
-def _dbcv(X: np.ndarray, labels: np.ndarray) -> float:
+def _dbcv(X: np.ndarray, labels: np.ndarray, metric: str = "euclidean") -> float:
     """Compute the reference HDBSCAN DBCV score, returning NaN when undefined."""
     valid = np.asarray(labels) >= 0
     if valid.sum() < 3 or np.unique(np.asarray(labels)[valid]).size < 2:
@@ -580,10 +596,22 @@ def _dbcv(X: np.ndarray, labels: np.ndarray) -> float:
     try:
         from hdbscan.validity import validity_index
 
-        score = validity_index(np.asarray(X, dtype=np.float64), np.asarray(labels, dtype=int), metric="euclidean")
+        score = validity_index(
+            np.asarray(X, dtype=np.float64), np.asarray(labels, dtype=int), metric=metric
+        )
         return float(score) if np.isfinite(score) else float("nan")
     except (ImportError, ValueError, RuntimeError, FloatingPointError):
         return float("nan")
+
+
+def _cluster_space_settings(config: Mapping[str, Any]) -> tuple[str, str]:
+    """Return the working-space name and DBCV metric for a screening config."""
+    screening_cfg = config.get("screening", {})
+    umap_cfg = screening_cfg.get("umap", {})
+    hdbscan_cfg = screening_cfg.get("hdbscan", {})
+    if bool(umap_cfg.get("enabled", True)):
+        return "umap", "euclidean"
+    return "original_embeddings", str(hdbscan_cfg.get("metric", "euclidean"))
 
 
 def _candidate_metrics(role_units: pd.DataFrame, labels: np.ndarray) -> dict[str, Any]:
@@ -622,7 +650,10 @@ def _evaluate_candidate_task(task: Mapping[str, Any]) -> dict[str, Any]:
         "labels": labels.astype(np.int32),
         "membership_strength": membership_strength.astype(np.float32),
         "reduced": np.asarray(reduced, dtype=np.float32),
-        "dbcv_umap": _dbcv(reduced[dbcv_indices], labels[dbcv_indices]),
+        "dbcv_umap": _dbcv(
+            reduced[dbcv_indices], labels[dbcv_indices],
+            metric=_cluster_space_settings(task["config"])[1],
+        ),
         "dbcv_n_units": int(len(dbcv_indices)),
         "random_state": int(task["random_state"]),
         "metrics": metrics,
@@ -824,13 +855,18 @@ def evaluate_candidates(
         membership_strength = result["membership_strength"]
         np.save(candidate_dir / f"{configuration_id}_labels.npy", labels.astype(np.int32))
         np.save(candidate_dir / f"{configuration_id}_membership_strength.npy", membership_strength.astype(np.float32))
-        np.save(candidate_dir / f"{configuration_id}_umap.npy", reduced.astype(np.float32))
+        np.save(candidate_dir / f"{configuration_id}_cluster_space.npy", reduced.astype(np.float32))
         rows.append({
             "role": role,
             "configuration_id": configuration_id,
             **result["params"],
             **result["metrics"],
             "dbcv_umap": result["dbcv_umap"],
+            "dbcv_space": result["dbcv_umap"],
+            "dbcv_metric": (
+                _cluster_space_settings(config)[1]
+            ),
+            "cluster_space": _cluster_space_settings(config)[0],
             "dbcv_n_units": result["dbcv_n_units"],
             "random_state": result["random_state"],
         })
@@ -979,7 +1015,8 @@ def evaluate_resampling_stability(
         "candidate_signature": candidate_signature,
         "n_candidates": int(len(candidates)),
         "aggregation": "mean_over_observable_replicates",
-        "umap_random_state_policy": "fixed_primary_seed_during_resampling",
+        "cluster_space": _cluster_space_settings(config)[0],
+        "random_state_policy": "fixed_primary_seed_during_resampling",
     }
     cached_stability_metadata = {}
     if stability_metadata_path.is_file():
@@ -1002,7 +1039,7 @@ def evaluate_resampling_stability(
         configuration_id = str(candidate["configuration_id"])
         labels_path = candidate_dir / f"{configuration_id}_labels.npy"
         reference = np.load(labels_path).astype(int)
-        params = {key: _to_python_value(candidate[key]) for key in PARAMETER_KEYS}
+        params = {key: _to_python_value(candidate[key]) for key in PARAMETER_KEYS if key in candidate.index}
         reference_clusters = [int(label) for label in np.unique(reference) if label >= 0]
         for repetition in range(n_repetitions):
             rng = np.random.default_rng(random_state + ROLE_RANK[role] * 10000 + repetition)
@@ -1071,6 +1108,7 @@ def materialize_selected_partition(
     configuration_id: str,
     output_dir: Path,
     theme_stability: pd.DataFrame | None = None,
+    cluster_space_name: str = "umap",
 ) -> None:
     """Copy the selected candidate artifacts into discovery/<role>/selected/."""
     role_dir = _discovery_role_dir(output_dir, role)
@@ -1079,15 +1117,19 @@ def materialize_selected_partition(
     selected_dir.mkdir(parents=True, exist_ok=True)
     labels_path = candidate_dir / f"{configuration_id}_labels.npy"
     strength_path = candidate_dir / f"{configuration_id}_membership_strength.npy"
-    umap_path = candidate_dir / f"{configuration_id}_umap.npy"
+    space_path = candidate_dir / f"{configuration_id}_cluster_space.npy"
+    if not space_path.is_file():
+        # Backward compatibility for discovery runs created before the generic
+        # cluster-space artifact name was introduced.
+        space_path = candidate_dir / f"{configuration_id}_umap.npy"
     if not labels_path.is_file() or not strength_path.is_file():
         raise FileNotFoundError(f"Missing candidate artifacts for {role}/{configuration_id}")
     labels = np.load(labels_path).astype(np.int32)
     strengths = np.load(strength_path).astype(np.float32)
     np.save(selected_dir / "labels.npy", labels)
     np.save(selected_dir / "membership_strength.npy", strengths)
-    if umap_path.is_file():
-        np.save(selected_dir / "umap.npy", np.load(umap_path).astype(np.float32))
+    if space_path.is_file():
+        np.save(selected_dir / f"{cluster_space_name}.npy", np.load(space_path).astype(np.float32))
 
     role_units = units.loc[units["_role"].eq(role)].reset_index(drop=True)
     if len(role_units) != len(labels):
@@ -1312,7 +1354,10 @@ def _evaluate_seed_task(task: Mapping[str, Any]) -> dict[str, Any]:
         "membership_strength": np.asarray(membership_strength, dtype=np.float32),
         "n_clusters": int(metrics["n_clusters"]),
         "noise_fraction": float(metrics["noise_fraction"]),
-        "dbcv_umap": float(_dbcv(reduced, labels)),
+        "dbcv_umap": float(_dbcv(
+            reduced, labels,
+            metric=_cluster_space_settings(task["config"])[1],
+        )),
         "factor_rows": rows,
     }
 
@@ -1378,12 +1423,15 @@ def evaluate_seed_sensitivity(
             "Refuse to compare partitions on different factual-unit sets."
         )
     reference_clusters = [int(label) for label in np.unique(reference) if label >= 0]
-    missing_params = [key for key in PARAMETER_KEYS if key not in candidate_row]
+    missing_params = (
+        [key for key in PARAMETER_KEYS if key not in candidate_row]
+        if _cluster_space_settings(config)[0] == "umap" else []
+    )
     if missing_params:
         raise ValueError(
             f"[{role}] selected configuration missing parameters for seed sensitivity: {missing_params}"
         )
-    params = {key: _to_python_value(candidate_row[key]) for key in PARAMETER_KEYS}
+    params = {key: _to_python_value(candidate_row[key]) for key in PARAMETER_KEYS if key in candidate_row}
     tasks = [
         {
             "seed": seed,

@@ -14,46 +14,53 @@ model:
 roles:
   B:
     instruction: >-
-      Represent an occupational accident factual unit by the accident event
-      mechanism it explicitly describes. Focus on the physical event or
-      process, its immediate trigger, and the involved object, material,
-      structure, or equipment. De-emphasize job, task, location, injury,
-      symptoms, medical outcome, rescue, and administrative details unless
-      they identify the mechanism. Do not infer information absent from the
-      text.
+      Represent occupational accident factual units for clustering by the
+      accident event mechanism explicitly described. Prioritize the type of
+      physical event or process and its essential participants, including who
+      or what falls, strikes, collapses, overturns, or is otherwise affected.
+      Group equivalent mechanisms across different equipment and work
+      contexts, while distinguishing different mechanisms involving the same
+      equipment. De-emphasize occupations, locations, injuries, and
+      consequences unless they are essential to identifying the event. Do not
+      infer unstated causes or outcomes.
     embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.csv
     manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.manifest.json
 
   A0:
     instruction: >-
-      Represent an occupational accident factual unit by the neutral work
-      situation explicitly described before or around the accident. Focus on
-      the task, worksite, equipment, materials, and ordinary work context that
-      define the situation. Preserve relevant details without recasting them
-      as hazards, adverse conditions, accident events, or injuries. Do not
-      infer information absent from the text.
+      Represent occupational accident factual units for clustering by the
+      neutral work activity or situation explicitly described. Prioritize the
+      type of activity, the action performed, and its essential objects or
+      context. Group equivalent work situations across different occupations,
+      equipment, or worksites when these differences do not change the nature
+      of the activity. Preserve meaningful distinctions between activities.
+      Do not infer hazards, accident events, or consequences.
     embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A0_work_situation_instruct.csv
     manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A0_work_situation_instruct.manifest.json
 
   A1:
     instruction: >-
-      Represent an occupational accident factual unit by the explicitly
-      reported adverse work condition or hazard. Focus on unsafe or
-      unfavourable states, missing or defective safeguards, hazardous
-      materials or environments, and adverse organizational conditions when
-      stated. Distinguish the condition from the neutral work situation, the
-      accident event, and bodily harm. Do not infer information absent from
-      the text.
+      Represent occupational accident factual units for clustering by the
+      adverse work condition explicitly described. Prioritize the nature of
+      the unsafe state, missing or defective safeguard, hazardous condition,
+      or organizational deficiency, together with the entity affected. Group
+      equivalent adverse conditions across different equipment and work
+      contexts. Distinguish different types of adverse conditions even when
+      they involve the same object. Do not infer unstated hazards, causes, or
+      accident events.
     embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A1_adverse_condition_instruct.csv
     manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A1_adverse_condition_instruct.manifest.json
 
   C:
     instruction: >-
-      Represent an occupational accident factual unit by the bodily harm or
-      health consequence explicitly reported. Focus on the affected body part,
-      injury, symptom, hospitalization, fatality, or other stated medical
-      outcome. De-emphasize the work situation and triggering event unless
-      they are needed to identify the reported consequence. Do not infer
-      information absent from the text.
+      Represent occupational accident factual units for clustering by the
+      bodily harm or health consequence explicitly reported. Prioritize the
+      type of injury, symptom, health impairment, or medical outcome. Group
+      equivalent types of harm across different accident mechanisms and work
+      contexts. Treat anatomical location and severity as secondary
+      characteristics unless they are essential to distinguishing the
+      reported consequence. Preserve distinctions between injuries, symptoms,
+      and outcomes such as hospitalization or death. Do not infer unstated
+      medical consequences.
     embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_C_health_consequence_instruct.csv
     manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_C_health_consequence_instruct.manifest.json

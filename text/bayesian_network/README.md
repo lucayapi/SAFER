@@ -22,6 +22,24 @@ Qwen embeddings and HDBSCAN EOM selection:
 CONFIG=bayesian_network/config_btp_building_construction_and_masonry.yaml REESTIMATE=1 sbatch jobs/run_bayesian_network.sh
 ```
 
+To compare against HDBSCAN on the refreshed Qwen embeddings **without UMAP**,
+using cosine distance and the HDBSCAN `leaf` selection method, submit factor
+discovery and annotation only:
+
+```bash
+CONFIG=bayesian_network/config_btp_building_construction_and_masonry_qwen_raw_leaf.yaml STAGE=factors REESTIMATE=1 sbatch jobs/run_bayesian_network.sh
+```
+
+This configuration evaluates six HDBSCAN parameter combinations per role
+(three minimum cluster sizes by two `min_samples` values), with 30 accident
+resamples per combination. Candidate DBCV is computed in the original
+embedding space using cosine distance. Outputs receive a separate
+`btp_building_construction_masonry_qwen_raw_leaf_<timestamp>/` run directory;
+the selected coordinates are saved as `cluster_space.npy` to distinguish them
+from UMAP coordinates. `STAGE=factors` stops after factor annotation and the
+accident-by-factor matrix, without fitting Bayesian networks or generating
+scenario bootstrap results.
+
 For a separate EOM run with 10 rather than 30 accident resamples per
 configuration, submit only factor discovery, LLM annotation, and the
 accident-by-factor matrix:

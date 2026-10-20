@@ -13,12 +13,15 @@ model:
   precision: bfloat16
 
 instruction: >-
-  Represent an occupational accident factual unit by the accident event
-  mechanism it explicitly describes. Focus on the physical event or process,
-  its immediate trigger, and the involved object, material, structure, or
-  equipment. De-emphasize job, task, location, injury, symptoms, medical
-  outcome, rescue, and administrative details unless they identify the
-  mechanism. Do not infer information absent from the text.
+  Represent occupational accident factual units for clustering by the
+  accident event mechanism explicitly described. Prioritize the type of
+  physical event or process and its essential participants, including who or
+  what falls, strikes, collapses, overturns, or is otherwise affected. Group
+  equivalent mechanisms across different equipment and work contexts, while
+  distinguishing different mechanisms involving the same equipment.
+  De-emphasize occupations, locations, injuries, and consequences unless they
+  are essential to identifying the event. Do not infer unstated causes or
+  outcomes.
 
 output:
   embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.csv

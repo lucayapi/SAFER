@@ -49,6 +49,9 @@ text/annotation/data/*.csv
 text/annotation/data/*.xlsx
 !text/annotation/data/.gitkeep
 !text/annotation/data/README.md
+text/embedding_diagnostics/**/results/
+text/embedding_diagnostics/btp_building_construction_masonry_C_reference_comparison/
+text/embedding_diagnostics/runs/
 !text/output/comparisons/topics_legacy/stopwords_domain.txt
 text/**/*.pt
 text/**/*.pth
