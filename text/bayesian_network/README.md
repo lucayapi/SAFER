@@ -40,6 +40,23 @@ random subsamples than the 30-resample analysis. The new timestamped run has no
 old clustering cache; if a run is interrupted, specifying its `RUN_DIR` on
 resubmission can reuse completed stages.
 
+To discover factors from the four role-specific, task-instructed Qwen
+embeddings (B, A0, A1 and C), first finish
+`jobs/export_all_roles_instruct.sh`. Then submit this single job from `text/`:
+
+```bash
+sbatch jobs/run_btp_instructed_eom_factors.sh
+```
+
+It checks that each role export contains exactly the valid factual-unit IDs
+for that role, stacks the four exports into one aligned file, and then runs
+factor discovery with the same EOM grid and ten 80%-subsample resamples per
+candidate as the earlier EOM factors-only run. The run uses a distinct
+`btp_building_construction_masonry_instructed_eom_r10_<timestamp>/` output
+directory. This job stops after factor annotation and matrix creation; it does
+not fit either Bayesian network. It requires the OpenAI key for factor naming,
+as well as the four completed embedding exports.
+
 The OpenAI key must be available in `text/.env` or in the job environment.
 Each run receives a separate timestamped directory and annotation cache.
 `REESTIMATE=1` forces the UMAP/HDBSCAN candidate and resampling computations
