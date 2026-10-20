@@ -1,0 +1,25 @@
+input:
+  units_csv: dataset/families/btp/data_btp_building_construction_and_masonry.csv
+  fact_id_col: fact_id
+  role_col: pred_label
+  valid_col: pred_ok
+  text_col: sentence
+  selected_role: B
+
+model:
+  name: Qwen/Qwen3-Embedding-0.6B
+  max_length: 256
+  batch_size: 32
+  precision: bfloat16
+
+instruction: >-
+  Represent an occupational accident factual unit by the accident event
+  mechanism it explicitly describes. Focus on the physical event or process,
+  its immediate trigger, and the involved object, material, structure, or
+  equipment. De-emphasize job, task, location, injury, symptoms, medical
+  outcome, rescue, and administrative details unless they identify the
+  mechanism. Do not infer information absent from the text.
+
+output:
+  embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.csv
+  manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.manifest.json

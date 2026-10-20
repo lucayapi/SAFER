@@ -1,0 +1,59 @@
+input:
+  units_csv: dataset/families/btp/data_btp_building_construction_and_masonry.csv
+  fact_id_col: fact_id
+  role_col: pred_label
+  valid_col: pred_ok
+  text_col: sentence
+
+model:
+  name: Qwen/Qwen3-Embedding-0.6B
+  max_length: 256
+  batch_size: 32
+  precision: bfloat16
+
+roles:
+  B:
+    instruction: >-
+      Represent an occupational accident factual unit by the accident event
+      mechanism it explicitly describes. Focus on the physical event or
+      process, its immediate trigger, and the involved object, material,
+      structure, or equipment. De-emphasize job, task, location, injury,
+      symptoms, medical outcome, rescue, and administrative details unless
+      they identify the mechanism. Do not infer information absent from the
+      text.
+    embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.csv
+    manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_B_mechanism_instruct.manifest.json
+
+  A0:
+    instruction: >-
+      Represent an occupational accident factual unit by the neutral work
+      situation explicitly described before or around the accident. Focus on
+      the task, worksite, equipment, materials, and ordinary work context that
+      define the situation. Preserve relevant details without recasting them
+      as hazards, adverse conditions, accident events, or injuries. Do not
+      infer information absent from the text.
+    embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A0_work_situation_instruct.csv
+    manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A0_work_situation_instruct.manifest.json
+
+  A1:
+    instruction: >-
+      Represent an occupational accident factual unit by the explicitly
+      reported adverse work condition or hazard. Focus on unsafe or
+      unfavourable states, missing or defective safeguards, hazardous
+      materials or environments, and adverse organizational conditions when
+      stated. Distinguish the condition from the neutral work situation, the
+      accident event, and bodily harm. Do not infer information absent from
+      the text.
+    embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A1_adverse_condition_instruct.csv
+    manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_A1_adverse_condition_instruct.manifest.json
+
+  C:
+    instruction: >-
+      Represent an occupational accident factual unit by the bodily harm or
+      health consequence explicitly reported. Focus on the affected body part,
+      injury, symptom, hospitalization, fatality, or other stated medical
+      outcome. De-emphasize the work situation and triggering event unless
+      they are needed to identify the reported consequence. Do not infer
+      information absent from the text.
+    embeddings_csv: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_C_health_consequence_instruct.csv
+    manifest_json: embeddings/instructed/btp_building_construction_and_masonry/Qwen3-Embedding-0.6B_btp_C_health_consequence_instruct.manifest.json
