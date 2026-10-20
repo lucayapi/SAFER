@@ -16,10 +16,10 @@ sbatch jobs/run_bayesian_network.sh
 ```
 
 To analyse the Building construction and masonry family with the refreshed
-Qwen embeddings:
+Qwen embeddings and HDBSCAN EOM selection:
 
 ```bash
-CONFIG=bayesian_network/config_btp_building_construction_and_masonry.yaml sbatch jobs/run_bayesian_network.sh
+CONFIG=bayesian_network/config_btp_building_construction_and_masonry.yaml REESTIMATE=1 sbatch jobs/run_bayesian_network.sh
 ```
 
 The OpenAI key must be available in `text/.env` or in the job environment.

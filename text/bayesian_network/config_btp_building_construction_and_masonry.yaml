@@ -1,5 +1,6 @@
 # Building construction and masonry family, using the refreshed Qwen embeddings.
-analysis_id: btp_building_construction_and_masonry
+# HDBSCAN EOM selection; separate run prefix from the earlier leaf analysis.
+analysis_id: btp_building_construction_and_masonry_eom
 
 data:
   units_path: ../dataset/families/btp/data_btp_building_construction_and_masonry.csv
@@ -35,7 +36,7 @@ screening:
   hdbscan:
     min_cluster_size: [15, 25, 50]
     min_samples: [5, 10]
-    cluster_selection_method: [leaf]
+    cluster_selection_method: [eom]
     metric: euclidean
     prediction_data: true
 
