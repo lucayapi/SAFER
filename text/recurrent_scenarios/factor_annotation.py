@@ -114,6 +114,30 @@ def _catalog(prepared, selections: Mapping[str, str], config: Mapping[str, Any],
     return catalog
 
 
+def build_unannotated_selected_factor_catalog(
+    prepared, selections: Mapping[str, str], config: Mapping[str, Any], run_dir: Path
+) -> Path:
+    """Export selected factors and their strongest examples without calling an LLM."""
+    catalog = _catalog(prepared, selections, config, Path(run_dir))
+    for column in ("llm_label", "llm_description", "llm_evidence", "llm_role_fit", "llm_heterogeneity"):
+        catalog[column] = ""
+    output = Path(run_dir) / "topics_manual" / "topic_dictionary_unannotated.csv"
+    catalog.to_csv(output, index=False)
+    status = {
+        "status": "annotation_skipped",
+        "reason": "Factor labels will be proposed manually from the exported examples.",
+        "n_factors": int(len(catalog)),
+        "representative_sentences_per_factor_max": int(
+            config.get("factor_annotation", {}).get("representative_sentences", 10)
+        ),
+    }
+    (output.parent / "annotation_status.json").write_text(
+        json.dumps(status, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    print(f"[factor-annotation] skipped LLM calls; unannotated factor catalog: {output}", flush=True)
+    return output
+
+
 def _record(row: Mapping[str, Any], *, language: str, prompt_version: str,
             model: str, limit: int) -> dict[str, Any]:
     role = str(row["role"])

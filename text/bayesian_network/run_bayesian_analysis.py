@@ -20,7 +20,8 @@ sys.path.insert(0,str(HERE))
 sys.path.insert(0,str(TEXT_ROOT/"recurrent_scenarios"))
 
 import scenario_pipeline as sp
-from factor_annotation import annotate_selected_factors, check_annotation_credentials
+from factor_annotation import (annotate_selected_factors, build_unannotated_selected_factor_catalog,
+    check_annotation_credentials)
 from network_analysis import (ROLES, bn_joint_probabilities, cpt_jeffreys,
     fit_exact_bn, fit_greedy_bn, summarize_scenarios,
     scenario_candidates)
@@ -346,7 +347,7 @@ def main():
     if config.get("factor_annotation",{}).get("enabled"):
         dictionary_path=annotate_selected_factors(full_data,selections,config,RUN_DIR)
     else:
-        raise RuntimeError("This analysis requires factor_annotation.enabled=true")
+        dictionary_path=build_unannotated_selected_factor_catalog(full_data,selections,config,RUN_DIR)
     dictionary=read_csv(dictionary_path)
     factor_labels=np.full(len(units),-1,dtype=int)
     for role in ROLES:
@@ -363,7 +364,8 @@ def main():
       "units_sha256":sha256(Path(config["data"]["units_path"])),"embeddings_sha256":sha256(Path(config["data"]["embeddings_path"])),
       "source_code_sha256":{p.name:sha256(p) for p in source_files},
       "input_audit":audit,"factor_selections":selections,
-      "descriptive_scope":"all eligible accidents in the configured corpus"}
+      "descriptive_scope":"all eligible accidents in the configured corpus",
+      "factor_annotation":"LLM annotation skipped; see topics_manual/topic_dictionary_unannotated.csv and representatives_by_membership.csv" if not config.get("factor_annotation",{}).get("enabled") else "LLM annotation enabled"}
     if args.stage=="all":
         manifest["bootstrap_conditional_on"]="full-corpus factor discovery, LLM labels and unit-to-factor assignments; factors are held fixed across bootstrap repetitions"
     (RUN_DIR/"manifest.json").write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding="utf-8")
