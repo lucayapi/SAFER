@@ -1,0 +1,192 @@
+# Explicit French expressions used to recode the factual units of the selected
+# Qwen3-4B leaf run. Patterns apply only within the recorded accident-process
+# role. A factual unit may express more than one component of that role.
+# These are descriptive, text-observed components, not inferred causes.
+components:
+  - id: A0_ROOF
+    role: A0
+    label: Roof and covering context
+    description: Work or work setting involving a roof, covering, roofing structure or gutter.
+    patterns: ['\btoitur\w*\b', '\bcouvertur\w*\b', '\btuil\w*\b', '\bardois\w*\b', '\bcharpent\w*\b', '\bgouttier\w*\b', '\bzinguer\w*\b']
+  - id: A0_SCAFFOLD
+    role: A0
+    label: Scaffold and elevated platform context
+    description: Work or work setting involving a scaffold, working platform or mobile lift.
+    patterns: ['\bechafaud\w*\b', '\bplateforme\b', '\bplate.forme\b', '\bnacell\w*\b', '\bpasserell\w*\b']
+  - id: A0_FORMWORK
+    role: A0
+    label: Formwork and concrete context
+    description: Work or work setting involving formwork, reinforcement or concrete.
+    patterns: ['\bcoffrag\w*\b', '\bbanche\w*\b', '\bbeton\w*\b', '\bferraillage\b', '\bpredall\w*\b', '\bcoulag\w*\b']
+  - id: A0_MASONRY
+    role: A0
+    label: Masonry, wall and façade context
+    description: Masonry work or work involving a wall or façade.
+    patterns: ['\bmaconner\w*\b', '\bparpaing\w*\b', '\bbriqu\w*\b', '\bjointoi\w*\b', '\bfacad\w*\b', '\bmontage d.un mur\b', '\breparation d.un mur\b']
+  - id: A0_DEMOLITION
+    role: A0
+    label: Demolition and dismantling work
+    description: Deliberate removal or dismantling of an existing structure or installation.
+    patterns: ['\bdemol\w*\b', '\bdeconstruc\w*\b', '\bdemont\w*\b', '\bdepos\w*\b']
+  - id: A0_EXCAVATION
+    role: A0
+    label: Excavation and trench work
+    description: Excavation, digging, earthworks or work in a trench.
+    patterns: ['\btranchee\w*\b', '\bfouill\w*\b', '\bterrass\w*\b', '\bexcav\w*\b', '\bcreus\w*\b']
+  - id: A0_LIFTING
+    role: A0
+    label: Lifting and positioning loads
+    description: Hoisting, rigging or positioning materials with lifting equipment.
+    patterns: ['\blevag\w*\b', '\beling\w*\b', '\bgrut\w*\b', '\bgrue\w*\b', '\bpalonnier\w*\b', '\btreuil\w*\b']
+  - id: A0_MACHINE
+    role: A0
+    label: Powered equipment context
+    description: Work or work setting involving powered construction equipment.
+    patterns: ['\bmini.pell\w*\b', '\bpell\w* hydraul\w*\b', '\bmachine\w*\b', '\bengin\w*\b', '\btronconn\w*\b', '\bponceus\w*\b', '\bperceus\w*\b']
+
+  - id: A1_FALL_GUARD
+    role: A1
+    label: Missing or inadequate fall protection
+    description: Explicitly missing, removed or inadequate collective or personal fall protection.
+    patterns: ['\b(?:absence|sans|manque|depourvu|pas|non|retire|enleve|aucun\w*)\b.{0,85}\b(?:garde.corps|filet|harnais|protection\w*\s+(?:collectiv\w*|contre les chutes)|ligne de vie)\b', '\b(?:garde.corps|filet|harnais|ligne de vie)\b.{0,65}\b(?:absen\w*|retir\w*|enlev\w*|defectu\w*|incomplet\w*|non fix\w*|pas attach\w*)\b', '\b(?:bordure|bord|aplom[b]?)\b.{0,30}\bvide\b', '\b(?:tremie|ouverture)\b.{0,60}\b(?:non protege\w*|sans protection|aucune protection|incomplet\w*|non couvert\w*)\b', '\b(?:aucune|pas de|sans)\s+protection\b.{0,35}\b(?:bord|vide|chute|tremie)\b', '\b(?:rive\w*|bord\w*|plan de travail|protection\w* collectiv\w*)\b.{0,50}\b(?:rarement proteg\w*|non protege\w*|pas protege\w*|incomplet\w*|absence de protection)\b', '\b(?:aucune|pas de|sans)\s+protection\b.{0,35}\b(?:collective|individuelle|en bordure|antichute)\b']
+  - id: A1_UNSTABLE
+    role: A1
+    label: Unstable or fragile support
+    description: An explicitly unstable, fragile or insufficiently secured structure, surface or support.
+    patterns: ['\binstabil\w*\b', '\bfragil\w*\b', '\bnon stabilis\w*\b', '\bmal stabilis\w*\b', '\bnon etaye\w*\b', '\betaiement insuffisant\b', '\bfixation\w* insuffisant\w*\b', '\bassemblage\w* insuffisant\w*\b', '\b(?:platelage|plancher|toiture|support|sol)\b.{0,45}\b(?:defectu\w*|non protege\w*|insuffisant\w*|degrade\w*|pourri\w*)\b', '\b(?:echelle|plateforme|plate.forme)\b.{0,45}\b(?:non fix\w*|non attache\w*|pas fix\w*|pas attache\w*)\b', '\b(?:stabilisation|etaiement|fixation|maintien)\b.{0,45}\b(?:precaire|absen\w*|insuffisan\w*|non assure\w*|non realise\w*)\b', '\b(?:fissure|faux aplomb|terrain sans cohesion|cohesion insuffisant\w*)\b']
+  - id: A1_DEFECTIVE_EQUIPMENT
+    role: A1
+    label: Defective or misused equipment
+    description: Explicitly defective, unsuitable or incompletely deployed equipment.
+    patterns: ['\b(?:engin|machine|materiel|equipement|outil|stabilisateur\w*|echelle|cable\w*|malaxeur|dispositif|telecommande|protecteur)\b.{0,50}\b(?:defectu\w*|hors service|endommage\w*|casse\w*|use\w*|non deploye\w*|pas deploye\w*|mal fixe\w*|non attache\w*|en panne|mauvais etat|inutilisable|deforme\w*)\b', '\b(?:defectu\w*|hors service|endommage\w*|casse\w*|use\w*|dysfonctionnement|panne|defaut d.isolement)\b.{0,50}\b(?:engin|machine|materiel|equipement|outil|echelle|cable\w*|malaxeur|dispositif|telecommande|protecteur)\b', '\b(?:dysfonctionnement|panne|defaut d.isolement)\b.{0,30}\b(?:du|de la|des)\b', '\b(?:protecteur|dispositif de securite|arret d.urgence)\b.{0,45}\b(?:retir\w*|absen\w*|inutilisable|mauvais etat|non fonctionnel)\b']
+  - id: A1_OVERLOAD
+    role: A1
+    label: Excessive or unsecured load
+    description: Explicit overload, excessive weight or an unsecured load.
+    patterns: ['\b(?:charge|poids)\b.{0,75}\b(?:superieur\w*|excessif\w*|depasse\w*|trop lourde\w*)\b.{0,40}\b(?:maximal\w*|autorise\w*|admissibl\w*|capacite|limite\w*)\b', '\b(?:grue|engin|plancher|toiture|predalle|echafaudage|banche)\b.{0,50}\b(?:en surcharge|surcharge par|charge excessive)\b', '\b(?:surcharge par|charge trop lourde|charge excessive)\b', '\b(?:charge|palette|element)\b.{0,45}\b(?:non fixe\w*|sans fixation|mal stabilis\w*|non stabilis\w*)\b']
+  - id: A1_ELECTRIC
+    role: A1
+    label: Unprotected electrical hazard
+    description: Explicitly exposed, live or unisolated electrical installation.
+    patterns: ['\b(?:ligne|cable|fil|borne|conducteur|installation)\b.{0,45}\b(?:sous tension|non isole\w*|denude\w*|a nu\b)\b', '\b(?:sous tension|non isole\w*|denude\w*)\b.{0,45}\b(?:ligne|cable|fil|borne|conducteur)\b', '\b(?:ligne electrique|ligne haute tension|ligne \d[\d ]{3,6}\s*v)\b.{0,70}\b(?:travers\w*|proximit\w*|non signal\w*|non indiqu\w*)\b']
+  - id: A1_ORGANISATION
+    role: A1
+    label: Inadequate training or work organisation
+    description: Explicitly insufficient training, authorisation, instructions or planning.
+    patterns: ['\b(?:pas|sans|aucun\w*|absence|manque|non)\b.{0,65}\b(?:formation|autorisation|habilitation|consigne\w*|plan\s+de\s+prevention|ppsps|coordination|supervision|concertation|evaluation des risques|directive\w*)\b', '\b(?:formation|autorisation|habilitation|consigne\w*|coordination|ppsps|plan particulier de securite)\b.{0,60}\b(?:insuffisant\w*|non formalise\w*|inadapt\w*|ne traite pas|n.apportait aucune information)\b', '\b(?:n.etait pas|n.avait pas)\b.{0,40}\b(?:titulaire|forme|habilite|autorise)\b']
+  - id: A1_RESTRICTED_SPACE
+    role: A1
+    label: Restricted or unsafe access
+    description: Explicitly cramped workspace, obstructed access or unsafe vehicle-pedestrian circulation.
+    patterns: ['\b(?:encombrement|encombre\w*|peu de place|espace limite|exiguit\w*|passage restreint|acces difficile)\b', '\b(?:engins? et pietons?|pietons? et engins?)\b.{0,50}\b(?:non securis\w*|absence|sans|non delimit\w*)\b', '\b(?:absence de delimitation|circulation non securisee)\b']
+    exclude_patterns: ['\b(?:grimp|evacuation de la victime|pour evacuer la victime)\b']
+  - id: A1_ENVIRONMENT
+    role: A1
+    label: Adverse ground, weather or atmosphere
+    description: Explicitly adverse weather, ground conditions or atmospheric exposure.
+    patterns: ['\b(?:vent|rafale\w*|pluie|verglas|glace|intemperie\w*|sol)\b.{0,45}\b(?:violent\w*|fort\w*|glissant\w*|instabl\w*|detremp\w*|sans cohesion|degrade\w*)\b', '\b(?:fort\w*|violent\w*|glissant\w*|instabl\w*)\b.{0,25}\b(?:vent|rafale\w*|pluie|sol|tuil\w*)\b', '\b(?:espace confine|atmosphere confinee|non ventile\w*|emanation\w* toxique\w*|temperature\w* .{0,15}40.c)\b']
+  - id: A1_HAZARDOUS_MATERIAL
+    role: A1
+    label: Hazardous substance or dust
+    description: Explicit asbestos, hazardous dust, chemical vapour or gas exposure.
+    patterns: ['\b(?:poussiere\w* d.amiante|liber\w* de l.amiante|retrait d.amiante|desamiant\w*|diagnostic amiante|gaz toxique\w*|vapeur\w* toxique\w*|dichloromethane|fumee\w* consequent\w*|emanation\w* de gaz)\b', '\bamiante\b.{0,65}\b(?:sans protection respiratoire|aucun\w* form\w*|non form\w*|risque\w* lie\w* aux poussiere\w*)\b']
+
+  - id: B_PERSON_FALL
+    role: B
+    label: Person falling
+    description: A worker or other person falls, including through a surface or from height.
+    patterns: ['\b(?:victime|salarie\w*|ouvrier\w*|travailleur\w*|homme|elle|il|macon|coffreur|couvreur|personne\w*|chef de chantier)\b.{0,45}\b(?:chut\w*|tombe\w*|tomba|gliss\w*|trebuch\w*|fait une chute)\b', '\b(?:chute|tombee?)\s+(?:du|de la|des|d.un|d.une)\s+(?:victime|salarie\w*|ouvrier\w*|travailleur\w*|personne\w*|macon|coffreur|couvreur|chef de chantier)\b', '\b(?:il|elle|ils|elles)\s+(?:a|ont|est|sont)?\s*(?:chute\w*|tombe\w*|tomba|gliss\w*)\b', '\b(?:victime|salarie\w*|ouvrier\w*|collegue\w*)\b.{0,45}\b(?:passe\w*|bascule\w*)\b.{0,20}\b(?:a travers|au travers|dans le vide|par dessus|par-dessus)\b']
+  - id: B_COLLAPSE
+    role: B
+    label: Collapse or structural failure
+    description: A structure or its support collapses, breaks or gives way.
+    patterns: ['\b(?:effondr\w*|eboul\w*|ecroul\w*|s.affaiss\w*)\b', '\b(?:mur|poutre\w*|dalle\w*|coffrage\w*|plancher\w*|echafaud\w*|passerelle\w*|support\w*)\b.{0,55}\b(?:cede\w*|casse\w*|romp\w*|rupture|bascul\w*)\b']
+  - id: B_FALLING_OBJECT
+    role: B
+    label: Falling or swinging material
+    description: A load, tool, material or structure part falls or swings unexpectedly.
+    exclude_patterns: ['\btombe en panne\b']
+    patterns: ['\b(?:charge\w*|objet\w*|materiau\w*|piece\w*|bloc\w*|pierre\w*|planche\w*|benne\w*|poutre\w*|dalle\w*|palette\w*|madrier\w*)\b\s+(?:(?:alors|brusquement|soudain|ensuite)\s+)?(?:(?:a|ont|est|s.est|se)\s+)?(?:tombe\w*|tomba|bascul\w*)\b', '\b(?:charge\w*|objet\w*|materiau\w*|piece\w*|bloc\w*|pierre\w*|planche\w*|benne\w*|poutre\w*|dalle\w*|palette\w*|madrier\w*)\b\s+(?:a|ont|est|s.est)\s+chut\w*\b', '\bchute\s+(?:de|du|des|d.une?)\s+(?:charge\w*|objet\w*|materiau\w*|piece\w*|bloc\w*|pierre\w*|planche\w*|benne\w*|poutre\w*|dalle\w*|palette\w*|madrier\w*)\b']
+  - id: B_STRUCK_CRUSHED
+    role: B
+    label: Person struck, trapped or crushed
+    description: An explicitly reported impact, trapping or crushing affecting a person.
+    patterns: ['\b(?:victime|salarie\w*|ouvrier\w*|travailleur\w*|personne\w*|il|elle)\b.{0,75}\b(?:heurt\w*|percut\w*|ecras\w*|coin[cç]\w*|coinc\w*|happ\w*|ensevel\w*|frapp\w*)\b', '\b(?:heurt\w*|percut\w*|ecras\w*|coin[cç]\w*|coinc\w*|happ\w*|ensevel\w*|frapp\w*)\b.{0,60}\b(?:victime|salarie\w*|ouvrier\w*|travailleur\w*|personne\w*|ma[cç]on|coffreur|couvreur)\b']
+  - id: B_VEHICLE
+    role: B
+    label: Vehicle collision or overturning
+    description: A vehicle or mobile machine collides, leaves its path or overturns.
+    patterns: ['\b(?:vehicule|camion|voiture|fourgon|engin|pelle|chariot)\b\s+(?:(?:s.est|se|a|est|vient|est venu)\s+)?(?:renvers\w*|retourn\w*|bascul\w*|percut\w*|heurt\w*)\b', '\b(?:collision|renversement|sortie de route)\b.{0,40}\b(?:vehicule|camion|voiture|fourgon|engin|pelle|chariot)\b', '\b(?:vehicule|camion|voiture|fourgon|engin|pelle|chariot)\b.{0,30}\b(?:perd\w* le controle|mord\w* le bas cote|entre en collision)\b']
+  - id: B_ELECTRIC_CONTACT
+    role: B
+    label: Electrical contact or discharge
+    description: Electrical current passes through a person or equipment contacts a live line.
+    patterns: ['\b(?:electris\w*|electrocut\w*|decharge electrique|arc electrique)\b', '\b(?:contact|touch\w*)\b.{0,55}\b(?:ligne haute tension|ligne electrique|fil sous tension|borne sous tension|cable electrique|ligne \d[\d ]{3,6}\s*v)\b', '\b(?:courant electrique|parcouru\w* par un courant)\b']
+  - id: B_MACHINE_CONTACT
+    role: B
+    label: Contact with moving machinery
+    description: A person is caught by, pulled into or struck by moving powered equipment.
+    patterns: ['\b(?:happ\w*|entrain\w*|coin[cç]\w*|coinc\w*)\b.{0,55}\b(?:machine|lame\w*|outil\w*|rouleau\w*|engin|pelle\w*|benne\w*)\b', '\b(?:machine|lame\w*|outil\w*|rouleau\w*|engin|pelle\w*|benne\w*)\b.{0,55}\b(?:happ\w*|entrain\w*|coin[cç]\w*|coinc\w*)\b']
+  - id: B_FIRE_EXPLOSION
+    role: B
+    label: Fire or explosion
+    description: Ignition, fire, explosion or deflagration is explicitly reported.
+    patterns: ['\b(?:explosion|explos\w*|deflagration|incendie|inflammation|s.enflamme\w*)\b']
+
+  - id: C_FATALITY
+    role: C
+    label: Death
+    description: Death is explicitly reported, including fatal injuries or electrocution.
+    patterns: ['\b(?:deced\w*|deces|mort\w*|tue\w*|fatal\w*|electrocut\w*)\b']
+  - id: C_FRACTURE
+    role: C
+    label: Fracture
+    description: A fracture or broken bone is explicitly reported.
+    patterns: ['\b(?:fractur\w*|cassure\w*|os casse\w*|cote\w* cassee\w*)\b']
+  - id: C_HEAD_TRAUMA
+    role: C
+    label: Head injury
+    description: Head or cranial trauma is explicitly reported.
+    patterns: ['\b(?:traumatisme cranien|trauma cranien|lesion cranien\w*|blessure\w* a la tete|plaie\w* a la tete|commotion cerebrale)\b']
+  - id: C_AMPUTATION
+    role: C
+    label: Amputation or severed digit
+    description: Loss or severing of a limb, hand or digit is explicitly reported.
+    patterns: ['\b(?:amput\w*|sectionnement\w*\s+(?:de la|du|des|d.une?)\s+(?:phalange\w*|doigt\w*|main\w*|bras|jambe\w*|pied\w*)|arrachement\w* de\w* doigt\w*|doigt\w* sectionne\w*)\b']
+    exclude_patterns: ['\b(?:risque|risquait|pourrait|suspecte)\b.{0,25}\bamput\w*\b']
+  - id: C_BURN
+    role: C
+    label: Burn injury
+    description: A burn or electrical burn is explicitly reported.
+    patterns: ['\b(?:brulur\w*|brule\w*|brula\w*)\b']
+  - id: C_OTHER_INJURY
+    role: C
+    label: Contusion, wound or pain
+    description: Explicit contusion, cut, wound, pain or similar soft-tissue injury.
+    patterns: ['\b(?:contusion\w*|plaie\w*|coupur\w*|douleur\w*|hematome\w*|entors\w*|luxation\w*|hemorragie\w*|entaill\w*)\b']
+  - id: C_HOSPITALISATION
+    role: C
+    label: Hospitalisation
+    description: Admission to hospital is explicitly reported.
+    patterns: ['\b(?:hospitalis\w*|admis\w* a l.hopital|admission a l.hopital)\b']
+    exclude_patterns: ['\b(?:pas necessit\w*|sans necessit\w*|n.a pas necessit\w*|non)\b.{0,35}\bhospitalis\w*\b']
+  - id: C_CRUSH_INJURY
+    role: C
+    label: Crushing injury
+    description: Explicit crushing of the body or a body part.
+    patterns: ['\b(?:victime|salarie\w*|ouvrier\w*|personne\w*|tete|thorax|main|bras|jambe|pied|bassin)\b.{0,50}\becras\w*\b', '\becras\w*\b.{0,35}\b(?:victime|salarie\w*|ouvrier\w*|personne\w*|tete|thorax|main|bras|jambe|pied|bassin)\b']
+  - id: C_ELECTRIC_HARM
+    role: C
+    label: Electrical injury
+    description: Electrocution or electric shock affecting a person.
+    patterns: ['\b(?:electrocut\w*|electris\w*|decharge electrique)\b']
+  - id: C_CARDIO_RESPIRATORY
+    role: C
+    label: Cardiac or respiratory impairment
+    description: Explicit cardiac arrest, cardiac crisis or asphyxia.
+    patterns: ['\b(?:arret cardiaque|crise cardiaque|asphyxi\w*)\b']
+  - id: C_UNCONSCIOUSNESS
+    role: C
+    label: Unconsciousness or coma
+    description: Explicit unconsciousness, coma or being found unresponsive.
+    patterns: ['\b(?:coma|inconscient\w*|inanim\w*|sans connaissance)\b']

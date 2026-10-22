@@ -404,7 +404,8 @@ def write_results_report(output: Path, audit: dict, summaries: list[dict], compa
             f"**{summary['overlapping_map_partitions']}/{summary['accidents']} accidents "
             f"({summary['overlap_index']:.1%})**. The observed-data log score per accident "
             f"is {summary['score_per_accident']:.3f}.", "",
-            f"All {len(diagnostics['em_runs'])} EM fits converged across "
+            f"{sum(run['converged'] for run in diagnostics['em_runs'])} of "
+            f"{len(diagnostics['em_runs'])} EM fits converged across "
             f"{summary['pruning_rounds']} pruning rounds; "
             f"{diagnostics['total_themes_eliminated']} candidate themes were eliminated. "
             f"Of {diagnostics['unique_baskets_represented']} distinct observed baskets, "
@@ -460,6 +461,8 @@ def write_results_report(output: Path, audit: dict, summaries: list[dict], compa
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="theme_dictionary/config.yaml")
+    parser.add_argument("--source-run", default=None,
+                        help="Completed accident-component run to analyse (relative to text/)")
     parser.add_argument("--run-dir", default=None)
     parser.add_argument("--k", type=int, choices=(1, 3), default=None,
                         help="Fit only this overlap constraint in an independent run")
@@ -467,14 +470,16 @@ def main() -> None:
     args = parser.parse_args()
     config_path = resolve(args.config)
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if args.source_run is not None:
+        config["data"]["source_run"] = str(resolve(args.source_run))
     configured_k = [int(value) for value in config["model"]["overlap_values"]]
     if configured_k != [3, 1]:
         raise ValueError("The configured comparison must contain K=3 then K=1")
     overlap_values = [args.k] if args.k is not None else configured_k
     matrix, dictionary, baskets, audit = load_inputs(config)
     input_hash = hashlib.sha256(
-        (sha256(config_path) + audit["matrix_sha256"] + audit["dictionary_sha256"] +
-         (audit["editorial_labels_sha256"] or "") +
+        (yaml.safe_dump(config, sort_keys=True) + audit["matrix_sha256"] +
+         audit["dictionary_sha256"] + (audit["editorial_labels_sha256"] or "") +
          sha256(Path(__file__)) + sha256(Path(__file__).with_name("model.py"))).encode()
     ).hexdigest()
     # A code/config/input revision starts a separate run, leaving earlier audits intact.
