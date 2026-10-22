@@ -17,9 +17,12 @@ It does not regenerate embeddings, clusters or LLM labels.
    role-specific expressions in `component_definitions_leaf.yaml` assign
    zero or more components. Candidate components appearing in fewer than
    12 distinct accidents are omitted from the modelling matrix.
-2. The exact TDM preflight checks feasibility for both overlap limits
-   before any network bootstrap starts. If the exact cover-partition bounds
-   are exceeded, the job stops and reports the failing basket.
+2. The exact TDM preflight tries the declared theme-support thresholds
+   12, 16, 20, 25, 30, 40, 50, 60 and 80, in that order. It keeps the
+   smallest threshold that passes the K=3 and K=1 resource bounds. Failed
+   attempts, the selected threshold and the resolved configuration are saved
+   under `theme_dictionary/runs/curated_leaf_selection/`. If none passes,
+   the job stops without claiming an approximate result.
 3. The Bayesian analysis fits the primary strict role-order network and a
    separate greedy within-role sensitivity network, then runs 100 conditional
    accident bootstraps.

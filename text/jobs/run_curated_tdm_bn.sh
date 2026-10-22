@@ -28,14 +28,17 @@ CURATED_RUN="${CURATED_RUN:-bayesian_network/runs/curated_leaf_components_qwen3_
 SOURCE_NAME="$(basename "${CURATED_RUN%/}")"
 BN_OUTPUT="${BN_OUTPUT:-bayesian_network/runs/${SOURCE_NAME}_network}"
 TDM_CONFIG="${TDM_CONFIG:-theme_dictionary/config_curated_leaf.yaml}"
+TDM_SELECTION="${TDM_SELECTION:-theme_dictionary/runs/curated_leaf_selection}"
 echo "[curated] leaf=${LEAF_RUN}; output=${CURATED_RUN}; CPUs=${SLURM_CPUS_PER_TASK:-24}"
 echo "[curated] unit-level component recoding"
 python -u bayesian_network/curate_leaf_components.py \
   --source-run "${LEAF_RUN}" \
   --output-dir "${CURATED_RUN}"
-echo "[curated] TDM exact preflight, K=3 and K=1"
-python -u -m theme_dictionary.run \
-  --config "${TDM_CONFIG}" --source-run "${CURATED_RUN}" --preflight
+echo "[curated] finding the smallest feasible declared TDM support threshold"
+python -u -m theme_dictionary.select_feasible_config \
+  --config "${TDM_CONFIG}" --source-run "${CURATED_RUN}" \
+  --output-dir "${TDM_SELECTION}"
+TDM_SELECTED_CONFIG="${TDM_SELECTION}/config_selected.yaml"
 echo "[curated] Bayesian networks and conditional bootstrap"
 python -u bayesian_network/run_network_from_matrix.py \
   --source-run "${CURATED_RUN}" \
@@ -43,5 +46,5 @@ python -u bayesian_network/run_network_from_matrix.py \
   --output-dir "${BN_OUTPUT}"
 echo "[curated] TDM estimation, K=3 and K=1"
 python -u -m theme_dictionary.run \
-  --config "${TDM_CONFIG}" --source-run "${CURATED_RUN}"
+  --config "${TDM_SELECTED_CONFIG}" --source-run "${CURATED_RUN}"
 echo "[curated] all analyses complete"
