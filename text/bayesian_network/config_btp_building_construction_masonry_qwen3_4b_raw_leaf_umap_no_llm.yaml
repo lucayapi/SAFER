@@ -1,10 +1,10 @@
-# UMAP + HDBSCAN discovery using role-specific, instructed Qwen3-4B vectors.
-# HDBSCAN uses leaf selection. Factor naming by LLM is disabled.
-analysis_id: btp_building_construction_masonry_qwen3_4b_instruct_leaf_umap_no_llm
+# UMAP + HDBSCAN factor discovery from the standard (non-instructed)
+# Qwen3-Embedding-4B BTP embeddings. LLM factor annotation is disabled.
+analysis_id: btp_building_construction_masonry_qwen3_4b_raw_leaf_umap_no_llm
 
 data:
   units_path: ../dataset/families/btp/data_btp_building_construction_and_masonry.csv
-  embeddings_path: ../embeddings/instructed_qwen3_4b/btp_building_construction_and_masonry/Qwen3-Embedding-4B_btp_all_roles_instruct.csv
+  embeddings_path: ../embeddings/gold_v3/qwen3_4b/btp.csv
   accident_id_col: accident_id
   fact_id_col: fact_id
   unit_id_col: fact_id
@@ -19,7 +19,7 @@ data:
 parallel:
   enabled: true
   n_workers: auto
-  max_workers: 31
+  max_workers: 23
   backend: loky
 
 screening:
@@ -53,7 +53,7 @@ clustering_selection:
 
 topics:
   top_words: 12
-  top_sentences: 5
+  top_sentences: 10
   n_gram_range: [1, 2]
   min_topic_frequency: 1
   idf_smoothing: 1.0
