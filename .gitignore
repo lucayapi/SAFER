@@ -1,4 +1,4 @@
-# Python / env
+﻿# Python / env
 __pycache__/
 *.py[cod]
 *.pyo
@@ -21,11 +21,11 @@ scgm_text/.env
 *.ipynb.bak
 Untitled.ipynb
 
-# Notebooks (local uniquement — régénérer : scripts/build_*.py, build_notebook_02_scgm_results.py, etc.)
+# Notebooks (local uniquement â€” rÃ©gÃ©nÃ©rer : scripts/build_*.py, build_notebook_02_scgm_results.py, etc.)
 text/notebooks/**
 !text/notebooks/.gitkeep
 
-# Artefacts texte (lourds / régénérables)
+# Artefacts texte (lourds / rÃ©gÃ©nÃ©rables)
 text/embeddings/
 text/dataset/*.csv
 text/dataset/**/*.csv
@@ -36,6 +36,7 @@ text/output/
 text/output_test/
 text/recurrent_scenarios/runs/
 text/bayesian_network/runs/
+text/bayesian_network/reviews/
 text/theme_dictionary/runs/
 text/recurrent_scenarios/notebooks/*.ipynb
 !text/recurrent_scenarios/notebooks/recurrent_scenarios_results.ipynb
@@ -56,17 +57,17 @@ text/embedding_diagnostics/runs/
 text/**/*.pt
 text/**/*.pth
 
-# Recette légère et versionnée des réplications multi-seeds. Les résultats,
-# checkpoints et prédictions sous text/output/replications/ restent ignorés.
+# Recette lÃ©gÃ¨re et versionnÃ©e des rÃ©plications multi-seeds. Les rÃ©sultats,
+# checkpoints et prÃ©dictions sous text/output/replications/ restent ignorÃ©s.
 !text/output/
 text/output/*
 !text/output/replication_recipes/
 !text/output/replication_recipes/**
 
-# Code image legacy (local uniquement, non poussé)
+# Code image legacy (local uniquement, non poussÃ©)
 images/
 
-# Archives mesocentre (local uniquement, non poussé)
+# Archives mesocentre (local uniquement, non poussÃ©)
 archives script mesocentre/
 
 # Binaires scientifiques (global)
@@ -79,7 +80,7 @@ archives script mesocentre/
 .DS_Store
 
 # Local manuscript packages, reference articles, and derived review material
-/Manuscript de thèse AHO/
+/Manuscript de thÃ¨se AHO/
 /Pretrained text representation strategies under domain shift_ An empirical study of occupational accident narratives/
 /Pretrained text representation strategies under domain shift_ An empirical study of occupational accident narratives.zip
 /Cross-sector generalization of accident-process role classification in occupational accident narratives/
@@ -90,12 +91,13 @@ archives script mesocentre/
 /figures/
 /jrssc_recurrent_accident_scenarios_source/
 /reports/neurocomputing_article_reproducibility/
+/text/bayesian_network/recurrent_accident_scenarios/
 Thumbs.db
 
 # Fichiers temporaires locaux
 test.txt
 
-# Corpus et application locale de revue des récits (données sensibles)
+# Corpus et application locale de revue des rÃ©cits (donnÃ©es sensibles)
 /annotation/
 /safer_sat_lodo/
 /safer_sat_indomain/

@@ -1,0 +1,75 @@
+# UMAP + HDBSCAN discovery using role-specific, instructed Qwen3-4B vectors.
+# HDBSCAN uses leaf selection. Factor naming by LLM is disabled.
+analysis_id: btp_building_construction_masonry_qwen3_4b_instruct_leaf_umap_no_llm
+
+data:
+  units_path: ../dataset/families/btp/data_btp_building_construction_and_masonry.csv
+  embeddings_path: ../embeddings/instructed_qwen3_4b/btp_building_construction_and_masonry/Qwen3-Embedding-4B_btp_all_roles_instruct.csv
+  accident_id_col: accident_id
+  fact_id_col: fact_id
+  unit_id_col: fact_id
+  text_col: sentence
+  role_col: pred_label
+  valid_col: pred_ok
+  embedding_id_col: doc_id
+  embedding_dimensions_prefix: dim_
+  normalize_embeddings: true
+  fail_on_unmatched_units: true
+
+parallel:
+  enabled: true
+  n_workers: auto
+  max_workers: 31
+  backend: loky
+
+screening:
+  show_progress: true
+  umap:
+    enabled: true
+    n_neighbors: [10, 20, 40, 80]
+    n_components: [5, 10, 15]
+    min_dist: [0.0]
+    metric: cosine
+    low_memory: true
+    n_jobs: 1
+  hdbscan:
+    min_cluster_size: [15, 25, 50]
+    min_samples: [5, 10]
+    cluster_selection_method: [leaf]
+    metric: euclidean
+    algorithm: best
+    prediction_data: true
+
+clustering_selection:
+  random_state: 42
+  resampling_fraction: 0.8
+  n_resampling: 10
+  dbcv_sample_size: 12000
+  selection_metric: pareto_normalized_tchebycheff
+  show_progress: true
+  seed_sensitivity:
+    enabled: false
+    seeds: []
+
+topics:
+  top_words: 12
+  top_sentences: 5
+  n_gram_range: [1, 2]
+  min_topic_frequency: 1
+  idf_smoothing: 1.0
+  stopwords_file: ../recurrent_scenarios/stop_metier.txt
+  additional_stopwords: []
+  stopwords: [le, la, les, un, une, des, de, du, et, en, dans, sur, au, aux, que, qui, est, a, avec, pour, par, ce, cette, son, sa, ses, il, elle, ils, elles]
+
+factor_annotation:
+  enabled: false
+
+network:
+  max_parents: 2
+  jeffreys_alpha: 0.5
+  scenario_min_count: 5
+  scenario_two_b_sensitivity: true
+  scenario_mc_draws: 20000
+  bootstrap_replicates: 100
+  bootstrap_seed: 42042
+  bootstrap_parallel: true
