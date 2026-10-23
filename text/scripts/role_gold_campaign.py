@@ -33,6 +33,9 @@ ROLES = tuple(LABEL2ID)
 METHODS = ("ce", "supcon", "softtriple")
 SEEDS = (42, 1729, 20261018)
 CS = (0.01, 0.1, 1.0, 10.0)
+EQUALIZED_EXPERIMENTS = ("single_source_equalized", "lodo_equalized")
+EQUALIZED_TRAIN_PER_ROLE_PER_DOMAIN = 96
+EQUALIZED_VAL_PER_ROLE_PER_DOMAIN = 15
 BACKBONE = "intfloat/multilingual-e5-large"
 PREFIX = "query: "
 MAX_LENGTH = 256
@@ -82,11 +85,21 @@ def bundle_path() -> Path:
 
 
 def output_root(experiment: str) -> Path:
-    if experiment not in ("single_source", "lodo"):
+    if experiment not in ("single_source", "lodo", *EQUALIZED_EXPERIMENTS):
         raise ValueError(experiment)
+    default_name = ("safer_role_gold_v3_equalized" if experiment in EQUALIZED_EXPERIMENTS
+                    else "safer_role_gold_v3")
     root = Path(os.getenv("ROLE_GOLD_RUN_ROOT", os.path.join(
-        os.getenv("SCRATCH", str(ROOT)), "safer_role_gold_v3")))
+        os.getenv("SCRATCH", str(ROOT)), default_name)))
     return root.expanduser().resolve() / experiment
+
+
+def is_single_source(experiment: str) -> bool:
+    return experiment in ("single_source", "single_source_equalized")
+
+
+def is_equalized(experiment: str) -> bool:
+    return experiment in EQUALIZED_EXPERIMENTS
 
 
 def source_partition(bundle: Path, corpus: str, name: str) -> list[str]:
@@ -170,17 +183,76 @@ def load_gold(bundle: Path) -> tuple[dict[str, pd.DataFrame], dict, dict]:
                            "csv_sha256": {c: manifest["corpora"][CSV_NAME[c]]["sha256"] for c in CORPORA}}
 
 
-def selection(experiment: str, fold: str, frames: dict, split: dict):
-    sources = (fold,) if experiment == "single_source" else tuple(c for c in CORPORA if c != fold)
-    targets = tuple(c for c in CORPORA if c != fold) if experiment == "single_source" else (fold,)
+def make_equalized_sample_plan(experiment: str, frames: dict, split: dict) -> dict:
+    """Freeze matched train/validation fact IDs for both experiment arms.
+
+    Each model sees 2,400 training units with exactly 480 units per role.
+    LODO allocates 96 per role to each of five source domains; single-source
+    allocates all 480 per role to its one source. Validation is also matched
+    at 375 units (75 per role): 15 per role per domain for LODO.
+    """
+    if experiment not in EQUALIZED_EXPERIMENTS:
+        return {}
+    import hashlib
+
+    quotas = {"train_per_role_per_domain": EQUALIZED_TRAIN_PER_ROLE_PER_DOMAIN,
+              "val_per_role_per_domain": EQUALIZED_VAL_PER_ROLE_PER_DOMAIN,
+              "roles": list(ROLES), "seed": 20261023}
+    plan = {"experiment": experiment, "quotas": quotas, "folds": {}}
+    single = is_single_source(experiment)
+    for fold in CORPORA:
+        sources = (fold,) if single else tuple(c for c in CORPORA if c != fold)
+        plan["folds"][fold] = {"sources": list(sources), "train": {}, "val": {}}
+        for corpus in sources:
+            source_frame = frames[corpus]
+            for part, base_quota in (("train", EQUALIZED_TRAIN_PER_ROLE_PER_DOMAIN),
+                                     ("val", EQUALIZED_VAL_PER_ROLE_PER_DOMAIN)):
+                part_rows = source_frame[source_frame.accident_id.isin(split[corpus][part])]
+                quota = base_quota * (5 if single else 1)
+                chosen = []
+                for role in ROLES:
+                    candidates = part_rows[part_rows.pred_label.eq(role)].sort_values("doc_id")
+                    if len(candidates) < quota:
+                        raise ValueError(f"Equalized sample infeasible: {experiment}/{fold}/{corpus}/{part}/{role}: "
+                                         f"need {quota}, have {len(candidates)}")
+                    key = f"{experiment}|{fold}|{corpus}|{part}|{role}|{quotas['seed']}"
+                    seed = int.from_bytes(hashlib.sha256(key.encode()).digest()[:8], "big")
+                    selected = candidates.sample(n=quota, random_state=seed % (2**32 - 1))
+                    chosen.extend(selected.doc_id.astype(str).tolist())
+                if len(chosen) != len(set(chosen)):
+                    raise ValueError(f"Repeated unit in equalized sample: {experiment}/{fold}/{corpus}/{part}")
+                plan["folds"][fold][part][corpus] = sorted(chosen)
+    return plan
+
+
+def selection(experiment: str, fold: str, frames: dict, split: dict, sample_plan: dict | None = None):
+    single = is_single_source(experiment)
+    sources = (fold,) if single else tuple(c for c in CORPORA if c != fold)
+    targets = tuple(c for c in CORPORA if c != fold) if single else (fold,)
     def part(c: str, p: str) -> pd.DataFrame:
-        return frames[c][frames[c]["accident_id"].isin(split[c][p])].copy()
+        result = frames[c][frames[c]["accident_id"].isin(split[c][p])].copy()
+        if is_equalized(experiment) and p in ("train", "val"):
+            if sample_plan is None:
+                raise ValueError("Equalized sample plan is required")
+            ids = set(sample_plan["folds"][fold][p][c])
+            result = result[result.doc_id.astype(str).isin(ids)].copy()
+            if set(result.doc_id.astype(str)) != ids:
+                raise ValueError(f"Equalized sample IDs missing from GOLD: {experiment}/{fold}/{c}/{p}")
+        return result
     train = pd.concat([part(c, "train") for c in sources], ignore_index=True)
     val = pd.concat([part(c, "val") for c in sources], ignore_index=True)
     tests = {c: part(c, "test") for c in targets}
     for c, df in tests.items():
         if set(df["accident_id"]) & set(train["accident_id"]):
             raise ValueError(f"Target leak: {c}")
+    if is_equalized(experiment):
+        expected_train = 2400
+        expected_val = 375
+        if len(train) != expected_train or len(val) != 375:
+            raise ValueError(f"Equalized sample size mismatch: train={len(train)}, val={len(val)}")
+        if train.pred_label.value_counts().reindex(ROLES, fill_value=0).nunique() != 1 or \
+           val.pred_label.value_counts().reindex(ROLES, fill_value=0).nunique() != 1:
+            raise ValueError("Equalized samples do not have matched role counts")
     return train, val, tests
 
 
@@ -262,11 +334,23 @@ def prepare(args) -> None:
     bundle = bundle_path()
     frames, split, signatures = load_gold(bundle)
     root = output_root(args.experiment)
+    sample_plan = make_equalized_sample_plan(args.experiment, frames, split)
+    sample_plan_path = root / "equalized_sample_ids.json"
+    if is_equalized(args.experiment):
+        if sample_plan_path.is_file():
+            if read_json(sample_plan_path) != sample_plan:
+                raise ValueError(f"Existing equalized sample plan differs: {sample_plan_path}")
+        else:
+            write_json(sample_plan_path, sample_plan)
     def remaining_jobs(path: Path) -> int:
         return sum(not (path / "trained" / fold / method /
                         f"seed_{seed}" / "complete.json").is_file()
                    for fold in CORPORA for method in METHODS for seed in SEEDS)
-    other = output_root("lodo" if args.experiment == "single_source" else "single_source")
+    if args.experiment in EQUALIZED_EXPERIMENTS:
+        other_name = "lodo_equalized" if args.experiment == "single_source_equalized" else "single_source_equalized"
+    else:
+        other_name = "lodo" if args.experiment == "single_source" else "single_source"
+    other = output_root(other_name)
     remaining = remaining_jobs(root)
     if (other / "campaign.json").exists() and not (other / "results/manifest.json").exists():
         remaining += remaining_jobs(other)
@@ -285,6 +369,12 @@ def prepare(args) -> None:
               "roles": list(ROLES), "seeds": list(SEEDS), "methods": list(METHODS),
               "backbone": BACKBONE, "input_prefix": PREFIX, "max_length": MAX_LENGTH,
               "bundle": str(bundle), "signatures": signatures,
+              "equalized_sampling": ({"train_units_per_model": 2400,
+                  "train_per_role": 480, "lodo_train_per_role_per_source": 96,
+                  "validation_units_per_model": 375, "validation_per_role": 75,
+                  "lodo_validation_per_role_per_source": 15,
+                  "sample_seed": 20261023,
+                  "sample_ids_sha256": digest(sample_plan_path)} if is_equalized(args.experiment) else None),
               "splits": {c: {p: {"n_narratives": len(ids), "n_units": int(frames[c]["accident_id"].isin(ids).sum())}
                              for p, ids in split[c].items()} for c in CORPORA}}
     existing = root / "campaign.json"
@@ -307,7 +397,14 @@ def verified_campaign(experiment: str):
     record = read_json(root / "campaign.json")
     if record["signatures"] != signatures or record["experiment"] != experiment:
         raise ValueError("Campaign does not match current GOLD/splits")
-    return root, frames, split
+    sample_plan = None
+    if is_equalized(experiment):
+        plan_path = root / "equalized_sample_ids.json"
+        expected_hash = record.get("equalized_sampling", {}).get("sample_ids_sha256")
+        if not plan_path.is_file() or digest(plan_path) != expected_hash:
+            raise ValueError("Equalized sample plan missing or changed")
+        sample_plan = read_json(plan_path)
+    return root, frames, split, sample_plan
 
 
 def complete_and_verified(dest: Path, targets, campaign: Path, *, checkpoint: bool) -> bool:
@@ -361,16 +458,16 @@ def prune_verified_checkpoint(dest: Path, targets, campaign: Path) -> None:
 
 
 def frozen(args) -> None:
-    root, frames, split = verified_campaign(args.experiment)
+    root, frames, split, sample_plan = verified_campaign(args.experiment)
     fold = CORPORA[args.fold_index]
     dest = root / "frozen" / fold
-    expected_targets = tuple(c for c in CORPORA if c != fold) if args.experiment == "single_source" else (fold,)
+    expected_targets = tuple(c for c in CORPORA if c != fold) if is_single_source(args.experiment) else (fold,)
     if complete_and_verified(dest, expected_targets, root / "campaign.json", checkpoint=False):
         print(f"[skip] frozen/{fold}", flush=True)
         return
-    train, val, tests = selection(args.experiment, fold, frames, split)
+    train, val, tests = selection(args.experiment, fold, frames, split, sample_plan)
     by_corpus = {}
-    for corpus in (fold,) if args.experiment == "single_source" else CORPORA:
+    for corpus in (fold,) if is_single_source(args.experiment) else CORPORA:
         emb = TEXT / "embeddings/gold_v3/e5" / f"{CSV_NAME[corpus]}.csv"
         meta = load_filtered_metadata(str(TEXT / "dataset" / f"data_{CSV_NAME[corpus]}.csv"), text_col="sentence")
         merged, dims = merge_metadata_with_embeddings(meta, str(emb), strict=True, corpus_id=corpus)
@@ -665,16 +762,16 @@ def train_model(method: str, seed: int, train: pd.DataFrame, val: pd.DataFrame,
 
 
 def train(args) -> None:
-    root, frames, split = verified_campaign(args.experiment)
+    root, frames, split, sample_plan = verified_campaign(args.experiment)
     fold, seed, method = task_spec(args.task_index)
-    train_df, val_df, tests = selection(args.experiment, fold, frames, split)
+    train_df, val_df, tests = selection(args.experiment, fold, frames, split, sample_plan)
     dest = root / "trained" / fold / method / f"seed_{seed}"
     train_model(method, seed, train_df, val_df, tests, dest)
 
 
 def smoke(args) -> None:
-    root, frames, split = verified_campaign(args.experiment)
-    train_df, val_df, tests = selection(args.experiment, CORPORA[0], frames, split)
+    root, frames, split, sample_plan = verified_campaign(args.experiment)
+    train_df, val_df, tests = selection(args.experiment, CORPORA[0], frames, split, sample_plan)
     def tiny(df, n):
         return pd.concat([df[df.pred_label.eq(role)].head(n) for role in ROLES], ignore_index=True)
     train_df, val_df = tiny(train_df, 5), tiny(val_df, 2)
@@ -693,12 +790,12 @@ def smoke(args) -> None:
 
 
 def summary(args) -> None:
-    root, frames, split = verified_campaign(args.experiment)
+    root, frames, split, sample_plan = verified_campaign(args.experiment)
     rows, role_rows, confusion_rows = [], [], []
     import pandas as pd
     for fold in CORPORA:
-        expected = tuple(c for c in CORPORA if c != fold) if args.experiment == "single_source" else (fold,)
-        train_df, val_df, _ = selection(args.experiment, fold, frames, split)
+        expected = tuple(c for c in CORPORA if c != fold) if is_single_source(args.experiment) else (fold,)
+        train_df, val_df, _ = selection(args.experiment, fold, frames, split, sample_plan)
         candidates = [("frozen", SEEDS[0], root / "frozen" / fold)]
         candidates += [(method, seed, root / "trained" / fold / method / f"seed_{seed}")
                        for method in METHODS for seed in SEEDS]
@@ -720,7 +817,7 @@ def summary(args) -> None:
                     frame["doc_id"].tolist() != test["doc_id"].tolist() or
                     frame["pred_label"].tolist() != test["pred_label"].tolist()):
                     raise ValueError(f"Test units differ: {path}/{target}")
-                rows.append({"experiment": args.experiment, "source": fold if args.experiment == "single_source" else "five_sources",
+                rows.append({"experiment": args.experiment, "source": fold if is_single_source(args.experiment) else "five_sources",
                              "target": target, "method": method, "seed": seed,
                              "balanced_accuracy": metrics["balanced_accuracy"],
                              "macro_f1": metrics["macro_f1"], "n_units": metrics["n_units"],
@@ -746,7 +843,7 @@ def summary(args) -> None:
         n_seeds=("seed", "nunique"))
     grouped[["ba_sd", "macro_f1_sd"]] = grouped[["ba_sd", "macro_f1_sd"]].fillna(0)
     grouped.to_csv(result / "scores_by_transfer.csv", index=False)
-    if args.experiment == "single_source":
+    if is_single_source(args.experiment):
         for method in ("frozen", *METHODS):
             matrix = grouped[grouped.method.eq(method)].pivot(index="source", columns="target", values="ba_mean")
             matrix = matrix.reindex(index=CORPORA, columns=CORPORA)
@@ -762,14 +859,14 @@ def summary(args) -> None:
         "gold_sha256": GOLD_V3_SNAPSHOT_SHA256,
         "campaign_sha256": digest(root / "campaign.json"), "rows": len(frame),
         "methods": ["frozen", *METHODS], "seeds": list(SEEDS),
-        "note": "Single-source and LODO training volumes differ; results use GOLD units, not predicted segments."})
+        "note": ("Training volume is matched at 2,400 units and 480 per role. Single-source draws all examples from one allowed domain; LODO draws 96 per role from each of five source domains. Validation is matched at 375 units and 75 per role. The source-domain composition therefore differs by design; results use GOLD units, not predicted segments." if is_equalized(args.experiment) else "Single-source and LODO training volumes differ; results use GOLD units, not predicted segments.")})
     print(f"[done] {result} ({len(frame)} transfer scores)", flush=True)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("command", choices=("prepare", "frozen", "train", "smoke", "summary"))
-    parser.add_argument("--experiment", choices=("single_source", "lodo"), required=True)
+    parser.add_argument("--experiment", choices=("single_source", "lodo", *EQUALIZED_EXPERIMENTS), required=True)
     parser.add_argument("--fold-index", type=int, default=0)
     parser.add_argument("--task-index", type=int, default=0)
     parser.add_argument("--min-free-gib", type=float, default=0)

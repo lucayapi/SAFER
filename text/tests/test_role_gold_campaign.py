@@ -39,6 +39,53 @@ def test_selection_uses_only_source_train_and_validation():
     assert set(targets["btp"].accident_id) == {"btp-test"}
 
 
+def test_equalized_arms_match_volume_roles_and_fixed_tests():
+    frames, splits = {}, {}
+    for corpus in campaign.CORPORA:
+        rows = []
+        parts = {"train": [], "val": [], "test": []}
+        for role in campaign.ROLES:
+            for i in range(480):
+                aid = f"{corpus}-train-{role}-{i}"
+                rows.append({"corpus": corpus, "accident_id": aid,
+                             "doc_id": f"{aid}-fact", "pred_label": role,
+                             "label_id": campaign.LABEL2ID[role]})
+                parts["train"].append(aid)
+            for i in range(75):
+                aid = f"{corpus}-val-{role}-{i}"
+                rows.append({"corpus": corpus, "accident_id": aid,
+                             "doc_id": f"{aid}-fact", "pred_label": role,
+                             "label_id": campaign.LABEL2ID[role]})
+                parts["val"].append(aid)
+        aid = f"{corpus}-test"
+        rows.append({"corpus": corpus, "accident_id": aid,
+                     "doc_id": f"{aid}-fact", "pred_label": "A0", "label_id": 0})
+        parts["test"].append(aid)
+        frames[corpus] = pd.DataFrame(rows)
+        splits[corpus] = parts
+
+    plans = {experiment: campaign.make_equalized_sample_plan(experiment, frames, splits)
+             for experiment in campaign.EQUALIZED_EXPERIMENTS}
+    for target in campaign.CORPORA:
+        single_train, single_val, single_tests = campaign.selection(
+            "single_source_equalized", target, frames, splits,
+            plans["single_source_equalized"])
+        multi_train, multi_val, multi_tests = campaign.selection(
+            "lodo_equalized", target, frames, splits, plans["lodo_equalized"])
+        assert len(single_train) == len(multi_train) == 2400
+        assert len(single_val) == len(multi_val) == 375
+        assert single_train.pred_label.value_counts().nunique() == 1
+        assert multi_train.pred_label.value_counts().nunique() == 1
+        assert single_val.pred_label.value_counts().nunique() == 1
+        assert multi_val.pred_label.value_counts().nunique() == 1
+        assert set(multi_tests) == {target}
+        for source in set(campaign.CORPORA) - {target}:
+            _, _, source_tests = campaign.selection(
+                "single_source_equalized", source, frames, splits,
+                plans["single_source_equalized"])
+            assert source_tests[target].doc_id.tolist() == multi_tests[target].doc_id.tolist()
+
+
 def test_scores_use_five_roles_even_if_one_is_never_predicted():
     y = np.array([0, 1, 2, 3, 4])
     predicted = np.array([0, 1, 2, 3, 0])

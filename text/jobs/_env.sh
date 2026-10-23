@@ -57,10 +57,14 @@ load_hpc_modules() {
 
 # Active text/.venv si présent (depuis la racine text/, après cd ..).
 activate_text_venv() {
-  if [[ -f .venv/bin/activate ]]; then
-    # shellcheck disable=SC1091
-    source .venv/bin/activate
+  local venv="${SAFER_TEXT_VENV:-.venv2}"
+  if [[ ! -f "${venv}/bin/activate" ]]; then
+    echo "Python venv missing: ${venv} (set SAFER_TEXT_VENV to override)" >&2
+    return 1
   fi
+  # shellcheck disable=SC1091
+  source "${venv}/bin/activate"
+  echo "text venv: ${venv} ($(python --version 2>&1))"
 }
 
 # Cache Hugging Face (éviter TRANSFORMERS_CACHE, déprécié depuis transformers v5).

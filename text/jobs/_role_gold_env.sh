@@ -15,10 +15,7 @@ export PYTHONUNBUFFERED=1
 load_hpc_modules
 load_text_dotenv .env
 setup_hf_cache_env
-venv="${ROLE_GOLD_VENV:-}"
-if [[ -z "${venv}" ]]; then
-  if [[ -f .venv1/bin/activate ]]; then venv=".venv1"; else venv=".venv"; fi
-fi
+venv="${ROLE_GOLD_VENV:-${SAFER_TEXT_VENV:-.venv2}}"
 if [[ ! -f "${venv}/bin/activate" ]]; then
   echo "Python environment missing: ${venv}" >&2
   exit 2

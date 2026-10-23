@@ -2,7 +2,7 @@
 # Installe le venv SAFER/text avec versions compatibles (transformers 4.51 + numpy 1.26).
 # Usage (cluster) :
 #   module purge && module load gcc/8.1.0 && module load python/3.10.10
-#   cd text && python -m venv .venv && source .venv/bin/activate && bash scripts/install_text_venv.sh
+#   cd text && python -m venv .venv2 && source .venv2/bin/activate && bash scripts/install_text_venv.sh
 #
 # Les jobs SLURM chargent ces modules via jobs/_env.sh (load_hpc_modules).
 #
@@ -14,7 +14,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT}"
 
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
-  echo "ERREUR: activez d'abord le venv : source .venv/bin/activate" >&2
+  echo "ERREUR: activez d'abord le venv : source .venv2/bin/activate" >&2
   exit 1
 fi
 
