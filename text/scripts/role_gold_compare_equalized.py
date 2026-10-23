@@ -172,7 +172,7 @@ def _collect_target(root: Path, target: str, method: str) -> tuple[dict[str, lis
 def main() -> None:
     parser = argparse.ArgumentParser()
     default_root = Path(os.getenv("ROLE_GOLD_RUN_ROOT", Path(os.getenv("SCRATCH", str(ROOT))) /
-                                  "safer_role_gold_v3_equalized"))
+                                  "role_gold_equalized"))
     parser.add_argument("--run-root", type=Path, default=default_root)
     parser.add_argument("--n-bootstrap", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=20261023)

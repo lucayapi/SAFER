@@ -87,7 +87,7 @@ def bundle_path() -> Path:
 def output_root(experiment: str) -> Path:
     if experiment not in ("single_source", "lodo", *EQUALIZED_EXPERIMENTS):
         raise ValueError(experiment)
-    default_name = ("safer_role_gold_v3_equalized" if experiment in EQUALIZED_EXPERIMENTS
+    default_name = ("role_gold_equalized" if experiment in EQUALIZED_EXPERIMENTS
                     else "safer_role_gold_v3")
     root = Path(os.getenv("ROLE_GOLD_RUN_ROOT", os.path.join(
         os.getenv("SCRATCH", str(ROOT)), default_name)))

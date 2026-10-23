@@ -12,8 +12,9 @@ default for other jobs that use the shared `setup_text_job_env` helper. Set
 stores that venv at a different path.
 
 The launcher prepares and runs both arms on the same narrative-v3 GOLD and the
-same frozen RQ1 test narratives. It limits each of the two arms to one GPU job
-at a time, so at most two GPU jobs run concurrently. It uses the existing
+same frozen RQ1 test narratives. It serializes GPU stages within each arm and
+allows two GPU tasks per arm, so at most four GPU jobs overall run concurrently.
+It uses the existing
 five-role E5-large experiments (frozen E5 + logistic regression, CE, SupCon,
 SoftTriple) and the existing three training seeds.
 
@@ -27,7 +28,7 @@ training. Sampling occurs only inside the frozen training and validation
 partitions; the target test narratives are unchanged.
 
 The full-volume campaigns remain untouched. Results are written under
-`$SCRATCH/safer_role_gold_v3_equalized/` (or the repository root if `SCRATCH`
+`$SCRATCH/role_gold_equalized/` (or the repository root if `SCRATCH`
 is unset), in `single_source_equalized/`, `lodo_equalized/`, and `results/`.
 The final comparison includes per-target and macro Balanced Accuracy and
 Macro-F1, with paired 95% cluster-bootstrap confidence intervals that
@@ -50,5 +51,5 @@ per-target and macro comparison CSVs, and
 predictions, run:
 
 ```bash
-python text/scripts/role_gold_compare_equalized.py --run-root /path/to/safer_role_gold_v3_equalized
+python text/scripts/role_gold_compare_equalized.py --run-root /path/to/role_gold_equalized
 ```
