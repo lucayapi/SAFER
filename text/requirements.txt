@@ -61,8 +61,8 @@ datamapplot==0.6.4
 # --- OpenAI & env ---
 openai==1.59.2
 openpyxl==3.1.5
-# <0.13 : évite le build Rust sur HPC (pip tire sinon tiktoken 0.13 en sdist)
-tiktoken>=0.5.0,<0.13.0
+# 0.11.0 fournit une roue manylinux_2_17 compatible avec les anciens nœuds HPC.
+tiktoken==0.11.0
 python-dotenv==1.0.1
 
 # --- Topics ---

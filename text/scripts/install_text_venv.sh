@@ -21,7 +21,9 @@ fi
 echo "python: $(which python)"
 echo "pip install (requirements + constraints)..."
 pip install -U pip wheel
-pip install -r requirements.txt -c constraints.txt
+# Do not fall back to local compilation for packages whose compatible Linux
+# wheels are pinned in constraints.txt below.
+pip install --only-binary=tiktoken,numba,llvmlite -r requirements.txt -c constraints.txt
 
 if [[ "${INSTALL_TORCH_CUDA:-0}" == "1" ]]; then
   echo "Réinstallation torch CUDA 2.5.1 (cu124)..."
