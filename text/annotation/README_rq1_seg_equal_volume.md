@@ -41,8 +41,9 @@ sbatch text/jobs/rq1_seg_equal_volume_launch.sh
 ```
 
 Le lanceur recherche ce paquet sous `$SCRATCH`, `$HOME` ou `SAFER/`. Il utilise
-le clone versionné de `wtpsplit` et recrée si nécessaire `.venv1` dans
-`$SCRATCH/safer_sat_lodo/runtime_gold_v3/`. Il enchaîne précontrôle, essai GPU,
+le clone versionné de `wtpsplit` et crée un environnement isolé neuf dans
+`$SCRATCH/safer_sat_equal_volume_runtime_v2/.venv/` (ou sous `$HOME` si
+`$SCRATCH` est absent). Il ne réutilise pas l'ancien `.venv1`. Il enchaîne précontrôle, essai GPU,
 30 tâches `0-29%2`, puis un audit final. L'adaptateur de l'essai GPU sert de
 gabarit technique pour exporter les checkpoints des nouveaux entraînements ;
 ses poids ne sont pas chargés pour initialiser ces entraînements.

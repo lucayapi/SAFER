@@ -41,8 +41,10 @@ export RQ1_EQUAL_RUN_ROOT="${RQ1_EQUAL_RUN_ROOT:-${storage_root}/safer_sat_equal
 }
 
 export SAT_LODO_TEXT_ROOT="${text_root}"
-export SAT_LODO_RUNTIME_ROOT="${storage_root}/safer_sat_lodo/runtime_gold_v3"
-export SAT_LODO_VENV="${SAT_LODO_RUNTIME_ROOT}/.venv1"
+# This campaign uses a fresh, isolated environment. Older .venv1 installations
+# may have been partially deleted and must never be silently reused here.
+export SAT_LODO_RUNTIME_ROOT="${storage_root}/safer_sat_equal_volume_runtime_v2"
+export SAT_LODO_VENV="${SAT_LODO_RUNTIME_ROOT}/.venv"
 export SAT_WTPSPLIT_REPO="${text_root}/vendor/wtpsplit"
 export SAT_LODO_BUNDLE="${RQ1_EQUAL_SOURCE_BUNDLE}"
 sat_lodo_set_paths
@@ -53,6 +55,7 @@ else
   sat_lodo_check_runtime
 fi
 source "${SAT_LODO_VENV}/bin/activate"
-export PYTHONPATH="${text_root}${PYTHONPATH:+:${PYTHONPATH}}"
-export WANDB_DISABLED=true TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
+export PYTHONPATH="${text_root}"
+export PYTHONNOUSERSITE=1 WANDB_DISABLED=true TOKENIZERS_PARALLELISM=false PYTHONUNBUFFERED=1
+echo "RQ1 equal-volume Python: $(command -v python)"
 mkdir -p "${RQ1_EQUAL_RUN_ROOT}"

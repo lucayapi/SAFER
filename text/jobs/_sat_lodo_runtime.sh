@@ -45,6 +45,31 @@ sat_lodo_runtime_stamp() {
   printf '%s %s %s\n' "${SAT_LODO_WTPSPLIT_REV}" "${digest%% *}" "${vendor_digest%% *}"
 }
 
+sat_lodo_runtime_packages_ok() {
+  # A ready marker alone is insufficient: editable installs can disappear if
+  # the environment was copied, repaired, or partially reinstalled.
+  env -u PYTHONPATH "${SAT_LODO_VENV}/bin/python" - "${SAT_WTPSPLIT_REPO}" <<'PY'
+import importlib.metadata
+import importlib.util
+import pathlib
+import re
+import sys
+
+expected = (pathlib.Path(sys.argv[1]) / "wtpsplit").resolve()
+requirements = expected.parents[2] / "annotation" / "requirements_sat_lodo.txt"
+packages = {"torch", "wtpsplit", "adapters"}
+for line in requirements.read_text(encoding="utf-8").splitlines():
+    item = line.split("#", 1)[0].strip()
+    if item and not item.startswith("-"):
+        packages.add(re.split(r"[<>=!~;\[\s]", item, 1)[0])
+for package in sorted(packages):
+    importlib.metadata.version(package)
+spec = importlib.util.find_spec("wtpsplit")
+if spec is None or spec.origin is None or pathlib.Path(spec.origin).resolve().parent != expected:
+    raise RuntimeError(f"wtpsplit is not installed from the vendored checkout: {expected}")
+PY
+}
+
 sat_lodo_check_runtime() {
   local stamp_file="${SAT_LODO_RUNTIME_ROOT}/ready.txt"
   [[ -f "${stamp_file}" && -x "${SAT_LODO_VENV}/bin/python" ]] || {
@@ -56,6 +81,10 @@ sat_lodo_check_runtime() {
     return 1
   }
   [[ -f "${SAT_WTPSPLIT_REPO}/SAFER_VENDOR.json" ]] || return 1
+  sat_lodo_runtime_packages_ok || {
+    echo "Environnement LoRA incomplet: relancer le precontrole pour reparer ${SAT_LODO_VENV}." >&2
+    return 1
+  }
 }
 
 sat_lodo_bootstrap() {
@@ -64,9 +93,18 @@ sat_lodo_bootstrap() {
   [[ -f "${SAT_WTPSPLIT_REPO}/SAFER_VENDOR.json" ]] || return 1
   if [[ -f "${stamp_file}" && -x "${SAT_LODO_VENV}/bin/python" &&
         "$(cat "${stamp_file}")" == "$(sat_lodo_runtime_stamp)" ]]; then
-    echo "Environnement LoRA deja installe: ${SAT_LODO_VENV}"
-    return 0
+    if sat_lodo_runtime_packages_ok >/dev/null 2>&1; then
+      echo "Environnement LoRA deja installe: ${SAT_LODO_VENV}"
+      return 0
+    fi
+    echo "Environnement LoRA incomplet; reinstallation du checkout wtpsplit."
+    "${SAT_LODO_VENV}/bin/python" -m pip install --no-deps -e "${SAT_WTPSPLIT_REPO}"
+    if sat_lodo_runtime_packages_ok >/dev/null 2>&1; then
+      echo "Environnement LoRA repare: ${SAT_LODO_VENV}"
+      return 0
+    fi
   fi
+  rm -f "${stamp_file}"
   if [[ ! -x "${SAT_LODO_VENV}/bin/python" ]]; then
     python -m venv "${SAT_LODO_VENV}"
   fi
@@ -75,6 +113,7 @@ sat_lodo_bootstrap() {
   "${SAT_LODO_VENV}/bin/python" -m pip install -r "${SAT_LODO_REQUIREMENTS}"
   "${SAT_LODO_VENV}/bin/python" -m pip install --no-deps -e "${SAT_WTPSPLIT_REPO}"
   "${SAT_LODO_VENV}/bin/python" -m pip install --no-deps adapters==0.2.1
+  sat_lodo_runtime_packages_ok
   "${SAT_LODO_VENV}/bin/python" -m pip freeze > "${SAT_LODO_RUNTIME_ROOT}/pip_freeze.txt"
   sat_lodo_runtime_stamp > "${stamp_file}"
 }
