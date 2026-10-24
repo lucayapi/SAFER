@@ -94,6 +94,7 @@ archives script mesocentre/
 /reports/neurocomputing_article_reproducibility/
 /text/bayesian_network/arXiv-2005.10125v2/
 /text/bayesian_network/recurrent_accident_scenarios/
+/text/A Domain-General Framework for Factual Unit Extraction and Accident-Process Role Classification from Occupational Accident Reports/
 Thumbs.db
 
 # Fichiers temporaires locaux
@@ -106,6 +107,8 @@ test.txt
 /safer_sat_rq1_final/
 /safer_sat_rq1_refiner/
 /safer_sat_rq1_refiner_crossfit/
+/safer_sat_equal_volume/
+/safer_sat_equal_volume_v2/
 /rq1_segmentation_final_v1/
 /safer_role_gold_v3/
 /role_gold_equalized/
