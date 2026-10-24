@@ -32,8 +32,8 @@ def payload(bundle: Path) -> dict:
             "code_sha256": x.digest(Path(__file__)),
             "crossfit_code_sha256": x.digest(Path(x.__file__)),
             "refiner_code_sha256": x.digest(Path(refiner.__file__)),
-            "seeds": SEEDS, "e2_fraction": E2_FRACTION,
-            "targets": sat.CORPORA, "variant": VARIANT}
+            "seeds": list(SEEDS), "e2_fraction": E2_FRACTION,
+            "targets": list(sat.CORPORA), "variant": VARIANT}
 
 
 def check_binding(bundle: Path, root: Path) -> None:
@@ -67,7 +67,17 @@ def preflight(args: argparse.Namespace) -> None:
     root.mkdir(parents=True, exist_ok=True)
     binding = root / "binding.json"
     if binding.is_file() and x.json_read(binding) != desired:
-        raise ValueError(f"Existing run has different data or code: {root}")
+        previous = x.json_read(binding)
+        changed = {name for name in set(previous) | set(desired)
+                   if previous.get(name) != desired.get(name)}
+        # The initial launcher wrote JSON arrays but compared them to Python
+        # tuples. Permit exactly that preflight-only campaign to resume after
+        # the serialization fix; never rebind a smoke or trained model.
+        if (changed != {"code_sha256"} or (root / "smoke_ok.json").exists()
+                or (root / "smoke_check").exists()
+                or any(root.glob("target_*"))):
+            raise ValueError(f"Existing run has different data or code: {root}; changed={sorted(changed)}")
+        print("Updating preflight-only binding after JSON list/tuple fix", flush=True)
     min_free = args.min_free_gib
     free = shutil.disk_usage(root).free / 2**30
     if free < min_free:
