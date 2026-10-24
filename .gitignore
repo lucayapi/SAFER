@@ -107,6 +107,9 @@ test.txt
 /safer_sat_rq1_final/
 /safer_sat_rq1_refiner/
 /safer_sat_rq1_refiner_crossfit/
+/safer_sat_rq1_e2_disjoint/
+slurm-rq1-e2d-*.out
+slurm-rq1-e2d-*.err
 /safer_sat_equal_volume/
 /safer_sat_equal_volume_v2/
 /rq1_segmentation_final_v1/
