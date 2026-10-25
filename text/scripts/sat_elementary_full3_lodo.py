@@ -188,19 +188,22 @@ def smoke(args):
         raise ValueError("Smoke did not save resumable full optimizer state")
     from wtpsplit.models import SubwordXLMForTokenClassification
     initial = SubwordXLMForTokenClassification.from_pretrained(str(model_dir))
-    trained = load_state(weight_file(folder))
+    # With two smoke steps and one warm-up step, checkpoint-1 may be saved
+    # before any non-zero learning-rate update. Check checkpoint-2 instead.
+    updated_folder = trainer / "checkpoint-2"
+    trained = load_state(weight_file(updated_folder))
     encoder_keys = [key for key in initial.state_dict()
                     if key.startswith("roberta.encoder.layer.0.") and
                     "weight" in key and "lora" not in key]
     if not encoder_keys or not any(
             not torch.equal(initial.state_dict()[key], trained["backbone." + key])
             for key in encoder_keys):
-        raise ValueError("Smoke did not update a pretrained encoder layer")
+        raise ValueError("Smoke did not update a pretrained encoder layer by step 2")
     del initial, trained
-    smoke_epoch = float(json.loads((folder / "trainer_state.json").read_text(
+    smoke_epoch = float(json.loads((updated_folder / "trainer_state.json").read_text(
         encoding="utf-8"))["epoch"])
     export = work / "exported_checkpoint"
-    exported = export_checkpoint(folder, export, model_dir, tokenizer_dir, smoke_epoch)
+    exported = export_checkpoint(updated_folder, export, model_dir, tokenizer_dir, smoke_epoch)
     if exported["weights"] != hashes(export):
         raise ValueError("Checkpoint export changed during smoke")
     final = trainer / base.DATASET_NAME / "fr"
