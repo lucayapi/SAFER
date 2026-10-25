@@ -49,6 +49,12 @@ def campaign_binding(prepared: Path) -> dict:
             "selection_metric": METRIC}
 
 
+def smoke_folder(root: Path) -> Path:
+    # Keep smoke checkpoints separate across code revisions so a changed smoke
+    # binding never attempts to train into an old Trainer output directory.
+    return root / f"checkpoint_smoke_{script_digest()[:12]}"
+
+
 def write_json(path: Path, value: object) -> None:
     runtime.write_json(path, value)
 
@@ -182,7 +188,7 @@ def validation_curve(val: list[dict], db, candidate: dict) -> list[dict]:
         raise ValueError("Checkpoint selection requires the five source validation corpora")
     totals = collections.defaultdict(collections.Counter)
     for row in val:
-        if not row["raw_text"]:
+        if not row["raw_text"].strip():
             continue
         probs = runtime.get_probs(db, row)
         for threshold in runtime.THRESHOLDS:
@@ -212,10 +218,10 @@ def smoke(args: argparse.Namespace) -> None:
     expected = campaign_binding(prepared)
     marker = root / "checkpoint_smoke_ok.json"
     if marker.is_file():
-        if json.loads(marker.read_text(encoding="utf-8")) != expected:
-            raise ValueError("Existing smoke marker belongs to another run")
-        print(f"Checkpoint-selection smoke already passed: {marker}", flush=True)
-        return
+        if json.loads(marker.read_text(encoding="utf-8")) == expected:
+            print(f"Checkpoint-selection smoke already passed: {marker}", flush=True)
+            return
+        print("Refreshing stale checkpoint-selection smoke after code change", flush=True)
     repo = args.wtpsplit_repo.resolve()
     runtime.legacy.gpu_runtime(repo)
     model_dir, tokenizer_dir = m3.pinned_backbone(prepared)
@@ -223,7 +229,7 @@ def smoke(args: argparse.Namespace) -> None:
     fold = prepared / "folds" / f"target_{target}"
     data = torch.load(fold / "training.pth", map_location="cpu", weights_only=False)
     original = data["fr"]["sentence"][runtime.DATASET_NAME]
-    work = root / "checkpoint_smoke"
+    work = smoke_folder(root)
     work.mkdir(parents=True, exist_ok=True)
     sample = work / "training.pth"
     torch.save({"fr": {"sentence": {runtime.DATASET_NAME: {
@@ -241,7 +247,7 @@ def smoke(args: argparse.Namespace) -> None:
     exported = work / "checkpoint_adapter"
     checkpoint.export_checkpoint_adapter(intermediate, exported, final)
     adapter_hashes(exported)
-    row = next(r for r in runtime.read_jsonl(fold / "val.jsonl") if r["raw_text"])
+    row = next(r for r in runtime.read_jsonl(fold / "val.jsonl") if r["raw_text"].strip())
     model = runtime.load_pinned_sat(model_dir, tokenizer_dir, exported)
     runtime.legacy.pieces_to_spans(row["raw_text"], model.split(row["raw_text"], threshold=runtime.DEFAULT))
     del model
@@ -291,13 +297,13 @@ def fit(args: argparse.Namespace) -> None:
         resumable = checkpoint.latest_resumable_checkpoint(trainer)
         if resumable:
             config["resume_from_checkpoint"] = str(resumable)
-        template = runtime.legacy.adapter_folder(root / "checkpoint_smoke" / "trainer")
+        template = runtime.legacy.adapter_folder(smoke_folder(root) / "trainer")
         if not checkpoint.complete_adapter(template):
             raise FileNotFoundError(f"Smoke adapter template missing: {template}")
         run_trainer(repo, config, run, template)
     if not checkpoint.complete_adapter(final_adapter):
         raise RuntimeError(f"Training did not save the final adapter: {final_adapter}")
-    harvest(run, trainer, runtime.legacy.adapter_folder(root / "checkpoint_smoke" / "trainer"))
+    harvest(run, trainer, runtime.legacy.adapter_folder(smoke_folder(root) / "trainer"))
     candidates = candidate_list(run, trainer)
     state_path = trainer / "trainer_state.json"
     if state_path.is_file():
@@ -326,13 +332,14 @@ def fit(args: argparse.Namespace) -> None:
             write_json(cache_binding, expected_cache)
         with closing(runtime._probability_connection(cache, create=True)) as db:
             count = db.execute("SELECT COUNT(*) FROM probabilities").fetchone()[0]
-            if count < len([r for r in val if r["raw_text"]]):
+            nonempty_val = [r for r in val if r["raw_text"].strip()]
+            if count < len(nonempty_val):
                 model = runtime.load_pinned_sat(model_dir, tokenizer_dir, adapter)
-                runtime.infer_adapted(model, db, [r for r in val if r["raw_text"]])
+                runtime.infer_adapted(model, db, nonempty_val)
                 del model
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-            expected_count = len([r for r in val if r["raw_text"]])
+            expected_count = len(nonempty_val)
             if db.execute("SELECT COUNT(*) FROM probabilities").fetchone()[0] != expected_count:
                 raise ValueError(f"Incomplete source validation probabilities: {name}")
             curve = validation_curve(val, db, candidate)
@@ -382,7 +389,7 @@ def fit(args: argparse.Namespace) -> None:
     else:
         write_json(test_binding, expected_test_binding)
     with closing(runtime._probability_connection(test_cache, create=True)) as db:
-        nonempty = [r for r in test if r["raw_text"]]
+        nonempty = [r for r in test if r["raw_text"].strip()]
         count = db.execute("SELECT COUNT(*) FROM probabilities").fetchone()[0]
         if count < len(nonempty):
             model = runtime.load_pinned_sat(model_dir, tokenizer_dir, selected_adapter)
@@ -396,7 +403,7 @@ def fit(args: argparse.Namespace) -> None:
             for row in test:
                 spans = (runtime.legacy.spans_from_probabilities(row["raw_text"],
                     runtime.get_probs(db, row), float(selected["threshold"]))
-                    if row["raw_text"] else [])
+                    if row["raw_text"].strip() else [])
                 total.update(m3.score(row, spans))
                 stream.write(json.dumps({"corpus": target, "document_id": row["document_id"],
                     "threshold": float(selected["threshold"]),
