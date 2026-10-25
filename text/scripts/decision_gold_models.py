@@ -50,7 +50,10 @@ EPOCHS = 15
 PATIENCE = 3
 CS = (0.01, 0.1, 1.0, 10.0)
 GATE_THRESHOLDS = tuple(float(x) for x in np.arange(0.1, 1.0, 0.1))
-QWEN_DIR = TEXT / "embeddings" / "qwen3"
+QWEN_DIR_CANDIDATES = (
+    TEXT / "embeddings" / "gold_v3" / "qwen3",
+    TEXT / "embeddings" / "qwen3",  # Existing local layout.
+)
 STOPWORDS = TEXT / "macro_transfer" / "stop_metier.txt"
 
 
@@ -86,7 +89,20 @@ def bundle() -> Path:
 
 
 def qwen_path(corpus: str) -> Path:
-    return QWEN_DIR / f"{CSV_NAME[corpus]}.csv"
+    for directory in QWEN_DIR_CANDIDATES:
+        if not directory.exists():
+            continue
+        missing = [CSV_NAME[c] + ".csv" for c in CORPORA
+                   if not (directory / (CSV_NAME[c] + ".csv")).is_file()]
+        if missing:
+            raise FileNotFoundError(
+                f"Qwen3 directory is present but incomplete: {directory}; missing {missing}"
+            )
+        return directory / f"{CSV_NAME[corpus]}.csv"
+    expected = ", ".join(str(path) for path in QWEN_DIR_CANDIDATES)
+    raise FileNotFoundError(
+        f"Missing the six Qwen3 GOLD exports. Expected a complete set in one of: {expected}"
+    )
 
 
 def backbone_path() -> str:
@@ -101,7 +117,8 @@ def validate_qwen_exports(frames: dict[str, pd.DataFrame]) -> dict:
         path = qwen_path(corpus)
         if not path.is_file():
             raise FileNotFoundError(
-                f"Missing Qwen3 GOLD vectors: {path}. Transfer text/embeddings/qwen3/ to the cluster."
+                f"Missing Qwen3 GOLD vectors: {path}. Transfer the complete folder "
+                "text/embeddings/gold_v3/qwen3/ to the cluster."
             )
         header = pd.read_csv(path, nrows=0).columns.tolist()
         dims = [c for c in header if c.startswith("dim_")]

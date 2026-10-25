@@ -44,7 +44,7 @@ split files.
    `manifest.json`, `complete.json`, and the six `folds/target_<corpus>/`
    directories.
 4. Transfer the six frozen Qwen3 CSV exports to
-   `text/embeddings/qwen3/{btp,metallurgie,caou,bois_textille,service_temporaire,nicollin}.csv`.
+   `text/embeddings/gold_v3/qwen3/{btp,metallurgie,caou,bois_textille,service_temporaire,nicollin}.csv`.
    Each must have `doc_id` followed by 1,024 `dim_*` columns in the GOLD row
    order. Preparation verifies their IDs, order, schema, and hashes.
 5. Ensure the métier stop-word list is present at
