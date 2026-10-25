@@ -49,7 +49,7 @@ split files.
    `text/macro_transfer/stop_metier.txt`. It is used only by TF-IDF. If your
    cluster checkout does not contain it, copy that file manually to the same
    relative path; the campaign does not upload it.
-6. Use the project's `.venv2` (or set `ROLE_GOLD_VENV`) with the existing
+6. Use the project's `text/.venv` (or set `ROLE_GOLD_VENV`) with the existing
    PyTorch/Transformers/scikit-learn dependencies. The public
    `Qwen/Qwen3-Embedding-0.6B` model must be in the shared Hugging Face cache or
    downloadable from the cluster. GPU work requests one A100/H100 and up to
