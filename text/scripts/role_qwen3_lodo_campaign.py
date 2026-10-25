@@ -72,21 +72,33 @@ def load_data(*, check_qwen: bool) -> tuple[dict, dict, dict]:
     if (m.get("version") != "sat_narrative_only_lodo_v1" or
             complete.get("manifest_sha256") != digest(manifest_path)):
         raise ValueError("Wrong or incomplete narrative-only LODO bundle")
+    # The bundle contains the manifest used to construct these exact folds.
+    # A separately copied manifest under text/dataset may be stale, so verify
+    # the *actual six CSV files* against the bundled authoritative hashes.
+    source_manifest = b / "source_dataset_manifest.json"
+    source_hash = digest(source_manifest)
+    if (source_hash != m.get("narrative_only_manifest_sha256") or
+            source_hash != m["files"].get("source_dataset_manifest.json")):
+        raise ValueError("Bundled clean-dataset manifest hash differs from LODO manifest: "
+                         f"actual={source_hash}, expected={m.get('narrative_only_manifest_sha256')}")
+    clean = read(source_manifest)
+    if clean.get("total_units") != 147487 or clean.get("total_documents") != 17927:
+        raise ValueError("Bundled clean-dataset counts differ from 147487 facts / 17927 narratives")
     clean_path = TEXT / "dataset/narrative_only_v1/narrative_only_manifest.json"
-    clean = read(clean_path)
-    if (clean.get("total_units") != 147487 or clean.get("total_documents") != 17927 or
-            digest(clean_path) != m.get("narrative_only_manifest_sha256") or
-            digest(b / "source_dataset_manifest.json") != m["files"].get("source_dataset_manifest.json")):
-        raise ValueError("Clean dataset and LODO bundle provenance disagree")
+    if clean_path.is_file() and digest(clean_path) != source_hash:
+        print(f"[preflight] Local dataset manifest differs from the frozen LODO copy: {clean_path}. "
+              "The six CSV hashes will be checked against the LODO copy.", flush=True)
     frames, splits, signatures = {}, {}, {"bundle_manifest_sha256": digest(manifest_path),
-        "clean_manifest_sha256": digest(clean_path), "clean_csv_sha256": {},
+        "clean_manifest_sha256": source_hash, "clean_csv_sha256": {},
         "split_sha256": {}, "qwen_sha256": {}, "original_csv_sha256": {}}
     for corpus in CORPORA:
         stem = CSV_NAME[corpus]
         entry = clean["corpora"][stem]
         csv = TEXT / "dataset/narrative_only_v1" / entry["file"]
-        if digest(csv) != entry["csv_sha256"]:
-            raise ValueError(f"Changed cleaned CSV: {csv}")
+        csv_hash = digest(csv)
+        if csv_hash != entry["csv_sha256"]:
+            raise ValueError(f"Cleaned CSV differs from frozen LODO source: {csv}; "
+                             f"actual={csv_hash}, expected={entry['csv_sha256']}")
         df = pd.read_csv(csv, dtype={"accident_id": str, "doc_id": str})
         if len(df) != entry["units"] or df.doc_id.duplicated().any() or df.accident_id.isna().any():
             raise ValueError(f"Wrong unit count or duplicate ID: {corpus}")
