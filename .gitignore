@@ -103,14 +103,10 @@ test.txt
 # Corpus et application locale de revue des rÃ©cits (donnÃ©es sensibles)
 /annotation/
 /safer_sat_lodo/
+/sat12l_sm_elementary_v1/
+/sat12l_sm_elementary_checkpoint_v2/
 /safer_sat_indomain/
 /safer_sat_rq1_final/
-/safer_sat_rq1_refiner/
-/safer_sat_rq1_refiner_crossfit/
-/safer_sat_rq1_e2_disjoint/
-/safer_sat_rq1_exclusion_holdout/
-slurm-rq1-e2d-*.out
-slurm-rq1-e2d-*.err
 /safer_sat_equal_volume/
 /safer_sat_equal_volume_v2/
 /rq1_segmentation_final_v1/
@@ -118,7 +114,3 @@ slurm-rq1-e2d-*.err
 /role_gold_equalized/
 slurm-role-gold-*.out
 slurm-role-gold-*.err
-
-# Journaux de la campagne exploratoire SaT-guided refiner
-slurm-rq1-refiner-*.out
-slurm-rq1-refiner-*.err

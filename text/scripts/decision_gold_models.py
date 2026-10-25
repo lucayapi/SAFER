@@ -29,8 +29,6 @@ ROOT = TEXT.parent
 sys.path.insert(0, str(TEXT))
 
 import role_gold_campaign as gold
-import rq1_e2_crossfit as bundle_tools
-import rq1_e2_excluded as exclusion_tools
 import sat_lodo_gold_v3 as sat
 
 CORPORA = gold.CORPORA
@@ -55,6 +53,45 @@ QWEN_DIR_CANDIDATES = (
     TEXT / "embeddings" / "qwen3",  # Existing local layout.
 )
 STOPWORDS = TEXT / "macro_transfer" / "stop_metier.txt"
+
+
+def bundle_groups(bundle_path: Path, target: str) -> dict[str, list[dict]]:
+    """Read one verified LODO fold without depending on retired refiners."""
+    folder = bundle_path / "folds" / f"target_{target}"
+    groups = {part: sat.read_jsonl(folder / f"{part}.jsonl")
+              for part in ("train", "val", "test")}
+    ids = {part: {(row["corpus"], row["document_id"]) for row in rows}
+           for part, rows in groups.items()}
+    if any(len(ids[part]) != len(groups[part]) for part in groups):
+        raise ValueError(f"Duplicate narrative in LODO fold: {target}")
+    if any(ids[a] & ids[b] for a, b in (("train", "val"),
+                                         ("train", "test"), ("val", "test"))):
+        raise ValueError(f"Overlapping LODO partitions: {target}")
+    if any(row["corpus"] == target for part in ("train", "val")
+           for row in groups[part]):
+        raise ValueError(f"Target narrative used as source: {target}")
+    if any(row["corpus"] != target for row in groups["test"]):
+        raise ValueError(f"Wrong target test narratives: {target}")
+    return groups
+
+
+def reference_spans(row: dict, field: str) -> list[tuple[int, int]]:
+    raw = row["raw_text"]
+    spans = [sat.trim_span(raw, int(item["start"]), int(item["end"]))
+             for item in row.get(field, [])]
+    if any(not 0 <= a < b <= len(raw) for a, b in spans):
+        raise ValueError(f"Empty or invalid {field}: "
+                         f"{row['corpus']}/{row['document_id']}")
+    return spans
+
+
+def check_annotations(row: dict) -> None:
+    sat.validate_gold(row)
+    intervals = sorted(reference_spans(row, "units")
+                       + reference_spans(row, "excluded_spans"))
+    if any(left[1] > right[0] for left, right in zip(intervals, intervals[1:])):
+        raise ValueError(f"Overlapping reference spans: "
+                         f"{row['corpus']}/{row['document_id']}")
 
 
 def digest(path: Path) -> str:
@@ -138,7 +175,7 @@ def validate_qwen_exports(frames: dict[str, pd.DataFrame]) -> dict:
 def validate_source_partitions(bundle_path: Path, frames: dict, split: dict) -> None:
     """Cross-check facts, offsets, roles and narrative IDs against the RQ1 bundle."""
     for target in CORPORA:
-        groups = bundle_tools.bundle_groups(bundle_path, target)
+        groups = bundle_groups(bundle_path, target)
         for part, rows in groups.items():
             allowed = {corpus: set(split[corpus][part]) for corpus in CORPORA
                        if (part != "test" or corpus == target)}
@@ -152,7 +189,7 @@ def validate_source_partitions(bundle_path: Path, frames: dict, split: dict) -> 
                     raise ValueError(f"Repeated narrative in split: {key}")
                 observed.add(key)
                 sat.validate_gold(row)
-                exclusion_tools.check_annotations(row)
+                check_annotations(row)
                 part_df = frames[corpus]
                 part_df = part_df[part_df.accident_id.astype(str).eq(document_id)]
                 expected_facts = sorted(
@@ -173,11 +210,11 @@ def collect_exclusions(bundle_path: Path) -> dict[str, list[dict]]:
     result = {c: [] for c in CORPORA}
     seen: dict[tuple[str, str, int], tuple[int, int, str]] = {}
     for target in CORPORA:
-        groups = bundle_tools.bundle_groups(bundle_path, target)
+        groups = bundle_groups(bundle_path, target)
         for part in ("train", "val", "test"):
             for row in groups[part]:
                 corpus, document_id = row["corpus"], str(row["document_id"])
-                spans = exclusion_tools.reference_spans(row, "excluded_spans")
+                spans = reference_spans(row, "excluded_spans")
                 for ix, (a, b) in enumerate(spans):
                     key = (corpus, document_id, ix)
                     value = (a, b, row["raw_text"][a:b])
@@ -242,7 +279,7 @@ def prepare(args) -> None:
         write_json(marker, binding)
     counts = {}
     for target in CORPORA:
-        groups = bundle_tools.bundle_groups(bundle_path, target)
+        groups = bundle_groups(bundle_path, target)
         counts[target] = {part: {"narratives": len(rows),
             "facts": sum(len(r["units"]) for r in rows),
             "excluded": sum(len(r["excluded_spans"]) for r in rows)}
@@ -350,13 +387,13 @@ def examples_for_target(decision: str, target: str, bundle_path: Path,
                 "label": frame.pred_label.astype(str), "source_type": "fact"})
         return cv(train_facts), cv(val_facts), cv(tests[target])
 
-    groups = bundle_tools.bundle_groups(bundle_path, target)
+    groups = bundle_groups(bundle_path, target)
     parts = {}
     for part, rows in groups.items():
         records = []
         for row in rows:
             corpus, document_id = row["corpus"], str(row["document_id"])
-            for ix, (a, b) in enumerate(exclusion_tools.reference_spans(row, "excluded_spans")):
+            for ix, (a, b) in enumerate(reference_spans(row, "excluded_spans")):
                 text = row["raw_text"][a:b]
                 if not text.strip():
                     raise ValueError(f"Empty exclusion after trimming: {corpus}/{document_id}/{ix}")
