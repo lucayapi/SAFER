@@ -25,8 +25,8 @@ import sat_narrative_only_runtime as runtime
 
 ROOT = runtime.ROOT
 PREPARED = ROOT / "annotation" / "lodo_sat_transfer" / "narrative_only_lodo_v1"
-DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v1_baselines"
-VERSION = "sat_narrative_only_baselines_v1"
+DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v2_baselines"
+VERSION = "sat_narrative_only_baselines_v2"
 METHODS = ("M0", "M1", "M2")
 NORMALIZATION = "trim Unicode whitespace and punctuation at span edges only"
 METRIC = "edge_normalized_exact_f1"
@@ -89,6 +89,23 @@ def load_all_test_rows(prepared: Path) -> list[dict]:
     if len(rows) != dataset_manifest["total_documents"]:
         raise ValueError("Held-out test folds do not cover the complete narrative-only dataset")
     return rows
+
+
+def load_probability_rows(prepared: Path, test_rows: list[dict]) -> list[dict]:
+    """Unique test and source-validation narratives required by M1/M2."""
+    unique: dict[tuple[str, str], dict] = {}
+    for row in test_rows:
+        unique[(row["corpus"], row["document_id"])] = row
+    for target in runtime.CORPORA:
+        fold = prepared / "folds" / f"target_{target}"
+        for row in runtime.read_jsonl(fold / "val.jsonl"):
+            key = row["corpus"], row["document_id"]
+            previous = unique.get(key)
+            if previous is not None and previous["raw_text"] != row["raw_text"]:
+                raise ValueError(f"Conflicting text for shared probability-cache ID: {key}")
+            unique.setdefault(key, row)
+    # Empty texts are deliberately not sent to SaT or stored in its cache.
+    return [row for row in unique.values() if row["raw_text"].strip()]
 
 
 def read_cached_spans(raw: str, value: str) -> list[tuple[int, int]]:
@@ -211,6 +228,7 @@ def run(args: argparse.Namespace) -> None:
     expected_binding = binding(prepared)
     init_output(output, expected_binding)
     rows = load_all_test_rows(prepared)
+    probability_rows = load_probability_rows(prepared, rows)
     model_dir, tokenizer_dir = m3.pinned_backbone(prepared)
     model = runtime.load_pinned_sat(model_dir, tokenizer_dir)
     prob_db_path = output / "pretrained_probabilities.sqlite3"
@@ -218,15 +236,14 @@ def run(args: argparse.Namespace) -> None:
     with closing(open_cache(pysbd_db_path)) as pysbd_db:
         cache_pysbd(rows, pysbd_db)
         with closing(runtime._probability_connection(prob_db_path, create=True)) as prob_db:
-            runtime.infer_adapted(model, prob_db, [r for r in rows if r["raw_text"].strip()])
+            runtime.infer_adapted(model, prob_db, probability_rows)
             expected_probability_ids = {(r["corpus"], r["document_id"])
-                                        for r in rows if r["raw_text"].strip()}
+                                        for r in probability_rows}
             actual_probability_ids = {(c, ident) for c, ident in prob_db.execute(
                 "SELECT corpus,document_id FROM probabilities")}
             if actual_probability_ids != expected_probability_ids:
                 raise ValueError("Pretrained SaT probability cache has unexpected or missing documents")
-            runtime.verify_native(model, prob_db,
-                [r for r in rows if r["raw_text"].strip()], runtime.DEFAULT)
+            runtime.verify_native(model, prob_db, probability_rows, runtime.DEFAULT)
             metric_rows = []
             threshold_rows = []
             for target in runtime.CORPORA:

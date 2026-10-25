@@ -12,7 +12,7 @@ set -euo pipefail
 export SAT_NARRATIVE_RUN_ROOT="${SAT_NARRATIVE_RUN_ROOT:-${SCRATCH:-$HOME}/safer_sat_lodo/runs/narrative_only_lodo_checkpoint_v1}"
 source "${SLURM_SUBMIT_DIR}/text/jobs/_sat_narrative_only_env.sh"
 sat_narrative_only_setup run
-export SAT_NARRATIVE_BASELINE_ROOT="${SAT_NARRATIVE_BASELINE_ROOT:-${SCRATCH:-$HOME}/safer_sat_lodo/runs/narrative_only_lodo_v1_baselines}"
+export SAT_NARRATIVE_BASELINE_ROOT="${SAT_NARRATIVE_BASELINE_ROOT:-${SCRATCH:-$HOME}/safer_sat_lodo/runs/narrative_only_lodo_v2_baselines}"
 python -u scripts/sat_narrative_only_checkpoint_lodo.py summarize \
   --prepared "${SAT_NARRATIVE_PREPARED}" --run-root "${SAT_NARRATIVE_RUN_ROOT}"
 python -u scripts/sat_narrative_only_baselines.py compare \
