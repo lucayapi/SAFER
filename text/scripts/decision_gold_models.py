@@ -37,7 +37,9 @@ CORPORA = gold.CORPORA
 CSV_NAME = gold.CSV_NAME
 ROLES = tuple(gold.ROLES)
 ROLE_ID = {name: i for i, name in enumerate(ROLES)}
-SEEDS = (42, 1729, 20261018)
+# One fixed seed for the requested single-run campaign. Results are descriptive
+# for this fit and do not estimate between-seed training variability.
+SEEDS = (42,)
 METHODS = ("tfidf_lr", "qwen3_frozen_lr", "qwen3_finetuned")
 BACKBONE = "Qwen/Qwen3-Embedding-0.6B"
 # Snapshot currently used to create the local frozen Qwen3 exports. The smoke
@@ -75,7 +77,7 @@ def output_root(decision: str) -> Path:
     if decision not in ("facthood", "roles"):
         raise ValueError(decision)
     base = Path(os.getenv("DECISION_GOLD_RUN_ROOT",
-                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_v1")))
+                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_single_v1")))
     return base.expanduser().resolve() / decision
 
 
@@ -859,26 +861,23 @@ def summary(args) -> None:
     frame = pd.DataFrame(rows)
     frame.to_csv(out / "scores_by_target_seed.csv", index=False)
     grouped = frame.groupby(["target", "method"], as_index=False).agg(
-        balanced_accuracy_mean=("balanced_accuracy", "mean"),
-        balanced_accuracy_sd=("balanced_accuracy", "std"),
-        macro_f1_mean=("macro_f1", "mean"), macro_f1_sd=("macro_f1", "std"),
-        n_seeds=("seed", "nunique"), n_examples=("n_examples", "first"))
+        balanced_accuracy=("balanced_accuracy", "first"),
+        macro_f1=("macro_f1", "first"), n_examples=("n_examples", "first"))
     if args.decision == "facthood":
         gate_diag = frame.groupby(["target", "method"], as_index=False).agg(
-            fact_recall_mean=("fact_recall", "mean"),
-            exclusion_recall_mean=("exclusion_recall", "mean"))
+            fact_recall=("fact_recall", "first"),
+            exclusion_recall=("exclusion_recall", "first"))
         grouped = grouped.merge(gate_diag, on=["target", "method"], validate="one_to_one")
-    grouped[["balanced_accuracy_sd", "macro_f1_sd"]] = grouped[["balanced_accuracy_sd", "macro_f1_sd"]].fillna(0.0)
     grouped.to_csv(out / "scores_by_target.csv", index=False)
     macro = grouped.groupby("method", as_index=False).agg(
-        macro_domain_balanced_accuracy=("balanced_accuracy_mean", "mean"),
-        sd_across_domains=("balanced_accuracy_mean", "std"),
-        macro_domain_macro_f1=("macro_f1_mean", "mean"),
+        macro_domain_balanced_accuracy=("balanced_accuracy", "mean"),
+        sd_across_domains=("balanced_accuracy", "std"),
+        macro_domain_macro_f1=("macro_f1", "mean"),
         n_domains=("target", "nunique"))
     if args.decision == "facthood":
         macro_diag = grouped.groupby("method", as_index=False).agg(
-            macro_domain_fact_recall=("fact_recall_mean", "mean"),
-            macro_domain_exclusion_recall=("exclusion_recall_mean", "mean"))
+            macro_domain_fact_recall=("fact_recall", "mean"),
+            macro_domain_exclusion_recall=("exclusion_recall", "mean"))
         macro = macro.merge(macro_diag, on="method", validate="one_to_one")
     macro.to_csv(out / "macro_domain_summary.csv", index=False)
     write_json(out / "manifest.json", {"decision": args.decision,
@@ -901,7 +900,8 @@ def main() -> None:
         if name == "embed-exclusions":
             p.add_argument("--corpus-index", type=int, choices=range(6), required=True)
         if name == "run":
-            p.add_argument("--task-index", type=int, choices=range(18), required=True)
+            p.add_argument("--task-index", type=int,
+                           choices=range(len(CORPORA) * len(SEEDS)), required=True)
         p.set_defaults(func=fn)
     args = parser.parse_args()
     args.func(args)

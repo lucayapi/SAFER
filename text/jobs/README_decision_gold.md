@@ -15,7 +15,9 @@ threshold selection, and the sixth corpus only for final evaluation. The three
 comparisons are word/bigram TF-IDF with class-weighted logistic regression,
 frozen Qwen3 embeddings with logistic regression, and Qwen3 fine-tuning (binary
 BCE for facthood; five-class cross-entropy for roles). The fine-tuned model is
-run with three seeds; the deterministic feature baselines run once per target.
+run once with seed 42 for each held-out target; the deterministic feature
+baselines also run once per target. This is a single-run comparison and does
+not estimate variability across training seeds.
 No supervised contrastive or SoftTriple run is included. Fine-tuning and
 excluded-span encoding use the recorded Qwen3 snapshot; the smoke job compares
 one recomputed factual vector per corpus with its supplied CSV vector and stops
@@ -57,9 +59,9 @@ split files.
 
 The facthood campaign first makes frozen embeddings for explicit excluded
 spans, because the existing Qwen3 CSVs contain only factual units. It then
-runs one GPU smoke job. Each successful launch starts 18 LODO fit tasks (six
-held-out domains by three fine-tuning seeds), with no more than three GPU tasks
-running at once, and finishes with a summary job. The role campaign uses the
+runs one GPU smoke job. Each successful launch starts six LODO fit tasks (one
+per held-out domain, using seed 42), with no more than three GPU tasks running
+at once, and finishes with a summary job. The role campaign uses the
 same sequence without the extra exclusion-embedding array. A launch guard
 prevents starting either campaign while the other is still queued or running,
 so their combined GPU concurrency stays at three.

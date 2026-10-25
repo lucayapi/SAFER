@@ -32,8 +32,8 @@ else
     --export=ALL "${jobs}/decision_gold_smoke.sh")"
 fi
 fit="$(sbatch --parsable --job-name="${decision}-fit" --kill-on-invalid-dep=yes --dependency="afterok:${smoke}" \
-  --array=0-17%3 --export=ALL "${jobs}/decision_gold_train.sh")"
+  --array=0-5%3 --export=ALL "${jobs}/decision_gold_train.sh")"
 summary="$(sbatch --parsable --job-name="${decision}-sum" --kill-on-invalid-dep=yes --dependency="afterok:${fit}" \
   --export=ALL "${jobs}/decision_gold_summary.sh")"
-printf 'Decision: %s\nPreparation: %s\nExcluded-span Qwen embeddings: %s\nGPU smoke: %s\nLODO training (18 tasks, max 3 concurrent): %s\nSummary: %s\n' \
+printf 'Decision: %s\nPreparation: %s\nExcluded-span Qwen embeddings: %s\nGPU smoke: %s\nLODO training (6 targets, one seed, max 3 concurrent): %s\nSummary: %s\n' \
   "${decision}" "${prepare}" "${embeddings}" "${smoke}" "${fit}" "${summary}"
