@@ -200,7 +200,8 @@ def validation_curve(val: list[dict], db, candidate: dict) -> list[dict]:
         curve.append({"candidate": candidate["candidate"], "step": candidate["step"],
                       "epoch": candidate["epoch"], "threshold": threshold,
                       METRIC: sum(per_source.values()) / len(per_source),
-                      **{f"f1_{source}": per_source[source] for source in runtime.CORPORA}})
+                      # The held-out target has no source-validation score by design.
+                      **{f"f1_{source}": per_source.get(source) for source in runtime.CORPORA}})
     return curve
 
 
