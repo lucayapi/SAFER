@@ -25,8 +25,8 @@ import sat_narrative_only_runtime as runtime
 
 ROOT = runtime.ROOT
 PREPARED = ROOT / "annotation" / "lodo_sat_transfer" / "narrative_only_lodo_v1"
-DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v2_baselines"
-VERSION = "sat_narrative_only_baselines_v2"
+DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v3_baselines"
+VERSION = "sat_narrative_only_baselines_v3"
 METHODS = ("M0", "M1", "M2")
 NORMALIZATION = "trim Unicode whitespace and punctuation at span edges only"
 METRIC = "edge_normalized_exact_f1"
@@ -250,7 +250,13 @@ def run(args: argparse.Namespace) -> None:
                 fold = prepared / "folds" / f"target_{target}"
                 val = runtime.read_jsonl(fold / "val.jsonl")
                 test = runtime.read_jsonl(fold / "test.jsonl")
-                chosen, curve = m3.select_threshold(val, prob_db)
+                # Ignore whitespace-only records just as inference does, while
+                # retaining their corpus labels for the five-source check.
+                val_for_threshold = [
+                    row if row["raw_text"].strip() else {**row, "raw_text": ""}
+                    for row in val
+                ]
+                chosen, curve = m3.select_threshold(val_for_threshold, prob_db)
                 for point in curve:
                     threshold_rows.append({"target": target, **point})
                 variants = {}
