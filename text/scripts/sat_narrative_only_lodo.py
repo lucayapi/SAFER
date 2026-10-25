@@ -13,20 +13,16 @@ import argparse
 import collections
 import hashlib
 import json
-import shutil
-import tempfile
 import unicodedata
 from contextlib import closing
 from pathlib import Path
 
 import torch
 
-import sat_lodo_gold_v3 as base
+import sat_narrative_only_runtime as base
 
 ROOT = base.ROOT
-BASE_BUNDLE = base.BUNDLE
-DATASET = ROOT / "text" / "dataset" / "narrative_only_v1"
-PREPARED = ROOT / "annotation" / "lodo_sat_transfer" / "sat12l_sm_narrative_only_v1"
+PREPARED = ROOT / "annotation" / "lodo_sat_transfer" / "narrative_only_lodo_v1"
 VERSION = "sat_narrative_only_lodo_v1"
 METHOD = "SaT+LoRA; factual units only; narrative-only input"
 FIELDS = ("span_tp", "span_pred", "span_ref")
@@ -37,7 +33,11 @@ def digest(path: Path) -> str:
 
 
 def code_digest() -> str:
-    return hashlib.sha256(Path(__file__).read_text(encoding="utf-8").replace("\r\n", "\n").encode()).hexdigest()
+    digest_builder = hashlib.sha256()
+    for path in (Path(__file__), Path(base.__file__)):
+        digest_builder.update(path.name.encode())
+        digest_builder.update(path.read_text(encoding="utf-8").replace("\r\n", "\n").encode())
+    return digest_builder.hexdigest()
 
 
 def is_edge_char(char: str) -> bool:
@@ -68,42 +68,6 @@ def prf(counts: dict[str, int]) -> tuple[float, float, float]:
     return p, r, 2 * p * r / (p + r) if p + r else 0.0
 
 
-def runtime_signature(bundle: Path) -> dict:
-    return {
-        "version": VERSION,
-        "method": METHOD,
-        "base_bundle_manifest_sha256": digest(bundle / "manifest.json"),
-        "script_sha256": code_digest(),
-        "template_sha256": digest(base.legacy.TEMPLATE),
-        "fold_order": list(base.CORPORA),
-        "seed": base.SEED,
-        "training_target": "sorted literal factual units only; excluded spans removed from input",
-        "selection_metric": "macro source micro exact-span F1 after trimming edge whitespace and Unicode punctuation",
-    }
-
-
-def prepared_signature(bundle: Path, dataset: Path) -> dict:
-    return {**runtime_signature(bundle),
-            "narrative_only_manifest_sha256": digest(dataset / "narrative_only_manifest.json"),
-            "clean_snapshot_sha256": digest(dataset / "gold_snapshot.jsonl")}
-
-
-def read_clean_snapshot(dataset: Path) -> dict[tuple[str, str], dict]:
-    rows = base.read_jsonl(dataset / "gold_snapshot.jsonl")
-    result = {}
-    for row in rows:
-        validate_clean_row(row)
-        if row.get("excluded_spans"):
-            raise ValueError("The narrative-only snapshot still contains excluded spans")
-        key = row["corpus"], row["document_id"]
-        if key in result:
-            raise ValueError(f"Duplicate clean narrative: {key}")
-        result[key] = row
-    if len(result) != 17927:
-        raise ValueError(f"Expected 17,927 cleaned narratives, got {len(result)}")
-    return result
-
-
 def validate_clean_row(row: dict) -> None:
     # Removing the only documentary content can legitimately leave an empty
     # input document. It remains in the split, contributes no gold/predicted
@@ -115,134 +79,36 @@ def validate_clean_row(row: dict) -> None:
         base.validate_gold(surrogate)
 
 
-def prepare(args: argparse.Namespace) -> None:
-    bundle, dataset, output = args.bundle.resolve(), args.dataset.resolve(), args.out.resolve()
-    base.check_bundle(bundle)
-    clean = read_clean_snapshot(dataset)
-    signature = prepared_signature(bundle, dataset)
-    if output.exists():
-        raise FileExistsError(f"Prepared folder exists: {output}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix=output.name + ".preparing-", dir=output.parent))
-    files, reports = {}, {}
-    try:
-        shutil.copy2(dataset / "narrative_only_manifest.json", stage / "source_dataset_manifest.json")
-        files["source_dataset_manifest.json"] = digest(stage / "source_dataset_manifest.json")
-        for target in base.CORPORA:
-            original_fold = bundle / "folds" / f"target_{target}"
-            fold_dir = stage / "folds" / f"target_{target}"
-            fold_dir.mkdir(parents=True)
-            reports[target] = {}
-            for split in ("train", "val", "test"):
-                old_rows = base.read_jsonl(original_fold / f"{split}.jsonl")
-                new_rows = []
-                for old in old_rows:
-                    key = old["corpus"], old["document_id"]
-                    row = clean.get(key)
-                    if row is None:
-                        raise ValueError(f"Missing cleaned narrative {key}")
-                    if len(old["units"]) != len(row["units"]):
-                        raise ValueError(f"GOLD unit count changed for {key}")
-                    for old_unit, new_unit in zip(old["units"], row["units"], strict=True):
-                        old_text = old["raw_text"][old_unit["start"]:old_unit["end"]]
-                        new_text = row["raw_text"][new_unit["start"]:new_unit["end"]]
-                        if old_text != new_text or old_unit["role"] != new_unit["role"]:
-                            raise ValueError(f"Factual unit text or role changed for {key}")
-                    new_rows.append(row)
-                path = fold_dir / f"{split}.jsonl"
-                base.legacy.write_jsonl(path, new_rows)
-                files[path.relative_to(stage).as_posix()] = digest(path)
-                reports[target][f"{split}_documents"] = len(new_rows)
-                reports[target][f"{split}_units"] = sum(len(r["units"]) for r in new_rows)
-
-            train_rows = base.read_jsonl(fold_dir / "train.jsonl")
-            val_rows = base.read_jsonl(fold_dir / "val.jsonl")
-            train_chunks, val_chunks = [], []
-            skipped_train = collections.Counter()
-            skipped_val = collections.Counter()
-            omitted_train = 0
-            omitted_val = 0
-            for rows, dest, skipped, omitted_ref in (
-                (train_rows, train_chunks, skipped_train, "train"),
-                (val_rows, val_chunks, skipped_val, "val"),
-            ):
-                omitted = 0
-                for row in rows:
-                    chunks, reason, n = base.trainer_chunks(row)
-                    if chunks is None:
-                        skipped[reason] += 1
-                    else:
-                        dest.append(chunks)
-                        omitted += n
-                if not dest:
-                    raise ValueError(f"No trainable factual units for {target}/{omitted_ref}")
-                if omitted_ref == "train":
-                    omitted_train = omitted
-                else:
-                    omitted_val = omitted
-            data = {"fr": {"sentence": {base.DATASET_NAME: {
-                "meta": {"train_data": train_chunks}, "data": val_chunks}}}}
-            path = fold_dir / "training.pth"
-            torch.save(data, path)
-            files[path.relative_to(stage).as_posix()] = digest(path)
-            reports[target]["trainer"] = {
-                "train_documents": len(train_chunks), "val_documents": len(val_chunks),
-                "train_factual_units": sum(len(r["units"]) for r in train_rows),
-                "val_factual_units": sum(len(r["units"]) for r in val_rows),
-                "train_skipped": dict(skipped_train), "val_skipped": dict(skipped_val),
-                "train_characters_omitted_from_trainer_copy": omitted_train,
-                "val_characters_omitted_from_trainer_copy": omitted_val,
-            }
-            print(f"{target}: train={len(train_chunks)} docs, val={len(val_chunks)} docs, "
-                  f"test={len(base.read_jsonl(fold_dir / 'test.jsonl'))} docs", flush=True)
-        manifest = {**signature, "files": files, "fold_report": reports,
-                    "created_at_utc": base.stamp()}
-        readme = (
-            "SaT+LoRA narrative_only_v1 transfer bundle\n"
-            "\n"
-            "Training chunks contain factual units only. All explicit excluded_spans were removed from the raw narrative before split export; validation and target test use the cleaned narrative. The six folds reuse the original RQ1 source/validation/target assignments.\n"
-            "\n"
-            "Primary metric: edge-normalized exact-span F1. Both predicted and gold offsets are trimmed over Unicode whitespace and Unicode punctuation at their outer edges only; internal punctuation and characters remain exact. Threshold choice uses only the five source validation corpora. One seed and the existing SaT+LoRA template are used.\n"
-            "\n"
-            "Transfer this entire folder to $SCRATCH/safer_private/sat12l_sm_narrative_only_v1/ on the cluster. The pre-existing sat12l_sm_gold_v3_rq1 base bundle and the updated SAFER code/jobs are also required. No separate narrative_only_v1 dataset transfer is required.\n"
-        )
-        (stage / "README.txt").write_text(readme, encoding="utf-8")
-        files["README.txt"] = digest(stage / "README.txt")
-        manifest["files"] = files
-        base.write_json(stage / "manifest.json", manifest)
-        base.write_json(stage / "complete.json", {"manifest_sha256": digest(stage / "manifest.json")})
-        check_prepared(bundle, stage)
-        stage.rename(output)
-        print(json.dumps({"prepared": str(output), "targets": len(base.CORPORA),
-                          "clean_documents": len(clean)}, ensure_ascii=False))
-    finally:
-        if stage.exists():
-            shutil.rmtree(stage, ignore_errors=True)
-
-
-def check_prepared(bundle: Path, prepared: Path) -> dict:
-    base.check_bundle(bundle)
+def check_prepared(prepared: Path) -> dict:
     manifest = json.loads((prepared / "manifest.json").read_text(encoding="utf-8"))
     complete = json.loads((prepared / "complete.json").read_text(encoding="utf-8"))
     if complete.get("manifest_sha256") != digest(prepared / "manifest.json"):
         raise ValueError("Prepared complete marker is invalid")
-    if any(manifest.get(k) != v for k, v in runtime_signature(bundle).items()):
-        raise ValueError("Prepared bundle has different source, data or code")
+    if (manifest.get("version") != VERSION or manifest.get("fold_order") != list(base.CORPORA)
+            or manifest.get("script_sha256") != code_digest()
+            or manifest.get("template_sha256") != digest(base.legacy.TEMPLATE)):
+        raise ValueError("Prepared bundle has an unexpected shared split protocol")
     source_manifest = prepared / "source_dataset_manifest.json"
     if (digest(source_manifest) != manifest.get("narrative_only_manifest_sha256")
             or json.loads(source_manifest.read_text(encoding="utf-8")).get("version") != "narrative_only_v1"):
         raise ValueError("Prepared bundle is not bound to narrative_only_v1")
     if not manifest.get("clean_snapshot_sha256"):
         raise ValueError("Prepared bundle lacks the clean source snapshot hash")
+    dataset_manifest = json.loads(source_manifest.read_text(encoding="utf-8"))
+    if not (prepared / "pinned_runtime.json").is_file():
+        raise ValueError("Prepared bundle lacks pinned model revisions")
+    test_ids_seen: set[tuple[str, str]] = set()
     expected_files = {f"folds/target_{t}/{s}.jsonl" for t in base.CORPORA for s in ("train", "val", "test")}
+    expected_files |= {f"folds/target_{t}/split_ids.json" for t in base.CORPORA}
     expected_files |= {f"folds/target_{t}/training.pth" for t in base.CORPORA}
-    expected_files |= {"source_dataset_manifest.json", "README.txt"}
+    expected_files |= {"source_dataset_manifest.json", "pinned_runtime.json", "README.txt"}
     if set(manifest["files"]) != expected_files:
         raise ValueError("Prepared bundle does not contain the expected fold files")
     for relative, sha in manifest["files"].items():
         path = (prepared / relative).resolve()
         if not path.is_relative_to(prepared.resolve()) or not path.is_file() or digest(path) != sha:
             raise ValueError(f"Prepared file missing or changed: {relative}")
+    shared_ids: dict[str, dict[str, list[str]]] = {split: {} for split in ("train", "val")}
     for target in base.CORPORA:
         fold = prepared / "folds" / f"target_{target}"
         groups = {s: base.read_jsonl(fold / f"{s}.jsonl") for s in ("train", "val", "test")}
@@ -253,18 +119,62 @@ def check_prepared(bundle: Path, prepared: Path) -> dict:
             raise ValueError(f"Target leakage in target {target}")
         if any(r["corpus"] != target for r in groups["test"]):
             raise ValueError(f"Invalid test fold for target {target}")
+        current_test_ids = {(r["corpus"], r["document_id"]) for r in groups["test"]}
+        if test_ids_seen & current_test_ids:
+            raise ValueError("The six target test folds contain duplicate documents")
+        test_ids_seen |= current_test_ids
+        ids = json.loads((fold / "split_ids.json").read_text(encoding="utf-8"))
+        for split, rows in groups.items():
+            expected_ids = {c: [r["document_id"] for r in rows if r["corpus"] == c]
+                            for c in base.CORPORA}
+            if ids.get(split) != expected_ids:
+                raise ValueError(f"Split ID index mismatch for {target}/{split}")
+            if split in shared_ids:
+                for corpus in base.CORPORA:
+                    if corpus == target:
+                        continue
+                    prior = shared_ids[split].setdefault(corpus, expected_ids[corpus])
+                    if prior != expected_ids[corpus]:
+                        raise ValueError(f"Shared source {split} IDs differ across LODO folds for {corpus}")
         for split, rows in groups.items():
             for row in rows:
                 validate_clean_row(row)
                 if row.get("excluded_spans"):
                     raise ValueError("Excluded text remains in prepared narratives")
+    if len(test_ids_seen) != dataset_manifest.get("total_documents"):
+        raise ValueError("LODO target tests do not cover the complete cleaned dataset")
     return manifest
 
 
-def binding(bundle: Path, prepared: Path) -> dict:
-    return {"version": VERSION, "base_bundle_manifest_sha256": digest(bundle / "manifest.json"),
-            "prepared_manifest_sha256": digest(prepared / "manifest.json"),
+def binding(prepared: Path) -> dict:
+    return {"version": VERSION, "prepared_manifest_sha256": digest(prepared / "manifest.json"),
             "script_sha256": code_digest(), "template_sha256": digest(base.legacy.TEMPLATE)}
+
+
+def pinned_backbone(prepared: Path) -> tuple[Path, Path]:
+    from huggingface_hub import snapshot_download
+
+    runtime = json.loads((prepared / "pinned_runtime.json").read_text(encoding="utf-8"))
+    model_revision, tokenizer_revision = runtime.get("model_revision"), runtime.get("tokenizer_revision")
+    if not model_revision or not tokenizer_revision:
+        raise ValueError("Prepared shared bundle lacks immutable model revisions")
+    model_dir = Path(snapshot_download(repo_id="segment-any-text/sat-12l-sm", revision=model_revision)).resolve()
+    tokenizer_dir = Path(snapshot_download(repo_id="FacebookAI/xlm-roberta-base", revision=tokenizer_revision)).resolve()
+    if model_dir.name != model_revision or tokenizer_dir.name != tokenizer_revision:
+        raise ValueError("Downloaded model/tokenizer revision differs from the prepared protocol")
+    return model_dir, tokenizer_dir
+
+
+def trainer_config(target: str, output_dir: Path, model_dir: Path,
+                   tokenizer_dir: Path, prepared: Path) -> dict:
+    config = json.loads(base.legacy.TEMPLATE.read_text(encoding="utf-8"))
+    if (config.get("model_name_or_path") != "segment-any-text/" + base.MODEL
+            or config.get("subsample") is not None or config.get("report_to") != "none"):
+        raise ValueError("Unexpected SaT+LoRA training template")
+    config.update({"text_path": str((prepared / "folds" / f"target_{target}" / "training.pth").resolve()),
+                   "output_dir": str(output_dir.resolve()), "seed": base.SEED,
+                   "model_name_or_path": str(model_dir), "base_model": str(tokenizer_dir)})
+    return config
 
 
 def verify_smoke(root: Path, expected: dict) -> None:
@@ -274,16 +184,16 @@ def verify_smoke(root: Path, expected: dict) -> None:
 
 
 def smoke(args: argparse.Namespace) -> None:
-    bundle, prepared, root = args.bundle.resolve(), args.prepared.resolve(), args.run_root.resolve()
-    check_prepared(bundle, prepared)
-    expected = binding(bundle, prepared)
+    prepared, root = args.prepared.resolve(), args.run_root.resolve()
+    check_prepared(prepared)
+    expected = binding(prepared)
     if (root / "smoke_ok.json").is_file():
         verify_smoke(root, expected)
         print(f"Smoke already passed: {root / 'smoke_ok.json'}")
         return
     repo = args.wtpsplit_repo.resolve()
     base.legacy.gpu_runtime(repo)
-    model_dir, tokenizer_dir = base.pinned_backbone(bundle)
+    model_dir, tokenizer_dir = pinned_backbone(prepared)
     target = base.CORPORA[0]
     source = torch.load(prepared / "folds" / f"target_{target}" / "training.pth",
                         map_location="cpu", weights_only=False)["fr"]["sentence"][base.DATASET_NAME]
@@ -293,7 +203,7 @@ def smoke(args: argparse.Namespace) -> None:
     torch.save({"fr": {"sentence": {base.DATASET_NAME: {
         "meta": {"train_data": source["meta"]["train_data"][:8]},
         "data": source["data"][:4]}}}}, path)
-    config = base.trainer_config(bundle, target, work / "trainer", model_dir, tokenizer_dir)
+    config = trainer_config(target, work / "trainer", model_dir, tokenizer_dir, prepared)
     config.update({"text_path": str(path), "num_train_epochs": 1, "max_steps": 1,
                    "save_steps": 1, "per_device_train_batch_size": 2,
                    "per_device_eval_batch_size": 2, "gradient_accumulation_steps": 1})
@@ -336,7 +246,7 @@ def select_threshold(val: list[dict], db) -> tuple[float, list[dict]]:
     return best["threshold"], curve
 
 
-def evaluate(bundle: Path, prepared: Path, target: str, run: Path, adapter: Path,
+def evaluate(prepared: Path, target: str, run: Path, adapter: Path,
              model_dir: Path, tokenizer_dir: Path) -> None:
     fold = prepared / "folds" / f"target_{target}"
     val, test = base.read_jsonl(fold / "val.jsonl"), base.read_jsonl(fold / "test.jsonl")
@@ -370,16 +280,16 @@ def evaluate(bundle: Path, prepared: Path, target: str, run: Path, adapter: Path
 
 
 def fit(args: argparse.Namespace) -> None:
-    bundle, prepared, root = args.bundle.resolve(), args.prepared.resolve(), args.run_root.resolve()
-    check_prepared(bundle, prepared)
-    expected = binding(bundle, prepared)
+    prepared, root = args.prepared.resolve(), args.run_root.resolve()
+    check_prepared(prepared)
+    expected = binding(prepared)
     verify_smoke(root, expected)
     if not 0 <= args.task_index < len(base.CORPORA):
         raise ValueError("task-index must be 0..5")
     target = base.CORPORA[args.task_index]
     repo = args.wtpsplit_repo.resolve()
     base.legacy.gpu_runtime(repo)
-    model_dir, tokenizer_dir = base.pinned_backbone(bundle)
+    model_dir, tokenizer_dir = pinned_backbone(prepared)
     run = root / f"target_{target}"
     run.mkdir(parents=True, exist_ok=True)
     marker = run / "binding.json"
@@ -389,8 +299,7 @@ def fit(args: argparse.Namespace) -> None:
         if any(run.iterdir()):
             raise ValueError(f"Unbound nonempty run folder: {run}")
         base.write_json(marker, expected)
-    config = base.trainer_config(bundle, target, run / "trainer", model_dir, tokenizer_dir)
-    config["text_path"] = str(prepared / "folds" / f"target_{target}" / "training.pth")
+    config = trainer_config(target, run / "trainer", model_dir, tokenizer_dir, prepared)
     adapter = base.legacy.adapter_folder(run / "trainer")
     if not base.legacy.adapter_exists(adapter):
         checkpoints = sorted((run / "trainer").glob("checkpoint-*"),
@@ -409,13 +318,13 @@ def fit(args: argparse.Namespace) -> None:
     if (run / "metrics.json").is_file() and not args.force_evaluate:
         print(f"Already evaluated: {run / 'metrics.json'}")
         return
-    evaluate(bundle, prepared, target, run, adapter, model_dir, tokenizer_dir)
+    evaluate(prepared, target, run, adapter, model_dir, tokenizer_dir)
 
 
 def summarize(args: argparse.Namespace) -> None:
-    bundle, prepared, root = args.bundle.resolve(), args.prepared.resolve(), args.run_root.resolve()
-    manifest = check_prepared(bundle, prepared)
-    expected = binding(bundle, prepared)
+    prepared, root = args.prepared.resolve(), args.run_root.resolve()
+    manifest = check_prepared(prepared)
+    expected = binding(prepared)
     rows = []
     for target in base.CORPORA:
         run = root / f"target_{target}"
@@ -444,14 +353,9 @@ def summarize(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    for name, function in (("prepare", prepare), ("check", None), ("smoke", smoke), ("fit", fit), ("summarize", summarize)):
+    for name, function in (("check", None), ("smoke", smoke), ("fit", fit), ("summarize", summarize)):
         cmd = commands.add_parser(name)
-        cmd.add_argument("--bundle", type=Path, default=BASE_BUNDLE)
-        if name == "prepare":
-            cmd.add_argument("--dataset", type=Path, default=DATASET)
-            cmd.add_argument("--out", type=Path, default=PREPARED)
-        else:
-            cmd.add_argument("--prepared", type=Path, default=PREPARED)
+        cmd.add_argument("--prepared", type=Path, default=PREPARED)
         if name in {"smoke", "fit", "summarize"}:
             cmd.add_argument("--run-root", type=Path, required=True)
         if name in {"smoke", "fit"}:
@@ -462,7 +366,7 @@ def main() -> None:
         cmd.set_defaults(func=function)
     args = parser.parse_args()
     if args.command == "check":
-        report = check_prepared(args.bundle.resolve(), args.prepared.resolve())
+        report = check_prepared(args.prepared.resolve())
         print(json.dumps({"ready": True, "method": METHOD, "targets": report["fold_order"]}))
     else:
         args.func(args)

@@ -17,6 +17,6 @@ source "${SLURM_SUBMIT_DIR}/text/jobs/_sat_narrative_only_env.sh"
 sat_narrative_only_setup run
 : "${SLURM_ARRAY_TASK_ID:?Submit as a Slurm array}"
 python -u scripts/sat_narrative_only_lodo.py fit \
-  --bundle "${SAT_LODO_BUNDLE}" --prepared "${SAT_NARRATIVE_PREPARED}" \
+  --prepared "${SAT_NARRATIVE_PREPARED}" \
   --run-root "${SAT_NARRATIVE_RUN_ROOT}" --wtpsplit-repo "${SAT_WTPSPLIT_REPO}" \
   --task-index "${SLURM_ARRAY_TASK_ID}"

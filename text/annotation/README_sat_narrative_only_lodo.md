@@ -1,53 +1,58 @@
-# SaT + LoRA sur le récit nettoyé
+# Plis LODO communs pour M0–M3
 
-Cette expérience remplace l'ancien entraînement « unité élémentaire » qui
-fournissait les faits **et** les spans exclus au trainer. Ici, seuls les faits
-annotés servent de segments d'entraînement. Les spans explicitement exclus
-sont retirés du récit avant la préparation des plis ; les partitions RQ1
-(80 % entraînement / 20 % validation dans les cinq sources et corpus cible
-entier en test) sont conservées. Une graine et la configuration SaT + LoRA
-historique sont utilisées.
+Le paquet `annotation/lodo_sat_transfer/narrative_only_lodo_v1/` est la source
+de données figée pour comparer M0–M3. Il contient six rotations leave-one-
+corpus-out, les récits nettoyés, les unités factuelles GOLD, leurs rôles, les
+index d’identifiants des documents et les données d’entraînement SaT.
+Les spans explicitement exclus ont été retirés du texte fourni aux modèles.
 
-La métrique principale est le **F1 exact normalisé aux bords** : les espaces
-et caractères Unicode de ponctuation au début ou à la fin d'un span sont
-ignorés. Les caractères internes, y compris la ponctuation interne, doivent
-coïncider exactement. Le seuil est choisi par macro-F1 micro par source sur
-les cinq corpus de validation ; le corpus cible n'intervient pas dans ce choix.
+Pour chaque cible, les cinq autres corpus sont les sources. La partition
+d’entraînement est celle de 80 % des récits source; les 20 % restants servent
+à la validation source; le corpus cible entier reste réservé au test. Le
+`split_ids.json` de chaque pli permet de vérifier l’identité des documents.
+Toutes les méthodes doivent lire ces mêmes fichiers et ne pas recréer les plis.
 
-## Préparation locale
+La métrique de segmentation est le F1 exact normalisé aux bords : on ignore
+uniquement les espaces Unicode et la ponctuation Unicode au début et à la fin
+des spans GOLD et prédits. Tout leur contenu interne doit correspondre
+exactement. Les anciens scores obtenus sur les récits non nettoyés ou avec un
+exact-span F1 non normalisé ne sont pas directement comparables.
 
-Depuis la racine SAFER :
+M0 PySBD et M1 SaT préentraîné n’ont pas de paramètres ajustés sur les sources.
+M2 sélectionne son seuil sur la validation source. M3 s’entraîne sur les unités
+factuelles GOLD des sources puis sélectionne son seuil sur cette même
+validation. Les méthodes peuvent différer; les plis et le test doivent rester
+identiques.
+
+## Paquet autonome
+
+Le paquet contient déjà les six plis, leurs index, les données d’entraînement
+SaT, les révisions immuables du modèle et du tokenizer, ainsi que les sommes de
+contrôle. Il n’y a pas d’étape de préparation qui nécessite un autre paquet.
+Le contrôle local est :
 
 ```powershell
-.\text\.venv\Scripts\python.exe text\scripts\sat_narrative_only_lodo.py prepare
 .\text\.venv\Scripts\python.exe text\scripts\sat_narrative_only_lodo.py check
 .\text\.venv\Scripts\python.exe -m pytest text\tests\test_sat_narrative_only_metrics.py -q -p no:cacheprovider
 ```
 
-Le paquet à transférer est
-`annotation/lodo_sat_transfer/sat12l_sm_narrative_only_v1/`. Il contient les
-six plis nettoyés, les données SaT `training.pth`, les hashes et les rapports.
-Il n'est pas nécessaire de transférer séparément
-`text/dataset/narrative_only_v1/`.
+Transférer le dossier complet
+`annotation/lodo_sat_transfer/narrative_only_lodo_v1/` vers
+`$SCRATCH/safer_private/narrative_only_lodo_v1/`, ainsi que le code SAFER à jour
+`text/scripts/sat_narrative_only_lodo.py`,
+`text/scripts/sat_narrative_only_runtime.py`, les jobs
+`text/jobs/sat_narrative_only_*` et `_sat_narrative_only_env.sh`. Le CSV nettoyé
+n’a pas besoin d’être transféré séparément : les récits et offsets sont dans
+les plis.
 
-## À avoir sur le cluster
-
-1. Le code SAFER à jour, notamment `text/scripts/sat_narrative_only_lodo.py`
-   et les quatre fichiers `text/jobs/sat_narrative_only_*.sh` ainsi que
-   `_sat_narrative_only_env.sh`.
-2. Le nouveau paquet ci-dessus, copié vers
-   `$SCRATCH/safer_private/sat12l_sm_narrative_only_v1/`.
-3. Le paquet de base déjà utilisé auparavant :
-   `$SCRATCH/safer_private/sat12l_sm_gold_v3_rq1/`, avec les révisions épinglées
-   du modèle et le découpage RQ1. S'il est déjà sur le cluster, ne pas le
-   recopier.
-
-Depuis `SAFER/` sur le cluster, lancer :
+Depuis la racine SAFER sur le cluster :
 
 ```bash
 bash text/jobs/sat_narrative_only_launch.sh
 ```
 
-Cela soumet un smoke GPU, six tâches LODO (au plus trois simultanées), puis un
-résumé CPU dépendant de leur réussite. Les résultats sont écrits sous
-`$SCRATCH/safer_sat_lodo/runs/sat12l_sm_narrative_only_v1/`.
+Cela soumet un smoke GPU, six tâches cibles (au plus trois simultanées), puis
+un résumé. Les résultats SaT+LoRA sont écrits dans
+`$SCRATCH/safer_sat_lodo/runs/narrative_only_lodo_v1/`. Les évaluateurs M0–M2
+doivent eux aussi lire les plis de ce paquet pour que le tableau M0–M3 soit
+comparable.

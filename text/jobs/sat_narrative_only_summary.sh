@@ -12,5 +12,5 @@ set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/text/jobs/_sat_narrative_only_env.sh"
 sat_narrative_only_setup run
 python -u scripts/sat_narrative_only_lodo.py summarize \
-  --bundle "${SAT_LODO_BUNDLE}" --prepared "${SAT_NARRATIVE_PREPARED}" \
+  --prepared "${SAT_NARRATIVE_PREPARED}" \
   --run-root "${SAT_NARRATIVE_RUN_ROOT}"
