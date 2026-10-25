@@ -1,0 +1,96 @@
+{
+  "version": "narrative_only_v1",
+  "source_snapshot_sha256": "4845dbec927c5cd1161360729382ac5497c3f5c41d1562b03d5020c2f20bdca8",
+  "source_manifest_sha256": "db594fd4bc5d810613f6e2e80371ec7ee24f40c138ea71d130cbed503d4fb55a",
+  "created_at_utc": "2026-10-25T18:02:09.369196+00:00",
+  "operation": "Remove only spans explicitly listed in excluded_spans; retain factual units verbatim and remap offsets.",
+  "total_documents": 17927,
+  "total_units": 147487,
+  "total_removed_documentary_spans": 5043,
+  "corpora": {
+    "btp": {
+      "file": "data_btp.csv",
+      "documents": 4864,
+      "units": 49517,
+      "removed_documentary_spans": 901,
+      "roles": {
+        "A0": 20207,
+        "A1": 6981,
+        "AUTRE": 5484,
+        "B": 10764,
+        "C": 6081
+      },
+      "csv_sha256": "30e40e81390346eefc62b3031d201f23b974b99256105ddd50ed9435b34b314d"
+    },
+    "metallurgie": {
+      "file": "data_metallurgie.csv",
+      "documents": 2742,
+      "units": 28430,
+      "removed_documentary_spans": 424,
+      "roles": {
+        "A0": 11973,
+        "A1": 3955,
+        "AUTRE": 3439,
+        "B": 5588,
+        "C": 3475
+      },
+      "csv_sha256": "e6f6372035154454e9d405a9e467548230a6dd78d0161ad88c4229dda0775798"
+    },
+    "caou": {
+      "file": "data_caou.csv",
+      "documents": 737,
+      "units": 8200,
+      "removed_documentary_spans": 124,
+      "roles": {
+        "A0": 3410,
+        "A1": 1278,
+        "AUTRE": 1154,
+        "B": 1370,
+        "C": 988
+      },
+      "csv_sha256": "a44944f2f632c083c05a6d2ee97414aa09bff0827c24591c09d6e20de320959d"
+    },
+    "bois_textille": {
+      "file": "data_bois_textille.csv",
+      "documents": 1694,
+      "units": 18497,
+      "removed_documentary_spans": 309,
+      "roles": {
+        "A0": 7594,
+        "A1": 2861,
+        "AUTRE": 2427,
+        "B": 3433,
+        "C": 2182
+      },
+      "csv_sha256": "924185f142a3fcf08cf2058623731a680fa3805525bdebbe07498ec869be3319"
+    },
+    "service_temporaire": {
+      "file": "data_service_temporaire.csv",
+      "documents": 2299,
+      "units": 23943,
+      "removed_documentary_spans": 382,
+      "roles": {
+        "A0": 9932,
+        "A1": 3412,
+        "AUTRE": 3168,
+        "B": 4596,
+        "C": 2835
+      },
+      "csv_sha256": "707660ae4859be6ac077b2f410840c6fd6e37b6b40dd7e322db06f87d562b47d"
+    },
+    "nicollin": {
+      "file": "data_nicollin.csv",
+      "documents": 5591,
+      "units": 18900,
+      "removed_documentary_spans": 2903,
+      "roles": {
+        "A0": 7391,
+        "A1": 694,
+        "AUTRE": 2558,
+        "B": 4940,
+        "C": 3317
+      },
+      "csv_sha256": "66d5afbf9ca403a9cdb38987747b8ba691d4dfebdd9c4294e593285f73ea617c"
+    }
+  }
+}

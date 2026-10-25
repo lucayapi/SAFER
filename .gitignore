@@ -31,6 +31,7 @@ text/embeddings/
 text/dataset/*.csv
 text/dataset/**/*.csv
 text/dataset/test/
+text/dataset/narrative_only_v1/gold_snapshot.jsonl
 text/runs/
 text/outputs/
 text/output/
@@ -97,16 +98,18 @@ archives script mesocentre/
 /text/A Domain-General Framework for Factual Unit Extraction and Accident-Process Role Classification from Occupational Accident Reports/
 Thumbs.db
 
+# Archives de runs SaT avec unités élémentaires (conserver localement, hors Git)
+/sat12l_sm_elementary_v1/
+/sat12l_sm_elementary_checkpoint_v2/
+/sat12l_sm_elementary_full3_v1/
+/sat12l_sm_elementary_no_nicollin_v1/
+
 # Fichiers temporaires locaux
 test.txt
 
 # Corpus et application locale de revue des rÃ©cits (donnÃ©es sensibles)
 /annotation/
 /safer_sat_lodo/
-/sat12l_sm_elementary_v1/
-/sat12l_sm_elementary_checkpoint_v2/
-/sat12l_sm_elementary_full3_v1/
-/sat12l_sm_elementary_no_nicollin_v1/
 /safer_sat_indomain/
 /safer_sat_rq1_final/
 /safer_sat_equal_volume/
