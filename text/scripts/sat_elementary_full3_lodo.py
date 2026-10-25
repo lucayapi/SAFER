@@ -108,6 +108,12 @@ def export_checkpoint(folder: Path, output: Path, model_dir: Path, tokenizer_dir
     num_labels = int(weights["classifier.weight"].shape[0])
     from wtpsplit.models import SubwordXLMConfig, SubwordXLMForTokenClassification
     import adapters
+    from adapters.models import MODEL_MIXIN_MAPPING
+    from adapters.models.bert.mixin_bert import BertModelAdaptersMixin
+
+    # SaT wraps an XLM-R backbone in a custom class. Register the same
+    # adapter mixin used by wtpsplit's LoRA training/loading path before init.
+    MODEL_MIXIN_MAPPING["SubwordXLMRobertaModel"] = BertModelAdaptersMixin
 
     cfg = SubwordXLMConfig.from_pretrained(str(model_dir), num_labels=num_labels)
     cfg.base_model = str(tokenizer_dir)
