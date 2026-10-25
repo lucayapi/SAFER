@@ -72,6 +72,12 @@ same sequence without the extra exclusion-embedding array. A launch guard
 prevents starting either campaign while the other is still queued or running,
 so their combined GPU concurrency stays at three.
 
+The default output directory is `safer_decision_gold_single_v4/` under
+`$SCRATCH` (or the repository root if `$SCRATCH` is unset). This fresh version
+is required after the sparse TF-IDF prediction fix because the campaign binds
+its outputs to the exact script hash. A custom `DECISION_GOLD_RUN_ROOT` must
+also point to an empty directory when starting with updated code.
+
 From the cluster repository root (`SAFER/`), submit the two decisions
 separately with:
 

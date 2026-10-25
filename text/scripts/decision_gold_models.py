@@ -80,7 +80,7 @@ def output_root(decision: str) -> Path:
     if decision not in ("facthood", "roles"):
         raise ValueError(decision)
     base = Path(os.getenv("DECISION_GOLD_RUN_ROOT",
-                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_single_v3")))
+                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_single_v4")))
     return base.expanduser().resolve() / decision
 
 
@@ -201,7 +201,7 @@ def exclusion_manifest_path(root: Path, corpus: str) -> Path:
 
 def campaign_binding(decision: str, bundle_path: Path, signatures: dict,
                      qwen_manifest: dict, split: dict) -> dict:
-    return {"version": "decision_gold_lodo_single_v3", "decision": decision,
+    return {"version": "decision_gold_lodo_single_v4", "decision": decision,
             "gold_sha256": gold.GOLD_V3_SNAPSHOT_SHA256,
             "bundle_manifest_sha256": digest(bundle_path / "manifest.json"),
             "gold_signatures": signatures, "qwen_exports": qwen_manifest,
@@ -472,7 +472,7 @@ def vectors_for(frame: pd.DataFrame, fact_maps: dict, excluded_maps: dict) -> np
     return matrix
 
 
-def predictions(model, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def predictions(model, x) -> tuple[np.ndarray, np.ndarray]:
     from sklearn.pipeline import Pipeline
     if isinstance(model, Pipeline):
         classes = model.named_steps["logisticregression"].classes_.astype(int)
@@ -480,7 +480,7 @@ def predictions(model, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         classes = model.classes_.astype(int)
     raw = model.predict_proba(x)
     k = 2 if raw.shape[1] <= 2 and (len(classes) == 2) else 5
-    probs = np.zeros((len(x), k), dtype=np.float32)
+    probs = np.zeros((x.shape[0], k), dtype=np.float32)
     probs[:, classes] = raw
     return probs.argmax(axis=1), probs
 
