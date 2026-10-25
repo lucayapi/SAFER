@@ -18,6 +18,12 @@ BCE for facthood; five-class cross-entropy for roles). The fine-tuned model is
 run once with seed 42 for each held-out target; the deterministic feature
 baselines also run once per target. This is a single-run comparison and does
 not estimate variability across training seeds.
+The TF-IDF branch follows notebook 07c: `TfidfVectorizer` with word unigrams
+and bigrams, the métier stop-word list, and L2-normalised sparse vectors passed
+directly to logistic regression without a scaler. Its `C` is selected on
+source validation data only. The `CountVectorizer` configurations in the
+BERTopic notebooks are for topic modelling, not the supervised lexical
+classification baseline.
 No supervised contrastive or SoftTriple run is included. Fine-tuning and
 excluded-span encoding use the recorded Qwen3 snapshot; the smoke job compares
 one recomputed factual vector per corpus with its supplied CSV vector and stops

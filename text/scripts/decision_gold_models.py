@@ -80,7 +80,7 @@ def output_root(decision: str) -> Path:
     if decision not in ("facthood", "roles"):
         raise ValueError(decision)
     base = Path(os.getenv("DECISION_GOLD_RUN_ROOT",
-                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_single_v1")))
+                         str(Path(os.getenv("SCRATCH", str(ROOT))) / "safer_decision_gold_single_v3")))
     return base.expanduser().resolve() / decision
 
 
@@ -201,7 +201,7 @@ def exclusion_manifest_path(root: Path, corpus: str) -> Path:
 
 def campaign_binding(decision: str, bundle_path: Path, signatures: dict,
                      qwen_manifest: dict, split: dict) -> dict:
-    return {"version": "decision_gold_lodo_v1", "decision": decision,
+    return {"version": "decision_gold_lodo_single_v3", "decision": decision,
             "gold_sha256": gold.GOLD_V3_SNAPSHOT_SHA256,
             "bundle_manifest_sha256": digest(bundle_path / "manifest.json"),
             "gold_signatures": signatures, "qwen_exports": qwen_manifest,
@@ -485,17 +485,28 @@ def predictions(model, x: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return probs.argmax(axis=1), probs
 
 
-def select_lr(decision: str, x_train, y_train, x_val, y_val, seed: int):
+def logistic_estimator(model):
+    """Return the LR step whether or not a dense-feature scaler is present."""
+    return model.named_steps["logisticregression"] if hasattr(model, "named_steps") else model
+
+
+def select_lr(decision: str, x_train, y_train, x_val, y_val, seed: int,
+              *, standardize_dense: bool):
     from sklearn.linear_model import LogisticRegression
     from sklearn.pipeline import make_pipeline
     from sklearn.preprocessing import StandardScaler
     best = None
     for c in CS:
-        model = make_pipeline(StandardScaler(), LogisticRegression(
-            C=c, class_weight="balanced", max_iter=2000, random_state=seed))
+        classifier = LogisticRegression(
+            C=c, class_weight="balanced", max_iter=2000, random_state=seed)
+        # Match notebook 07c for lexical TF-IDF: its L2-normalised sparse
+        # vectors go directly to logistic regression, with no StandardScaler.
+        # The frozen dense Qwen baseline keeps the project's embedding protocol.
+        model = (make_pipeline(StandardScaler(), classifier)
+                 if standardize_dense else classifier)
         model.fit(x_train, y_train)
         raw = model.predict_proba(x_val)
-        classes = model.named_steps["logisticregression"].classes_.astype(int)
+        classes = logistic_estimator(model).classes_.astype(int)
         probs = np.zeros((len(y_val), 2 if decision == "facthood" else 5), dtype=np.float32)
         probs[:, classes] = raw
         if decision == "facthood":
@@ -515,7 +526,8 @@ def tfidf_method(decision: str, train: pd.DataFrame, val: pd.DataFrame,
                  test: pd.DataFrame, seed: int) -> tuple[np.ndarray, dict]:
     from sklearn.linear_model import LogisticRegression
     from macro_transfer.tfidf_baseline import fit_vectorizer, normalize_stopwords
-    params = {"analyzer": "word", "ngram_range": (1, 2), "min_df": 2,
+    params = {"analyzer": "word", "token_pattern": r"(?u)\b\w\w+\b",
+              "ngram_range": (1, 2), "min_df": 2,
               "max_df": 1.0, "max_features": 50000, "sublinear_tf": True,
               "norm": "l2", "lowercase": True, "strip_accents": None}
     stopwords = normalize_stopwords(STOPWORDS, params)
@@ -523,13 +535,16 @@ def tfidf_method(decision: str, train: pd.DataFrame, val: pd.DataFrame,
     x_val = vectorizer.transform(val.text.tolist()).tocsr()
     x_test = vectorizer.transform(test.text.tolist()).tocsr()
     model, threshold, score = select_lr(decision, x_train, train.label_id.to_numpy(),
-                                       x_val, val.label_id.to_numpy(), seed)
+                                       x_val, val.label_id.to_numpy(), seed,
+                                       standardize_dense=False)
     _, probs = predictions(model, x_test)
     pred = ((probs[:, 1] >= threshold).astype(int) if decision == "facthood"
             else probs.argmax(1))
-    return pred, {"validation_ba": score, "selected_C": float(model.named_steps["logisticregression"].C),
+    return pred, {"validation_ba": score, "selected_C": float(logistic_estimator(model).C),
                   "selected_reject_threshold": threshold,
-                  "vocabulary_size": len(vectorizer.vocabulary_)}
+                  "vocabulary_size": len(vectorizer.vocabulary_),
+                  "vectorizer": "TfidfVectorizer",
+                  "standard_scaler": False}
 
 
 def qwen_frozen_method(decision: str, train: pd.DataFrame, val: pd.DataFrame,
@@ -546,12 +561,14 @@ def qwen_frozen_method(decision: str, train: pd.DataFrame, val: pd.DataFrame,
     x_val = vectors_for(val, fact_maps, excluded_maps)
     x_test = vectors_for(test, fact_maps, excluded_maps)
     model, threshold, score = select_lr(decision, x_train, train.label_id.to_numpy(),
-                                       x_val, val.label_id.to_numpy(), seed)
+                                       x_val, val.label_id.to_numpy(), seed,
+                                       standardize_dense=True)
     _, probs = predictions(model, x_test)
     pred = ((probs[:, 1] >= threshold).astype(int) if decision == "facthood"
             else probs.argmax(1))
-    return pred, {"validation_ba": score, "selected_C": float(model.named_steps["logisticregression"].C),
-                  "selected_reject_threshold": threshold}
+    return pred, {"validation_ba": score, "selected_C": float(logistic_estimator(model).C),
+                  "selected_reject_threshold": threshold,
+                  "standard_scaler": True}
 
 
 def verify_qwen_export_revision(frames: dict[str, pd.DataFrame], device: str) -> dict:
