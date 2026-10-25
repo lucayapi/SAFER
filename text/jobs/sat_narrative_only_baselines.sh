@@ -16,7 +16,7 @@
 set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/text/jobs/_sat_narrative_only_env.sh"
 sat_narrative_only_setup run
-export SAT_NARRATIVE_BASELINE_ROOT="${SAT_NARRATIVE_BASELINE_ROOT:-${SCRATCH:-$HOME}/safer_sat_lodo/runs/narrative_only_lodo_v3_baselines}"
+export SAT_NARRATIVE_BASELINE_ROOT="${SAT_NARRATIVE_BASELINE_ROOT:-${SCRATCH:-$HOME}/safer_sat_lodo/runs/narrative_only_lodo_v4_baselines}"
 python -u scripts/sat_narrative_only_baselines.py run \
   --prepared "${SAT_NARRATIVE_PREPARED}" \
   --output "${SAT_NARRATIVE_BASELINE_ROOT}"

@@ -105,6 +105,10 @@ Thumbs.db
 /sat12l_sm_elementary_no_nicollin_v1/
 /narrative_only_lodo_v1/
 /narrative_only_lodo_checkpoint_v1/
+/narrative_only_lodo_v3_baselines/
+/safer_role_qwen3_narrative_lodo_3epoch_v1/
+slurm-role-qwen3-*.out
+slurm-role-qwen3-*.err
 
 # Fichiers temporaires locaux
 test.txt

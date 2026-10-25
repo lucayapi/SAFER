@@ -3,9 +3,11 @@
 
 M0 is French PySBD, M1 is pinned pretrained SaT at its default threshold, and
 M2 is the same SaT with its threshold selected on the five source validations.
-All scores reuse the edge-normalized exact-span metric implemented by the M3
-runner. The ``compare`` command refuses to combine results unless M3's run
-binding, test IDs, reference counts, seed, and normalization match the bundle.
+The reported scores ignore Unicode punctuation, symbols, separators, and
+control/format characters at span edges. Source threshold selection retains the
+original rule used by the completed M3 run. The ``compare`` command validates
+the historical M3 artifacts, then rescores their saved predictions under the
+updated boundary metric; it does not retrain or alter the selected checkpoint.
 """
 
 from __future__ import annotations
@@ -22,15 +24,17 @@ from pathlib import Path
 
 import sat_narrative_only_lodo as m3
 import sat_narrative_only_runtime as runtime
+import narrative_only_boundary_metric as boundary_metric
 
 ROOT = runtime.ROOT
 PREPARED = ROOT / "annotation" / "lodo_sat_transfer" / "narrative_only_lodo_v1"
-DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v3_baselines"
-VERSION = "sat_narrative_only_baselines_v3"
+DEFAULT_OUTPUT = ROOT / "safer_sat_lodo" / "runs" / "narrative_only_lodo_v4_baselines"
+VERSION = "sat_narrative_only_baselines_v4"
 METHODS = ("M0", "M1", "M2")
-NORMALIZATION = "trim Unicode whitespace and punctuation at span edges only"
-METRIC = "edge_normalized_exact_f1"
-COUNTS = ("span_tp", "span_pred", "span_ref")
+NORMALIZATION = boundary_metric.NORMALIZATION
+METRIC = boundary_metric.METRIC
+COUNTS = boundary_metric.COUNTS
+M3_STORED_NORMALIZATION = "trim Unicode whitespace and punctuation at span edges only"
 
 
 def digest(path: Path) -> str:
@@ -39,7 +43,8 @@ def digest(path: Path) -> str:
 
 def code_digest() -> str:
     h = hashlib.sha256()
-    for path in (Path(__file__), Path(m3.__file__), Path(runtime.__file__)):
+    for path in (Path(__file__), Path(m3.__file__), Path(runtime.__file__),
+                 Path(boundary_metric.__file__)):
         h.update(path.name.encode("utf-8"))
         h.update(path.read_text(encoding="utf-8").replace("\r\n", "\n").encode("utf-8"))
     return h.hexdigest()
@@ -58,6 +63,7 @@ def binding(prepared: Path) -> dict:
         "fold_order": manifest["fold_order"],
         "seed": runtime.SEED,
         "normalization": NORMALIZATION,
+        "threshold_selection_normalization": M3_STORED_NORMALIZATION,
         "thresholds": list(runtime.THRESHOLDS),
         "default_threshold": runtime.DEFAULT,
     }
@@ -216,8 +222,8 @@ def write_prediction_file(path: Path, rows: list[dict], spans: dict[str, list[tu
 def counts_for(rows: list[dict], span_by_id: dict[str, list[tuple[int, int]]]) -> dict:
     totals = collections.Counter()
     for row in rows:
-        totals.update(m3.score(row, span_by_id[row["document_id"]]))
-    p, r, f1 = m3.prf(totals)
+        totals.update(boundary_metric.score(row, span_by_id[row["document_id"]]))
+    p, r, f1 = boundary_metric.prf(totals)
     return {**{key: int(totals[key]) for key in COUNTS},
             "precision": p, "recall": r, METRIC: f1}
 
@@ -350,7 +356,7 @@ def compare(args: argparse.Namespace) -> None:
     m3_summary = json.loads((m3_root / "summary.json").read_text(encoding="utf-8"))
     if (m3_summary.get("version") != m3.VERSION or
             m3_summary.get("binding") != expected_m3_binding or
-            m3_summary.get("normalization") != NORMALIZATION or
+            m3_summary.get("normalization") != M3_STORED_NORMALIZATION or
             m3_summary.get("seed") != runtime.SEED):
         raise ValueError("M3 summary is not bound to these folds, seed, and metric")
     output.mkdir(parents=True, exist_ok=True)
@@ -359,15 +365,15 @@ def compare(args: argparse.Namespace) -> None:
         test = runtime.read_jsonl(prepared / "folds" / f"target_{target}" / "test.jsonl")
         if not test or any(row["corpus"] != target for row in test):
             raise ValueError(f"Invalid test data for {target}")
-        expected_ref = sum(m3.score(row, [])["span_ref"] for row in test)
+        expected_ref = sum(boundary_metric.score(row, [])["span_ref"] for row in test)
         metrics = {}
         for method in METHODS:
             pred = read_prediction_file(baseline_root / "predictions" / target / f"{method}.jsonl",
                                         test, method)
             counts = collections.Counter()
             for row in test:
-                counts.update(m3.score(row, pred[row["corpus"], row["document_id"]]))
-            p, r, f1 = m3.prf(counts)
+                counts.update(boundary_metric.score(row, pred[row["corpus"], row["document_id"]]))
+            p, r, f1 = boundary_metric.prf(counts)
             if counts["span_ref"] != expected_ref:
                 raise ValueError(f"Reference counts differ for {target}/{method}")
             metrics[method] = {**counts, "precision": p, "recall": r, METRIC: f1}
@@ -376,18 +382,24 @@ def compare(args: argparse.Namespace) -> None:
         result = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
         if (run_binding != expected_m3_binding or result.get("version") != m3.VERSION or
                 result.get("target") != target or result.get("seed") != runtime.SEED or
-                result.get("normalization") != NORMALIZATION or result.get("n_test") != len(test) or
-                result.get("counts", {}).get("span_ref") != expected_ref):
+                result.get("normalization") != M3_STORED_NORMALIZATION or result.get("n_test") != len(test)):
             raise ValueError(f"M3 fold metadata/counts mismatch for {target}")
         m3_predictions = read_prediction_file(run / "predictions.jsonl", test, "M3")
+        stored_metric_counts = collections.Counter()
         m3_counts = collections.Counter()
         for row in test:
-            m3_counts.update(m3.score(row, m3_predictions[row["corpus"], row["document_id"]]))
-        p, r, f1 = m3.prf(m3_counts)
-        if (m3_counts["span_ref"] != expected_ref or m3_counts["span_tp"] != result["counts"]["span_tp"] or
-                m3_counts["span_pred"] != result["counts"]["span_pred"] or
-                abs(f1 - result["metrics"][METRIC]) > 1e-12):
+            spans = m3_predictions[row["corpus"], row["document_id"]]
+            stored_metric_counts.update(m3.score(row, spans))
+            m3_counts.update(boundary_metric.score(row, spans))
+        old_p, old_r, old_f1 = m3.prf(stored_metric_counts)
+        if (stored_metric_counts["span_ref"] != result["counts"]["span_ref"] or
+                stored_metric_counts["span_tp"] != result["counts"]["span_tp"] or
+                stored_metric_counts["span_pred"] != result["counts"]["span_pred"] or
+                abs(old_f1 - result["metrics"]["edge_normalized_exact_f1"]) > 1e-12):
             raise ValueError(f"M3 predictions do not reproduce its stored scores: {target}")
+        p, r, f1 = boundary_metric.prf(m3_counts)
+        if m3_counts["span_ref"] != expected_ref:
+            raise ValueError(f"Updated metric reference count mismatch for {target}")
         metrics["M3"] = {**m3_counts, "precision": p, "recall": r, METRIC: f1}
         for method, values in metrics.items():
             table.append({"target": target, "n_test": len(test), "method": method,
@@ -404,11 +416,12 @@ def compare(args: argparse.Namespace) -> None:
             **{k: sum(r[k] for r in target_rows) for k in COUNTS}})
     fields = ("target", "n_test", "method", *COUNTS, "precision", "recall", METRIC)
     write_csv(output / "comparison_M0_M3.csv", table, fields)
-    comparison_manifest = {"version": "narrative_only_M0_M3_comparison_v1",
+    comparison_manifest = {"version": "narrative_only_M0_M3_comparison_v2",
         "prepared_manifest_sha256": digest(prepared / "manifest.json"),
         "baseline_manifest_sha256": digest(baseline_root / "manifest.json"),
         "m3_summary_sha256": digest(m3_root / "summary.json"),
         "normalization": NORMALIZATION,
+        "checkpoint_and_threshold_selection_normalization": M3_STORED_NORMALIZATION,
         "macro_f1": {method: next(r[METRIC] for r in table
                                   if r["target"] == "MACRO_6_CORPUS" and r["method"] == method)
                      for method in ("M0", "M1", "M2", "M3")}}
