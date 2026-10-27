@@ -1,0 +1,17 @@
+{
+  "prepared_manifest_sha256": "c91765d45ad70e51edebbe00b2bc71607c9388deb4b9cd00973bcb251c6b355a",
+  "baseline_manifest_sha256": "7eed567afff91f76529d49c5a64487d1573fe65a010d85af82faccb5323b1945",
+  "m3_summary_sha256": "1b25c1ad8b643a156e1a0cb43f47b33194e67575a05b4b1b4d6b6d18e2437b42",
+  "selection_note": "Stored source-selected checkpoints/thresholds; no retuning",
+  "normalization": "trim Unicode categories P/S/C/Z at span edges only; preserve internal characters",
+  "thresholds": [
+    0.3,
+    0.5,
+    0.7
+  ],
+  "comparison_sha256": "90965a6063686296170d530d52799a8631c0e12ba7aaf66322f09197213297de",
+  "output_sha256": "d71900e5651de4ce838881715b92e65f6326079a42eb8c9e153d3b828e2b974f",
+  "matching": "maximum-cardinality one-to-one on edge-normalized character spans",
+  "selection": "saved source-selected models and boundary thresholds; target rescoring only",
+  "macro": "unweighted arithmetic mean of six target-domain F1 scores"
+}

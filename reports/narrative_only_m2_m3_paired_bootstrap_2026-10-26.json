@@ -1,0 +1,13 @@
+{
+  "method": "within-domain paired nonparametric bootstrap of whole test narratives",
+  "estimand": "fixed-model domain-level IoU>=0.5 unit F1 and M3-minus-M2 difference",
+  "interval": "95% percentile interval (2.5th and 97.5th bootstrap quantiles)",
+  "repetitions": 5000,
+  "seed": 20261026,
+  "comparison_sha256": "90965a6063686296170d530d52799a8631c0e12ba7aaf66322f09197213297de",
+  "prepared_manifest_sha256": "c91765d45ad70e51edebbe00b2bc71607c9388deb4b9cd00973bcb251c6b355a",
+  "baseline_manifest_sha256": "7eed567afff91f76529d49c5a64487d1573fe65a010d85af82faccb5323b1945",
+  "m3_summary_sha256": "1b25c1ad8b643a156e1a0cb43f47b33194e67575a05b4b1b4d6b6d18e2437b42",
+  "output_sha256": "df5020eef8c73a3c1198ab59d95de0843b514c364540c3664edf797d378ef4ba",
+  "limitation": "conditional on the single trained M3 run and its source-selected checkpoint/threshold; no training-seed or new-domain uncertainty"
+}

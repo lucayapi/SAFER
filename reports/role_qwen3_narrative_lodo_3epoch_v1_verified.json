@@ -1,0 +1,290 @@
+{
+  "campaign_sha256": "da64002ce11df3c637544ed2028e63e554875c7fcefed72d4c78ea9291034f5e",
+  "prepared_manifest_sha256": "c91765d45ad70e51edebbe00b2bc71607c9388deb4b9cd00973bcb251c6b355a",
+  "output_sha256": "de70c795c64fe5ab9364d2b0dbe5d1c8cfac6b34886f15dd192d5fee2607798f",
+  "n_verified_runs": 48,
+  "unavailable": {
+    "ce": "18 empty seed directories; no complete markers",
+    "triplet": "not a method in this campaign"
+  },
+  "summary": {
+    "methods": {
+      "tfidf_lr": {
+        "n_seeds": 1,
+        "by_target": {
+          "btp": {
+            "balanced_accuracy_mean": 0.8008239320979882,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7939837309833921
+          },
+          "metallurgie": {
+            "balanced_accuracy_mean": 0.7884643852770287,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7781392891344782
+          },
+          "caou_chimie_plas": {
+            "balanced_accuracy_mean": 0.7804797893858765,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7717517860907926
+          },
+          "bois_textille": {
+            "balanced_accuracy_mean": 0.7931621065226279,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7845094128917973
+          },
+          "service_temporaire": {
+            "balanced_accuracy_mean": 0.8018744242325689,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7944448882538724
+          },
+          "nicollin": {
+            "balanced_accuracy_mean": 0.8029325149750849,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7830139582652298
+          }
+        },
+        "by_seed": [
+          {
+            "seed": null,
+            "macro_ba": 0.7946228587485291,
+            "macro_f1": 0.7843071776032604,
+            "worst_ba": 0.7804797893858765,
+            "worst_target": "caou_chimie_plas"
+          }
+        ],
+        "macro_ba_mean": 0.7946228587485291,
+        "macro_ba_sd": null,
+        "macro_f1_mean": 0.7843071776032604,
+        "macro_f1_sd": null,
+        "worst_ba_mean": 0.7804797893858765,
+        "worst_ba_sd": null
+      },
+      "qwen3_frozen_lr": {
+        "n_seeds": 1,
+        "by_target": {
+          "btp": {
+            "balanced_accuracy_mean": 0.8008690317559715,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7864057801574229
+          },
+          "metallurgie": {
+            "balanced_accuracy_mean": 0.7853430132539493,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7677773707635753
+          },
+          "caou_chimie_plas": {
+            "balanced_accuracy_mean": 0.7734420744209515,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7587579493372615
+          },
+          "bois_textille": {
+            "balanced_accuracy_mean": 0.7833889261817669,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7691760684656012
+          },
+          "service_temporaire": {
+            "balanced_accuracy_mean": 0.7976699892720726,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7819204111041798
+          },
+          "nicollin": {
+            "balanced_accuracy_mean": 0.79432508096669,
+            "balanced_accuracy_sd": null,
+            "macro_f1_mean": 0.7371846408353597
+          }
+        },
+        "by_seed": [
+          {
+            "seed": null,
+            "macro_ba": 0.789173019308567,
+            "macro_f1": 0.7668703701105667,
+            "worst_ba": 0.7734420744209515,
+            "worst_target": "caou_chimie_plas"
+          }
+        ],
+        "macro_ba_mean": 0.789173019308567,
+        "macro_ba_sd": null,
+        "macro_f1_mean": 0.7668703701105667,
+        "macro_f1_sd": null,
+        "worst_ba_mean": 0.7734420744209515,
+        "worst_ba_sd": null
+      },
+      "supcon": {
+        "n_seeds": 3,
+        "by_target": {
+          "btp": {
+            "balanced_accuracy_mean": 0.8376446538728834,
+            "balanced_accuracy_sd": 0.0031756689627914316,
+            "macro_f1_mean": 0.8290299574427482
+          },
+          "metallurgie": {
+            "balanced_accuracy_mean": 0.827402004336241,
+            "balanced_accuracy_sd": 0.001886815582492362,
+            "macro_f1_mean": 0.8114732526844566
+          },
+          "caou_chimie_plas": {
+            "balanced_accuracy_mean": 0.8165190586927837,
+            "balanced_accuracy_sd": 0.0026803251937778734,
+            "macro_f1_mean": 0.8051105867830353
+          },
+          "bois_textille": {
+            "balanced_accuracy_mean": 0.8282122527718689,
+            "balanced_accuracy_sd": 0.006274620164035491,
+            "macro_f1_mean": 0.8160994867389619
+          },
+          "service_temporaire": {
+            "balanced_accuracy_mean": 0.8370554098151847,
+            "balanced_accuracy_sd": 0.002056673845265769,
+            "macro_f1_mean": 0.825894448994392
+          },
+          "nicollin": {
+            "balanced_accuracy_mean": 0.8653983021845697,
+            "balanced_accuracy_sd": 0.009892206763042631,
+            "macro_f1_mean": 0.8313504859325812
+          }
+        },
+        "by_seed": [
+          {
+            "seed": 42,
+            "macro_ba": 0.8372256665952227,
+            "macro_f1": 0.8209896243552447,
+            "worst_ba": 0.8195114647692724,
+            "worst_target": "caou_chimie_plas"
+          },
+          {
+            "seed": 1729,
+            "macro_ba": 0.8321596991935272,
+            "macro_f1": 0.81583687201826,
+            "worst_ba": 0.8143385512270762,
+            "worst_target": "caou_chimie_plas"
+          },
+          {
+            "seed": 20261018,
+            "macro_ba": 0.836730475048016,
+            "macro_f1": 0.8226526129145828,
+            "worst_ba": 0.8157071600820026,
+            "worst_target": "caou_chimie_plas"
+          }
+        ],
+        "macro_ba_mean": 0.8353719469455886,
+        "macro_ba_sd": 0.0027928847778907963,
+        "macro_f1_mean": 0.8198263697626959,
+        "macro_f1_sd": 0.0035536533211282875,
+        "worst_ba_mean": 0.8165190586927837,
+        "worst_ba_sd": 0.0026803251937778734
+      },
+      "softtriple": {
+        "n_seeds": 3,
+        "by_target": {
+          "btp": {
+            "balanced_accuracy_mean": 0.8525088113919722,
+            "balanced_accuracy_sd": 0.0021495185237453787,
+            "macro_f1_mean": 0.846607531514276
+          },
+          "metallurgie": {
+            "balanced_accuracy_mean": 0.8382069274999504,
+            "balanced_accuracy_sd": 0.003215180504186015,
+            "macro_f1_mean": 0.8297727275561884
+          },
+          "caou_chimie_plas": {
+            "balanced_accuracy_mean": 0.8272204093262119,
+            "balanced_accuracy_sd": 0.0021305405976674422,
+            "macro_f1_mean": 0.8202915811846125
+          },
+          "bois_textille": {
+            "balanced_accuracy_mean": 0.8361151716600227,
+            "balanced_accuracy_sd": 0.0020529153605524965,
+            "macro_f1_mean": 0.8283553601757547
+          },
+          "service_temporaire": {
+            "balanced_accuracy_mean": 0.844077130909543,
+            "balanced_accuracy_sd": 0.00239768483258056,
+            "macro_f1_mean": 0.8369369824268248
+          },
+          "nicollin": {
+            "balanced_accuracy_mean": 0.8725623817406453,
+            "balanced_accuracy_sd": 0.0171188431110213,
+            "macro_f1_mean": 0.8478089646953694
+          }
+        },
+        "by_seed": [
+          {
+            "seed": 42,
+            "macro_ba": 0.8458904505955748,
+            "macro_f1": 0.8356108809650901,
+            "worst_ba": 0.8253245169589454,
+            "worst_target": "caou_chimie_plas"
+          },
+          {
+            "seed": 1729,
+            "macro_ba": 0.8474246403073423,
+            "macro_f1": 0.8367507313823974,
+            "worst_ba": 0.8268106378156558,
+            "worst_target": "caou_chimie_plas"
+          },
+          {
+            "seed": 20261018,
+            "macro_ba": 0.8420303253612555,
+            "macro_f1": 0.8325249614290254,
+            "worst_ba": 0.8295260732040344,
+            "worst_target": "caou_chimie_plas"
+          }
+        ],
+        "macro_ba_mean": 0.8451151387547242,
+        "macro_ba_sd": 0.0027794765284700827,
+        "macro_f1_mean": 0.8349621912588376,
+        "macro_f1_sd": 0.002186294050660559,
+        "worst_ba_mean": 0.8272204093262119,
+        "worst_ba_sd": 0.0021305405976674422
+      }
+    },
+    "softtriple_confusion": {
+      "roles": [
+        "A0",
+        "A1",
+        "B",
+        "C",
+        "AUTRE"
+      ],
+      "n_domain_seed_matrices": 18,
+      "weighting": "row normalize each target/seed confusion matrix, then equal mean over six targets and three seeds",
+      "values": [
+        [
+          0.8640438446414288,
+          0.058676761587184344,
+          0.028284527766109385,
+          0.0013819936803651186,
+          0.04761287232491234
+        ],
+        [
+          0.09552946890328615,
+          0.7921548971965627,
+          0.04666706328533234,
+          0.011654188278917293,
+          0.05399438233590146
+        ],
+        [
+          0.043789895733945136,
+          0.04000786799013308,
+          0.8727408650044979,
+          0.02459587244981764,
+          0.018865498821606222
+        ],
+        [
+          0.00534881923709958,
+          0.017134691678951368,
+          0.05072103951861595,
+          0.9074530495655716,
+          0.019342399999761523
+        ],
+        [
+          0.09797499416049879,
+          0.07264942486095441,
+          0.024317280986904145,
+          0.01587526262608245,
+          0.7891830373655602
+        ]
+      ]
+    }
+  }
+}
