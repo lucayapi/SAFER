@@ -26,15 +26,32 @@ METHODS = ("ce", "supcon", "softtriple")
 VERSION = "role_narrative_e2e_reduced_v1"
 
 
+def sat_result_root(env_name: str, folder: str, marker: str) -> Path:
+    explicit = os.environ.get(env_name)
+    if explicit:
+        candidates = [Path(explicit)]
+    else:
+        storage = Path(os.environ.get("SCRATCH", base.ROOT))
+        candidates = [storage / "safer_sat_lodo" / "runs" / folder,
+                      Path.home() / "safer_sat_lodo" / "runs" / folder,
+                      base.ROOT / folder]
+    for candidate in candidates:
+        if (candidate / marker).is_file():
+            return candidate.resolve()
+    searched = ", ".join(str(path.resolve()) for path in candidates)
+    raise FileNotFoundError(
+        f"Missing SaT result {folder}/{marker}; searched: {searched}. "
+        f"Set {env_name} to the directory containing {marker}.")
+
+
 def paths() -> tuple[Path, Path, Path]:
-    storage = Path(os.environ.get("SCRATCH", base.ROOT))
     prepared = Path(os.environ.get("SAT_NARRATIVE_PREPARED",
         base.ROOT / "annotation/lodo_sat_transfer/narrative_only_lodo_v1"))
-    sat_baselines = Path(os.environ.get("SAT_NARRATIVE_BASELINE_ROOT",
-        storage / "safer_sat_lodo/runs/narrative_only_lodo_v3_baselines"))
-    sat_m3 = Path(os.environ.get("SAT_NARRATIVE_RUN_ROOT",
-        storage / "safer_sat_lodo/runs/narrative_only_lodo_checkpoint_v1"))
-    return tuple(p.resolve() for p in (prepared, sat_baselines, sat_m3))
+    sat_baselines = sat_result_root("SAT_NARRATIVE_BASELINE_ROOT",
+        "narrative_only_lodo_v3_baselines", "manifest.json")
+    sat_m3 = sat_result_root("SAT_NARRATIVE_RUN_ROOT",
+        "narrative_only_lodo_checkpoint_v1", "summary.json")
+    return prepared.resolve(), sat_baselines, sat_m3
 
 
 def manifest_path() -> Path:

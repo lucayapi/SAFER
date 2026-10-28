@@ -11,6 +11,31 @@ import role_narrative_e2e_baselines as scoring
 import role_narrative_e2e_retrain as campaign
 
 
+def test_sat_results_can_live_at_repository_root(tmp_path, monkeypatch):
+    root = tmp_path / "SAFER"
+    results = root / "narrative_only_lodo_v3_baselines"
+    results.mkdir(parents=True)
+    (results / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(campaign.base, "ROOT", root)
+    monkeypatch.setenv("SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.delenv("SAT_NARRATIVE_BASELINE_ROOT", raising=False)
+    assert campaign.sat_result_root("SAT_NARRATIVE_BASELINE_ROOT",
+        "narrative_only_lodo_v3_baselines", "manifest.json") == results.resolve()
+
+
+def test_sat_results_can_live_in_home_runs(tmp_path, monkeypatch):
+    results = (tmp_path / "safer_sat_lodo" / "runs" /
+               "narrative_only_lodo_v3_baselines")
+    results.mkdir(parents=True)
+    (results / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(campaign.base, "ROOT", tmp_path / "SAFER")
+    monkeypatch.setattr(campaign.Path, "home", lambda: tmp_path)
+    monkeypatch.setenv("SCRATCH", str(tmp_path / "scratch"))
+    monkeypatch.delenv("SAT_NARRATIVE_BASELINE_ROOT", raising=False)
+    assert campaign.sat_result_root("SAT_NARRATIVE_BASELINE_ROOT",
+        "narrative_only_lodo_v3_baselines", "manifest.json") == results.resolve()
+
+
 def test_role_aware_scoring_uses_role_blind_span_alignment():
     row = {"document_id": "example", "raw_text": "alpha beta",
            "units": [{"start": 0, "end": 5, "role": "A0"},
